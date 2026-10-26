@@ -55,6 +55,9 @@ pub fn tree(w: &gtk::Widget, root: &gtk::Widget, parent: &str) -> Node {
         rect,
         row,
         clips,
+        // List scrollers (class `whole-rows`) must show whole rows at rest; page scrollers may cut.
+        viewport: w.is::<gtk::ScrolledWindow>() && w.has_css_class("whole-rows"),
+        list_row: w.has_css_class("list-row"),
         clipped_text,
         children,
     }

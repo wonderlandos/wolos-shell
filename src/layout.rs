@@ -19,6 +19,10 @@ pub struct Node {
     pub row: bool,
     /// Scroll views: content may exceed on purpose.
     pub clips: bool,
+    /// List scroll view: rows inside must be wholly visible or hidden at rest.
+    pub viewport: bool,
+    /// A list row (whole-row rule).
+    pub list_row: bool,
     /// Label whose text is ellipsized or cut.
     pub clipped_text: bool,
     pub children: Vec<Node>,
@@ -32,7 +36,7 @@ pub struct Issue {
 
 pub fn find(root: &Node) -> Vec<Issue> {
     let mut out = Vec::new();
-    walk(root, &mut out);
+    walk(root, None, &mut out);
     out
 }
 
@@ -40,11 +44,25 @@ pub fn find(root: &Node) -> Vec<Issue> {
 pub fn find_in(frame: Rect, root: &Node) -> Vec<Issue> {
     let mut out = Vec::new();
     overflow(frame, root, &mut out);
-    walk(root, &mut out);
+    walk(root, None, &mut out);
     out
 }
 
-fn walk(n: &Node, out: &mut Vec<Issue>) {
+fn walk(n: &Node, view: Option<Rect>, out: &mut Vec<Issue>) {
+    let view = if n.viewport { Some(n.rect) } else { view };
+    if let (true, Some(v)) = (n.list_row, view) {
+        let (top, bottom) = (n.rect.y.max(v.y), (n.rect.y + n.rect.h).min(v.y + v.h));
+        let visible = bottom - top;
+        if visible > TOLERANCE && visible < n.rect.h - TOLERANCE {
+            out.push(Issue {
+                path: n.path.clone(),
+                message: format!(
+                    "{} row is cut by its scroll view ({visible} of {} px visible)",
+                    n.path, n.rect.h
+                ),
+            });
+        }
+    }
     if n.clipped_text {
         out.push(Issue {
             path: n.path.clone(),
@@ -69,7 +87,7 @@ fn walk(n: &Node, out: &mut Vec<Issue>) {
         }
     }
     for c in &n.children {
-        walk(c, out);
+        walk(c, view, out);
     }
 }
 
@@ -157,6 +175,27 @@ mod tests {
         assert_eq!(i.len(), 1);
         assert_eq!(i[0].path, "label");
         assert!(i[0].message.contains("5 px off"));
+    }
+
+    #[test]
+    fn partial_rows_in_scroll_views() {
+        let mut scroll = n("scroll", 0, 0, 100, 100);
+        scroll.clips = true;
+        scroll.viewport = true;
+        let mut list = n("list", 0, 0, 100, 160);
+        let row = |y| {
+            let mut r = n("row", 0, y, 100, 40);
+            r.list_row = true;
+            r
+        };
+        // 0..40, 40..80 whole; 80..120 cut at 100; 120..160 hidden.
+        list.children = vec![row(0), row(40), row(80), row(120)];
+        scroll.children = vec![list];
+        let i = find(&scroll);
+        assert_eq!(i.len(), 1, "{i:?}");
+        assert!(i[0].message.contains("row is cut"), "{}", i[0].message);
+        scroll.rect.h = 80;
+        assert!(find(&scroll).is_empty());
     }
 
     #[test]

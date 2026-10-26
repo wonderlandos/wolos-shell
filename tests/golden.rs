@@ -121,6 +121,37 @@ fn cases() -> Vec<Case> {
             });
         }
     }
+    v.push(Case {
+        name: "login-hint".into(),
+        size: (900, 600),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| {
+            let l = ui::lock::Login::new(&["alice".into(), "dinah".into()]);
+            l.pick("alice");
+            l.panel.reject(shell::login::Verdict::Denied.message());
+            let hint = shell::login::hint_message(3, Some("white rabbit"));
+            l.panel.message.set_label(&hint.unwrap_or_default());
+            l.root.clone()
+        }),
+    });
+    for v2 in [(1280, 800, "1280"), (1024, 640, "1024")] {
+        v.push(Case {
+            name: format!("setup-account-filled-{}", v2.2),
+            size: (v2.0, v2.1),
+            class: "lock-window",
+            wallpaper: false,
+            build: Box::new(|| {
+                use shell::setup::Field;
+                let s = ui::setup::Setup::new(&shell::system::Fake);
+                s.show(shell::setup::Step::Account);
+                s.type_into(Field::FullName, "Alice Liddell");
+                s.type_into(Field::Password, "curiouser");
+                s.type_into(Field::Verify, "curious");
+                s.root.clone()
+            }),
+        });
+    }
     for (sw, sh, tag) in [(900, 600, "wide"), (480, 360, "narrow")] {
         for p in ui::store::PAGES.into_iter().chain(["Search"]) {
             v.push(Case {
