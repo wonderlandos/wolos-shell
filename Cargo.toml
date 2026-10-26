@@ -23,6 +23,11 @@ wol_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 async-channel = "2"
+# wol-window-shot: hyprland_toplevel_export_v1 client (Mission Control thumbnails).
+wayland-client = "0.31"
+wayland-scanner = "0.31"
+wayland-backend = "0.3"
+bitflags = "2"
 
 [[test]]
 name = "golden"
