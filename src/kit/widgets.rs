@@ -26,7 +26,8 @@ pub const APP_SIZE: (i32, i32) = (900, 600);
 pub const APP_NARROW: (i32, i32) = (480, 360);
 /// Below this window width the sidebar collapses.
 pub const NARROW: i32 = 640;
-pub const LOCK_FIELD_WIDTH: i32 = 280;
+pub const LOCK_FIELD_WIDTH: i32 = 200;
+pub const LOCK_FIELD_HEIGHT: i32 = 28;
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
 
@@ -716,44 +717,77 @@ pub fn clock_header() -> gtk::Box {
     b
 }
 
-/// Avatar, name, round password field, message line.
+/// Avatar, name, glass password pill with a submit arrow, message line.
 pub struct UserPanel {
     pub root: gtk::Box,
     pub name: gtk::Label,
+    pub pill: gtk::Box,
     pub field: gtk::PasswordEntry,
+    pub submit: gtk::Button,
     pub message: gtk::Label,
 }
 
 impl UserPanel {
     pub fn new(name: &str) -> Self {
-        let root = vbox(S3);
+        let root = vbox(S2);
         root.set_halign(gtk::Align::Center);
         root.append(&avatar(name, AVATAR_XL));
         let n = centered(name, "lock-name");
         root.append(&n);
+        let pill = hbox(0);
+        pill.add_css_class("lock-pill");
+        pill.set_halign(gtk::Align::Center);
+        pill.set_size_request(LOCK_FIELD_WIDTH, LOCK_FIELD_HEIGHT);
         let field = gtk::PasswordEntry::builder()
             .placeholder_text("Enter Password")
+            .hexpand(true)
+            .valign(gtk::Align::Center)
             .build();
         field.add_css_class("lock-field");
-        field.set_halign(gtk::Align::Center);
-        field.set_width_request(LOCK_FIELD_WIDTH);
-        root.append(&field);
+        field.set_width_chars(1);
+        pill.append(&field);
+        let submit = gtk::Button::builder()
+            .label("→")
+            .tooltip_text("Unlock")
+            .valign(gtk::Align::Center)
+            .sensitive(false)
+            .build();
+        submit.add_css_class("lock-submit");
+        pill.append(&submit);
+        let s2 = submit.clone();
+        field.connect_changed(move |f| s2.set_sensitive(!f.text().is_empty()));
+        let f2 = field.clone();
+        submit.connect_clicked(move |_| {
+            f2.emit_by_name::<()>("activate", &[]);
+        });
+        root.append(&pill);
         let message = centered("", "lock-message");
         root.append(&message);
         UserPanel {
             root,
             name: n,
+            pill,
             field,
+            submit,
             message,
         }
+    }
+
+    pub fn set_user(&self, name: &str) {
+        self.name.set_label(name);
+        if let Some(a) = self.root.first_child().and_downcast::<gtk::Label>() {
+            a.set_label(&crate::login::initials(name));
+        }
+        self.message.set_label("");
+        self.field.set_text("");
     }
 
     /// Wrong password: shake once, clear, say why.
     pub fn reject(&self, why: &str) {
         self.message.set_label(why);
         self.field.set_text("");
-        self.field.remove_css_class("shake");
-        let f = self.field.clone();
-        glib::idle_add_local_once(move || f.add_css_class("shake"));
+        self.pill.remove_css_class("shake");
+        let p = self.pill.clone();
+        glib::idle_add_local_once(move || p.add_css_class("shake"));
     }
 }

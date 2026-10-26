@@ -70,8 +70,39 @@ fn cases() -> Vec<Case> {
             size: (900, 600),
             class: "lock-window",
             wallpaper: false,
+            build: Box::new(|| ui::lock::lock_screen(&w::UserPanel::new("Alice Liddell"))),
+        },
+        Case {
+            name: "lock-rejected".into(),
+            size: (900, 600),
+            class: "lock-window",
+            wallpaper: false,
             build: Box::new(|| {
-                ui::lock::body(&w::UserPanel::new("Alice Liddell").root, None).upcast()
+                let p = w::UserPanel::new("Alice Liddell");
+                p.reject(shell::login::Verdict::Denied.message());
+                ui::lock::lock_screen(&p)
+            }),
+        },
+        Case {
+            name: "login".into(),
+            size: (900, 600),
+            class: "lock-window",
+            wallpaper: false,
+            build: Box::new(|| {
+                ui::lock::Login::new(&["alice".into(), "dinah".into(), "Mad Hatter".into()])
+                    .root
+                    .clone()
+            }),
+        },
+        Case {
+            name: "login-password".into(),
+            size: (900, 600),
+            class: "lock-window",
+            wallpaper: false,
+            build: Box::new(|| {
+                let l = ui::lock::Login::new(&["alice".into(), "dinah".into()]);
+                l.pick("dinah");
+                l.root.clone()
             }),
         },
     ];

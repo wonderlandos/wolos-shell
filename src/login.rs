@@ -117,6 +117,50 @@ pub fn users(passwd: &str, shells: &str) -> Vec<String> {
         .collect()
 }
 
+/// Login window power buttons (FreeBSD base commands).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Power {
+    Sleep,
+    Restart,
+    ShutDown,
+}
+
+impl Power {
+    pub const ALL: [Power; 3] = [Power::Sleep, Power::Restart, Power::ShutDown];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Power::Sleep => "Sleep",
+            Power::Restart => "Restart",
+            Power::ShutDown => "Shut Down",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Power::Sleep => "weather-clear-night-symbolic",
+            Power::Restart => "view-refresh-symbolic",
+            Power::ShutDown => "system-shutdown-symbolic",
+        }
+    }
+
+    pub fn argv(self) -> &'static [&'static str] {
+        match self {
+            Power::Sleep => &["/usr/sbin/acpiconf", "-s", "3"],
+            Power::Restart => &["/sbin/shutdown", "-r", "now"],
+            Power::ShutDown => &["/sbin/shutdown", "-p", "now"],
+        }
+    }
+
+    /// Fire and forget; failure (no privilege) is reported on stderr.
+    pub fn run(self) {
+        let a = self.argv();
+        if let Err(e) = std::process::Command::new(a[0]).args(&a[1..]).spawn() {
+            eprintln!("wol-loginwindow: {}: {e}", a[0]);
+        }
+    }
+}
+
 /// Owned-argument form for worker threads.
 pub fn authcheck_owned(password: String) -> Verdict {
     authcheck(&password)
@@ -152,6 +196,21 @@ mod tests {
         assert!(login_request("", "pw").is_none());
         assert!(login_request("a\nb", "pw").is_none());
         assert!(login_request("a", &"x".repeat(513)).is_none());
+    }
+
+    #[test]
+    fn power_commands() {
+        for (p, argv) in [
+            (Power::Sleep, &["/usr/sbin/acpiconf", "-s", "3"][..]),
+            (Power::Restart, &["/sbin/shutdown", "-r", "now"][..]),
+            (Power::ShutDown, &["/sbin/shutdown", "-p", "now"][..]),
+        ] {
+            assert_eq!(p.argv(), argv);
+        }
+        assert_eq!(
+            Power::ALL.map(Power::label),
+            ["Sleep", "Restart", "Shut Down"]
+        );
     }
 
     #[test]
