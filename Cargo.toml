@@ -27,3 +27,7 @@ async-channel = "2"
 [[test]]
 name = "golden"
 harness = false
+
+[dev-dependencies]
+async-io = "2"
+futures-lite = "2"
