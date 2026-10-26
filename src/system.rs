@@ -540,8 +540,26 @@ impl CoreSystem {
         )
     }
 
-    /// Injected controls (tests use a `FakeHost`). Starts the refresh worker.
+    /// Injected controls (tests use a `FakeHost`). Refreshes now and then every second.
     pub fn with(c: Controls, files: Sysfs, cache: Option<std::path::PathBuf>) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = std::thread::Builder::new()
+            .name("wol-controls-tick".into())
+            .spawn(move || {
+                while tx.send(()).is_ok() {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+            });
+        Self::with_ticks(c, files, cache, rx)
+    }
+
+    /// Refresh worker driven by `ticks` (one refresh per message); stops when either side drops.
+    pub fn with_ticks(
+        c: Controls,
+        files: Sysfs,
+        cache: Option<std::path::PathBuf>,
+        ticks: std::sync::mpsc::Receiver<()>,
+    ) -> Self {
         let snap = cache
             .as_ref()
             .and_then(|p| fs::read_to_string(p).ok())
@@ -560,11 +578,10 @@ impl CoreSystem {
             .name("wol-controls".into())
             .spawn(move || {
                 let mut tick = 0u64;
-                while let Some(i) = weak.upgrade() {
+                while ticks.recv().is_ok() {
+                    let Some(i) = weak.upgrade() else { break };
                     i.refresh(tick);
-                    drop(i);
                     tick += 1;
-                    std::thread::sleep(std::time::Duration::from_secs(1));
                 }
             });
         CoreSystem { inner }
@@ -664,8 +681,9 @@ impl System for CoreSystem {
             .name("wol-action".into())
             .spawn(move || {
                 let r = i.perform(&a);
-                let _ = tx.try_send(r);
+                // Reply with the host's state already read, so callers never see it go stale after.
                 i.refresh(0);
+                let _ = tx.try_send(r);
             });
         rx
     }
@@ -787,24 +805,24 @@ mod tests {
         let root = std::env::temp_dir().join(format!("wol-core-sys-{}", std::process::id()));
         let cache = root.join("snap.json");
         fs::create_dir_all(&root).unwrap();
-        let sys = CoreSystem::with(
+        let (tick, ticks) = std::sync::mpsc::channel();
+        let sys = CoreSystem::with_ticks(
             Controls::new(h.clone()),
             Sysfs { root: root.clone() },
             Some(cache.clone()),
+            ticks,
         );
         let w = sys.watch().unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while sys.audio().volume.is_none() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        tick.send(()).unwrap();
+        w.recv_blocking().unwrap();
         assert_eq!(sys.audio().volume, Some(64));
-        assert!(w.try_recv().is_ok(), "watchers hear about changes");
         assert_eq!(sys.wifi_enabled(), Some(true));
         assert_eq!(wifi_subtitle(sys.network(), &sys.wifi_networks()), "Home");
         assert_eq!(sys.network().signal, Some(70));
+        h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.30\n");
         let done = sys.spawn(Action::Volume(30));
         assert_eq!(done.recv_blocking(), Ok(Ok(())));
-        assert_eq!(sys.audio().volume, Some(30), "optimistic snapshot");
+        assert_eq!(sys.audio().volume, Some(30), "refreshed before the reply");
         assert_eq!(
             sys.spawn(Action::UserAdd {
                 name: "dinah".into(),
