@@ -196,6 +196,40 @@ fn cases() -> Vec<Case> {
                 b.upcast()
             }),
         },
+        Case {
+            name: "banners".into(),
+            size: (420, 360),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let n = |app: &str, summary: &str, body: &str| shell::ui::notify::Note {
+                    id: 1,
+                    app: app.into(),
+                    icon: String::new(),
+                    summary: summary.into(),
+                    body: body.into(),
+                    critical: false,
+                    timeout_ms: -1,
+                };
+                let col = w::vbox(0);
+                col.add_css_class("banners-preview");
+                col.set_halign(gtk::Align::End);
+                col.set_valign(gtk::Align::Start);
+                col.append(&ui::notify::banner(
+                    &n("Mail", "Dinah", "Tea at four? The Hatter insists it is always six o'clock, so bring a watch that agrees with him and some extra cups."),
+                    1,
+                ));
+                col.append(&ui::notify::banner(
+                    &n("Music", "Now Playing", "White Rabbit — Jefferson Airplane"),
+                    3,
+                ));
+                col.append(&ui::notify::banner(
+                    &n("Calendar", "Croquet with the Queen", ""),
+                    1,
+                ));
+                col.upcast()
+            }),
+        },
     ];
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
         for st in shell::setup::STEPS {

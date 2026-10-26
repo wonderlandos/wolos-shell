@@ -89,8 +89,11 @@ pub fn is_running(p: &Pin, classes: &std::collections::HashSet<String>) -> bool 
 
 fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
     let lc = class.to_lowercase();
-    pins.iter()
-        .find(|p| p.id == lc || p.exec.first().is_some_and(|e| program(e) == lc))
+    pins.iter().find(|p| {
+        p.id == lc
+            || p.exec.first().is_some_and(|e| program(e) == lc)
+            || p.name.eq_ignore_ascii_case(class)
+    })
 }
 
 fn entry_for<'a>(class: &str, installed: &'a [Entry]) -> Option<&'a Entry> {
@@ -169,6 +172,7 @@ mod tests {
             ("Firefox", "wolos-browser"),
             ("gnome-calculator", "accessories-calculator"),
             ("weird", "weird"),
+            ("Mail", "wolos-mail"),
         ] {
             assert_eq!(icon_for(c, PINS, &installed), w, "{c}");
         }
