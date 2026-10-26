@@ -31,6 +31,13 @@ pub fn apps(clients: &[Client], installed: &[crate::desktop::Entry]) -> Vec<App>
     out
 }
 
+/// Apps for the strip from a raw `j/clients` reply. Fails closed: None (switcher stays hidden)
+/// when the compositor did not answer, the reply is unreadable, or no app window is open.
+pub fn to_show(reply: Option<&str>, installed: &[crate::desktop::Entry]) -> Option<Vec<App>> {
+    let a = apps(&crate::hypr::parse_clients(reply?), installed);
+    (!a.is_empty()).then_some(a)
+}
+
 /// Selection while Super is held. Opening selects the previous app (index 1), like macOS.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cycle {
@@ -138,6 +145,19 @@ mod tests {
         assert!(apps(&[], &[]).is_empty());
         let names: Vec<&str> = got.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(names, ["Browser", "Terminal", "Files"]);
+    }
+
+    #[test]
+    fn opens_only_on_a_readable_nonempty_client_list() {
+        let one = r#"[{"address":"0x1","class":"foot","title":"~","focusHistoryID":0}]"#;
+        for (reply, opens) in [
+            (None, false),             // no compositor answer (not Hyprland, socket down)
+            (Some("not json"), false), // unreadable
+            (Some("[]"), false),       // nothing open: no "No open windows" pill
+            (Some(one), true),
+        ] {
+            assert_eq!(to_show(reply, &[]).is_some(), opens, "{reply:?}");
+        }
     }
 
     #[test]

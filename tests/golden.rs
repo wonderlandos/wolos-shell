@@ -37,6 +37,18 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // No focused window: no app name and no app/Window menus (no resident Finder).
+            name: "menubar-desktop".into(),
+            size: (900, 28),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let b = ui::menubar::content(&shell::system::Fake);
+                b.set_app(String::new(), String::new());
+                b.root.clone().upcast()
+            }),
+        },
+        Case {
             name: "about-app".into(),
             size: (320, 1),
             class: "preview",

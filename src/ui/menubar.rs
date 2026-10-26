@@ -43,6 +43,7 @@ impl Bar {
                 .as_ref(),
         );
         self.window_menu.set_visible(!class.is_empty());
+        self.app_menu.set_visible(!name.is_empty());
     }
 }
 
@@ -102,6 +103,7 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     // Only menus backed by real actions: the app menu and Window (no placeholder File/Edit/View).
     let appname = w::label(crate::apps::DESKTOP_NAME, "app-name");
     let app_menu = w::menubar_menu(&appname);
+    app_menu.set_visible(false);
     root.append(&app_menu);
     let window_menu = w::menubar_menu(&w::label("Window", ""));
     window_menu.set_popover(Some(&w::menu_keys(actions(appmenu::window_menu(), "", ""))));
