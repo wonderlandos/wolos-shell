@@ -112,7 +112,7 @@ fn icons(display: &gdk::Display) {
     });
     gtk::Settings::for_display(display).set_gtk_icon_theme_name(Some(name));
     for p in [
-        "/usr/local/share/wol/icons",
+        "/usr/local/share/icons/WolOS/scalable/apps",
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/apps"),
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/symbolic"),
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/brand"),

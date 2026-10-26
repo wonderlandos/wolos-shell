@@ -9,7 +9,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 const WALLPAPERS: [&str; 2] = [
-    "/usr/local/share/wol/wallpapers/wonderland-dusk.svg",
+    "/usr/local/share/wolos/wallpapers/wonderland-dusk.svg",
     concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../design/wallpapers/wonderland-dusk.svg"

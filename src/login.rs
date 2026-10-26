@@ -126,6 +126,33 @@ pub fn users(passwd: &str, shells: &str) -> Vec<String> {
         .collect()
 }
 
+/// Login users as (login name, name shown): the shown name is the full name when passwd has one.
+pub fn login_users(passwd: &str, shells: &str) -> Vec<(String, String)> {
+    users(passwd, shells)
+        .into_iter()
+        .map(|u| {
+            let shown = display_name(&u, passwd);
+            (u, shown)
+        })
+        .collect()
+}
+
+/// The account's full name (passwd GECOS, first field), else the login name.
+pub fn display_name(user: &str, passwd: &str) -> String {
+    passwd
+        .lines()
+        .map(|l| l.split(':').collect::<Vec<_>>())
+        .find(|f| f.len() >= 5 && f[0] == user)
+        .and_then(|f| {
+            f[4].split(',')
+                .next()
+                .map(str::trim)
+                .filter(|g| !g.is_empty())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| user.into())
+}
+
 pub use shared::login::Power;
 
 pub fn power_label(p: Power) -> &'static str {
@@ -237,6 +264,19 @@ mod tests {
         assert_eq!(srv.join().unwrap(), b"!restart\n");
         assert_eq!(power("/nonexistent/sock", Power::Sleep), Verdict::Error);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn login_users_show_full_names() {
+        // /etc/passwd (7 fields): the login window tiles and pill show GECOS, auth keeps the login.
+        let pw = "root:*:0:0:Charlie &:/root:/bin/sh\nanalima:*:1001:1001:Ana Lima,,,:/home/analima:/bin/sh\nbo:*:1002:1002::/home/bo:/bin/sh\n";
+        assert_eq!(
+            login_users(pw, "/bin/sh\n"),
+            [
+                ("analima".to_string(), "Ana Lima".to_string()),
+                ("bo".into(), "bo".into())
+            ]
+        );
     }
 
     #[test]

@@ -99,9 +99,13 @@ fn cases() -> Vec<Case> {
             class: "lock-window",
             wallpaper: false,
             build: Box::new(|| {
-                ui::lock::Login::new(&["alice".into(), "dinah".into(), "Mad Hatter".into()])
-                    .root
-                    .clone()
+                ui::lock::Login::new(&[
+                    ("alice".into(), "alice".into()),
+                    ("dinah".into(), "dinah".into()),
+                    ("hatter".into(), "Mad Hatter".into()),
+                ])
+                .root
+                .clone()
             }),
         },
         Case {
@@ -110,8 +114,11 @@ fn cases() -> Vec<Case> {
             class: "lock-window",
             wallpaper: false,
             build: Box::new(|| {
-                let l = ui::lock::Login::new(&["alice".into(), "dinah".into()]);
-                l.pick("dinah");
+                let l = ui::lock::Login::new(&[
+                    ("alice".into(), "alice".into()),
+                    ("dinah".into(), "dinah".into()),
+                ]);
+                l.pick("dinah", "dinah");
                 l.root.clone()
             }),
         },
@@ -261,8 +268,11 @@ fn cases() -> Vec<Case> {
         class: "lock-window",
         wallpaper: false,
         build: Box::new(|| {
-            let l = ui::lock::Login::new(&["alice".into(), "dinah".into()]);
-            l.pick("alice");
+            let l = ui::lock::Login::new(&[
+                ("alice".into(), "alice".into()),
+                ("dinah".into(), "dinah".into()),
+            ]);
+            l.pick("alice", "alice");
             l.panel.reject(shell::login::Verdict::Denied.message());
             let hint = shell::login::hint_message(3, Some("white rabbit"));
             l.panel.message.set_label(&hint.unwrap_or_default());

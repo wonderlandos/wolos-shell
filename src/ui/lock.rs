@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 const WALLPAPER_DIRS: [&str; 2] = [
-    "/usr/local/share/wol/wallpapers",
+    "/usr/local/share/wolos/wallpapers",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers"),
 ];
 /// The backdrop is decoded small, blurred on the CPU (edge-clamped: no dark rim) and scaled up.
@@ -207,8 +207,11 @@ pub struct Login {
 }
 
 impl Login {
-    pub fn new(users: &[String]) -> Rc<Login> {
-        let panel = Rc::new(w::UserPanel::new(users.first().map_or("", |u| u.as_str())));
+    /// `users`: (login name, name shown), see [`login::login_users`].
+    pub fn new(users: &[(String, String)]) -> Rc<Login> {
+        let panel = Rc::new(w::UserPanel::new(
+            users.first().map_or("", |u| u.1.as_str()),
+        ));
         let stack = gtk::Stack::builder()
             .transition_type(gtk::StackTransitionType::Crossfade)
             .vhomogeneous(false)
@@ -241,17 +244,17 @@ impl Login {
             selected: Default::default(),
             failures: Default::default(),
         });
-        for u in users {
+        for (u, shown) in users {
             let t = gtk::Button::builder().build();
             t.add_css_class("login-tile");
             let c = w::vbox(w::S3);
-            c.append(&w::avatar(u, w::AVATAR_XL));
-            c.append(&w::centered(u, "lock-name"));
+            c.append(&w::avatar(shown, w::AVATAR_XL));
+            c.append(&w::centered(shown, "lock-name"));
             t.set_child(Some(&c));
-            let (l2, u) = (Rc::downgrade(&l), u.clone());
+            let (l2, u, shown) = (Rc::downgrade(&l), u.clone(), shown.clone());
             t.connect_clicked(move |_| {
                 if let Some(l) = l2.upgrade() {
-                    l.pick(&u)
+                    l.pick(&u, &shown)
                 }
             });
             tiles.append(&t);
@@ -262,8 +265,8 @@ impl Login {
                 l.stack.set_visible_child_name("users")
             }
         });
-        if let [only] = users {
-            l.pick(only);
+        if let [(only, shown)] = users {
+            l.pick(only, shown);
             if let Some(b) = l.back.parent() {
                 b.set_visible(false);
             }
@@ -271,11 +274,11 @@ impl Login {
         l
     }
 
-    /// Shows `user`'s password pill.
-    pub fn pick(&self, user: &str) {
+    /// Shows `user`'s password pill, titled with `shown` (full name).
+    pub fn pick(&self, user: &str, shown: &str) {
         *self.selected.borrow_mut() = user.to_string();
         self.failures.set(0);
-        self.panel.set_user(user);
+        self.panel.set_user(shown);
         self.stack.set_visible_child_name("password");
         self.panel.field.grab_focus();
     }
@@ -356,7 +359,10 @@ pub fn run_lock() -> glib::ExitCode {
         kit::style::install("");
         let win = gtk::ApplicationWindow::new(app);
         win.add_css_class("lock-window");
-        let panel = Rc::new(w::UserPanel::new(&user_name()));
+        let panel = Rc::new(w::UserPanel::new(&login::display_name(
+            &user_name(),
+            &std::fs::read_to_string("/etc/passwd").unwrap_or_default(),
+        )));
         win.set_child(Some(&lock_screen(&panel)));
         kit::snapshot_on_map(&win, "lock");
         let unlock = lock_surface(app, &win);
@@ -418,7 +424,7 @@ pub fn run_login() -> glib::ExitCode {
         win.add_css_class("lock-window");
         let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
         let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-        let l = Login::new(&login::users(&passwd, &shells));
+        let l = Login::new(&login::login_users(&passwd, &shells));
         win.set_child(Some(&l.root));
         let (l2, l4) = (l.clone(), l.clone());
         wire(
@@ -451,6 +457,14 @@ pub fn run_login() -> glib::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lock_shows_the_full_name() {
+        let pw = "root:*:0:0:Charlie &:/root:/bin/sh\nkim:*:1001:1001:Kim Lee,,,:/home/kim:/bin/sh\nbo:*:1002:1002::/home/bo:/bin/sh\n";
+        for (user, want) in [("kim", "Kim Lee"), ("bo", "bo"), ("ghost", "ghost")] {
+            assert_eq!(login::display_name(user, pw), want);
+        }
+    }
 
     #[test]
     fn blur_spreads_and_keeps_flat_areas() {

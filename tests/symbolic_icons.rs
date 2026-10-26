@@ -73,3 +73,36 @@ fn symbolic_icons_are_fill_only() {
         .collect();
     assert!(bad.is_empty(), "stroked symbolic icons: {bad:?}");
 }
+
+/// `"wolos-*"` full-colour icon names the shell requests ship in design/icons/apps (installed to
+/// scalable/apps). FreeBSD setup shot: `wolos-mark` was a broken-image placeholder on the Welcome page.
+#[test]
+fn every_requested_wolos_app_icon_ships() {
+    let mut files = Vec::new();
+    rs_files(&root().join("crates/shell/src"), &mut files);
+    let mut names: Vec<String> = files
+        .iter()
+        .flat_map(|f| {
+            let s = std::fs::read_to_string(f).unwrap();
+            s.split('"')
+                .skip(1)
+                .step_by(2)
+                .filter(|t| {
+                    t.starts_with("wolos-")
+                        && !t.ends_with("-symbolic")
+                        && t.bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                })
+                .map(String::from)
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    let dir = root().join("design/icons/apps");
+    let missing: Vec<_> = names
+        .iter()
+        .filter(|n| !dir.join(format!("{n}.svg")).is_file())
+        .collect();
+    assert!(missing.is_empty(), "not in design/icons/apps: {missing:?}");
+}
