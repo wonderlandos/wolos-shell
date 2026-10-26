@@ -41,7 +41,7 @@ pub fn shell_socket(
                         continue;
                     };
                     if !handlers.iter().any(|h| h(&cmd)) {
-                        run(&cmd, &panels, &osd, &*sys);
+                        run(&cmd, &panels, &osd, &sys);
                     }
                 }
             });
@@ -67,15 +67,26 @@ pub fn on_reload(f: impl Fn(&ShellPrefs) + 'static) {
     RELOAD.with(|r| r.borrow_mut().push(Box::new(f)));
 }
 
-fn run(cmd: &protocol::Command, panels: &Panels, osd: &Rc<Osd>, sys: &dyn crate::system::System) {
+fn run(
+    cmd: &protocol::Command,
+    panels: &Panels,
+    osd: &Rc<Osd>,
+    sys: &Rc<dyn crate::system::System>,
+) {
     if cmd.verb == protocol::Verb::Reload {
         // Theme reloads through its file monitor; shell prefs here.
         let p = shell_prefs();
         return RELOAD.with(|r| r.borrow().iter().for_each(|f| f(&p)));
     }
     if cmd.target == "osd" && cmd.verb == protocol::Verb::Show {
-        let a = sys.audio();
-        return osd.show(crate::status::volume(a), a.volume.unwrap_or(0));
+        // Sent by wol-volume after a change: read the sink now, then show the new level.
+        let (done, osd, sys) = (sys.refresh_audio(), osd.clone(), sys.clone());
+        glib::spawn_future_local(async move {
+            let _ = done.recv().await;
+            let a = sys.audio();
+            osd.show(crate::status::volume(a), a.volume.unwrap_or(0));
+        });
+        return;
     }
     match panels.borrow().get(cmd.target.as_str()) {
         Some(w) => w.set_visible(protocol::apply(cmd.verb, w.is_visible())),

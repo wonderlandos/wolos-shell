@@ -133,6 +133,12 @@ pub trait System: Send + Sync {
         let _ = tx.try_send(self.perform(&a));
         rx
     }
+    /// Re-reads audio now (volume keys -> OSD); resolves once `audio()` has the new value.
+    fn refresh_audio(&self) -> Done {
+        let (tx, rx) = async_channel::bounded(1);
+        let _ = tx.try_send(Ok(()));
+        rx
+    }
     /// Fires after the snapshot changed (None = static data).
     fn watch(&self) -> Option<async_channel::Receiver<()>> {
         None
@@ -420,6 +426,14 @@ pub struct Snapshot {
 const TTL_AUDIO: u64 = 2;
 const TTL_WIFI: u64 = 5;
 const TTL_SLOW: u64 = 10;
+/// Refresh cadence while a surface watches the snapshot (Control Center, Settings).
+pub const WATCHED_PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
+/// Cadence with nobody watching: the menu bar polls every 5 s; nothing needs fresher data.
+pub const IDLE_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
+/// TTLs (s) for audio, wifi, slow topics while watched / unwatched. Unwatched, only the menu
+/// bar reads: volume keys refresh audio on demand (`refresh_audio`), so every helper runs once a minute.
+const TTLS_WATCHED: [u64; 3] = [TTL_AUDIO, TTL_WIFI, TTL_SLOW];
+const TTLS_IDLE: [u64; 3] = [60, 60, 60];
 
 struct Inner {
     c: Controls,
@@ -429,6 +443,8 @@ struct Inner {
     password: Mutex<String>,
     watchers: Mutex<Vec<async_channel::Sender<()>>>,
     cache: Option<std::path::PathBuf>,
+    /// Last refresh per topic (audio, wifi, slow); None = never.
+    last: Mutex<[Option<std::time::Instant>; 3]>,
 }
 
 impl Inner {
@@ -436,18 +452,61 @@ impl Inner {
         self.snap.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn refresh(&self, tick: u64) {
+    /// Next refresh delay: fast only while a live watcher exists.
+    fn period(&self) -> std::time::Duration {
+        let mut w = self.watchers.lock().unwrap_or_else(|e| e.into_inner());
+        w.retain(|t| !t.is_closed());
+        if w.is_empty() {
+            IDLE_PERIOD
+        } else {
+            WATCHED_PERIOD
+        }
+    }
+
+    /// Refreshes every topic whose TTL elapsed (all when `force`).
+    fn refresh(&self, force: bool) {
+        let now = std::time::Instant::now();
+        let due = {
+            let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+            let mut due = [false; 3];
+            let ttls = if self.period() == WATCHED_PERIOD {
+                TTLS_WATCHED
+            } else {
+                TTLS_IDLE
+            };
+            for (i, ttl) in ttls.into_iter().enumerate() {
+                // 100 ms slack: a 1 s tick must not miss a 2 s TTL by jitter.
+                let ready = |t: std::time::Instant| {
+                    now.duration_since(t).as_millis() + 100 >= u128::from(ttl) * 1000
+                };
+                if force || last[i].is_none_or(ready) {
+                    last[i] = Some(now);
+                    due[i] = true;
+                }
+            }
+            due
+        };
+        self.refresh_topics(due);
+    }
+
+    /// Audio only, now (volume keys); the other topics keep their schedule.
+    fn refresh_audio(&self) {
+        self.last.lock().unwrap_or_else(|e| e.into_inner())[0] = Some(std::time::Instant::now());
+        self.refresh_topics([true, false, false]);
+    }
+
+    fn refresh_topics(&self, due: [bool; 3]) {
         let mut s = self.lock().clone();
         let before = s.clone();
-        if tick.is_multiple_of(TTL_AUDIO) {
+        if due[0] {
             s.volume = self.c.volume().or(s.volume);
             s.brightness = self.c.brightness();
         }
-        if tick.is_multiple_of(TTL_WIFI) {
+        if due[1] {
             s.wifi_on = self.c.wifi_enabled();
             s.nets = self.c.wifi_networks();
         }
-        if tick.is_multiple_of(TTL_SLOW) {
+        if due[2] {
             s.outputs = self.c.outputs();
             s.bluetooth = self.c.bluetooth();
             s.monitors = self.c.monitors();
@@ -540,17 +599,22 @@ impl CoreSystem {
         )
     }
 
-    /// Injected controls (tests use a `FakeHost`). Refreshes now and then every second.
+    /// Injected controls (tests use a `FakeHost`). Refreshes now, then every `Inner::period`.
     pub fn with(c: Controls, files: Sysfs, cache: Option<std::path::PathBuf>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
+        let sys = Self::with_ticks(c, files, cache, rx);
+        let weak = Arc::downgrade(&sys.inner);
         let _ = std::thread::Builder::new()
             .name("wol-controls-tick".into())
             .spawn(move || {
                 while tx.send(()).is_ok() {
-                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    let Some(period) = weak.upgrade().map(|i| i.period()) else {
+                        break;
+                    };
+                    std::thread::sleep(period);
                 }
             });
-        Self::with_ticks(c, files, cache, rx)
+        sys
     }
 
     /// Refresh worker driven by `ticks` (one refresh per message); stops when either side drops.
@@ -572,16 +636,15 @@ impl CoreSystem {
             password: Default::default(),
             watchers: Default::default(),
             cache,
+            last: Default::default(),
         });
         let weak: Weak<Inner> = Arc::downgrade(&inner);
         let _ = std::thread::Builder::new()
             .name("wol-controls".into())
             .spawn(move || {
-                let mut tick = 0u64;
                 while ticks.recv().is_ok() {
                     let Some(i) = weak.upgrade() else { break };
-                    i.refresh(tick);
-                    tick += 1;
+                    i.refresh(false);
                 }
             });
         CoreSystem { inner }
@@ -682,8 +745,19 @@ impl System for CoreSystem {
             .spawn(move || {
                 let r = i.perform(&a);
                 // Reply with the host's state already read, so callers never see it go stale after.
-                i.refresh(0);
+                i.refresh(true);
                 let _ = tx.try_send(r);
+            });
+        rx
+    }
+    fn refresh_audio(&self) -> Done {
+        let (tx, rx) = async_channel::bounded(1);
+        let i = self.inner.clone();
+        let _ = std::thread::Builder::new()
+            .name("wol-audio".into())
+            .spawn(move || {
+                i.refresh_audio();
+                let _ = tx.try_send(Ok(()));
             });
         rx
     }
@@ -789,6 +863,44 @@ mod tests {
         );
         assert_eq!(s.brightness(), None);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Volume keys: the OSD waited for the next poll (up to 10 s). `refresh_audio` reads the
+    /// sink now, off the UI thread, and replies once the snapshot has it.
+    #[test]
+    fn refresh_audio_reads_the_sink_now() {
+        use wol_core::system::fake::FakeHost;
+        let h = Arc::new(FakeHost::new(false));
+        h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.42\n");
+        let (_tick, ticks) = std::sync::mpsc::channel();
+        let sys = CoreSystem::with_ticks(Controls::new(h), Sysfs::default(), None, ticks);
+        assert_eq!(sys.audio().volume, None, "no tick yet");
+        assert_eq!(sys.refresh_audio().recv_blocking(), Ok(Ok(())));
+        assert_eq!(sys.audio().volume, Some(42));
+    }
+
+    /// Live idle: the refresh worker woke every second (10 wakeups/s in wol-shell, plus helper
+    /// processes) with nobody looking. Fast refresh only while a watcher (Control Center) is open.
+    #[test]
+    fn refreshes_fast_only_while_watched() {
+        use wol_core::system::fake::FakeHost;
+        let (_tick, ticks) = std::sync::mpsc::channel();
+        let sys = CoreSystem::with_ticks(
+            Controls::new(Arc::new(FakeHost::new(false))),
+            Sysfs::default(),
+            None,
+            ticks,
+        );
+        assert_eq!(sys.inner.period(), IDLE_PERIOD);
+        let w = sys.watch().unwrap();
+        assert_eq!(sys.inner.period(), WATCHED_PERIOD);
+        drop(w);
+        assert_eq!(sys.inner.period(), IDLE_PERIOD);
+        assert!(IDLE_PERIOD >= std::time::Duration::from_secs(10));
+        assert!(
+            TTLS_IDLE[1] >= 60 && TTLS_IDLE[2] >= 60,
+            "scans are the expensive helpers"
+        );
     }
 
     #[test]

@@ -104,6 +104,7 @@ pub fn content(items: Rc<RefCell<Vec<Item>>>, query: &str) -> (gtk::Widget, Rc<d
     let render: Rc<dyn Fn()> = {
         let (shown, hits, sel, entry) = (shown.clone(), hits.clone(), sel.clone(), entry.clone());
         Rc::new(move || {
+            let t0 = std::time::Instant::now();
             while let Some(c) = hits.first_child() {
                 hits.remove(&c);
             }
@@ -137,6 +138,10 @@ pub fn content(items: Rc<RefCell<Vec<Item>>>, query: &str) -> (gtk::Widget, Rc<d
                 s.push((b, it.exec.clone()));
             }
             hits.set_visible(!s.is_empty());
+            // WOL_SHELL_TIMING: per-keystroke search + row build time (target < 16 ms).
+            if std::env::var_os("WOL_SHELL_TIMING").is_some() {
+                eprintln!("wol-spotlight: keystroke {:?}", t0.elapsed());
+            }
         })
     };
     {
