@@ -32,7 +32,8 @@ fn requested() -> Vec<String> {
                 .step_by(2)
                 .filter(|t| {
                     t.ends_with("-symbolic")
-                        && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                        && t.bytes()
+                            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
                 })
                 .map(String::from)
                 .collect::<Vec<_>>()
@@ -52,7 +53,11 @@ fn every_requested_symbolic_icon_ships_in_the_wolos_theme() {
         .iter()
         .filter(|n| !dir.join(format!("{n}.svg")).is_file())
         .collect();
-    assert!(missing.is_empty(), "{} icons not in design/icons/symbolic: {missing:?}", missing.len());
+    assert!(
+        missing.is_empty(),
+        "{} icons not in design/icons/symbolic: {missing:?}",
+        missing.len()
+    );
 }
 
 #[test]
