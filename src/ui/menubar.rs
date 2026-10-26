@@ -2,7 +2,7 @@
 use super::panels::Osd;
 use crate::kit::{self, widgets as w};
 use crate::perf::Changed;
-use crate::status;
+use crate::{appmenu, status};
 use gtk::{glib, prelude::*};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -18,6 +18,8 @@ type Seen = (
 pub struct Bar {
     pub root: gtk::Box,
     pub appname: gtk::Label,
+    app_menu: gtk::MenuButton,
+    window_menu: gtk::MenuButton,
     network: gtk::Image,
     battery: gtk::Image,
     volume: gtk::Image,
@@ -29,11 +31,53 @@ pub struct Bar {
 }
 
 impl Bar {
-    pub fn set_app(&self, name: String) {
-        if self.name_seen.borrow_mut().set(name.clone()) {
-            self.appname.set_label(&name);
+    /// Frontmost app: bold name with its real menu; the Window menu only when a window is focused.
+    pub fn set_app(&self, name: String, class: String) {
+        if !self.name_seen.borrow_mut().set(format!("{name}\n{class}")) {
+            return;
         }
+        self.appname.set_label(&name);
+        let rows = appmenu::app_menu(&name, &class);
+        self.app_menu.set_popover(
+            (!rows.is_empty())
+                .then(|| w::menu_keys(actions(rows, &name, &class)))
+                .as_ref(),
+        );
+        self.window_menu.set_visible(!class.is_empty());
     }
+}
+
+/// Menu rows -> clickable rows: About opens the about window, the rest run `wol-app <verb>`.
+fn actions(rows: Vec<appmenu::Row>, name: &str, class: &str) -> Vec<w::MenuRow> {
+    rows.into_iter()
+        .map(|(label, key, act)| {
+            let (name, class) = (name.to_string(), class.to_string());
+            let f: Box<dyn Fn()> = match act {
+                Some(appmenu::Act::About) => Box::new(move || about(&name, &class)),
+                Some(a) => {
+                    let mut argv = vec!["wol-app".to_string()];
+                    argv.extend(
+                        appmenu::verb(a)
+                            .unwrap_or_default()
+                            .split(' ')
+                            .map(String::from),
+                    );
+                    Box::new(move || kit::spawn(&argv))
+                }
+                None => Box::new(|| {}),
+            };
+            (label, key, f)
+        })
+        .collect()
+}
+
+/// About <App>: icon and name from the dock pin or installed .desktop entry.
+fn about(name: &str, class: &str) {
+    let Some(app) = gtk::gio::Application::default().and_downcast::<gtk::Application>() else {
+        return;
+    };
+    let icon = crate::apps::icon_for(class, crate::apps::PINS, &crate::desktop::load_all());
+    super::panels::about(&app, name, &icon, class).present();
 }
 
 fn run(argv: &'static [&'static str]) -> Box<dyn Fn()> {
@@ -56,11 +100,14 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         ("Shut Down…", run(&["wol", "shell", "toggle", "session"])),
     ])));
     root.append(&logo);
+    // Only menus backed by real actions: the app menu and Window (no placeholder File/Edit/View).
     let appname = w::label(crate::apps::DESKTOP_NAME, "app-name");
-    root.append(&w::menubar_item(&appname));
-    for m in ["File", "Edit", "View", "Go", "Window", "Help"] {
-        root.append(&w::menubar_item(&w::label(m, "")));
-    }
+    let app_menu = w::menubar_menu(&appname);
+    root.append(&app_menu);
+    let window_menu = w::menubar_menu(&w::label("Window", ""));
+    window_menu.set_popover(Some(&w::menu_keys(actions(appmenu::window_menu(), "", ""))));
+    window_menu.set_visible(false);
+    root.append(&window_menu);
     root.append(&w::spacer());
 
     let (network, battery, volume) = (
@@ -131,6 +178,8 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     let bar = Rc::new(Bar {
         root,
         appname,
+        app_menu,
+        window_menu,
         network,
         battery,
         volume,

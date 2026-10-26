@@ -83,3 +83,45 @@ fn screenshot_surfaces_disappear_without_animation() {
         );
     }
 }
+
+/// Every shortcut the menu bar shows is bound to the same `wol-app` action, and the image ships it.
+#[test]
+fn menu_shortcuts_are_bound_to_the_same_action() {
+    use shell::appmenu::{app_menu, verb, window_menu};
+    let rows = app_menu("App", "org.gnome.TextEditor")
+        .into_iter()
+        .chain(window_menu());
+    let mut n = 0;
+    for (label, key, act) in rows {
+        let (Some(key), Some(act)) = (key, act) else {
+            continue;
+        };
+        if key.starts_with("Ctrl+") {
+            continue; // handled by the app itself (sendshortcut)
+        }
+        let mut parts: Vec<&str> = key.split('+').collect();
+        let k = parts.pop().unwrap();
+        let mods: Vec<String> = parts
+            .iter()
+            .map(|m| {
+                if *m == "Super" {
+                    "$mod".into()
+                } else {
+                    m.to_uppercase()
+                }
+            })
+            .collect();
+        let want = format!(
+            "bind = {}, {k}, exec, wol-app {}",
+            mods.join(" "),
+            verb(act).unwrap()
+        );
+        assert!(
+            CONF.lines().any(|l| l.trim() == want),
+            "{label}: missing `{want}`"
+        );
+        n += 1;
+    }
+    assert_eq!(n, 4);
+    assert!(include_str!("../../../image/build-rust.sh").contains(" wol-app"));
+}
