@@ -250,3 +250,15 @@ list.sidebar row.sidebar-search { padding: 0 0 8px 0; }
 list.sidebar row.sidebar-search:hover { background: none; }
 .store-grid { margin-top: -8px; }
 .hero-card button.get-button label { color: var(--accent); }
+
+/* ---- Setup assistant (wol-setup): glass card over the lock backdrop ---- */
+.setup-card { margin: 0; padding: 32px 40px 24px 40px; }
+label.setup-subtitle { color: var(--dim); }
+image.setup-icon, image.setup-done-icon { color: var(--accent); }
+label.setup-hello { font-size: 96px; font-weight: 600; color: white; letter-spacing: -2px; text-shadow: 0 2px 16px rgba(0,0,0,0.30); }
+.lock-screen.light label.setup-hello { color: rgba(22,18,48,0.90); text-shadow: 0 1px 12px rgba(255,255,255,0.40); }
+.setup-card scrolledwindow { border-radius: var(--glass-radius-s); }
+.setup-card .card-list { background: var(--card); }
+button.setup-start { min-height: 32px; padding: 0 24px; margin-top: 8px; }
+.setup-card button.btn:disabled { opacity: 0.45; }
+image.setup-done-icon { background: var(--accent); color: var(--accent-text); border-radius: 999px; padding: 16px; }

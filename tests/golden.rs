@@ -106,6 +106,21 @@ fn cases() -> Vec<Case> {
             }),
         },
     ];
+    for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
+        for st in shell::setup::STEPS {
+            v.push(Case {
+                name: format!("setup-{}-{tag}", st.id()),
+                size: (sw, sh),
+                class: "lock-window",
+                wallpaper: false,
+                build: Box::new(move || {
+                    let s = ui::setup::Setup::new(&shell::system::Fake);
+                    s.show(st);
+                    s.root.clone()
+                }),
+            });
+        }
+    }
     for (sw, sh, tag) in [(900, 600, "wide"), (480, 360, "narrow")] {
         for p in ui::store::PAGES.into_iter().chain(["Search"]) {
             v.push(Case {

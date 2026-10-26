@@ -9,6 +9,7 @@ pub mod login;
 pub mod perf;
 pub mod protocol;
 pub mod search;
+pub mod setup;
 pub mod status;
 pub mod system;
 pub mod theme;

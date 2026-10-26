@@ -119,7 +119,7 @@ fn backdrop() -> gtk::Picture {
 }
 
 /// Wallpaper + scrim under `content`.
-fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
+pub(crate) fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
     let o = gtk::Overlay::new();
     o.add_css_class("lock-screen");
     let tone = {

@@ -7,6 +7,7 @@ pub mod menubar;
 pub mod notify;
 pub mod panels;
 pub mod settings;
+pub mod setup;
 pub mod spotlight;
 pub mod store;
 
