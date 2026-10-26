@@ -222,7 +222,8 @@ image.accent-icon { color: var(--accent); }
 scale.slider.row-slider trough { min-height: 16px; background: linear-gradient(var(--control), var(--control)) center / 100% 4px no-repeat; border-radius: 0; }
 scale.slider.row-slider highlight { min-height: 16px; background: linear-gradient(var(--accent), var(--accent)) center / 100% 4px no-repeat; border-radius: 0; }
 scale.slider.row-slider slider { margin: 0; }
-label.footnote { margin: -16px 12px 0 12px; }
+scale.slider.row-slider highlight { margin: 0; }
+label.footnote { margin: 0 12px; }
 .card-list.preview-card { padding: 12px; }
 flowbox.wrap-row > flowboxchild { padding: 0; background: none; }
 scale.slider.row-slider trough, scale.slider.row-slider highlight { border: none; box-shadow: none; outline: none; }

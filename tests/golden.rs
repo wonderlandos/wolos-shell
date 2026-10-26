@@ -349,6 +349,10 @@ fn diff(a: &gdk::Texture, b: &gdk::Texture) -> f64 {
     bad as f64 / (aw * ah) as f64
 }
 
+thread_local! {
+    static WARNINGS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn main() {
     let n = 40 + std::process::id() % 200;
     let display = format!(":{n}");
@@ -384,6 +388,23 @@ fn main() {
         std::env::set_var("WOL_FAKE_NOW", "1");
         std::env::set_var("XDG_CONFIG_HOME", &cfg);
         std::env::set_var("GTK_THEME", "Adwaita");
+    }
+    // Any GLib/GTK warning or critical fails the case that produced it (style bugs, bad sizes).
+    {
+        glib::log_set_writer_func(|level, fields| {
+            if matches!(
+                level,
+                glib::LogLevel::Warning | glib::LogLevel::Critical | glib::LogLevel::Error
+            ) {
+                let msg = fields
+                    .iter()
+                    .find(|f| f.key() == "MESSAGE")
+                    .and_then(|f| f.value_str().map(str::to_owned))
+                    .unwrap_or_default();
+                WARNINGS.with_borrow_mut(|v| v.push(format!("{level:?}: {msg}")));
+            }
+            glib::log_writer_default(level, fields)
+        });
     }
     gtk::init().expect("gtk init");
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
@@ -453,6 +474,7 @@ fn main() {
                 ));
             }
             let tex = render(&win);
+            issues.extend(WARNINGS.with_borrow_mut(std::mem::take));
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             let png = out.join(format!("{name}.png"));
             tex.save_to_png(&png).unwrap();
