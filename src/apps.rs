@@ -68,7 +68,7 @@ pub const PINS: &[Pin] = &[
         exec: &["foot"],
     },
     Pin {
-        id: "wol-settings",
+        id: "org.wolos.settings",
         name: "System Settings",
         icon: "wolos-settings",
         exec: &["wol-settings"],
@@ -138,6 +138,18 @@ pub fn icon_for(class: &str, pins: &[Pin], installed: &[Entry]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_window_is_named_and_marked_running() {
+        // Live: the menu bar read "org.wolos.settings" (pin id was "wol-settings", not the app id).
+        let class = "org.wolos.settings";
+        assert_eq!(
+            frontmost_name(class, "Settings", PINS, &[]),
+            "System Settings"
+        );
+        let settings = PINS.iter().find(|p| p.exec == ["wol-settings"]).unwrap();
+        assert!(is_running(settings, &[class.to_owned()].into()));
+    }
 
     #[test]
     fn frontmost_names() {

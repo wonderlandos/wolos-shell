@@ -121,7 +121,7 @@ fn cases() -> Vec<Case> {
                         c("0x2", "wol-files", 1),
                         c("0x3", "firefox", 2),
                         c("0x4", "foot", 3),
-                        c("0x5", "wol-settings", 4),
+                        c("0x5", "org.wolos.settings", 4),
                         c("0x6", "wol-mail", 5),
                     ],
                     &[],
