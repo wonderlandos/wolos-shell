@@ -293,6 +293,7 @@ pub fn start(app: &gtk::Application) -> gtk::Window {
         ),
     );
     let stack = w::vbox(0);
+    stack.add_css_class("banner-stack");
     // Width first: a Fill-height stack would ask the 2-line bodies for width-for-height and widen.
     stack.set_valign(gtk::Align::Start);
     stack.set_halign(gtk::Align::End);

@@ -9,7 +9,7 @@
   --glass-motion: 320ms;
   --glass-rim: rgba(255,255,255,0.50);
   --glass-hairline: rgba(255,255,255,0.22);
-  --glass-shadow: 0 8px 32px rgba(0,0,0,0.24), 0 1px 4px rgba(0,0,0,0.16);
+  --glass-shadow: 0 6px 18px rgba(0,0,0,0.24), 0 1px 4px rgba(0,0,0,0.16);
   --bar-fill: rgba(30,30,36,0.28);
   --bar-text: rgba(255,255,255,0.96);
   --bar-hover: rgba(255,255,255,0.18);
@@ -253,7 +253,7 @@ list.sidebar row.sidebar-search:hover { background: none; }
 .hero-banner button.get-button label { color: #1d1d1f; }
 
 /* ---- Setup assistant (wol-setup): content-sized glass card over the lock backdrop ---- */
-.setup-card { margin: 0; padding: 24px; }
+.setup-card { margin: 24px; padding: 24px; }
 label.setup-subtitle { color: var(--dim); font-size: 13px; }
 image.setup-icon { color: var(--accent); }
 label.setup-hello { font-size: 96px; font-weight: 600; color: white; letter-spacing: -2px; text-shadow: 0 2px 16px rgba(0,0,0,0.30); }
@@ -307,7 +307,9 @@ button.capture-go { margin-left: 6px; min-height: 28px; padding: 0 14px; }
 .menu-heading { font-size: 12px; font-weight: 600; color: var(--dim); padding: 4px 8px 2px 8px; }
 
 /* ---- Notification banners ---- */
-window.banners .banner-group, .banners-preview .banner-group { margin: 8px 12px 0 0; }
+window.banners .banner-group, .banners-preview .banner-group { margin: 8px 0 0 0; }
+/* Room for the card shadow at the surface edges (shadow_fits.rs); banners stay 8 px apart. */
+.banner-stack, .banners-preview { padding: 4px 18px 24px 18px; }
 .banner-app { font-size: 11px; font-weight: 500; color: var(--dim); }
 .banner-time { font-size: 11px; color: var(--dim); }
 .banner-title { font-size: 13px; font-weight: 700; }

@@ -6,7 +6,7 @@ pub mod widgets;
 
 /// Installed WolOS icon dir, else the repo design tree (dev, tests).
 pub const ICON_DIRS: [&str; 3] = [
-    "/usr/local/share/wol/icons",
+    "/usr/local/share/icons/WolOS/scalable/apps",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/apps"),
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/brand"),
 ];
