@@ -1,65 +1,54 @@
-//! Dock: pinned apps (+ unpinned running ones), running dot from Hyprland clients, Trash.
+//! Dock: pinned apps, running dots from Hyprland clients, separator, Trash.
 use crate::apps::{self, PINS};
-use crate::kit::{self, surface::Spec};
+use crate::kit::{self, surface::Spec, widgets as w};
 use gtk::prelude::*;
 use std::collections::HashSet;
 use std::rc::Rc;
 
 pub struct Dock {
-    pub window: gtk::ApplicationWindow,
-    buttons: Vec<gtk::Button>,
+    pub root: gtk::Box,
+    tiles: Vec<w::DockTile>,
 }
 
-fn app_button(icon: &str, name: &str, argv: Vec<String>) -> gtk::Button {
-    let img = gtk::Image::from_icon_name(icon);
-    img.set_pixel_size(48);
-    let b = gtk::Button::builder()
-        .child(&img)
-        .tooltip_text(name)
-        .build();
-    b.connect_clicked(move |_| kit::spawn(&argv));
-    b
-}
-
-pub fn build(app: &gtk::Application) -> Rc<Dock> {
-    let window = super::window(app, "dock", Spec::dock());
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let buttons: Vec<gtk::Button> = PINS
+pub fn content(running: &HashSet<String>) -> Rc<Dock> {
+    let root = w::hbox(w::S2);
+    root.add_css_class("dock-shelf");
+    root.add_css_class("no-row-check"); // tiles lift on hover by design
+    root.set_halign(gtk::Align::Center);
+    root.set_valign(gtk::Align::End);
+    let tiles: Vec<w::DockTile> = PINS
         .iter()
         .map(|p| {
-            app_button(
-                p.icon,
-                p.name,
-                p.exec.iter().map(|s| s.to_string()).collect(),
-            )
+            let argv: Vec<String> = p.exec.iter().map(|s| s.to_string()).collect();
+            w::DockTile::new(p.icon, p.name, move || kit::spawn(&argv))
         })
         .collect();
-    for b in &buttons {
-        row.append(b);
+    for t in &tiles {
+        root.append(&t.button);
     }
-    row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
-    row.append(&app_button(
-        "wolos-trash",
-        "Trash",
-        vec!["wol-files".into(), "trash:".into()],
-    ));
-    window.set_child(Some(&row));
-    let dock = Rc::new(Dock { window, buttons });
-    dock.set_running(&crate::hypr::running_classes(&crate::hypr::clients()));
-    dock
+    root.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    root.append(
+        &w::DockTile::new("wolos-trash", "Trash", || {
+            kit::spawn(&["wol-files".into(), "trash:".into()])
+        })
+        .button,
+    );
+    let d = Rc::new(Dock { root, tiles });
+    d.set_running(running);
+    d
+}
+
+pub fn build(app: &gtk::Application) -> (gtk::ApplicationWindow, Rc<Dock>) {
+    let win = super::window(app, "dock", Spec::dock());
+    let d = content(&crate::hypr::running_classes(&crate::hypr::clients()));
+    win.set_child(Some(&d.root));
+    (win, d)
 }
 
 impl Dock {
     pub fn set_running(&self, classes: &HashSet<String>) {
-        for (p, b) in PINS.iter().zip(&self.buttons) {
-            let on = apps::is_running(p, classes);
-            if b.has_css_class("running") != on {
-                if on {
-                    b.add_css_class("running")
-                } else {
-                    b.remove_css_class("running")
-                }
-            }
+        for (p, t) in PINS.iter().zip(&self.tiles) {
+            t.set_running(apps::is_running(p, classes));
         }
     }
 }

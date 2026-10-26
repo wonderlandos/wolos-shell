@@ -69,10 +69,10 @@ pub struct Osd {
 
 impl Osd {
     pub fn build(app: &gtk::Application) -> Rc<Osd> {
-        let g = w::glass_panel(10);
-        let row = w::hbox(12);
-        let icon = gtk::Image::new();
-        icon.set_pixel_size(24);
+        let g = w::glass_panel(w::S2);
+        g.add_css_class("osd-pill");
+        let row = w::hbox(w::S3);
+        let icon = w::icon("audio-volume-high-symbolic", w::ICON);
         let bar = gtk::ProgressBar::new();
         bar.set_hexpand(true);
         bar.set_valign(gtk::Align::Center);
@@ -106,11 +106,11 @@ impl Osd {
 
 /// Clipboard history: watches the display clipboard (event-driven), click copies back.
 pub fn clipboard(app: &gtk::Application) -> gtk::Window {
-    let g = w::glass_panel(10);
-    let head = w::hbox(8);
-    head.append(&w::label("Clipboard", "strong"));
+    let g = w::glass_panel(w::S2);
+    let head = w::hbox(w::S2);
+    head.append(&w::label("Clipboard", "title"));
     head.append(&w::spacer());
-    let list = w::vbox(2);
+    let list = w::vbox(w::S1);
     let scroll = gtk::ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -124,10 +124,10 @@ pub fn clipboard(app: &gtk::Application) -> gtk::Window {
             }
             let h = history.borrow();
             if h.is_empty() {
-                list.append(&w::label("Copied text shows up here", "dim"));
+                list.append(&w::label("Copied text shows up here", "secondary"));
             }
             for e in h.iter() {
-                let row = w::list_row("edit-paste-symbolic", &crate::clipboard::preview(e), "");
+                let row = w::list_button("edit-paste-symbolic", &crate::clipboard::preview(e), "");
                 let e = e.clone();
                 row.connect_clicked(move |b| b.display().clipboard().set_text(&e));
                 list.append(&row);
@@ -135,7 +135,7 @@ pub fn clipboard(app: &gtk::Application) -> gtk::Window {
         })
     };
     let (h2, r2) = (history.clone(), render.clone());
-    head.append(&w::button("Clear", "secondary", move || {
+    head.append(&w::button("Clear", w::Kind::Default, move || {
         h2.borrow_mut().clear();
         r2();
     }));
@@ -146,10 +146,10 @@ pub fn clipboard(app: &gtk::Application) -> gtk::Window {
     cb.connect_changed(move |cb| {
         let (history, render) = (history.clone(), render.clone());
         cb.read_text_async(gio_none(), move |r| {
-            if let Ok(Some(t)) = r {
-                if crate::clipboard::push(&mut history.borrow_mut(), &t) {
-                    render();
-                }
+            if let Ok(Some(t)) = r
+                && crate::clipboard::push(&mut history.borrow_mut(), &t)
+            {
+                render();
             }
         });
     });
@@ -161,8 +161,8 @@ fn gio_none() -> Option<&'static gtk::gio::Cancellable> {
 }
 
 pub fn session(app: &gtk::Application) -> gtk::Window {
-    let g = w::glass_panel(10);
-    let row = w::hbox(8);
+    let g = w::glass_panel(w::S2);
+    let row = w::hbox(w::S2);
     for (icon, label, action) in [
         ("system-lock-screen-symbolic", "Lock", "lock"),
         ("weather-clear-night-symbolic", "Sleep", "sleep"),
@@ -170,11 +170,11 @@ pub fn session(app: &gtk::Application) -> gtk::Window {
         ("system-shutdown-symbolic", "Shut Down", "shutdown"),
         ("system-log-out-symbolic", "Log Out", "logout"),
     ] {
-        let b = w::vbox(6);
-        b.append(&gtk::Image::from_icon_name(icon));
-        let l = w::label(label, "");
-        l.set_xalign(0.5);
-        b.append(&l);
+        let b = w::vbox(w::S1);
+        let i = w::icon(icon, w::ICON_M);
+        i.set_halign(gtk::Align::Center);
+        b.append(&i);
+        b.append(&w::centered(label, ""));
         let btn = gtk::Button::builder().child(&b).build();
         btn.add_css_class("session-item");
         btn.connect_clicked(move |b| {
@@ -193,8 +193,8 @@ pub fn session(app: &gtk::Application) -> gtk::Window {
 
 /// Window switcher: one tile per Hyprland client, rebuilt each time it is shown.
 pub fn switcher(app: &gtk::Application) -> gtk::Window {
-    let g = w::glass_panel(10);
-    let row = w::hbox(8);
+    let g = w::glass_panel(w::S2);
+    let row = w::hbox(w::S2);
     g.append(&row);
     let win = panel(app, "switcher", "wol-panel-switcher", [false; 4], &g);
     win.connect_show(move |_| {
@@ -203,15 +203,14 @@ pub fn switcher(app: &gtk::Application) -> gtk::Window {
         }
         let clients = crate::hypr::clients();
         if clients.is_empty() {
-            row.append(&w::label("No open windows", "dim"));
+            row.append(&w::label("No open windows", "secondary"));
         }
         for c in clients {
-            let b = w::vbox(6);
-            let img = gtk::Image::from_icon_name(&c.class.to_lowercase());
-            img.set_pixel_size(64);
-            b.append(&img);
-            let l = w::label(&crate::clipboard::preview(&c.title), "dim");
-            l.set_max_width_chars(14);
+            let b = w::vbox(w::S1);
+            b.append(&w::app_icon(&c.class.to_lowercase(), w::ICON_XL));
+            let l = w::centered(&crate::clipboard::preview(&c.title), "secondary");
+            l.add_css_class("may-ellipsize");
+            l.set_max_width_chars(w::TILE_CHARS);
             l.set_ellipsize(gtk::pango::EllipsizeMode::End);
             b.append(&l);
             let btn = gtk::Button::builder().child(&b).build();

@@ -32,42 +32,36 @@ pub fn run_shell() -> glib::ExitCode {
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.connect_activate(move |app| {
-        let tm = |s: &str| {
-            if std::env::var_os("WOL_SHELL_TIMING").is_some() {
-                eprintln!("{s} {:?}", t0.elapsed())
-            }
-        };
-        tm("activate");
         kit::style::install("");
-        tm("style");
-        let sys: Rc<dyn crate::system::System> = Rc::new(crate::system::Sysfs::default());
+        let sys = crate::system::default_system();
         let panels: Panels = Default::default();
-        panels::wallpaper(app).present();
-        tm("wallpaper");
-        let bar = menubar::build(app, sys.clone());
-        let dock = dock::build(app);
-        tm("bar+dock");
-        let osd = panels::Osd::build(app);
-        menubar::poll_status(bar.clone(), sys.clone(), osd.clone());
-        ipc::hypr_events(bar.clone(), dock.clone());
-        let mut p = panels.borrow_mut();
-        p.insert("osd", osd.window.clone().upcast());
-        p.insert("clipboard", panels::clipboard(app));
-        p.insert("session", panels::session(app));
-        p.insert("switcher", panels::switcher(app));
-        p.insert("notifications", notify::start(app));
-        drop(p);
-        tm("panels");
-        ipc::shell_socket(panels.clone(), osd, sys);
-        bar.window.connect_map(move |_| {
+        let (bar_win, bar) = menubar::build(app, &*sys);
+        let (dock_win, dock) = dock::build(app);
+        kit::snapshot_on_map(&bar_win, "menubar");
+        kit::snapshot_on_map(&dock_win, "dock");
+        bar_win.connect_map(move |_| {
             if std::env::var_os("WOL_SHELL_TIMING").is_some() {
                 eprintln!("wol-shell: first map {:?}", t0.elapsed());
             }
         });
-        kit::snapshot_on_map(&bar.window, "menubar");
-        kit::snapshot_on_map(&dock.window, "dock");
-        bar.window.present();
-        dock.window.present();
+        bar_win.present();
+        dock_win.present();
+        // Everything below is off the first-frame path.
+        let app = app.clone();
+        glib::idle_add_local_once(move || {
+            panels::wallpaper(&app).present();
+            let osd = panels::Osd::build(&app);
+            menubar::poll_status(bar.clone(), sys.clone(), osd.clone());
+            ipc::hypr_events(bar, dock);
+            let mut p = panels.borrow_mut();
+            p.insert("osd", osd.window.clone());
+            p.insert("clipboard", panels::clipboard(&app));
+            p.insert("session", panels::session(&app));
+            p.insert("switcher", panels::switcher(&app));
+            p.insert("notifications", notify::start(&app));
+            drop(p);
+            ipc::shell_socket(panels, osd, sys);
+        });
     });
     app.run_with_args::<&str>(&[])
 }
@@ -77,7 +71,7 @@ pub fn run_panel_app(
     id: &str,
     class: &'static str,
     spec: surface::Spec,
-    build: fn(&gtk::ApplicationWindow) -> gtk::Widget,
+    build: fn(&gtk::ApplicationWindow, Rc<dyn crate::system::System>) -> gtk::Widget,
 ) -> glib::ExitCode {
     let app = gtk::Application::builder().application_id(id).build();
     app.connect_activate(move |app| {
@@ -88,7 +82,7 @@ pub fn run_panel_app(
         }
         kit::style::install("");
         let w = window(app, class, spec);
-        w.set_child(Some(&build(&w)));
+        w.set_child(Some(&build(&w, crate::system::default_system())));
         let keys = gtk::EventControllerKey::new();
         let w2 = w.clone();
         keys.connect_key_pressed(move |_, k, _, _| {

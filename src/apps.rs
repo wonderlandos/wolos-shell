@@ -9,7 +9,7 @@ pub struct Pin {
     pub exec: &'static [&'static str],
 }
 
-pub const DESKTOP_NAME: &str = "Finder";
+pub const DESKTOP_NAME: &str = "Files";
 
 /// Default dock (WolOS design icons).
 pub const PINS: &[Pin] = &[
@@ -128,7 +128,7 @@ mod tests {
             icon: String::new(),
         }];
         for (c, t, w) in [
-            ("", "", "Finder"),
+            ("", "", "Files"),
             ("foot", "~", "Terminal"),
             ("org.gnome.Calculator", "x", "Calculator"),
             ("gnome-calculator", "", "Calculator"),

@@ -54,37 +54,55 @@ pub fn run() -> glib::ExitCode {
             [true, false, false, false],
             Keyboard::Exclusive,
         ),
-        build,
+        |win, _| {
+            let items: Rc<RefCell<Vec<Item>>> = Default::default();
+            let (c, render) = content(
+                items.clone(),
+                &std::env::var("WOL_SPOTLIGHT_QUERY").unwrap_or_default(),
+            );
+            let _ = win;
+            // Index off the main thread (parallel .desktop parse); typing before it lands re-renders when ready.
+            glib::spawn_future_local(async move {
+                if let Ok(v) = gtk::gio::spawn_blocking(|| index(crate::desktop::load_all())).await
+                {
+                    *items.borrow_mut() = v;
+                    render();
+                }
+            });
+            c
+        },
     )
 }
 
-fn build(win: &gtk::ApplicationWindow) -> gtk::Widget {
-    win.set_margin_top(160);
+/// Search field + ranked hits. Returns the widget and a re-render hook (index arrived).
+/// A shown result: its row and what it launches.
+type Hit = (gtk::Button, Vec<String>);
+
+pub fn content(items: Rc<RefCell<Vec<Item>>>, query: &str) -> (gtk::Widget, Rc<dyn Fn()>) {
     let panel = w::glass_panel(0);
-    let bar = w::hbox(10);
-    bar.add_css_class("search-bar");
-    bar.append(&gtk::Image::from_icon_name("system-search-symbolic"));
+    panel.add_css_class("spotlight-panel");
+    panel.set_width_request(w::SPOTLIGHT_WIDTH);
+    panel.set_valign(gtk::Align::Start);
+    panel.set_margin_top(w::PANEL_TOP);
+    let bar = w::hbox(w::S3);
+    bar.add_css_class("spotlight-bar");
+    bar.append(&w::icon("system-search-symbolic", w::ICON_M));
     let entry = gtk::Text::builder()
         .placeholder_text("Spotlight Search")
         .hexpand(true)
+        .valign(gtk::Align::Center)
         .build();
     bar.append(&entry);
     panel.append(&bar);
-    let hits = w::vbox(2);
-    hits.add_css_class("hits");
+    let hits = w::vbox(w::S1);
+    hits.add_css_class("spotlight-hits");
+    hits.set_visible(false);
     panel.append(&hits);
 
-    let items: Rc<RefCell<Vec<Item>>> = Default::default();
-    let shown: Rc<RefCell<Vec<(gtk::Button, Vec<String>)>>> = Default::default();
+    let shown: Rc<RefCell<Vec<Hit>>> = Default::default();
     let sel = Rc::new(Cell::new(0usize));
-    let render = {
-        let (items, shown, hits, sel, entry) = (
-            items.clone(),
-            shown.clone(),
-            hits.clone(),
-            sel.clone(),
-            entry.clone(),
-        );
+    let render: Rc<dyn Fn()> = {
+        let (shown, hits, sel, entry) = (shown.clone(), hits.clone(), sel.clone(), entry.clone());
         Rc::new(move || {
             while let Some(c) = hits.first_child() {
                 hits.remove(&c);
@@ -97,14 +115,12 @@ fn build(win: &gtk::ApplicationWindow) -> gtk::Widget {
                 .into_iter()
                 .enumerate()
             {
-                let row = w::hbox(10);
-                let img = gtk::Image::from_icon_name(&it.icon);
-                img.set_pixel_size(28);
-                row.append(&img);
-                let t = w::label(&it.title, "hit-title");
+                let row = w::hbox(w::S3);
+                row.append(&w::app_icon(&it.icon, w::ICON_M));
+                let t = w::label(&it.title, "");
                 t.set_hexpand(true);
                 row.append(&t);
-                row.append(&w::label(it.kind, "kind"));
+                row.append(&w::label(it.kind, "secondary"));
                 let b = gtk::Button::builder().child(&row).build();
                 b.add_css_class("hit");
                 if i == 0 {
@@ -123,18 +139,18 @@ fn build(win: &gtk::ApplicationWindow) -> gtk::Widget {
             hits.set_visible(!s.is_empty());
         })
     };
-    hits.set_visible(false);
     {
         let r = render.clone();
         entry.connect_changed(move |_| r());
     }
     {
-        let (shown, win) = (shown.clone(), win.clone());
-        let sel = sel.clone();
-        entry.connect_activate(move |_| {
+        let (shown, sel) = (shown.clone(), sel.clone());
+        entry.connect_activate(move |e| {
             if let Some((_, exec)) = shown.borrow().get(sel.get()) {
                 kit::spawn(exec);
-                win.close();
+                if let Some(w) = e.root().and_downcast::<gtk::Window>() {
+                    w.close();
+                }
             }
         });
     }
@@ -158,17 +174,8 @@ fn build(win: &gtk::ApplicationWindow) -> gtk::Widget {
         });
     }
     entry.add_controller(keys);
-    // Index off the main thread (parallel .desktop parse); typing before it lands re-renders when ready.
-    glib::spawn_future_local(async move {
-        if let Ok(v) = gtk::gio::spawn_blocking(|| index(crate::desktop::load_all())).await {
-            *items.borrow_mut() = v;
-            render();
-        }
-    });
-    if let Ok(q) = std::env::var("WOL_SPOTLIGHT_QUERY") {
-        entry.set_text(&q);
-    }
-    panel.upcast()
+    entry.set_text(query);
+    (panel.upcast(), render)
 }
 
 #[cfg(test)]

@@ -79,30 +79,27 @@ pub fn banner_ms(n: &Note) -> Option<u32> {
 }
 
 fn card(n: &Note) -> gtk::Box {
-    let c = w::glass_panel(2);
-    c.set_margin_top(0);
-    c.set_margin_bottom(8);
-    c.set_margin_start(0);
-    c.set_margin_end(0);
+    let c = w::glass_panel(w::S1);
     c.add_css_class("notification");
     if n.critical {
         c.add_css_class("critical");
     }
-    let row = w::hbox(10);
-    let img = gtk::Image::from_icon_name(if n.icon.is_empty() {
-        "dialog-information-symbolic"
-    } else {
-        &n.icon
-    });
-    img.set_pixel_size(32);
+    let row = w::hbox(w::S3);
+    let img = w::icon(
+        if n.icon.is_empty() {
+            "dialog-information-symbolic"
+        } else {
+            &n.icon
+        },
+        w::ICON_M,
+    );
     row.append(&img);
-    let text = w::vbox(2);
-    text.append(&w::label(&n.app, "dim"));
-    text.append(&w::label(&n.summary, "summary"));
+    let text = w::vbox(0);
+    text.append(&w::label(&n.app, "secondary"));
+    text.append(&w::label(&n.summary, "title"));
     if !n.body.is_empty() {
-        let b = w::label(&n.body, "body");
+        let b = w::label(&n.body, "");
         b.set_wrap(true);
-        b.set_max_width_chars(40);
         text.append(&b);
     }
     row.append(&text);
@@ -144,12 +141,12 @@ pub fn start(app: &gtk::Application) -> gtk::Window {
     let stack = w::vbox(0);
     banners.set_child(Some(&stack));
     let center_list = w::vbox(0);
-    let g = w::glass_panel(8);
+    let g = w::glass_panel(w::S2);
     g.append(&w::label("Notifications", "title"));
     g.append(
         &gtk::ScrolledWindow::builder()
             .child(&center_list)
-            .min_content_height(400)
+            .vexpand(true)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build(),
     );

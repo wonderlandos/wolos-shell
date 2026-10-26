@@ -94,26 +94,22 @@ pub fn load_all() -> Vec<Entry> {
     .into_iter()
     .flatten()
     .collect();
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out
 }
 
-/// Fork/join map, order kept. Swap for `shared::par` when the workspace lists this crate.
+/// Fork/join map, order kept (`shared::par`).
 pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let n = std::thread::available_parallelism()
-        .map_or(1, |n| n.get())
-        .min(8);
-    if items.len() < 32 || n == 1 {
-        return items.iter().map(f).collect();
-    }
-    let chunk = items.len().div_ceil(n);
-    std::thread::scope(|s| {
-        let hs: Vec<_> = items
-            .chunks(chunk)
-            .map(|c| s.spawn(|| c.iter().map(&f).collect::<Vec<R>>()))
-            .collect();
-        hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
-    })
+    shared::par::fold(
+        items,
+        16,
+        |s| s.split_at(s.len() / 2),
+        |s| s.iter().map(&f).collect::<Vec<R>>(),
+        |mut a, b| {
+            a.extend(b);
+            a
+        },
+    )
 }
 
 #[cfg(test)]

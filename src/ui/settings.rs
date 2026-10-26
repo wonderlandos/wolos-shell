@@ -1,8 +1,18 @@
-//! System Settings (port of apps/IaraSettings): sidebar + pages. Appearance is live; other pages show state
-//! read through `System` and are wired as `core` grows (see report gaps).
+//! System Settings (port of apps/IaraSettings) on the HIG AppWindow: sidebar of pages, grouped Section cards.
+//! Appearance is live; pages read state through `System`; writes land as `core` exposes them.
 use crate::kit::{self, widgets as w};
-use crate::system::{Sysfs, System};
+use crate::system::System;
 use gtk::{glib, prelude::*};
+
+pub const PAGES: [&str; 7] = [
+    "Appearance",
+    "Menu Bar & Dock",
+    "Keyboard",
+    "Lock & Idle",
+    "Hardware",
+    "Accounts",
+    "About",
+];
 
 pub fn run() -> glib::ExitCode {
     let app = gtk::Application::builder()
@@ -13,105 +23,65 @@ pub fn run() -> glib::ExitCode {
         let win = gtk::ApplicationWindow::builder()
             .application(app)
             .title("System Settings")
-            .default_width(820)
-            .default_height(560)
+            .default_width(w::APP_SIZE.0)
+            .default_height(w::APP_SIZE.1)
+            .decorated(false)
             .build();
-        win.add_css_class("settings");
-        let sys = Sysfs::default();
-        let stack = gtk::Stack::new();
-        stack.set_transition_type(gtk::StackTransitionType::Crossfade);
-        stack.set_hexpand(true);
-        let side = gtk::ListBox::new();
-        side.add_css_class("sidebar");
-        side.add_css_class("navigation-sidebar");
-        for (i, (name, icon, page)) in [
-            (
-                "Appearance",
-                "preferences-desktop-appearance-symbolic",
-                appearance(),
-            ),
-            ("Menu Bar & Dock", "user-desktop-symbolic", menubar_dock()),
-            ("Keyboard", "input-keyboard-symbolic", keyboard()),
-            ("Lock & Idle", "system-lock-screen-symbolic", lock_idle()),
-            ("Hardware", "computer-symbolic", hardware(&sys)),
-            ("Accounts", "system-users-symbolic", accounts()),
-            ("About", "help-about-symbolic", about()),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let r = w::hbox(8);
-            r.append(&gtk::Image::from_icon_name(icon));
-            r.append(&w::label(name, ""));
-            side.append(&r);
-            let p = w::vbox(12);
-            p.add_css_class("page");
-            p.append(&w::label(name, "page-title"));
-            p.append(&page);
-            stack.add_named(
-                &gtk::ScrolledWindow::builder().child(&p).build(),
-                Some(name),
-            );
-            if i == 0 {
-                stack.set_visible_child_name(name);
-            }
+        let aw = content(&*crate::system::default_system(), &Host::read());
+        if let Some(p) = std::env::args().nth(1) {
+            aw.select(&p);
         }
-        let st = stack.clone();
-        let names: Vec<String> = [
-            "Appearance",
-            "Menu Bar & Dock",
-            "Keyboard",
-            "Lock & Idle",
-            "Hardware",
-            "Accounts",
-            "About",
-        ]
-        .map(String::from)
-        .to_vec();
-        let n2 = names.clone();
-        side.connect_row_selected(move |_, r| {
-            if let Some(r) = r {
-                st.set_visible_child_name(&n2[r.index() as usize]);
-            }
-        });
-        // `wol-settings <Page>` (Spotlight, menu) opens that page.
-        if let Some(arg) = std::env::args().nth(1) {
-            if let Some(i) = names.iter().position(|n| n.eq_ignore_ascii_case(&arg)) {
-                side.select_row(side.row_at_index(i as i32).as_ref());
-            }
-        } else {
-            side.select_row(side.row_at_index(0).as_ref());
-        }
-        let root = w::hbox(0);
-        root.append(&side);
-        root.append(&stack);
-        win.set_child(Some(&root));
+        win.set_child(Some(&aw.root));
         kit::snapshot_on_map(&win, "settings");
         win.present();
     });
     app.run_with_args::<&str>(&[])
 }
 
-fn group(rows: &[gtk::Widget]) -> gtk::Box {
-    let g = w::vbox(0);
-    g.add_css_class("group");
-    for r in rows {
-        r.add_css_class("row");
-        g.append(r);
-    }
-    g
+/// Host facts shown by Accounts/About (injected so golden renders do not depend on the build machine).
+pub struct Host {
+    pub hostname: String,
+    pub users: Vec<String>,
 }
 
-fn row(title: &str, value: &impl IsA<gtk::Widget>) -> gtk::Widget {
-    let r = w::hbox(8);
-    let l = w::label(title, "");
-    l.set_hexpand(true);
-    r.append(&l);
-    r.append(value);
-    r.upcast()
+impl Host {
+    pub fn read() -> Self {
+        let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+        let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+        Host {
+            hostname: std::fs::read_to_string("/etc/hostname")
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            users: crate::login::users(&passwd, &shells),
+        }
+    }
+}
+
+pub fn content(sys: &dyn System, host: &Host) -> w::AppWindow {
+    let aw = w::AppWindow::new("System Settings", true, false);
+    aw.source_section("Personal");
+    aw.source_item(
+        "preferences-desktop-appearance-symbolic",
+        "Appearance",
+        &appearance(),
+    );
+    aw.source_item("user-desktop-symbolic", "Menu Bar & Dock", &menubar_dock());
+    aw.source_item("input-keyboard-symbolic", "Keyboard", &keyboard());
+    aw.source_item("system-lock-screen-symbolic", "Lock & Idle", &lock_idle());
+    aw.source_section("System");
+    aw.source_item("computer-symbolic", "Hardware", &hardware(sys));
+    aw.source_item("system-users-symbolic", "Accounts", &accounts(host));
+    aw.source_item("help-about-symbolic", "About", &about(host));
+    aw
+}
+
+fn row(title: &str, control: &impl IsA<gtk::Widget>) -> gtk::Widget {
+    w::list_row("", title, "", Some(control.upcast_ref())).upcast()
 }
 
 fn appearance() -> gtk::Box {
+    let p = w::page("Appearance");
     let sel = match kit::style::active_id().as_deref() {
         Some("wol-light") => 0,
         Some("wol-dark") => 1,
@@ -121,95 +91,136 @@ fn appearance() -> gtk::Box {
         let _ = match i {
             0 => kit::style::set_active("wol-light"),
             1 => kit::style::set_active("wol-dark"),
-            _ => std::fs::remove_file(crate::theme::active_path(&kit::config_home())),
+            _ => std::fs::remove_file(crate::theme::active_path()),
         };
     });
-    group(&[
-        row("Appearance", &seg),
-        row("Accent color", &w::label("WolOS Violet", "dim")),
-    ])
+    p.append(&w::section(
+        "",
+        &[
+            row("Appearance", &seg),
+            row("Accent color", &w::label("Theme default", "secondary")),
+        ],
+    ));
+    p
 }
 
 fn menubar_dock() -> gtk::Box {
-    group(&[
-        row("Show battery percentage", &gtk::Switch::new()),
-        row("Automatically hide the dock", &gtk::Switch::new()),
-        row(
-            "Magnification",
-            &gtk::Switch::builder().active(true).build(),
-        ),
-    ])
+    let p = w::page("Menu Bar & Dock");
+    p.append(&w::section(
+        "Menu Bar",
+        &[
+            row("Show battery percentage", &w::toggle(false, |_| {})),
+            row("Show date", &w::toggle(true, |_| {})),
+        ],
+    ));
+    p.append(&w::section(
+        "Dock",
+        &[
+            row(
+                "Automatically hide and show the Dock",
+                &w::toggle(false, |_| {}),
+            ),
+            row("Magnification", &w::toggle(true, |_| {})),
+        ],
+    ));
+    p
 }
 
 fn keyboard() -> gtk::Box {
-    group(&[
-        row(
-            "Input source",
-            &gtk::DropDown::from_strings(&["U.S.", "Brazilian (ABNT2)", "Portuguese"]),
-        ),
-        row(
-            "Key repeat rate",
-            &gtk::Scale::with_range(gtk::Orientation::Horizontal, 1.0, 10.0, 1.0),
-        ),
-    ])
+    let p = w::page("Keyboard");
+    p.append(&w::section(
+        "",
+        &[
+            row(
+                "Input source",
+                &w::dropdown(&["U.S.", "Brazilian (ABNT2)", "Portuguese"], 0),
+            ),
+            row(
+                "Key repeat rate",
+                &w::dropdown(&["Slow", "Normal", "Fast"], 1),
+            ),
+        ],
+    ));
+    p
 }
 
 fn lock_idle() -> gtk::Box {
-    group(&[
-        row(
-            "Turn display off when inactive",
-            &gtk::DropDown::from_strings(&["2 minutes", "5 minutes", "10 minutes", "Never"]),
-        ),
-        row(
-            "Require password after screen saver",
-            &gtk::DropDown::from_strings(&["Immediately", "5 seconds", "1 minute"]),
-        ),
-    ])
+    let p = w::page("Lock & Idle");
+    p.append(&w::section(
+        "",
+        &[
+            row(
+                "Turn display off when inactive",
+                &w::dropdown(&["2 minutes", "5 minutes", "10 minutes", "Never"], 1),
+            ),
+            row(
+                "Require password after sleep",
+                &w::dropdown(&["Immediately", "After 1 minute", "After 5 minutes"], 0),
+            ),
+        ],
+    ));
+    p
 }
 
 fn hardware(sys: &dyn System) -> gtk::Box {
+    let p = w::page("Hardware");
     let bat = crate::system::battery_label(sys.battery()).unwrap_or_else(|| "No battery".into());
     let net = crate::system::wifi_subtitle(sys.network(), &sys.wifi_networks());
     let br = sys
         .brightness()
         .map_or("Not adjustable".into(), |b| format!("{b}%"));
-    group(&[
-        row("Battery", &w::label(&bat, "dim")),
-        row("Network", &w::label(&net, "dim")),
-        row("Display brightness", &w::label(&br, "dim")),
-    ])
+    p.append(&w::section(
+        "",
+        &[
+            row("Battery", &w::label(&bat, "secondary")),
+            row("Network", &w::label(&net, "secondary")),
+            row("Display brightness", &w::label(&br, "secondary")),
+        ],
+    ));
+    p
 }
 
-fn accounts() -> gtk::Box {
-    let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
-    let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-    let rows: Vec<gtk::Widget> = crate::login::users(&passwd, &shells)
+fn accounts(host: &Host) -> gtk::Box {
+    let p = w::page("Accounts");
+    let users = &host.users;
+    if users.is_empty() {
+        p.append(&w::empty_state(
+            "system-users-symbolic",
+            "No accounts",
+            "Login users appear here.",
+            None,
+        ));
+        return p;
+    }
+    let rows: Vec<gtk::Widget> = users
         .iter()
         .map(|u| {
-            let r = w::hbox(10);
-            r.append(&w::avatar(u, 48));
-            r.append(&w::label(u, "strong"));
+            let r = w::list_row("", u, "", None);
+            r.prepend(&w::avatar(u, w::ICON_M));
             r.upcast()
         })
         .collect();
-    group(&rows)
+    p.append(&w::section("", &rows));
+    p
 }
 
-fn about() -> gtk::Box {
-    let b = w::vbox(12);
-    let mark = gtk::Image::from_icon_name("wolos-mark");
-    mark.set_pixel_size(96);
-    b.append(&mark);
-    let t = w::label("WolOS", "page-title");
-    t.set_xalign(0.5);
-    b.append(&t);
-    let v = w::label(&format!("Version {}", env!("CARGO_PKG_VERSION")), "dim");
-    v.set_xalign(0.5);
-    b.append(&v);
-    let host = std::fs::read_to_string("/etc/hostname").unwrap_or_default();
-    b.append(&group(&[
-        row("Name", &w::label(host.trim(), "dim")),
-        row("Base", &w::label("FreeBSD 15.1", "dim")),
-    ]));
-    b
+fn about(host: &Host) -> gtk::Box {
+    let p = w::vbox(w::S3);
+    p.add_css_class("page");
+    let mark = w::app_icon("wolos-mark", w::ICON_XL);
+    mark.set_halign(gtk::Align::Center);
+    p.append(&mark);
+    p.append(&w::centered("WolOS", "large-title"));
+    p.append(&w::centered(
+        &format!("Version {}", env!("CARGO_PKG_VERSION")),
+        "secondary",
+    ));
+    p.append(&w::section(
+        "",
+        &[
+            row("Name", &w::label(&host.hostname, "secondary")),
+            row("Base", &w::label("FreeBSD 15.1", "secondary")),
+        ],
+    ));
+    p
 }
