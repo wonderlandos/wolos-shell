@@ -69,29 +69,41 @@ pub fn icon(name: &str, size: i32) -> gtk::Image {
     i
 }
 
-/// Full-colour app icon rendered by librsvg (gdk-pixbuf) off the main thread at 2x for HiDPI.
-/// GTK's own SVG path drops filters (shadows) to boxes, so app tiles never go through it.
+thread_local! {
+    /// Rendered app icons by (file, pixel size): each SVG is rasterised once per process.
+    static APP_ICONS: std::cell::RefCell<std::collections::HashMap<(std::path::PathBuf, i32), gtk::gdk::Texture>> =
+        Default::default();
+}
+
+/// Full-colour app icon rendered by librsvg (gdk-pixbuf) off the main thread at 2x for HiDPI,
+/// then cached. GTK's own SVG path drops filters (shadows) to boxes, so app tiles never go through it.
 pub fn app_icon(name: &str, size: i32) -> gtk::Image {
     let img = gtk::Image::new();
     img.set_pixel_size(size);
-    match super::icon_file(name) {
-        Some(path) => {
-            let i2 = img.clone();
-            glib::spawn_future_local(async move {
-                let px = size * 2;
-                let r = gtk::gio::spawn_blocking(move || {
-                    gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&path, px, px, true)
-                        .ok()
-                        .map(|pb| gtk::gdk::Texture::for_pixbuf(&pb))
-                })
-                .await;
-                if let Ok(Some(t)) = r {
-                    i2.set_paintable(Some(&t));
-                }
-            });
-        }
-        None => img.set_icon_name(Some(name)),
+    let Some(path) = super::icon_file(name) else {
+        img.set_icon_name(Some(name));
+        return img;
+    };
+    let px = size * 2;
+    let key = (path, px);
+    if let Some(t) = APP_ICONS.with_borrow(|c| c.get(&key).cloned()) {
+        img.set_paintable(Some(&t));
+        return img;
     }
+    let i2 = img.clone();
+    glib::spawn_future_local(async move {
+        let p = key.0.clone();
+        let r = gtk::gio::spawn_blocking(move || {
+            gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&p, px, px, true)
+                .ok()
+                .map(|pb| gtk::gdk::Texture::for_pixbuf(&pb))
+        })
+        .await;
+        if let Ok(Some(t)) = r {
+            i2.set_paintable(Some(&t));
+            APP_ICONS.with_borrow_mut(|c| c.insert(key, t));
+        }
+    });
     img
 }
 

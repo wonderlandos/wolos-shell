@@ -54,9 +54,32 @@ pub fn active_id() -> Option<String> {
     theme::saved()
 }
 
+const PRODUCT_ICONS: &str = "WolOS";
+
+/// The shell always draws the product icon theme (Adwaita in dev), never the host user's
+/// (`~/.config/gtk-4.0/settings.ini`): same look everywhere and a large theme such as
+/// breeze costs ~100 ms of startup.
+fn icon_theme(dirs: &[&str], exists: impl Fn(&str) -> bool) -> &'static str {
+    if dirs.iter().any(|d| exists(&format!("{d}/{PRODUCT_ICONS}"))) {
+        PRODUCT_ICONS
+    } else {
+        "Adwaita"
+    }
+}
+
 /// WolOS icons: installed share dir, else the repo's design/ tree (dev).
 fn icons(display: &gdk::Display) {
     let theme = gtk::IconTheme::for_display(display);
+    let dirs: Vec<String> = theme
+        .search_path()
+        .iter()
+        .filter_map(|p| p.to_str().map(str::to_string))
+        .collect();
+    let dirs: Vec<&str> = dirs.iter().map(String::as_str).collect();
+    let name = icon_theme(&dirs, |p| {
+        std::path::Path::new(p).join("index.theme").is_file()
+    });
+    gtk::Settings::for_display(display).set_gtk_icon_theme_name(Some(name));
     for p in [
         "/usr/local/share/wol/icons",
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/apps"),
@@ -88,5 +111,17 @@ pub fn apply(t: &theme::Theme, extra: &str) {
     });
     if let Some(s) = gtk::Settings::default() {
         s.set_gtk_application_prefer_dark_theme(t.variant == theme::Variant::Dark);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_icon_theme_is_the_product_theme() {
+        let dirs = |have: &'static [&'static str]| move |d: &str| have.contains(&d);
+        assert_eq!(icon_theme(&["/a", "/b"], dirs(&["/b/WolOS"])), "WolOS");
+        assert_eq!(icon_theme(&["/a"], dirs(&[])), "Adwaita");
     }
 }
