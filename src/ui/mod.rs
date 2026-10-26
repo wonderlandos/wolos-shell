@@ -1,4 +1,5 @@
 //! wol-shell composition: wallpaper, menu bar, dock, notifications, OSD, clipboard, session, switcher.
+pub mod capture;
 pub mod control_center;
 pub mod dock;
 pub mod ipc;
@@ -80,6 +81,7 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("session", panels::session(&app));
             p.insert("notifications", notify::start(&app));
             p.insert("overview", overview::build(&app));
+            p.insert("screenshot", capture::build(&app));
             drop(p);
             let sw = switcher::Switcher::build(&app);
             let handlers: ipc::Handlers = vec![Rc::new(move |c: &crate::protocol::Command| {

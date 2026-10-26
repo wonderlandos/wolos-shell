@@ -37,6 +37,8 @@ pub const TILE_CHARS: i32 = 14;
 /// Mission Control desktop thumbnail and window title line.
 pub const OVERVIEW_DESKTOP: (i32, i32) = (192, 108);
 pub const OVERVIEW_TITLE: i32 = 28;
+/// Screenshot thumbnail (bottom right after a capture).
+pub const CAPTURE_THUMB: (i32, i32) = (200, 125);
 
 pub fn vbox(spacing: i32) -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Vertical, spacing)

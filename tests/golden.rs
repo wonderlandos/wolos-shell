@@ -164,6 +164,38 @@ fn cases() -> Vec<Case> {
                 ui::overview::content((1024, 640), &desktops, 1, here, |_| {}).0
             }),
         },
+        Case {
+            name: "capture-bar".into(),
+            size: (900, 140),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let b = ui::capture::Toolbar::new(
+                    shell::capture::Mode::Selection,
+                    shell::capture::Options::default(),
+                );
+                b.root.set_halign(gtk::Align::Center);
+                b.root.set_valign(gtk::Align::End);
+                b.root.clone().upcast()
+            }),
+        },
+        Case {
+            name: "capture-thumb".into(),
+            size: (480, 240),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let shot =
+                    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/overview-light.png");
+                let t = gdk::Texture::from_filename(&shot).expect("overview golden");
+                let th = ui::capture::thumbnail(&t, &shot);
+                let b = w::vbox(0);
+                b.set_vexpand(true);
+                th.set_vexpand(true);
+                b.append(&th);
+                b.upcast()
+            }),
+        },
     ];
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
         for st in shell::setup::STEPS {
@@ -466,6 +498,11 @@ fn main() {
         });
     }
     gtk::init().expect("gtk init");
+    // Product symbolic icons (installed into the WolOS theme on the image).
+    gtk::IconTheme::for_display(&gdk::Display::default().unwrap()).add_search_path(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../design/icons/symbolic"
+    ));
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
