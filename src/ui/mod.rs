@@ -5,6 +5,7 @@ pub mod ipc;
 pub mod lock;
 pub mod menubar;
 pub mod notify;
+pub mod overview;
 pub mod panels;
 pub mod settings;
 pub mod setup;
@@ -78,6 +79,7 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("clipboard", panels::clipboard(&app));
             p.insert("session", panels::session(&app));
             p.insert("notifications", notify::start(&app));
+            p.insert("overview", overview::build(&app));
             drop(p);
             let sw = switcher::Switcher::build(&app);
             let handlers: ipc::Handlers = vec![Rc::new(move |c: &crate::protocol::Command| {

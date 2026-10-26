@@ -6,6 +6,7 @@ pub mod desktop;
 pub mod hypr;
 pub mod layout;
 pub mod login;
+pub mod overview;
 pub mod perf;
 pub mod protocol;
 pub mod search;
