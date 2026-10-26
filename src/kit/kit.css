@@ -41,6 +41,7 @@ button.menubar-item:hover, .menubar-strip menubutton > button:hover, .menubar-st
 popover.menu > contents { background: var(--glass); border-radius: var(--glass-radius-s); padding: 4px; box-shadow: var(--glass-shadow); border: 1px solid var(--line); }
 button.menu-item { background: none; border: none; box-shadow: none; border-radius: 6px; padding: 4px 12px; min-height: 0; }
 button.menu-item label { color: var(--text); }
+button.menu-item label.menu-key { color: var(--dim); }
 button.menu-item:hover { background: var(--accent); }
 button.menu-item:hover label { color: var(--accent-text); }
 popover.menu separator { margin: 4px 8px; background: var(--line); }

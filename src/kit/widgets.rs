@@ -41,6 +41,8 @@ pub const OVERVIEW_DESKTOP: (i32, i32) = (192, 108);
 pub const OVERVIEW_TITLE: i32 = 28;
 /// Screenshot thumbnail (bottom right after a capture).
 pub const CAPTURE_THUMB: (i32, i32) = (200, 125);
+/// About <App> panel width.
+pub const ABOUT_WIDTH: i32 = 280;
 
 pub fn vbox(spacing: i32) -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Vertical, spacing)
@@ -267,20 +269,36 @@ pub fn empty_state(
 }
 
 /// Context/app menu: (label, action). "" = separator.
-/// Menu entry: label (empty = separator) and action.
 pub type MenuItem<'a> = (&'a str, Box<dyn Fn()>);
+/// Menu row with an optional shortcut shown right-aligned and dimmed. "" = separator.
+pub type MenuRow = (String, Option<&'static str>, Box<dyn Fn()>);
 
 pub fn menu(items: Vec<MenuItem>) -> gtk::Popover {
+    menu_keys(
+        items
+            .into_iter()
+            .map(|(t, a)| (t.to_string(), None, a))
+            .collect(),
+    )
+}
+
+pub fn menu_keys(rows: Vec<MenuRow>) -> gtk::Popover {
     let p = gtk::Popover::new();
     p.add_css_class("menu");
     p.set_has_arrow(false);
     let b = vbox(0);
-    for (text, act) in items {
+    for (text, key, act) in rows {
         if text.is_empty() {
             b.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
             continue;
         }
-        let it = gtk::Button::builder().child(&label(text, "")).build();
+        let row = hbox(S6);
+        row.append(&label(&text, ""));
+        if let Some(k) = key {
+            row.append(&spacer());
+            row.append(&label(k, "menu-key"));
+        }
+        let it = gtk::Button::builder().child(&row).build();
         it.add_css_class("menu-item");
         let p2 = p.clone();
         it.connect_clicked(move |_| {
@@ -291,6 +309,14 @@ pub fn menu(items: Vec<MenuItem>) -> gtk::Popover {
     }
     p.set_child(Some(&b));
     p
+}
+
+/// Menu bar title with a drop-down menu (app name, Window).
+pub fn menubar_menu(child: &impl IsA<gtk::Widget>) -> gtk::MenuButton {
+    let b = gtk::MenuButton::new();
+    b.set_child(Some(child));
+    b.set_valign(gtk::Align::Center);
+    b
 }
 
 // ---- Lists ----

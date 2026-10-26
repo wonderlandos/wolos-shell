@@ -32,8 +32,18 @@ fn cases() -> Vec<Case> {
             wallpaper: true,
             build: Box::new(|| {
                 let b = ui::menubar::content(&shell::system::Fake);
-                b.set_app("Files".into());
+                b.set_app("Files".into(), "wol-files".into());
                 b.root.clone().upcast()
+            }),
+        },
+        Case {
+            name: "about-app".into(),
+            size: (320, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                ui::panels::about_card("Text Editor", "wolos-files", "org.gnome.TextEditor")
+                    .upcast()
             }),
         },
         Case {

@@ -54,6 +54,8 @@ pub struct Client {
     pub at: [i32; 2],
     #[serde(default)]
     pub size: [i32; 2],
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 fn far() -> i64 {
@@ -78,6 +80,7 @@ impl Client {
             workspace: WorkspaceRef::default(),
             at: [0, 0],
             size: [0, 0],
+            tags: Vec::new(),
         }
     }
 }
@@ -115,6 +118,33 @@ pub fn parse_active(json: &str) -> Option<(String, String)> {
     Some((s("class"), s("title")))
 }
 
+/// `j/activewindow` as a client (address, class, size, tags); None on the empty desktop.
+pub fn parse_active_client(json: &str) -> Option<Client> {
+    serde_json::from_str::<Client>(json)
+        .ok()
+        .filter(|c| !c.address.is_empty())
+}
+
+/// `j/monitors`: the focused output's logical box minus reserved areas (menu bar, dock).
+pub fn parse_zone(json: &str) -> Option<(i32, i32, i32, i32)> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let m = v
+        .as_array()?
+        .iter()
+        .find(|m| m["focused"].as_bool() == Some(true))?;
+    let n = |k: &str| m[k].as_f64().unwrap_or_default();
+    let r = |i: usize| m["reserved"][i].as_f64().unwrap_or_default();
+    let scale = if n("scale") > 0.0 { n("scale") } else { 1.0 };
+    let (w, h) = (n("width") / scale, n("height") / scale);
+    let i = |f: f64| f.round() as i32;
+    Some((
+        i(n("x") + r(0)),
+        i(n("y") + r(1)),
+        i(w - r(0) - r(2)),
+        i(h - r(1) - r(3)),
+    ))
+}
+
 /// Running classes, lowercase, for the dock's running dot.
 pub fn running_classes(clients: &[Client]) -> std::collections::HashSet<String> {
     clients.iter().map(|c| c.class.to_lowercase()).collect()
@@ -123,6 +153,20 @@ pub fn running_classes(clients: &[Client]) -> std::collections::HashSet<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zone_is_the_focused_output_minus_reserved() {
+        let j = r#"[{"x":0,"y":0,"width":2560,"height":1600,"scale":2.0,"focused":false,"reserved":[0,0,0,0]},
+                    {"x":1280,"y":0,"width":2560,"height":1600,"scale":2.0,"focused":true,"reserved":[0,28,0,102]}]"#;
+        assert_eq!(parse_zone(j), Some((1280, 28, 1280, 670)));
+        assert_eq!(parse_zone("[]"), None);
+        let a = parse_active_client(
+            r#"{"address":"0xa","class":"foot","title":"t","size":[4,3],"tags":["wol-csd"]}"#,
+        )
+        .unwrap();
+        assert_eq!((a.size, a.tags), ([4, 3], vec!["wol-csd".to_string()]));
+        assert_eq!(parse_active_client("{}"), None);
+    }
 
     #[test]
     fn parses_events() {

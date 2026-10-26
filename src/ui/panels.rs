@@ -60,6 +60,47 @@ pub(super) fn panel(
     win.upcast()
 }
 
+/// About <App> card: close light, 64 px icon, name, app id. Glass, centred (HIG panel).
+pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
+    let g = w::glass_panel(w::S6);
+    g.add_css_class("about-app");
+    g.set_size_request(w::ABOUT_WIDTH, -1);
+    let close = gtk::Button::new();
+    for c in ["light", "close"] {
+        close.add_css_class(c);
+    }
+    close.set_tooltip_text(Some("Close"));
+    close.set_halign(gtk::Align::Start);
+    close.connect_clicked(|b| {
+        if let Some(win) = b.root().and_downcast::<gtk::Window>() {
+            win.close();
+        }
+    });
+    let lights = w::hbox(0);
+    lights.add_css_class("traffic-lights");
+    lights.append(&close);
+    g.append(&lights);
+    let i = w::icon(icon, w::ICON_XL);
+    i.set_halign(gtk::Align::Center);
+    g.append(&i);
+    g.append(&w::centered(name, "title"));
+    g.append(&w::centered(class, "secondary"));
+    g
+}
+
+/// Shell-drawn About panel: the frontmost app keeps focus and its name in the menu bar.
+pub fn about(app: &gtk::Application, name: &str, icon: &str, class: &str) -> gtk::Window {
+    let win = panel(
+        app,
+        "about",
+        "wol-panel-about",
+        [false; 4],
+        &about_card(name, icon, class),
+    );
+    win.connect_hide(|w| w.destroy());
+    win
+}
+
 pub struct Osd {
     pub window: gtk::Window,
     icon: gtk::Image,

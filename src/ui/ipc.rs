@@ -93,12 +93,10 @@ pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>) {
         let (bar, installed) = (bar.clone(), installed.clone());
         move |class: &str, title: &str| {
             let inst = installed.get_or_init(crate::desktop::load_all);
-            bar.set_app(crate::apps::frontmost_name(
-                class,
-                title,
-                crate::apps::PINS,
-                inst,
-            ));
+            bar.set_app(
+                crate::apps::frontmost_name(class, title, crate::apps::PINS, inst),
+                class.to_string(),
+            );
         }
     };
     // Events only report changes: start from the window focused now.
