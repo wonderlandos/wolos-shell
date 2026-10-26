@@ -53,6 +53,9 @@ pub struct Options {
     pub delay: u32,
 }
 
+/// Wait between hiding the toolbar and capturing, so the compositor has drawn a frame without it.
+pub const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
 pub const DELAYS: [u32; 3] = [0, 5, 10];
 
 impl Default for Options {
@@ -145,6 +148,12 @@ mod tests {
         ] {
             assert_eq!(argv(mode, o, win, "/h").join(" "), want, "{mode:?}");
         }
+    }
+
+    /// Live Hyprland: the shot contained the toolbar (captured before the unmap was drawn).
+    #[test]
+    fn capture_waits_for_a_frame_without_the_toolbar() {
+        assert!(SETTLE >= std::time::Duration::from_millis(2 * 1000 / 30));
     }
 
     #[test]

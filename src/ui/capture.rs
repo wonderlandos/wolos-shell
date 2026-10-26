@@ -1,9 +1,6 @@
 //! Screenshot toolbar (Super+Shift+5) and the floating thumbnail that follows a capture.
 use crate::capture::{self, DELAYS, Dest, Mode, Options};
-use crate::kit::{
-    surface::{Keyboard, Spec},
-    widgets as w,
-};
+use crate::kit::{surface::Spec, widgets as w};
 use gtk::{gdk, gio, glib, prelude::*};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -180,28 +177,17 @@ fn active_window() -> Option<String> {
 
 /// The toolbar surface (bottom centre) and its thumbnail surface (bottom right).
 pub fn build(app: &gtk::Application) -> gtk::Window {
-    let win = super::window(
-        app,
-        "panel",
-        Spec::panel(
-            "wol-panel-capture",
-            [false, false, true, false],
-            Keyboard::Exclusive,
-        ),
-    );
+    let win = super::window(app, "panel", Spec::capture_bar());
     win.add_css_class("capture");
-    let thumb_win = super::window(
-        app,
-        "panel",
-        Spec::panel(
-            "wol-capture-thumb",
-            [false, true, true, false],
-            Keyboard::None,
-        ),
-    );
+    let thumb_win = super::window(app, "panel", Spec::capture_thumb());
     thumb_win.add_css_class("capture");
     let bar = Toolbar::new(Mode::Selection, Options::default());
     win.set_child(Some(&bar.root));
+    // Return captures (macOS); the button holds focus whenever the bar opens.
+    let cap = bar.capture.clone();
+    win.connect_show(move |_| {
+        cap.grab_focus();
+    });
     let w2 = win.clone();
     bar.close.connect_clicked(move |_| w2.set_visible(false));
     let keys = gtk::EventControllerKey::new();
@@ -220,10 +206,12 @@ pub fn build(app: &gtk::Application) -> gtk::Window {
         let geom = (mode.get() == Mode::Window).then(active_window).flatten();
         let home = std::env::var("HOME").unwrap_or_default();
         let argv = capture::argv(mode.get(), opts.get(), geom.as_deref(), &home);
-        // Hide first so the toolbar is not in the shot.
+        // Hide first so the toolbar (and a previous thumbnail) is not in the shot.
         w2.set_visible(false);
+        thumb_win.set_visible(false);
         let (tw, shown) = (thumb_win.clone(), shown.clone());
         glib::spawn_future_local(async move {
+            glib::timeout_future(capture::SETTLE).await;
             let out = gio::spawn_blocking(move || {
                 std::process::Command::new(&argv[0])
                     .args(&argv[1..])
