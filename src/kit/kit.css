@@ -167,17 +167,31 @@ window.lock-window { background: #0b0a1a; }
 label.lock-time { font-size: 96px; font-weight: 600; color: white; letter-spacing: -2px; text-shadow: 0 2px 16px rgba(0,0,0,0.30); }
 label.lock-date { font-size: 22px; font-weight: 500; color: rgba(255,255,255,0.92); text-shadow: 0 1px 8px rgba(0,0,0,0.30); }
 label.lock-name { font-size: 15px; font-weight: 600; color: white; text-shadow: 0 1px 6px rgba(0,0,0,0.35); }
-.lock-pill { margin-top: 4px; border-radius: 999px; min-height: 28px; padding: 0 4px 0 12px; background: rgba(255,255,255,0.22); border: 1px solid rgba(255,255,255,0.30); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
-.lock-pill:focus-within { background: rgba(255,255,255,0.28); }
+.lock-pill { margin-top: 4px; border-radius: 999px; min-height: 28px; padding: 0 4px 0 12px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.30); box-shadow: 0 4px 16px rgba(0,0,0,0.18); }
+.lock-pill:focus-within { background: rgba(255,255,255,0.18); }
 entry.lock-field, entry.lock-field:focus, entry.lock-field:focus-within { background: none; border: none; outline: none; box-shadow: none; min-height: 0; padding: 0; margin: 0; color: white; caret-color: white; font-size: 13px; }
-entry.lock-field text placeholder { color: rgba(255,255,255,0.70); }
+entry.lock-field text placeholder { color: rgba(255,255,255,0.86); opacity: 1; }
 entry.lock-field image { color: rgba(255,255,255,0.70); }
 button.lock-submit { min-width: 20px; min-height: 20px; padding: 0; margin: 0; border-radius: 999px; border: none; box-shadow: none; background: rgba(255,255,255,0.30); color: white; }
 button.lock-submit label { font-size: 13px; font-weight: 600; margin-top: -1px; }
-.lock-screen.light .lock-scrim { background: linear-gradient(to bottom, rgba(30,20,70,0.30), rgba(30,20,70,0.16) 45%, rgba(30,20,70,0.34)); }
+/* Light: pale wallpaper, dark ink (WCAG AA measured in the goldens). */
+.lock-screen.light .lock-scrim { background: rgba(255,255,255,0.22); }
+.lock-screen.light label.lock-time { color: rgba(22,18,48,0.90); text-shadow: 0 1px 12px rgba(255,255,255,0.40); }
+.lock-screen.light label.lock-date,
+.lock-screen.light label.lock-name,
+.lock-screen.light label.lock-caption,
+.lock-screen.light label.lock-message { color: #1c1838; text-shadow: none; }
+.lock-screen.light .lock-pill { background: rgba(255,255,255,0.62); border: 1px solid rgba(255,255,255,0.85); box-shadow: 0 4px 16px rgba(40,30,90,0.16); }
+.lock-screen.light entry.lock-field { color: #1c1838; caret-color: #1c1838; }
+.lock-screen.light entry.lock-field text placeholder { color: rgba(28,24,56,0.72); }
+.lock-screen.light entry.lock-field image { color: rgba(28,24,56,0.60); }
+.lock-screen.light button.lock-submit { background: rgba(28,24,56,0.80); color: white; }
+.lock-screen.light button.lock-submit:disabled { background: rgba(28,24,56,0.18); color: rgba(255,255,255,0.85); }
+.lock-screen.light button.lock-round { background: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.85); color: #1c1838; }
+.lock-screen.light button.login-tile:hover { background: rgba(255,255,255,0.30); }
 button.lock-submit:disabled { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.45); }
 button.lock-submit:hover:not(:disabled) { background: rgba(255,255,255,0.45); }
-label.lock-message { color: white; font-size: 11px; min-height: 16px; text-shadow: 0 1px 6px rgba(0,0,0,0.40); }
+label.lock-message { color: white; font-size: 13px; font-weight: 500; min-height: 18px; text-shadow: 0 1px 6px rgba(0,0,0,0.40); }
 @keyframes shake { 0%, 100% { margin-left: 0; margin-right: 0; } 15%, 55% { margin-left: 20px; margin-right: 0; } 35%, 75% { margin-left: 0; margin-right: 20px; } 90% { margin-left: 6px; margin-right: 0; } }
 .lock-pill.shake { animation: shake 420ms ease-out 1; }
 button.login-tile { background: none; border: none; box-shadow: none; padding: 12px 16px; border-radius: 16px; }

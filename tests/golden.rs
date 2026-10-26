@@ -260,7 +260,10 @@ fn contrast_issues(win: &gtk::Window, tex: &gdk::Texture, classes: &[&str]) -> V
         let mut found = Vec::new();
         find_class(win.upcast_ref(), class, &mut found);
         for wd in found {
-            if wd.downcast_ref::<gtk::Label>().is_some_and(|l| l.label().is_empty()) {
+            if wd
+                .downcast_ref::<gtk::Label>()
+                .is_some_and(|l| l.label().is_empty())
+            {
                 continue;
             }
             let Some(r) = wd.compute_bounds(win) else {
