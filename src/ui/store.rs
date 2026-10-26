@@ -15,8 +15,6 @@ pub const PAGES: [&str; 6] = ["Discover", "Create", "Work", "Play", "Develop", "
 /// Machine facts the store reads (injected so goldens do not depend on the build host).
 #[derive(Clone, Debug)]
 pub struct Env {
-    /// Use installed theme icons (off in goldens: monograms are deterministic).
-    pub themed_icons: bool,
     /// XDG data dirs searched for `applications/<id>.desktop`.
     pub data_dirs: Vec<PathBuf>,
     /// Run `pkg search` for non-catalog results.
@@ -37,7 +35,6 @@ impl Env {
                 .map(PathBuf::from),
         );
         Env {
-            themed_icons: true,
             data_dirs: dirs,
             pkg_search: true,
         }
@@ -94,8 +91,8 @@ fn say(l: &gtk::Label, text: &str) {
     l.set_visible(!text.is_empty());
 }
 
-fn icon(sh: &Shared, a: &App, size: i32) -> gtk::Widget {
-    w::store_icon(a.icon, a.name, size, sh.env.themed_icons)
+fn icon(a: &App, size: i32) -> gtk::Widget {
+    w::store_icon(a.id, size)
 }
 
 /// Get -> install (Authenticate sheet when needed) -> Open; Open launches the .desktop file.
@@ -147,7 +144,7 @@ fn wire(
 }
 
 fn tile(sh: &Rc<Shared>, a: &'static App) -> gtk::Widget {
-    let t = w::AppTile::new(&icon(sh, a, w::ICON_L), a.name, a.summary);
+    let t = w::AppTile::new(&icon(a, w::ICON_L), a.name, a.summary);
     let t2 = t.clone();
     wire(
         sh,
@@ -161,7 +158,7 @@ fn tile(sh: &Rc<Shared>, a: &'static App) -> gtk::Widget {
 }
 
 fn pkg_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
-    let t = w::AppTile::new(&w::app_monogram(&h.name, w::ICON_L), &h.name, &h.summary);
+    let t = w::AppTile::new(&w::store_icon(&h.name, w::ICON_L), &h.name, &h.summary);
     let t2 = t.clone();
     wire(
         sh,
@@ -190,35 +187,43 @@ fn shelf(title: &str, g: &gtk::FlowBox) -> gtk::Box {
     b
 }
 
+/// Page banner for Discover (`None`) or a category, from `store::hero`.
+fn hero(sh: &Rc<Shared>, page: Option<Category>) -> Option<gtk::Widget> {
+    let h = store::hero(page);
+    let a = store::get(h.app)?;
+    let get = gtk::Button::with_label("Get");
+    get.add_css_class("get-button");
+    let card = w::hero_banner(
+        h.colors,
+        a.name,
+        h.headline,
+        h.subhead,
+        &icon(a, w::HERO_ICON),
+        &get,
+    );
+    let g2 = get.clone();
+    wire(
+        sh,
+        a.id.into(),
+        a.name.into(),
+        Some(a.desktop),
+        Rc::new(move |s| {
+            g2.set_sensitive(s != w::TileState::Installing);
+            g2.set_label(match s {
+                w::TileState::Get => "Get",
+                w::TileState::Installing => "Installing…",
+                w::TileState::Open => "Open",
+            });
+        }),
+        &get,
+    );
+    Some(card.upcast())
+}
+
 fn discover(sh: &Rc<Shared>) -> gtk::Box {
     let p = w::page("Discover");
-    if let Some(h) = store::get(store::HERO) {
-        let get = gtk::Button::with_label("Get");
-        get.add_css_class("get-button");
-        let card = w::hero_card(
-            &icon(sh, h, w::ICON_XL),
-            "Editors' Choice",
-            h.name,
-            "Model, sculpt, animate and render. The free 3D studio used for films and games.",
-            &get,
-        );
-        let g2 = get.clone();
-        wire(
-            sh,
-            h.id.into(),
-            h.name.into(),
-            Some(h.desktop),
-            Rc::new(move |s| {
-                g2.set_sensitive(s != w::TileState::Installing);
-                g2.set_label(match s {
-                    w::TileState::Get => "Get",
-                    w::TileState::Installing => "Installing…",
-                    w::TileState::Open => "Open",
-                });
-            }),
-            &get,
-        );
-        p.append(&card);
+    if let Some(h) = hero(sh, None) {
+        p.append(&h);
     }
     for (title, ids) in store::ROWS {
         let g = grid(
@@ -233,6 +238,9 @@ fn discover(sh: &Rc<Shared>) -> gtk::Box {
 
 fn category(sh: &Rc<Shared>, c: Category) -> gtk::Box {
     let p = w::page(c.name());
+    if let Some(h) = hero(sh, Some(c)) {
+        p.append(&h);
+    }
     p.append(&grid(store::in_category(c).map(|a| tile(sh, a))));
     p
 }

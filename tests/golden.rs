@@ -132,7 +132,6 @@ fn cases() -> Vec<Case> {
                     let s = ui::store::content(
                         Rc::new(shell::system::Fake),
                         ui::store::Env {
-                            themed_icons: false,
                             data_dirs: vec![],
                             pkg_search: false,
                         },
