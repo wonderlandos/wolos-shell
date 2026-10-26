@@ -89,6 +89,24 @@ pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>) {
         return;
     };
     let installed = Rc::new(std::cell::OnceCell::<Vec<crate::desktop::Entry>>::new());
+    let show = {
+        let (bar, installed) = (bar.clone(), installed.clone());
+        move |class: &str, title: &str| {
+            let inst = installed.get_or_init(crate::desktop::load_all);
+            bar.set_app(crate::apps::frontmost_name(
+                class,
+                title,
+                crate::apps::PINS,
+                inst,
+            ));
+        }
+    };
+    // Events only report changes: start from the window focused now.
+    if let Some((class, title)) =
+        hypr::request("j/activewindow").and_then(|j| hypr::parse_active(&j))
+    {
+        show(&class, &title);
+    }
     glib::spawn_future_local(async move {
         let Ok(conn) = gio::SocketClient::new()
             .connect_future(&gio::UnixSocketAddress::new(&path))
@@ -102,15 +120,7 @@ pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>) {
             .await
         {
             match hypr::parse_event(&line) {
-                Some(hypr::Event::ActiveWindow { class, title }) => {
-                    let inst = installed.get_or_init(crate::desktop::load_all);
-                    bar.set_app(crate::apps::frontmost_name(
-                        &class,
-                        &title,
-                        crate::apps::PINS,
-                        inst,
-                    ));
-                }
+                Some(hypr::Event::ActiveWindow { class, title }) => show(&class, &title),
                 Some(hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. }) => {
                     dock.set_running(&hypr::running_classes(&hypr::clients()));
                 }

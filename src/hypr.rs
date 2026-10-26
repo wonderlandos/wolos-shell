@@ -108,6 +108,13 @@ pub fn clients() -> Vec<Client> {
         .unwrap_or_default()
 }
 
+/// `j/activewindow` -> (class, title); ("", "") on the empty desktop (`{}`), None if unreadable.
+pub fn parse_active(json: &str) -> Option<(String, String)> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
+    Some((s("class"), s("title")))
+}
+
 /// Running classes, lowercase, for the dock's running dot.
 pub fn running_classes(clients: &[Client]) -> std::collections::HashSet<String> {
     clients.iter().map(|c| c.class.to_lowercase()).collect()
@@ -147,6 +154,23 @@ mod tests {
             })
         );
         assert_eq!(parse_event("garbage"), None);
+    }
+
+    /// Live: a restarted shell showed "Files" while a window was focused (no event until a change).
+    #[test]
+    fn parses_active_window() {
+        for (json, want) in [
+            (r#"{"class":"foot","title":"~"}"#, Some(("foot", "~"))),
+            ("{}", Some(("", ""))),
+            ("Invalid", None),
+        ] {
+            let got = parse_active(json);
+            assert_eq!(
+                got.as_ref().map(|(c, t)| (c.as_str(), t.as_str())),
+                want,
+                "{json}"
+            );
+        }
     }
 
     #[test]
