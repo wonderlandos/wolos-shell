@@ -296,9 +296,10 @@ button.overview-window-button:hover .overview-window { outline: 3px solid var(--
 /* ---- Screenshot toolbar ---- */
 .capture-bar { padding: 6px 8px; border-radius: 14px; margin: 24px 24px 64px 24px; }
 .capture-bar separator { margin: 8px 6px; background: var(--line); min-width: 1px; }
-button.capture-mode, button.capture-close, menubutton.capture-options > button { background: none; border: none; box-shadow: none; min-height: 32px; min-width: 36px; padding: 0 6px; border-radius: 8px; color: var(--text); }
+button.capture-mode, button.capture-close, menubutton.capture-options > button { background: none; border: none; box-shadow: none; min-height: 32px; min-width: 32px; padding: 0 4px; border-radius: 8px; color: var(--text); }
 button.capture-mode:hover, button.capture-close:hover, menubutton.capture-options > button:hover { background: var(--control); }
-button.capture-mode:checked { background: alpha(var(--accent), 0.16); }
+button.capture-mode:checked { background: alpha(var(--accent), 0.18); }
+button.capture-mode { min-width: 40px; }
 button.capture-mode:checked image { color: var(--accent); }
 button.capture-go { margin-left: 6px; min-height: 28px; padding: 0 14px; }
 .capture-thumb { border-radius: 10px; border: 4px solid white; margin: 0 24px 24px 0; box-shadow: 0 12px 32px rgba(0,0,0,0.35); }
