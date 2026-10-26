@@ -34,6 +34,9 @@ pub const SETUP_ROW: i32 = 36;
 pub const SETUP_ROWS: i32 = 6;
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
+/// Mission Control desktop thumbnail and window title line.
+pub const OVERVIEW_DESKTOP: (i32, i32) = (192, 108);
+pub const OVERVIEW_TITLE: i32 = 28;
 
 pub fn vbox(spacing: i32) -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Vertical, spacing)

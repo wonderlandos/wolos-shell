@@ -132,6 +132,38 @@ fn cases() -> Vec<Case> {
                 s.root.clone().upcast()
             }),
         },
+        Case {
+            name: "overview".into(),
+            size: (1024, 640),
+            class: "lock-window",
+            wallpaper: false,
+            build: Box::new(|| {
+                let c = |a: &str, class: &str, title: &str, ws: i64, size: [i32; 2]| {
+                    let mut c = shell::hypr::Client::new(a, class, title);
+                    c.workspace.id = ws;
+                    c.size = size;
+                    c
+                };
+                let clients = vec![
+                    c("0x1", "foot", "~/src/wolos — fish", 1, [900, 560]),
+                    c("0x2", "wol-files", "Documents", 1, [1100, 700]),
+                    c("0x3", "firefox", "WolOS — The friendly BSD", 1, [1280, 760]),
+                    c("0x4", "wol-mail", "Inbox", 1, [800, 600]),
+                    c("0x5", "wol-music", "Music", 2, [800, 600]),
+                    c("0x6", "wol-notes", "Notes", 3, [800, 600]),
+                ];
+                let desktops = shell::overview::desktops(&clients, 1);
+                let here = clients
+                    .iter()
+                    .filter(|c| c.workspace.id == 1)
+                    .map(|client| ui::overview::Window {
+                        client,
+                        thumb: None,
+                    })
+                    .collect();
+                ui::overview::content((1024, 640), &desktops, 1, here, |_| {}).0
+            }),
+        },
     ];
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
         for st in shell::setup::STEPS {

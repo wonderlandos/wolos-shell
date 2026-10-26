@@ -111,7 +111,7 @@ fn on_dark_change(owner: &impl IsA<gtk::Widget>, f: impl Fn() + 'static) {
 
 /// Blurred wallpaper, decoded off the main thread (synchronously in fixed-time golden mode) and cached;
 /// follows the light/dark preference.
-fn backdrop() -> gtk::Picture {
+pub(crate) fn backdrop() -> gtk::Picture {
     let pic = gtk::Picture::builder()
         .content_fit(gtk::ContentFit::Cover)
         .can_shrink(true)
