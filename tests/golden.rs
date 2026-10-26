@@ -185,10 +185,9 @@ fn cases() -> Vec<Case> {
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
-                let shot =
-                    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/overview-light.png");
-                let t = gdk::Texture::from_filename(&shot).expect("overview golden");
-                let th = ui::capture::thumbnail(&t, &shot);
+                let shot = Path::new(WALL);
+                let t = gdk::Texture::from_filename(shot).expect("wallpaper");
+                let th = ui::capture::thumbnail(&t, shot);
                 let b = w::vbox(0);
                 b.set_vexpand(true);
                 th.set_vexpand(true);
