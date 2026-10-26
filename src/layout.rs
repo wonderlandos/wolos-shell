@@ -25,6 +25,8 @@ pub struct Node {
     pub list_row: bool,
     /// Label whose text is ellipsized or cut.
     pub clipped_text: bool,
+    /// Must be allocated square (avatars are circles, never pills).
+    pub square: bool,
     pub children: Vec<Node>,
 }
 
@@ -67,6 +69,12 @@ fn walk(n: &Node, view: Option<Rect>, out: &mut Vec<Issue>) {
         out.push(Issue {
             path: n.path.clone(),
             message: format!("{} text is clipped", n.path),
+        });
+    }
+    if n.square && (n.rect.w - n.rect.h).abs() > TOLERANCE {
+        out.push(Issue {
+            path: n.path.clone(),
+            message: format!("{} is not square ({}x{} px)", n.path, n.rect.w, n.rect.h),
         });
     }
     if !n.clips {
@@ -117,6 +125,26 @@ mod tests {
             path: path.into(),
             rect: Rect { x, y, w, h },
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn square_widgets_must_be_square() {
+        for (w, h, bad) in [
+            (32, 32, false),
+            (33, 32, false),
+            (32, 52, true),
+            (48, 32, true),
+        ] {
+            let mut root = n("root", 0, 0, 100, 100);
+            let mut a = n("Label.avatar", 0, 0, w, h);
+            a.square = true;
+            root.children = vec![a];
+            let i = find(&root);
+            assert_eq!(!i.is_empty(), bad, "{w}x{h}: {i:?}");
+            if bad {
+                assert!(i[0].message.contains("not square"), "{}", i[0].message);
+            }
         }
     }
 
