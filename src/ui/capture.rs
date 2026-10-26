@@ -41,7 +41,7 @@ impl Toolbar {
                 row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
             }
             let b = gtk::ToggleButton::builder()
-                .child(&w::icon(m.icon(), w::ICON))
+                .child(&w::icon(m.icon(), w::ICON_TOOL))
                 .tooltip_text(m.label())
                 .active(m == mode)
                 .build();

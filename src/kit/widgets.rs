@@ -12,6 +12,8 @@ pub const S6: i32 = 24;
 pub const S8: i32 = 32;
 /// Icon sizes (HIG §2): rows/toolbar, file and app tiles.
 pub const ICON: i32 = 16;
+/// Toolbar glyphs (screenshot bar).
+pub const ICON_TOOL: i32 = 18;
 pub const ICON_M: i32 = 32;
 pub const ICON_L: i32 = 48;
 pub const ICON_XL: i32 = 64;
