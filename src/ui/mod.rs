@@ -25,23 +25,40 @@ pub fn window(app: &gtk::Application, class: &str, spec: surface::Spec) -> gtk::
     w
 }
 
+/// `WOL_SHELL_TIMING=1`: startup stage times on stderr.
+fn mark(t0: std::time::Instant, stage: &str) {
+    if std::env::var_os("WOL_SHELL_TIMING").is_some() {
+        eprintln!("wol-shell: {stage} {:?}", t0.elapsed());
+    }
+}
+
 pub fn run_shell() -> glib::ExitCode {
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder()
         .application_id("org.wolos.shell")
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
+    app.connect_startup(move |_| mark(t0, "startup"));
     app.connect_activate(move |app| {
+        mark(t0, "activate");
         kit::style::install("");
+        mark(t0, "css");
+        let _ = gtk::IconTheme::for_display(&gtk::gdk::Display::default().unwrap())
+            .has_icon("wolos-glyph-symbolic");
+        mark(t0, "icontheme");
         let sys = crate::system::default_system();
         let panels: Panels = Default::default();
         let (bar_win, bar) = menubar::build(app, &*sys);
+        mark(t0, "menubar");
         let (dock_win, dock) = dock::build(app);
+        mark(t0, "dock");
         kit::snapshot_on_map(&bar_win, "menubar");
         kit::snapshot_on_map(&dock_win, "dock");
         bar_win.connect_map(move |_| {
-            if std::env::var_os("WOL_SHELL_TIMING").is_some() {
-                eprintln!("wol-shell: first map {:?}", t0.elapsed());
+            mark(t0, "first map");
+            // WOL_SHELL_TIMING=exit: measure startup only (10-run median script).
+            if std::env::var("WOL_SHELL_TIMING").as_deref() == Ok("exit") {
+                std::process::exit(0);
             }
         });
         bar_win.present();
