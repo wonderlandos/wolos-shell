@@ -365,7 +365,7 @@ impl System for Fake {
         vec![
             Output {
                 id: "speakers".into(),
-                name: "MacBook Speakers".into(),
+                name: "Built-in Speakers".into(),
                 default: true,
             },
             Output {
@@ -378,7 +378,7 @@ impl System for Fake {
     fn monitors(&self) -> Vec<Monitor> {
         vec![Monitor {
             name: "eDP-1".into(),
-            description: "Built-in Retina Display".into(),
+            description: "Built-in Display".into(),
             width: 2560,
             height: 1600,
             refresh: 60.0,
