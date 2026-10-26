@@ -52,7 +52,9 @@ pub fn content(
         let pick = on_pick.clone();
         b.connect_clicked(move |_| pick(format!("workspace {id}")));
         d.append(&b);
-        d.append(&w::centered(&format!("Desktop {id}"), "overview-caption"));
+        let cap = w::centered(&format!("Desktop {id}"), "overview-caption");
+        cap.set_halign(gtk::Align::Center);
+        d.append(&cap);
         strip.append(&d);
     }
     col.append(&strip);
