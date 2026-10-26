@@ -123,7 +123,7 @@ fn cases() -> Vec<Case> {
                             hostname: "wonderland".into(),
                             users: vec!["alice".into(), "dinah".into()],
                             os: "FreeBSD 15.1-RELEASE".into(),
-                            processor: "Apple M2 (8 cores)".into(),
+                            processor: "Intel Core i5 (8 cores)".into(),
                             memory: "16 GB".into(),
                         },
                     );
@@ -169,6 +169,86 @@ fn render(win: &gtk::Window) -> gdk::Texture {
     );
     r.unrealize();
     t
+}
+
+/// Text that must meet WCAG AA (4.5:1) against what is behind it, measured from the render.
+fn contrast_classes(case: &str) -> &'static [&'static str] {
+    if case.starts_with("lock") || case.starts_with("login") || case.starts_with("setup") {
+        &[
+            "lock-field",
+            "lock-message",
+            "lock-name",
+            "lock-caption",
+            "lock-date",
+        ]
+    } else {
+        &[]
+    }
+}
+
+fn find_class(w: &gtk::Widget, class: &str, out: &mut Vec<gtk::Widget>) {
+    if w.is_drawable() && w.has_css_class(class) {
+        out.push(w.clone());
+    }
+    let mut c = w.first_child();
+    while let Some(ch) = c {
+        find_class(&ch, class, out);
+        c = ch.next_sibling();
+    }
+}
+
+fn luminance(p: &[u8]) -> f64 {
+    let ch = |v: u8| {
+        let c = v as f64 / 255.0;
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * ch(p[0]) + 0.7152 * ch(p[1]) + 0.0722 * ch(p[2])
+}
+
+/// Contrast between the widget's background (median pixel) and its most extreme pixel (glyph core).
+fn contrast(px: &(i32, i32, Vec<u8>), r: &gtk::graphene::Rect) -> f64 {
+    let (w, h, ref data) = *px;
+    let (x0, y0) = (r.x().max(0.0) as i32, r.y().max(0.0) as i32);
+    let (x1, y1) = (
+        ((r.x() + r.width()) as i32).min(w),
+        ((r.y() + r.height()) as i32).min(h),
+    );
+    let mut l: Vec<f64> = (y0..y1)
+        .flat_map(|y| (x0..x1).map(move |x| (y * w + x) as usize * 4))
+        .map(|i| luminance(&data[i..i + 3]))
+        .collect();
+    if l.is_empty() {
+        return 21.0;
+    }
+    l.sort_by(f64::total_cmp);
+    let (lo, mid, hi) = (l[0], l[l.len() / 2], l[l.len() - 1]);
+    ((hi + 0.05) / (mid + 0.05)).max((mid + 0.05) / (lo + 0.05))
+}
+
+fn contrast_issues(win: &gtk::Window, tex: &gdk::Texture, classes: &[&str]) -> Vec<String> {
+    let px = pixels(tex);
+    let mut out = Vec::new();
+    for class in classes {
+        let mut found = Vec::new();
+        find_class(win.upcast_ref(), class, &mut found);
+        for wd in found {
+            if wd.downcast_ref::<gtk::Label>().is_some_and(|l| l.label().is_empty()) {
+                continue;
+            }
+            let Some(r) = wd.compute_bounds(win) else {
+                continue;
+            };
+            let c = contrast(&px, &r);
+            if c < 4.5 {
+                out.push(format!("{class}: contrast {c:.2}:1 < 4.5:1"));
+            }
+        }
+    }
+    out
 }
 
 fn pixels(t: &gdk::Texture) -> (i32, i32, Vec<u8>) {
@@ -301,6 +381,7 @@ fn main() {
                 ));
             }
             let tex = render(&win);
+            issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             let png = out.join(format!("{name}.png"));
             tex.save_to_png(&png).unwrap();
             let gold = golden.join(format!("{name}.png"));
