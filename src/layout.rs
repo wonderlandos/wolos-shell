@@ -36,6 +36,14 @@ pub fn find(root: &Node) -> Vec<Issue> {
     out
 }
 
+/// `find` plus the root against the window `frame`: content the window cuts off is never scrolled to.
+pub fn find_in(frame: Rect, root: &Node) -> Vec<Issue> {
+    let mut out = Vec::new();
+    overflow(frame, root, &mut out);
+    walk(root, &mut out);
+    out
+}
+
 fn walk(n: &Node, out: &mut Vec<Issue>) {
     if n.clipped_text {
         out.push(Issue {
@@ -123,6 +131,21 @@ mod tests {
         root.clips = true;
         root.children = vec![n("long", 0, 0, 100, 400)];
         assert!(find(&root).is_empty());
+    }
+
+    #[test]
+    fn content_cut_by_the_window_is_reported() {
+        let frame = Rect {
+            x: 0,
+            y: 0,
+            w: 480,
+            h: 360,
+        };
+        let root = n("Box.app-window", 0, 0, 480, 520);
+        let i = find_in(frame, &root);
+        assert_eq!(i.len(), 1);
+        assert!(i[0].message.contains("at the bottom"), "{}", i[0].message);
+        assert!(find_in(frame, &n("Box.app-window", 0, 0, 480, 360)).is_empty());
     }
 
     #[test]

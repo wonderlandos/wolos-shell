@@ -19,6 +19,20 @@ pub fn icon_file(name: &str) -> Option<std::path::PathBuf> {
         .find(|p| p.exists())
 }
 
+/// Installed store icons (`image/build.sh`), else the repo tree (dev, tests).
+pub const STORE_ICON_DIRS: [&str; 2] = [
+    "/usr/local/share/wolos/store-icons",
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/store"),
+];
+
+/// Official icon for a store catalog id.
+pub fn store_icon_file(id: &str) -> Option<std::path::PathBuf> {
+    STORE_ICON_DIRS
+        .iter()
+        .map(|d| std::path::Path::new(d).join(format!("{id}.svg")))
+        .find(|p| p.exists())
+}
+
 use gtk::glib;
 
 /// Fixed time for golden renders (`WOL_FAKE_NOW=1`): Mon 26 Oct 14:05.

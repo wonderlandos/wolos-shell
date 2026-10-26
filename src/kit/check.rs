@@ -65,7 +65,13 @@ pub fn issues(win: &gtk::Window) -> Vec<layout::Issue> {
     let Some(child) = win.child() else {
         return Vec::new();
     };
-    layout::find(&tree(&child, root, ""))
+    let frame = Rect {
+        x: 0,
+        y: 0,
+        w: win.width(),
+        h: win.height(),
+    };
+    layout::find_in(frame, &tree(&child, root, ""))
 }
 
 /// After the first layout: log issues; exit 1 when `WOL_LAYOUT_CHECK=exit`.
