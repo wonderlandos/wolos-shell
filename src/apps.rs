@@ -87,31 +87,48 @@ pub fn is_running(p: &Pin, classes: &std::collections::HashSet<String>) -> bool 
             .is_some_and(|e| classes.contains(&program(e).to_lowercase()))
 }
 
-/// Pin name, else installed .desktop Name, else window title, else class; empty class = desktop.
-pub fn frontmost_name(class: &str, title: &str, pins: &[Pin], installed: &[Entry]) -> String {
-    if class.is_empty() && title.is_empty() {
-        return DESKTOP_NAME.into();
-    }
+fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
     let lc = class.to_lowercase();
-    if let Some(p) = pins
-        .iter()
+    pins.iter()
         .find(|p| p.id == lc || p.exec.first().is_some_and(|e| program(e) == lc))
-    {
-        return p.name.into();
-    }
-    if let Some(e) = installed.iter().find(|e| {
+}
+
+fn entry_for<'a>(class: &str, installed: &'a [Entry]) -> Option<&'a Entry> {
+    installed.iter().find(|e| {
         e.id.trim_end_matches(".desktop")
             .eq_ignore_ascii_case(class)
             || e.exec
                 .first()
                 .is_some_and(|x| program(x).eq_ignore_ascii_case(class))
-    }) {
+    })
+}
+
+/// Pin name, else installed .desktop Name, else window title, else class; empty class = desktop.
+pub fn frontmost_name(class: &str, title: &str, pins: &[Pin], installed: &[Entry]) -> String {
+    if class.is_empty() && title.is_empty() {
+        return DESKTOP_NAME.into();
+    }
+    if let Some(p) = pin_for(class, pins) {
+        return p.name.into();
+    }
+    if let Some(e) = entry_for(class, installed) {
         return e.name.clone();
     }
     if class.is_empty() {
         title.into()
     } else {
         class.into()
+    }
+}
+
+/// Pin icon, else the installed .desktop Icon, else the class itself (icon theme lookup).
+pub fn icon_for(class: &str, pins: &[Pin], installed: &[Entry]) -> String {
+    if let Some(p) = pin_for(class, pins) {
+        return p.icon.into();
+    }
+    match entry_for(class, installed) {
+        Some(e) if !e.icon.is_empty() => e.icon.clone(),
+        _ => class.to_lowercase(),
     }
 }
 
@@ -136,6 +153,24 @@ mod tests {
             ("weird", "T", "weird"),
         ] {
             assert_eq!(frontmost_name(c, t, PINS, &installed), w, "{c}");
+        }
+    }
+
+    #[test]
+    fn icons_by_class() {
+        let installed = [Entry {
+            id: "org.gnome.Calculator.desktop".into(),
+            name: "Calculator".into(),
+            exec: vec!["gnome-calculator".into()],
+            icon: "accessories-calculator".into(),
+        }];
+        for (c, w) in [
+            ("foot", "wolos-terminal"),
+            ("Firefox", "wolos-browser"),
+            ("gnome-calculator", "accessories-calculator"),
+            ("weird", "weird"),
+        ] {
+            assert_eq!(icon_for(c, PINS, &installed), w, "{c}");
         }
     }
 

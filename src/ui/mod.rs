@@ -10,6 +10,7 @@ pub mod settings;
 pub mod setup;
 pub mod spotlight;
 pub mod store;
+pub mod switcher;
 
 use crate::kit::{self, surface};
 use gtk::{glib, prelude::*};
@@ -76,10 +77,13 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("osd", osd.window.clone());
             p.insert("clipboard", panels::clipboard(&app));
             p.insert("session", panels::session(&app));
-            p.insert("switcher", panels::switcher(&app));
             p.insert("notifications", notify::start(&app));
             drop(p);
-            ipc::shell_socket(panels, osd, sys);
+            let sw = switcher::Switcher::build(&app);
+            let handlers: ipc::Handlers = vec![Rc::new(move |c: &crate::protocol::Command| {
+                sw.command(c.verb, &c.target)
+            })];
+            ipc::shell_socket(panels, handlers, osd, sys);
             apply_setup();
         });
     });
