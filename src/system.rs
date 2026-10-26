@@ -25,6 +25,8 @@ pub enum Action {
         name: String,
         full_name: String,
         admin: bool,
+        /// New account password: reaches wol-admind on the socket, then `pw` on stdin.
+        password: String,
     },
     PkgUpgrade,
 }
@@ -485,7 +487,8 @@ impl Inner {
                 name,
                 full_name,
                 admin,
-            } => c.add_user(name, full_name, *admin, &pw),
+                password,
+            } => c.add_user(name, full_name, *admin, password, &pw),
             Action::PkgUpgrade => c.pkg_upgrade(&pw),
             Action::MediaToggle | Action::Power(_) => {
                 Err(wol_core::controls::ControlError::Unavailable)
@@ -803,7 +806,8 @@ mod tests {
             sys.spawn(Action::UserAdd {
                 name: "dinah".into(),
                 full_name: "Dinah".into(),
-                admin: false
+                admin: false,
+                password: "n3w-passw0rd".into(),
             })
             .recv_blocking(),
             Ok(Err(ActionError::Unavailable)),

@@ -926,6 +926,8 @@ fn accounts(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Box {
 
     let full = w::text_field("Full name");
     let short = w::text_field("Account name");
+    let pass = w::password_field("Password");
+    let verify = w::password_field("Verify");
     let admin = w::toggle(false, |_| {});
     {
         let s = short.clone();
@@ -935,6 +937,8 @@ fn accounts(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Box {
     body.append(&w::label("New account", "title"));
     body.append(&full);
     body.append(&short);
+    body.append(&pass);
+    body.append(&verify);
     body.append(&w::list_row(
         "",
         "Allow this user to administer this computer",
@@ -950,6 +954,7 @@ fn accounts(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Box {
         }));
     }
     {
+        let (pass, verify) = (pass.clone(), verify.clone());
         let (ctx, r, full, short, admin, st, list) = (
             ctx.clone(),
             sheet.clone(),
@@ -964,6 +969,12 @@ fn accounts(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Box {
             if !wol_core::settings::users::is_valid_name(&name) {
                 return say(&st, "Account names use lowercase letters, digits, - and _.");
             }
+            let password = pass.text().to_string();
+            if let Some(e) = password_problem(&password, &verify.text()) {
+                return say(&st, e);
+            }
+            pass.set_text("");
+            verify.set_text("");
             r.set_reveal_child(false);
             say(&st, &format!("Creating “{name}”…"));
             let (st, list, n2, f2) = (st.clone(), list.clone(), name.clone(), full_name.clone());
@@ -972,6 +983,7 @@ fn accounts(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Box {
                     name,
                     full_name,
                     admin: admin.is_active(),
+                    password,
                 },
                 Rc::new(move |res| match res {
                     Ok(()) => {
@@ -999,6 +1011,17 @@ fn accounts(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Box {
     p.append(&bar);
     p.append(&status);
     p
+}
+
+/// Inline error for the Add User password fields, None when acceptable.
+pub fn password_problem(password: &str, verify: &str) -> Option<&'static str> {
+    if !wol_core::settings::users::is_valid_password(password) {
+        Some("Use a password of at least 8 characters.")
+    } else if password != verify {
+        Some("The passwords do not match.")
+    } else {
+        None
+    }
 }
 
 // ---- Software Update ----
@@ -1232,6 +1255,19 @@ mod tests {
         ] {
             assert_eq!(account_name(full), want, "{full}");
         }
+    }
+
+    #[test]
+    fn add_user_password_rules() {
+        assert_eq!(
+            password_problem("", ""),
+            Some("Use a password of at least 8 characters.")
+        );
+        assert_eq!(
+            password_problem("longenough", "longenouhg"),
+            Some("The passwords do not match.")
+        );
+        assert_eq!(password_problem("longenough", "longenough"), None);
     }
 
     #[test]
