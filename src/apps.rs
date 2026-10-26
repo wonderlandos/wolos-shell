@@ -9,7 +9,9 @@ pub struct Pin {
     pub exec: &'static [&'static str],
 }
 
-pub const DESKTOP_NAME: &str = "Files";
+/// No focused window: no app name. WolOS has no resident Finder; naming Files would claim
+/// an app that is not running and offer its menu.
+pub const DESKTOP_NAME: &str = "";
 
 /// Default dock (WolOS design icons).
 pub const PINS: &[Pin] = &[
@@ -160,7 +162,7 @@ mod tests {
             icon: String::new(),
         }];
         for (c, t, w) in [
-            ("", "", "Files"),
+            ("", "", ""), // no focused window: no app name (no resident Finder)
             ("foot", "~", "Terminal"),
             ("org.gnome.Calculator", "x", "Calculator"),
             ("gnome-calculator", "", "Calculator"),

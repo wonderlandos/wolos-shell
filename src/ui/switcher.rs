@@ -40,9 +40,6 @@ impl Strip {
                 (tile, name)
             })
             .collect();
-        if apps.is_empty() {
-            row.append(&w::label("No open windows", "secondary"));
-        }
         let s = Strip { root, tiles };
         s.select(selected);
         s
@@ -130,7 +127,11 @@ impl Switcher {
     fn run(&self, op: Op) {
         match op {
             Op::Open => {
-                let apps = switcher::apps(&crate::hypr::clients(), &crate::desktop::load_all());
+                let reply = crate::hypr::request("j/clients");
+                let Some(apps) = switcher::to_show(reply.as_deref(), &crate::desktop::load_all())
+                else {
+                    return; // no compositor answer or nothing open: never guess
+                };
                 let cycle = Cycle::open(apps.len());
                 let strip = Strip::new(&apps, cycle.index);
                 self.window.set_child(Some(&strip.root));
