@@ -7,6 +7,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// The strip, also used by the goldens.
+/// Unmap round trip before focusing (Hyprland refocuses on layer unmap).
+const FOCUS_AFTER_UNMAP: std::time::Duration = std::time::Duration::from_millis(60);
+
 pub struct Strip {
     pub root: gtk::Box,
     tiles: Vec<(gtk::Box, gtk::Label)>,
@@ -145,13 +148,19 @@ impl Switcher {
                 }
             }
             Op::Commit => {
-                if let Some(a) = self.apps.borrow().get(self.cycle.get().index) {
-                    let _ = crate::hypr::request(&format!(
-                        "dispatch focuswindow address:{}",
-                        a.address
-                    ));
+                let steps = switcher::commit(self.apps.borrow().get(self.cycle.get().index));
+                for step in steps {
+                    match step {
+                        switcher::Step::Hide => self.window.set_visible(false),
+                        // After the compositor has unmapped the layer (and refocused).
+                        switcher::Step::Focus(arg) => {
+                            glib::timeout_add_local_once(FOCUS_AFTER_UNMAP, move || {
+                                let _ =
+                                    crate::hypr::request(&format!("dispatch focuswindow {arg}"));
+                            });
+                        }
+                    }
                 }
-                self.window.set_visible(false);
             }
             Op::None => {}
         }

@@ -63,6 +63,24 @@ impl Cycle {
     }
 }
 
+/// Committing a selection, in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    Hide,
+    /// Hyprland `focuswindow` dispatch argument.
+    Focus(String),
+}
+
+/// Hide first: Hyprland hands focus back to the previous window when a keyboard-exclusive
+/// layer unmaps, which would undo a focus sent before the hide.
+pub fn commit(selected: Option<&App>) -> Vec<Step> {
+    let mut v = vec![Step::Hide];
+    if let Some(a) = selected {
+        v.push(Step::Focus(format!("address:{}", a.address)));
+    }
+    v
+}
+
 /// What a shell-socket command does to the switcher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
@@ -133,6 +151,22 @@ mod tests {
             );
         }
         assert_eq!(Cycle::open(3).prev().prev().index, 2);
+    }
+
+    /// Live Hyprland 0.56: releasing Super left the old window focused.
+    #[test]
+    fn commit_hides_before_focusing() {
+        let a = App {
+            class: "foot".into(),
+            name: "Terminal".into(),
+            icon: "wolos-terminal".into(),
+            address: "0x1".into(),
+        };
+        assert_eq!(
+            commit(Some(&a)),
+            [Step::Hide, Step::Focus("address:0x1".into())]
+        );
+        assert_eq!(commit(None), [Step::Hide]);
     }
 
     #[test]

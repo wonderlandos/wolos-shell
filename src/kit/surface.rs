@@ -16,6 +16,17 @@ pub enum Keyboard {
     Exclusive,
 }
 
+/// How a surface treats other surfaces' exclusive zones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Zone {
+    /// Reserves its own size (menu bar, dock).
+    Reserve,
+    /// Placed inside what others reserve.
+    Respect,
+    /// Spans the whole output (wallpaper, Mission Control).
+    Ignore,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Spec {
     /// Layer namespace; the compositor's blur rules match `wol-menubar`, `wol-dock`, `wol-panel-*`.
@@ -28,6 +39,13 @@ pub struct Spec {
 }
 
 impl Spec {
+    pub fn zone(&self) -> Zone {
+        match (self.exclusive, self.anchor) {
+            (true, _) => Zone::Reserve,
+            (false, [true, true, true, true]) => Zone::Ignore,
+            _ => Zone::Respect,
+        }
+    }
     pub const fn menubar() -> Self {
         Spec {
             namespace: "wol-menubar",
@@ -86,8 +104,10 @@ pub fn place(w: &impl IsA<gtk::Window>, s: Spec) {
     {
         w.set_anchor(e, on);
     }
-    if s.exclusive {
-        w.auto_exclusive_zone_enable();
+    match s.zone() {
+        Zone::Reserve => w.auto_exclusive_zone_enable(),
+        Zone::Ignore => w.set_exclusive_zone(-1),
+        Zone::Respect => {}
     }
     w.set_keyboard_mode(match s.keyboard {
         Keyboard::None => KeyboardMode::None,
@@ -140,5 +160,25 @@ mod tests {
         assert_eq!(Spec::dock().namespace, "wol-dock");
         assert!(Spec::menubar().exclusive && Spec::dock().exclusive);
         assert_eq!(Spec::wallpaper().layer, Layer::Background);
+    }
+
+    /// Live Hyprland: the wallpaper stopped at the menu bar and dock zones (black strips).
+    #[test]
+    fn full_screen_surfaces_ignore_reserved_zones() {
+        for (spec, want) in [
+            (Spec::menubar(), Zone::Reserve),
+            (Spec::dock(), Zone::Reserve),
+            (Spec::wallpaper(), Zone::Ignore),
+            (
+                Spec::panel("wol-panel-overview", [true; 4], Keyboard::Exclusive),
+                Zone::Ignore,
+            ),
+            (
+                Spec::panel("wol-panel-switcher", [false; 4], Keyboard::Exclusive),
+                Zone::Respect,
+            ),
+        ] {
+            assert_eq!(spec.zone(), want, "{}", spec.namespace);
+        }
     }
 }
