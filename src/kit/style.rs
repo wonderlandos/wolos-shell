@@ -114,6 +114,7 @@ fn icons(display: &gdk::Display) {
     for p in [
         "/usr/local/share/wol/icons",
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/apps"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/symbolic"),
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/brand"),
     ] {
         if std::path::Path::new(p).is_dir() {
