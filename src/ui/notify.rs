@@ -4,9 +4,16 @@ use crate::kit::{
     widgets as w,
 };
 use gtk::{glib, prelude::*};
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use zbus::object_server::SignalEmitter;
 use zbus::zvariant::OwnedValue;
+
+const PATH: &str = "/org/freedesktop/Notifications";
+const NAME: &str = "org.freedesktop.Notifications";
 
 #[derive(Clone, Debug)]
 pub struct Note {
@@ -19,9 +26,72 @@ pub struct Note {
     pub timeout_ms: i32,
 }
 
+/// Server -> UI.
+#[derive(Clone, Debug)]
+pub enum Event {
+    Show(Note),
+    /// CloseNotification from a client: drop the banner (signal already sent).
+    Close(u32),
+}
+
+/// NotificationClosed reasons (Desktop Notifications spec 1.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CloseReason {
+    Expired = 1,
+    Dismissed = 2,
+    Closed = 3,
+}
+
+type Open = Arc<Mutex<HashSet<u32>>>;
+
+/// Takes `id` out of the open set; true when it was open (signal it exactly once).
+fn take(open: &Open, id: u32) -> bool {
+    open.lock().map(|mut o| o.remove(&id)).unwrap_or(false)
+}
+
 struct Server {
-    tx: async_channel::Sender<Note>,
+    tx: async_channel::Sender<Event>,
     next: AtomicU32,
+    open: Open,
+}
+
+/// The live bus connection: kept for the process lifetime to emit NotificationClosed.
+#[derive(Clone)]
+pub struct Bus {
+    conn: zbus::Connection,
+    open: Open,
+}
+
+impl Bus {
+    /// Owns `org.freedesktop.Notifications` on `address` (None: session bus).
+    pub async fn serve(
+        address: Option<&str>,
+        tx: async_channel::Sender<Event>,
+    ) -> zbus::Result<Bus> {
+        let open = Open::default();
+        let server = Server {
+            tx,
+            next: AtomicU32::new(1),
+            open: open.clone(),
+        };
+        let b = match address {
+            Some(a) => zbus::connection::Builder::address(a)?,
+            None => zbus::connection::Builder::session()?,
+        };
+        let conn = b.name(NAME)?.serve_at(PATH, server)?.build().await?;
+        Ok(Bus { conn, open })
+    }
+
+    /// Emits NotificationClosed once per notification; false when it was already closed.
+    pub async fn close(&self, id: u32, reason: CloseReason) -> zbus::Result<bool> {
+        if !take(&self.open, id) {
+            return Ok(false);
+        }
+        let e = SignalEmitter::new(&self.conn, PATH)?;
+        Server::notification_closed(&e, id, reason as u32).await?;
+        Ok(true)
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
@@ -44,7 +114,10 @@ impl Server {
             self.next.fetch_add(1, Ordering::Relaxed)
         };
         let critical = hints.get("urgency").and_then(|v| u8::try_from(v).ok()) == Some(2);
-        let _ = self.tx.try_send(Note {
+        if let Ok(mut o) = self.open.lock() {
+            o.insert(id);
+        }
+        let _ = self.tx.try_send(Event::Show(Note {
             id,
             app: app_name,
             icon: app_icon,
@@ -52,10 +125,22 @@ impl Server {
             body,
             critical,
             timeout_ms: expire_timeout,
-        });
+        }));
         id
     }
-    fn close_notification(&self, _id: u32) {}
+    async fn close_notification(
+        &self,
+        id: u32,
+        #[zbus(signal_emitter)] e: SignalEmitter<'_>,
+    ) -> zbus::fdo::Result<()> {
+        if take(&self.open, id) {
+            Self::notification_closed(&e, id, CloseReason::Closed as u32).await?;
+            let _ = self.tx.try_send(Event::Close(id));
+        }
+        Ok(())
+    }
+    #[zbus(signal)]
+    async fn notification_closed(e: &SignalEmitter<'_>, id: u32, reason: u32) -> zbus::Result<()>;
     fn get_capabilities(&self) -> Vec<String> {
         vec!["body".into(), "persistence".into()]
     }
@@ -109,25 +194,26 @@ fn card(n: &Note) -> gtk::Box {
 
 /// Starts the D-Bus server; returns the Notification Center panel.
 pub fn start(app: &gtk::Application) -> gtk::Window {
-    let (tx, rx) = async_channel::unbounded::<Note>();
+    let (tx, rx) = async_channel::unbounded::<Event>();
+    let bus: Rc<std::cell::OnceCell<Bus>> = Default::default();
+    let b2 = bus.clone();
     glib::spawn_future_local(async move {
-        let server = Server {
-            tx,
-            next: AtomicU32::new(1),
-        };
-        let built = async {
-            zbus::connection::Builder::session()?
-                .name("org.freedesktop.Notifications")?
-                .serve_at("/org/freedesktop/Notifications", server)?
-                .build()
-                .await
-        }
-        .await;
-        match built {
-            Ok(c) => std::mem::forget(c),
+        match Bus::serve(None, tx).await {
+            Ok(b) => {
+                let _ = b2.set(b);
+            }
             Err(e) => eprintln!("wol-shell: notifications: {e}"),
         }
     });
+    let closed = move |id: u32, reason: CloseReason| {
+        if let Some(b) = bus.get().cloned() {
+            glib::spawn_future_local(async move {
+                if let Err(e) = b.close(id, reason).await {
+                    eprintln!("wol-shell: NotificationClosed: {e}");
+                }
+            });
+        }
+    };
 
     let banners = super::window(
         app,
@@ -163,25 +249,72 @@ pub fn start(app: &gtk::Application) -> gtk::Window {
     center.set_child(Some(&g));
 
     glib::spawn_future_local(async move {
-        while let Ok(n) = rx.recv().await {
+        // Banners on screen by id; entries leave on dismiss, expiry, close or replacement.
+        let shown: Rc<RefCell<HashMap<u32, gtk::Box>>> = Default::default();
+        let forget = |shown: &RefCell<HashMap<u32, gtk::Box>>, id: u32, c: &gtk::Box| {
+            let mut m = shown.borrow_mut();
+            if m.get(&id) == Some(c) {
+                m.remove(&id);
+            }
+        };
+        let hide = |stack: &gtk::Box, banners: &gtk::ApplicationWindow, c: &gtk::Box| {
+            if c.parent().is_some() {
+                stack.remove(c);
+            }
+            if stack.first_child().is_none() {
+                banners.set_visible(false);
+            }
+        };
+        while let Ok(ev) = rx.recv().await {
+            let n = match ev {
+                Event::Show(n) => n,
+                Event::Close(id) => {
+                    if let Some(c) = shown.borrow_mut().remove(&id) {
+                        hide(&stack, &banners, &c);
+                    }
+                    continue;
+                }
+            };
+            let old = shown.borrow_mut().remove(&n.id);
+            if let Some(old) = old {
+                hide(&stack, &banners, &old);
+            }
             center_list.prepend(&card(&n));
             let c = card(&n);
             let click = gtk::GestureClick::new();
-            let (s2, c2) = (stack.clone(), c.clone());
-            click.connect_released(move |_, _, _, _| s2.remove(&c2));
+            let (s2, b2, c2, closed2, id, sh) = (
+                stack.clone(),
+                banners.clone(),
+                c.clone(),
+                closed.clone(),
+                n.id,
+                shown.clone(),
+            );
+            click.connect_released(move |_, _, _, _| {
+                forget(&sh, id, &c2);
+                hide(&s2, &b2, &c2);
+                closed2(id, CloseReason::Dismissed);
+            });
             c.add_controller(click);
             stack.append(&c);
+            shown.borrow_mut().insert(n.id, c.clone());
             banners.set_visible(true);
             if let Some(ms) = banner_ms(&n) {
-                let (stack, banners) = (stack.clone(), banners.clone());
+                let (stack, banners, closed, id, sh) = (
+                    stack.clone(),
+                    banners.clone(),
+                    closed.clone(),
+                    n.id,
+                    shown.clone(),
+                );
                 glib::timeout_add_local_once(
                     std::time::Duration::from_millis(ms as u64),
                     move || {
+                        // Only the banner that is still showing expires (a replacement has its own timer).
                         if c.parent().is_some() {
-                            stack.remove(&c);
-                        }
-                        if stack.first_child().is_none() {
-                            banners.set_visible(false);
+                            forget(&sh, id, &c);
+                            hide(&stack, &banners, &c);
+                            closed(id, CloseReason::Expired);
                         }
                     },
                 );
