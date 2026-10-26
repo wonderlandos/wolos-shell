@@ -59,6 +59,7 @@ pub fn tree(w: &gtk::Widget, root: &gtk::Widget, parent: &str) -> Node {
         viewport: w.is::<gtk::ScrolledWindow>() && w.has_css_class("whole-rows"),
         list_row: w.has_css_class("list-row"),
         clipped_text,
+        square: w.has_css_class("avatar"),
         children,
     }
 }

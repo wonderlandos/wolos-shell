@@ -763,8 +763,10 @@ pub fn avatar(name: &str, size: i32) -> gtk::Label {
         48.. => "avatar-l",
         _ => "avatar-s",
     });
+    // Fixed square, centred both ways: a stretched label draws a pill, not a circle.
     l.set_size_request(size, size);
     l.set_halign(gtk::Align::Center);
+    l.set_valign(gtk::Align::Center);
     l
 }
 pub const AVATAR_L: i32 = 48;
