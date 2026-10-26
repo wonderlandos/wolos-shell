@@ -134,7 +134,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "overview".into(),
-            size: (1024, 640),
+            size: (1280, 800),
             class: "lock-window",
             wallpaper: false,
             build: Box::new(|| {
@@ -161,7 +161,7 @@ fn cases() -> Vec<Case> {
                         thumb: None,
                     })
                     .collect();
-                ui::overview::content((1024, 640), &desktops, 1, here, |_| {}).0
+                ui::overview::content((1280, 800), &desktops, 1, here, |_| {}).0
             }),
         },
         Case {
@@ -578,7 +578,13 @@ fn main() {
                 win.add_css_class("app");
             }
             let child = (c.build)();
-            win.set_child(Some(&child));
+            // Broadway clamps windows to its 1024x768 screen; a sized frame holds the declared size.
+            let frame = gtk::Overlay::new();
+            frame.set_child(Some(&child));
+            if c.size.1 > 1 {
+                frame.set_size_request(c.size.0, c.size.1);
+            }
+            win.set_child(Some(&frame));
             win.present();
             pump(900);
             fn count(n: &shell::layout::Node) -> usize {
@@ -603,6 +609,16 @@ fn main() {
                 ));
             }
             let tex = render(&win);
+            // A golden must be the size it claims (height 1 = natural height).
+            if (tex.width(), tex.height()) != c.size && (c.size.1 > 1 || tex.width() != c.size.0) {
+                issues.push(format!(
+                    "rendered {}x{}, declared {}x{}",
+                    tex.width(),
+                    tex.height(),
+                    c.size.0,
+                    c.size.1
+                ));
+            }
             issues.extend(WARNINGS.with_borrow_mut(std::mem::take));
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             let png = out.join(format!("{name}.png"));
