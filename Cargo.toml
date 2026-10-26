@@ -35,4 +35,5 @@ harness = false
 
 [dev-dependencies]
 async-io = "2"
+blocking = "1"
 futures-lite = "2"

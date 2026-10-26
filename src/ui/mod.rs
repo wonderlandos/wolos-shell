@@ -30,10 +30,12 @@ pub fn window(app: &gtk::Application, class: &str, spec: surface::Spec) -> gtk::
     w
 }
 
-/// `WOL_SHELL_TIMING=1`: startup stage times on stderr.
+/// `WOL_SHELL_TIMING=1`: startup stage times on stderr, plus CLOCK_MONOTONIC ms (`at`) so a
+/// session-start script can measure from login (design/tools/perf/session_start.py).
 fn mark(t0: std::time::Instant, stage: &str) {
     if std::env::var_os("WOL_SHELL_TIMING").is_some() {
-        eprintln!("wol-shell: {stage} {:?}", t0.elapsed());
+        let at = glib::monotonic_time() as f64 / 1000.0;
+        eprintln!("wol-shell: {stage} {:?} at {at:.1}", t0.elapsed());
     }
 }
 
@@ -66,14 +68,17 @@ pub fn run_shell() -> glib::ExitCode {
                 std::process::exit(0);
             }
         });
+        dock_win.connect_map(move |_| mark(t0, "dock map"));
         bar_win.present();
         dock_win.present();
         // Everything below is off the first-frame path.
         let app = app.clone();
         glib::idle_add_local_once(move || {
-            panels::wallpaper(&app).present();
+            let wall = panels::wallpaper(&app);
+            wall.connect_map(move |_| mark(t0, "wallpaper map"));
+            wall.present();
             let osd = panels::Osd::build(&app);
-            menubar::poll_status(bar.clone(), sys.clone(), osd.clone());
+            menubar::poll_status(bar.clone(), sys.clone());
             ipc::hypr_events(bar, dock);
             let mut p = panels.borrow_mut();
             p.insert("osd", osd.window.clone());
@@ -81,6 +86,7 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("session", panels::session(&app));
             p.insert("notifications", notify::start(&app));
             p.insert("overview", overview::build(&app));
+            p.insert("control-center", control_center::panel(&app, sys.clone()));
             p.insert("screenshot", capture::build(&app));
             drop(p);
             let sw = switcher::Switcher::build(&app);
@@ -132,16 +138,27 @@ pub fn run_panel_app(
     spec: surface::Spec,
     build: fn(&gtk::ApplicationWindow, Rc<dyn crate::system::System>) -> gtk::Widget,
 ) -> glib::ExitCode {
+    let t0 = std::time::Instant::now();
     let app = gtk::Application::builder().application_id(id).build();
+    app.connect_startup(move |_| mark(t0, "startup"));
     app.connect_activate(move |app| {
+        mark(t0, "activate");
         // Second launch toggles: the running instance closes.
         if let Some(w) = app.active_window() {
             w.close();
             return;
         }
         kit::style::install("");
+        mark(t0, "css");
         let w = window(app, class, spec);
         w.set_child(Some(&build(&w, crate::system::default_system())));
+        mark(t0, "built");
+        w.connect_map(move |_| {
+            mark(t0, "first map");
+            if std::env::var("WOL_SHELL_TIMING").as_deref() == Ok("exit") {
+                std::process::exit(0);
+            }
+        });
         let keys = gtk::EventControllerKey::new();
         let w2 = w.clone();
         keys.connect_key_pressed(move |_, k, _, _| {

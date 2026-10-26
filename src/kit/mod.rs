@@ -75,8 +75,29 @@ pub fn every_minute(tick: impl Fn() + 'static) {
     arm(tick);
 }
 
-/// Spawns argv detached; errors go to stderr.
+/// `wol shell <verb> <panel>` as the socket line the CLI would send; None for anything else.
+pub fn shell_line(argv: &[String]) -> Option<String> {
+    match argv {
+        [wol, shell, rest @ ..] if wol == "wol" && shell == "shell" && !rest.is_empty() => {
+            Some(rest.join(" "))
+        }
+        _ => None,
+    }
+}
+
+/// Spawns argv detached; errors go to stderr. `wol shell ...` goes straight to the shell socket
+/// (no fork/exec of the CLI: Control Center p95 was 102 ms with it).
 pub fn spawn(argv: &[String]) {
+    if let Some(line) = shell_line(argv) {
+        use std::io::Write;
+        let path = crate::protocol::socket_path(&runtime_dir());
+        if std::os::unix::net::UnixStream::connect(path)
+            .and_then(|mut s| s.write_all(format!("{line}\n").as_bytes()))
+            .is_ok()
+        {
+            return;
+        }
+    }
     let Some((p, a)) = argv.split_first() else {
         return;
     };
@@ -130,4 +151,21 @@ pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static
             }
         });
     });
+}
+
+#[cfg(test)]
+mod spawn_tests {
+    use super::*;
+
+    #[test]
+    fn shell_commands_skip_the_cli() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            shell_line(&v(&["wol", "shell", "toggle", "control-center"])).as_deref(),
+            Some("toggle control-center")
+        );
+        assert_eq!(shell_line(&v(&["wol", "shell"])), None);
+        assert_eq!(shell_line(&v(&["wol", "theme", "toggle"])), None);
+        assert_eq!(shell_line(&v(&["wol-spotlight"])), None);
+    }
 }

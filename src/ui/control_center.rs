@@ -25,6 +25,51 @@ pub fn run() -> glib::ExitCode {
     )
 }
 
+/// Resident panel in wol-shell (`wol shell toggle control-center`): opening is one frame, no
+/// process start. Content is built on show and dropped on hide, so its snapshot watcher (1 s
+/// refresh) only lives while the panel is visible.
+pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
+    let win = super::window(
+        app,
+        "controlcenter",
+        Spec::panel(
+            "wol-panel-controlcenter",
+            [true, false, false, true],
+            Keyboard::OnDemand,
+        ),
+    );
+    win.set_hide_on_close(true);
+    // Built once (live perf: rebuilding per open leaked ~0.5 MB each); the watcher (1 s refresh)
+    // only lives while visible.
+    let (content, sync) = build(sys.clone());
+    win.set_child(Some(&content));
+    let running: Rc<RefCell<Option<glib::JoinHandle<()>>>> = Default::default();
+    {
+        let (running, sync) = (running.clone(), sync.clone());
+        win.connect_show(move |_| {
+            sync();
+            *running.borrow_mut() = follow(&sys, sync.clone());
+        });
+    }
+    win.connect_hide(move |_| {
+        if let Some(h) = running.borrow_mut().take() {
+            h.abort();
+        }
+    });
+    let keys = gtk::EventControllerKey::new();
+    let w2 = win.clone();
+    keys.connect_key_pressed(move |_, k, _, _| {
+        if k == gtk::gdk::Key::Escape {
+            w2.set_visible(false);
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+    win.add_controller(keys);
+    win.upcast()
+}
+
 fn dnd_path() -> std::path::PathBuf {
     std::path::Path::new(&kit::config_home()).join(DND_FILE)
 }
@@ -130,7 +175,8 @@ fn bluetooth_label(bt: Option<bool>) -> &'static str {
     }
 }
 
-pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
+/// Widgets plus `sync` (push the current snapshot into them).
+fn build(sys: Rc<dyn System>) -> (gtk::Widget, Rc<dyn Fn()>) {
     let panel = w::glass_panel(w::S2);
     panel.add_css_class("control-center");
     panel.set_width_request(w::CONTROL_CENTER_WIDTH);
@@ -338,35 +384,49 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
     ui.message.set_visible(false);
     main.append(&ui.message);
 
-    // Live: the backend snapshot refreshes off-thread; widgets follow it.
-    if let Some(rx) = sys.watch() {
+    // Live: the backend snapshot refreshes off-thread; widgets follow it via `sync`.
+    let sync: Rc<dyn Fn()> = {
         let (u, display, sound) = (ui.clone(), display.clone(), sound.clone());
-        let (wifi, bluetooth) = (Rc::new(wifi), Rc::new(bluetooth));
-        glib::spawn_future_local(async move {
-            while rx.recv().await.is_ok() {
-                let s = &u.sys;
-                u.syncing.set(true);
-                let nets = s.wifi_networks();
-                wifi.set_subtitle(&crate::system::wifi_subtitle(s.network(), &nets));
-                wifi.set_on(s.wifi_enabled().unwrap_or(false));
-                bluetooth.set_subtitle(bluetooth_label(s.bluetooth()));
-                bluetooth.set_on(s.bluetooth().unwrap_or(false));
-                display.set_visible(s.brightness().is_some());
-                if let (Some(b), Some(sc)) = (s.brightness(), scale_in(display.upcast_ref()))
-                    && !u.busy.borrow().contains_key("brightness")
-                {
-                    sc.set_value(b as f64);
-                }
-                if let (Some(v), Some(sc)) = (s.audio().volume, scale_in(sound.upcast_ref()))
-                    && !u.busy.borrow().contains_key("volume")
-                {
-                    sc.set_value(v as f64);
-                }
-                u.syncing.set(false);
+        Rc::new(move || {
+            let s = &u.sys;
+            u.syncing.set(true);
+            let nets = s.wifi_networks();
+            wifi.set_subtitle(&crate::system::wifi_subtitle(s.network(), &nets));
+            wifi.set_on(s.wifi_enabled().unwrap_or(false));
+            bluetooth.set_subtitle(bluetooth_label(s.bluetooth()));
+            bluetooth.set_on(s.bluetooth().unwrap_or(false));
+            display.set_visible(s.brightness().is_some());
+            if let (Some(b), Some(sc)) = (s.brightness(), scale_in(display.upcast_ref()))
+                && !u.busy.borrow().contains_key("brightness")
+            {
+                sc.set_value(b as f64);
             }
-        });
-    }
-    panel.upcast()
+            if let (Some(v), Some(sc)) = (s.audio().volume, scale_in(sound.upcast_ref()))
+                && !u.busy.borrow().contains_key("volume")
+            {
+                sc.set_value(v as f64);
+            }
+            u.syncing.set(false);
+        })
+    };
+    (panel.upcast(), sync)
+}
+
+/// Follows the snapshot until the returned handle is aborted (dropping the watcher).
+fn follow(sys: &Rc<dyn System>, sync: Rc<dyn Fn()>) -> Option<glib::JoinHandle<()>> {
+    let rx = sys.watch()?;
+    Some(glib::spawn_future_local(async move {
+        while rx.recv().await.is_ok() {
+            sync();
+        }
+    }))
+}
+
+/// Control Center app content: follows the snapshot for the life of the process.
+pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
+    let (w, sync) = build(sys.clone());
+    std::mem::forget(follow(&sys, sync));
+    w
 }
 
 /// Wi-Fi detail page: back, networks, join with password.

@@ -125,3 +125,30 @@ fn menu_shortcuts_are_bound_to_the_same_action() {
     assert_eq!(n, 4);
     assert!(include_str!("../../../image/build-rust.sh").contains(" wol-app"));
 }
+
+/// Volume keys show the OSD right away (it waited for the 10 s status poll).
+#[test]
+fn volume_keys_ask_the_shell_for_the_osd() {
+    let script = include_str!("../../../desktop/overlay/usr/local/bin/wol-volume");
+    assert!(
+        script
+            .lines()
+            .any(|l| l.trim() == "exec wol shell show osd"),
+        "{script}"
+    );
+}
+
+/// Live perf: spawning wol-control-center per click took 52 ms median, 109 ms p95 to the first
+/// frame (process + GTK + D-Bus setup). The shell keeps it resident; keys toggle the panel.
+#[test]
+fn control_center_is_a_resident_shell_panel() {
+    assert!(
+        CONF.lines()
+            .any(|l| l.trim() == "bind = $mod, A, exec, wol shell toggle control-center")
+    );
+    let bar = include_str!("../src/ui/menubar.rs");
+    assert!(
+        !bar.contains("\"wol-control-center\""),
+        "menu bar must not spawn the app"
+    );
+}

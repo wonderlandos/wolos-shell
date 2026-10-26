@@ -1,5 +1,4 @@
 //! Menu bar: logo menu, frontmost app name, app menus, status icons, clock, Spotlight, Control Center.
-use super::panels::Osd;
 use crate::kit::{self, widgets as w};
 use crate::perf::Changed;
 use crate::{appmenu, status};
@@ -123,10 +122,18 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         (
             battery_box.upcast_ref::<gtk::Widget>(),
             "Battery",
-            &["wol-control-center"][..],
+            &["wol", "shell", "toggle", "control-center"][..],
         ),
-        (network.upcast_ref(), "Wi-Fi", &["wol-control-center"][..]),
-        (volume.upcast_ref(), "Sound", &["wol-control-center"][..]),
+        (
+            network.upcast_ref(),
+            "Wi-Fi",
+            &["wol", "shell", "toggle", "control-center"][..],
+        ),
+        (
+            volume.upcast_ref(),
+            "Sound",
+            &["wol", "shell", "toggle", "control-center"][..],
+        ),
     ] {
         let b = w::menubar_item(img);
         b.set_tooltip_text(Some(tip));
@@ -135,12 +142,21 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         root.append(&b);
     }
     for (icon, tip, argv) in [
-        ("system-search-symbolic", "Spotlight", "wol-spotlight"),
-        ("view-grid-symbolic", "Control Center", "wol-control-center"),
+        (
+            "system-search-symbolic",
+            "Spotlight",
+            &["wol-spotlight"][..],
+        ),
+        (
+            "view-grid-symbolic",
+            "Control Center",
+            &["wol", "shell", "toggle", "control-center"][..],
+        ),
     ] {
         let b = w::menubar_item(&w::icon(icon, w::ICON));
         b.set_tooltip_text(Some(tip));
-        b.connect_clicked(move |_| kit::spawn(&[argv.to_string()]));
+        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+        b.connect_clicked(move |_| kit::spawn(&argv));
         root.append(&b);
     }
     let clock = w::label("", "");
@@ -188,7 +204,7 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         seen: Default::default(),
         name_seen: Default::default(),
     });
-    refresh(&bar, sys, None);
+    refresh(&bar, sys);
     {
         // Settings > Menu Bar: applied live on `reload`.
         let (b, battery) = (Rc::downgrade(&bar), sys.battery());
@@ -219,7 +235,7 @@ pub fn build(
 }
 
 /// One status read; widgets touched only on change. Volume change -> OSD.
-fn refresh(bar: &Bar, sys: &dyn crate::system::System, osd: Option<&Rc<Osd>>) {
+fn refresh(bar: &Bar, sys: &dyn crate::system::System) {
     let audio = sys.audio();
     let mut s = bar.seen.borrow_mut();
     let n = status::network(sys.network());
@@ -246,16 +262,14 @@ fn refresh(bar: &Bar, sys: &dyn crate::system::System, osd: Option<&Rc<Osd>>) {
     if s.2.set(v) {
         bar.volume.set_icon_name(Some(v));
     }
-    let changed = s.3.set(audio.volume);
-    if let (true, Some(o), Some(level)) = (changed, osd, audio.volume) {
-        o.show(v, level);
-    }
+    // The OSD is for volume keys only (`wol shell show osd` from wol-volume), not for polls.
+    s.3.set(audio.volume);
 }
 
 /// 5 s timer on whole seconds (GLib coalesces wakeups).
-pub fn poll_status(bar: Rc<Bar>, sys: Rc<dyn crate::system::System>, osd: Rc<Osd>) {
+pub fn poll_status(bar: Rc<Bar>, sys: Rc<dyn crate::system::System>) {
     glib::timeout_add_seconds_local(5, move || {
-        refresh(&bar, &*sys, Some(&osd));
+        refresh(&bar, &*sys);
         glib::ControlFlow::Continue
     });
 }
