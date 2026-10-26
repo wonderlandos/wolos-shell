@@ -454,6 +454,9 @@ impl AppWindow {
             .build();
         side.add_css_class("sidebar-scroll");
         if with_sidebar {
+            // Shown on realize when the window is wide enough; hidden first so a narrow
+            // window's minimum size never includes it.
+            side.set_visible(false);
             body.append(&side);
         }
         let content = gtk::Stack::builder()
@@ -1089,3 +1092,223 @@ pub fn wrap_row(spacing: i32, max_per_line: u32) -> gtk::FlowBox {
 
 /// Minimum width of a trailing value in info rows (About), in characters.
 pub const VALUE_CHARS: i32 = 18;
+
+// ---- App Store components (appended) ----
+
+/// Store tile width (Discover rows, category grids) and hero icon size.
+pub const STORE_TILE: i32 = 196;
+/// Summary width in characters inside a store tile.
+pub const TILE_SUMMARY_CHARS: i32 = 18;
+pub const RING: i32 = 24;
+
+/// Stable hue for a name (monogram tiles).
+fn hue_of(name: &str) -> f64 {
+    let h = name
+        .bytes()
+        .fold(2166136261u32, |h, b| (h ^ b as u32).wrapping_mul(16777619));
+    (h % 360) as f64
+}
+
+fn hsl(h: f64, s: f64, l: f64) -> (f64, f64, f64) {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match (h / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    (r + m, g + m, b + m)
+}
+
+/// Rounded gradient square with the app's initial: stands in when no icon is installed.
+pub fn app_monogram(name: &str, size: i32) -> gtk::Widget {
+    let hue = hue_of(name);
+    let area = gtk::DrawingArea::builder()
+        .content_width(size)
+        .content_height(size)
+        .build();
+    area.set_draw_func(move |_, cr, w, h| {
+        let (w, h) = (w as f64, h as f64);
+        let g = gtk::cairo::LinearGradient::new(0.0, 0.0, 0.0, h);
+        let (r1, g1, b1) = hsl(hue, 0.65, 0.62);
+        let (r2, g2, b2) = hsl((hue + 24.0) % 360.0, 0.70, 0.44);
+        g.add_color_stop_rgb(0.0, r1, g1, b1);
+        g.add_color_stop_rgb(1.0, r2, g2, b2);
+        rounded(cr, 0.0, 0.0, w, h, w * 0.225);
+        let _ = cr.set_source(&g);
+        cr.fill().ok();
+    });
+    let initial: String = name.chars().take(1).collect::<String>().to_uppercase();
+    let l = gtk::Label::new(Some(&initial));
+    l.add_css_class("monogram");
+    l.add_css_class(if size >= ICON_XL {
+        "monogram-l"
+    } else {
+        "monogram-s"
+    });
+    let o = gtk::Overlay::new();
+    o.set_child(Some(&area));
+    o.add_overlay(&l);
+    o.set_halign(gtk::Align::Center);
+    o.set_valign(gtk::Align::Center);
+    o.upcast()
+}
+
+/// WolOS SVG, else the installed theme icon (when `themed`), else a monogram.
+pub fn store_icon(icon_name: &str, name: &str, size: i32, themed: bool) -> gtk::Widget {
+    if super::icon_file(icon_name).is_some() {
+        return app_icon(icon_name, size).upcast();
+    }
+    let has = themed
+        && gtk::gdk::Display::default()
+            .is_some_and(|d| gtk::IconTheme::for_display(&d).has_icon(icon_name));
+    if has {
+        let i = gtk::Image::from_icon_name(icon_name);
+        i.set_pixel_size(size);
+        return i.upcast();
+    }
+    app_monogram(name, size)
+}
+
+/// Indeterminate ring in the accent colour (install in place, HIG §3).
+pub fn progress_ring() -> gtk::DrawingArea {
+    let a = gtk::DrawingArea::builder()
+        .content_width(RING)
+        .content_height(RING)
+        .valign(gtk::Align::Center)
+        .build();
+    a.add_css_class("progress-ring");
+    a.set_draw_func(|a, cr, w, h| {
+        let (w, h) = (w as f64, h as f64);
+        let c = a.color();
+        let t = a
+            .frame_clock()
+            .map_or(0.0, |f| f.frame_time() as f64 / 1_000_000.0);
+        let r = w.min(h) / 2.0 - 2.0;
+        cr.set_line_width(3.0);
+        cr.set_source_rgba(c.red() as f64, c.green() as f64, c.blue() as f64, 0.2);
+        cr.arc(w / 2.0, h / 2.0, r, 0.0, std::f64::consts::TAU);
+        cr.stroke().ok();
+        cr.set_source_rgba(c.red() as f64, c.green() as f64, c.blue() as f64, 1.0);
+        cr.set_line_cap(gtk::cairo::LineCap::Round);
+        let s = (t * 4.0) % std::f64::consts::TAU;
+        cr.arc(w / 2.0, h / 2.0, r, s, s + 1.6);
+        cr.stroke().ok();
+    });
+    a.add_tick_callback(|a, _| {
+        a.queue_draw();
+        glib::ControlFlow::Continue
+    });
+    a
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TileState {
+    Get,
+    Installing,
+    Open,
+}
+
+/// Store tile: icon, name, one-line summary, Get/Open pill (or progress ring while installing).
+#[derive(Clone)]
+pub struct AppTile {
+    pub root: gtk::Box,
+    pub action: gtk::Button,
+    ring: gtk::DrawingArea,
+}
+
+impl AppTile {
+    pub fn new(icon: &gtk::Widget, name: &str, summary: &str) -> Self {
+        let root = hbox(S3);
+        root.add_css_class("app-tile");
+        root.set_width_request(STORE_TILE);
+        root.append(icon);
+        let t = vbox(0);
+        t.set_hexpand(true);
+        t.set_valign(gtk::Align::Center);
+        let n = label(name, "title");
+        n.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        n.set_max_width_chars(TILE_SUMMARY_CHARS);
+        n.add_css_class("may-ellipsize");
+        t.append(&n);
+        let s = label(summary, "secondary");
+        s.set_wrap(true);
+        s.set_lines(2);
+        s.set_max_width_chars(TILE_SUMMARY_CHARS);
+        s.set_width_chars(TILE_SUMMARY_CHARS);
+        s.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        s.add_css_class("may-ellipsize");
+        t.append(&s);
+        root.append(&t);
+        let action = gtk::Button::with_label("Get");
+        action.add_css_class("get-button");
+        action.set_valign(gtk::Align::Center);
+        root.append(&action);
+        let ring = progress_ring();
+        ring.set_visible(false);
+        root.append(&ring);
+        AppTile { root, action, ring }
+    }
+
+    pub fn set_state(&self, s: TileState) {
+        self.action.set_visible(s != TileState::Installing);
+        self.ring.set_visible(s == TileState::Installing);
+        self.action
+            .set_label(if s == TileState::Open { "Open" } else { "Get" });
+    }
+}
+
+/// Discover hero: accent card with large icon, eyebrow, title, summary and an action.
+pub fn hero_card(
+    icon: &gtk::Widget,
+    eyebrow: &str,
+    title: &str,
+    summary: &str,
+    action: &gtk::Button,
+) -> gtk::Box {
+    let b = hbox(S4);
+    b.add_css_class("hero-card");
+    b.append(icon);
+    let t = vbox(S1);
+    t.set_hexpand(true);
+    t.set_valign(gtk::Align::Center);
+    t.append(&label(&eyebrow.to_uppercase(), "hero-eyebrow"));
+    let tl = label(title, "large-title");
+    tl.set_wrap(true);
+    t.append(&tl);
+    let s = label(summary, "");
+    s.set_wrap(true);
+    t.append(&s);
+    b.append(&t);
+    action.set_valign(gtk::Align::Center);
+    b.append(action);
+    b
+}
+
+impl AppWindow {
+    /// Search field at the top of the sidebar (App Store, Settings-style apps).
+    pub fn sidebar_search(&self, placeholder: &str) -> gtk::SearchEntry {
+        let s = search_field(placeholder);
+        let r = gtk::ListBoxRow::builder()
+            .child(&s)
+            .selectable(false)
+            .activatable(false)
+            .build();
+        r.add_css_class("sidebar-search");
+        self.sidebar.prepend(&r);
+        s
+    }
+
+    /// Content page with no sidebar row (search results); show it with `content.set_visible_child_name`.
+    pub fn hidden_page(&self, name: &str, page: &impl IsA<gtk::Widget>) {
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(page)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build();
+        self.content.add_named(&scroll, Some(name));
+    }
+}

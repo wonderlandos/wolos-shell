@@ -107,6 +107,30 @@ fn cases() -> Vec<Case> {
         },
     ];
     for (sw, sh, tag) in [(900, 600, "wide"), (480, 360, "narrow")] {
+        for p in ui::store::PAGES.into_iter().chain(["Search"]) {
+            v.push(Case {
+                name: format!("store-{}-{tag}", p.to_lowercase()),
+                size: (sw, sh),
+                class: "preview-app",
+                wallpaper: false,
+                build: Box::new(move || {
+                    let s = ui::store::content(
+                        Rc::new(shell::system::Fake),
+                        ui::store::Env {
+                            themed_icons: false,
+                            data_dirs: vec![],
+                            pkg_search: false,
+                        },
+                    );
+                    if p == "Search" {
+                        s.search_now("photo");
+                    } else {
+                        s.aw.select(p);
+                    }
+                    s.aw.root.clone().upcast()
+                }),
+            });
+        }
         for p in ui::settings::PAGES {
             v.push(Case {
                 name: format!(

@@ -8,6 +8,7 @@ pub mod notify;
 pub mod panels;
 pub mod settings;
 pub mod spotlight;
+pub mod store;
 
 use crate::kit::{self, surface};
 use gtk::{glib, prelude::*};
