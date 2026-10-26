@@ -219,3 +219,20 @@ button.choice-row .list-row { min-height: 44px; padding: 0 12px; }
 .card-list > button.choice-row + button.choice-row { border-top: 1px solid var(--line); }
 .card-list > box > button.choice-row + button.choice-row { border-top: 1px solid var(--line); }
 .list-row.hero-row { min-height: 64px; }
+/* ---- App Store (appended) ---- */
+.app-tile { padding: 8px 0; }
+button.get-button { border: none; box-shadow: none; border-radius: 999px; min-height: 24px; min-width: 56px; padding: 0 12px; background: var(--control); color: var(--accent); }
+button.get-button label { font-weight: 700; }
+button.get-button:hover { background: color-mix(in srgb, var(--control) 80%, var(--accent)); }
+.progress-ring { color: var(--accent); margin: 0 16px; }
+label.monogram { color: white; font-weight: 700; }
+label.monogram-s { font-size: 22px; }
+label.monogram-l { font-size: 22px; }
+.hero-card { padding: 24px; border-radius: var(--glass-radius-s); background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent) 55%, black)); }
+.hero-card label { color: var(--accent-text); }
+label.hero-eyebrow { font-size: 11px; font-weight: 600; opacity: 0.8; }
+.hero-card button.get-button { background: var(--accent-text); color: var(--accent); }
+list.sidebar row.sidebar-search { padding: 0 0 8px 0; }
+list.sidebar row.sidebar-search:hover { background: none; }
+.store-grid { margin-top: -8px; }
+.hero-card button.get-button label { color: var(--accent); }

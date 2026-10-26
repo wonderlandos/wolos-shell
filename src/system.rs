@@ -29,6 +29,8 @@ pub enum Action {
         password: String,
     },
     PkgUpgrade,
+    /// App Store: catalog id or package name (`wol_core::store`).
+    PkgInstall(String),
 }
 
 pub type Done = async_channel::Receiver<Result<(), ActionError>>;
@@ -490,6 +492,7 @@ impl Inner {
                 password,
             } => c.add_user(name, full_name, *admin, password, &pw),
             Action::PkgUpgrade => c.pkg_upgrade(&pw),
+            Action::PkgInstall(t) => c.pkg_install(t, &pw),
             Action::MediaToggle | Action::Power(_) => {
                 Err(wol_core::controls::ControlError::Unavailable)
             }

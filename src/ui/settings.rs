@@ -112,18 +112,36 @@ fn argv(v: &[&str]) -> Vec<String> {
 }
 
 /// Completion callback for one action.
-type Done = Rc<dyn Fn(Result<(), ActionError>)>;
+pub(crate) type Done = Rc<dyn Fn(Result<(), ActionError>)>;
 
 /// Shared page state: the System, the Authenticate sheet and an inline status line per action.
-struct Ctx {
-    sys: Rc<dyn System>,
+pub(crate) struct Ctx {
+    pub(crate) sys: Rc<dyn System>,
     auth: w::AuthSheet,
     pending: RefCell<Option<(Action, Done)>>,
 }
 
 impl Ctx {
+    /// Wires the Authenticate sheet; place it on `aw` after any other sheets.
+    pub(crate) fn new(sys: Rc<dyn System>, who: &str) -> Rc<Self> {
+        let ctx = Rc::new(Ctx {
+            sys,
+            auth: w::authenticate_sheet(who),
+            pending: Default::default(),
+        });
+        let c = ctx.clone();
+        ctx.auth.allow.connect_clicked(move |_| c.allow());
+        let c = ctx.clone();
+        ctx.auth.field.connect_activate(move |_| c.allow());
+        let c = ctx.clone();
+        ctx.auth.cancel.connect_clicked(move |_| c.cancel());
+        ctx
+    }
+    pub(crate) fn place(&self, aw: &w::AppWindow) {
+        w::toolbar_place(aw, &self.auth.revealer);
+    }
     /// `a` off the UI thread; root actions ask for the password, then retry; `done` gets the final result.
-    fn act(self: &Rc<Self>, a: Action, done: Rc<dyn Fn(Result<(), ActionError>)>) {
+    pub(crate) fn act(self: &Rc<Self>, a: Action, done: Rc<dyn Fn(Result<(), ActionError>)>) {
         let rx = self.sys.spawn(a.clone());
         let c = self.clone();
         glib::spawn_future_local(async move {
@@ -177,25 +195,13 @@ fn say(l: &gtk::Label, text: &str) {
 
 pub fn content(sys: Rc<dyn System>, host: &Host) -> w::AppWindow {
     let aw = w::AppWindow::new("System Settings", true, false);
-    let ctx = Rc::new(Ctx {
-        sys: sys.clone(),
-        auth: w::authenticate_sheet("System Settings"),
-        pending: Default::default(),
-    });
-    {
-        let c = ctx.clone();
-        ctx.auth.allow.connect_clicked(move |_| c.allow());
-        let c = ctx.clone();
-        ctx.auth.field.connect_activate(move |_| c.allow());
-        let c = ctx.clone();
-        ctx.auth.cancel.connect_clicked(move |_| c.cancel());
-    }
+    let ctx = Ctx::new(sys.clone(), "System Settings");
     let sheets = Sheets {
         join: w::toolbar_sheet(&aw, &gtk::Box::new(gtk::Orientation::Vertical, 0)),
         user: w::toolbar_sheet(&aw, &gtk::Box::new(gtk::Orientation::Vertical, 0)),
     };
     // Added last: the Authenticate sheet sits above the others.
-    w::toolbar_place(&aw, &ctx.auth.revealer);
+    ctx.place(&aw);
 
     aw.source_section("Personal");
     aw.source_item(
