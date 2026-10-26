@@ -71,3 +71,15 @@ fn every_bound_shell_panel_is_accepted_by_wol() {
         );
     }
 }
+
+/// Live: the toolbar's fade-out was in the screenshot.
+#[test]
+fn screenshot_surfaces_disappear_without_animation() {
+    let none = rules("no_anim on");
+    for ns in ["wol-panel-capture", "wol-panel-capture-thumb"] {
+        assert!(
+            none.iter().any(|(p, _)| matches(p, ns)),
+            "{ns}: fades into the capture"
+        );
+    }
+}

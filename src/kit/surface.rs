@@ -46,6 +46,22 @@ impl Spec {
             _ => Zone::Respect,
         }
     }
+    /// Screenshot toolbar: bottom centre, takes the keyboard (Esc, Return).
+    pub const fn capture_bar() -> Self {
+        Self::panel(
+            "wol-panel-capture",
+            [false, true, false, false],
+            Keyboard::Exclusive,
+        )
+    }
+    /// Thumbnail after a capture: bottom right, never takes the keyboard.
+    pub const fn capture_thumb() -> Self {
+        Self::panel(
+            "wol-panel-capture-thumb",
+            [false, true, false, true],
+            Keyboard::None,
+        )
+    }
     pub const fn menubar() -> Self {
         Spec {
             namespace: "wol-menubar",
@@ -160,6 +176,14 @@ mod tests {
         assert_eq!(Spec::dock().namespace, "wol-dock");
         assert!(Spec::menubar().exclusive && Spec::dock().exclusive);
         assert_eq!(Spec::wallpaper().layer, Layer::Background);
+    }
+
+    /// Live Hyprland: the screenshot bar sat at the left edge, the thumbnail bottom-left.
+    #[test]
+    fn screenshot_surfaces_sit_bottom_centre_and_bottom_right() {
+        // [top, bottom, left, right]
+        assert_eq!(Spec::capture_bar().anchor, [false, true, false, false]);
+        assert_eq!(Spec::capture_thumb().anchor, [false, true, false, true]);
     }
 
     /// Live Hyprland: the wallpaper stopped at the menu bar and dock zones (black strips).
