@@ -28,6 +28,8 @@ pub const APP_NARROW: (i32, i32) = (480, 360);
 pub const NARROW: i32 = 640;
 pub const LOCK_FIELD_WIDTH: i32 = 200;
 pub const LOCK_FIELD_HEIGHT: i32 = 28;
+/// Setup assistant card (fits 1024x640).
+pub const SETUP_CARD: (i32, i32) = (600, 520);
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
 

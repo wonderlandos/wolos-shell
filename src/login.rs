@@ -81,7 +81,11 @@ pub fn login(socket: &str, user: &str, password: &str) -> Verdict {
     exchange(socket, &req)
 }
 
-/// One request, write side closed, one-line reply.
+/// One request, write side closed, one-line reply. Blocking.
+pub fn request(socket: &str, req: &[u8]) -> Verdict {
+    exchange(socket, req)
+}
+
 fn exchange(socket: &str, req: &[u8]) -> Verdict {
     let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket) else {
         return Verdict::Error;
