@@ -45,6 +45,41 @@ pub struct Client {
     pub address: String,
     pub class: String,
     pub title: String,
+    /// 0 = most recently focused.
+    #[serde(rename = "focusHistoryID", default = "far")]
+    pub focus: i64,
+    #[serde(default)]
+    pub workspace: WorkspaceRef,
+    #[serde(default)]
+    pub at: [i32; 2],
+    #[serde(default)]
+    pub size: [i32; 2],
+}
+
+fn far() -> i64 {
+    i64::MAX
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct WorkspaceRef {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub name: String,
+}
+
+impl Client {
+    pub fn new(address: &str, class: &str, title: &str) -> Self {
+        Client {
+            address: address.into(),
+            class: class.into(),
+            title: title.into(),
+            focus: far(),
+            workspace: WorkspaceRef::default(),
+            at: [0, 0],
+            size: [0, 0],
+        }
+    }
 }
 
 pub fn parse_clients(json: &str) -> Vec<Client> {
@@ -120,5 +155,12 @@ mod tests {
         assert_eq!(c[0].class, "Foot");
         assert!(running_classes(&c).contains("foot"));
         assert!(parse_clients("not json").is_empty());
+        let c = parse_clients(
+            r#"[{"address":"0x2","class":"a","title":"","focusHistoryID":1,"workspace":{"id":2,"name":"2"},"at":[10,20],"size":[300,200]}]"#,
+        );
+        assert_eq!(
+            (c[0].focus, c[0].workspace.id, c[0].at, c[0].size),
+            (1, 2, [10, 20], [300, 200])
+        );
     }
 }

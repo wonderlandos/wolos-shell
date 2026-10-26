@@ -36,7 +36,7 @@ pub fn wallpaper(app: &gtk::Application) -> gtk::ApplicationWindow {
 }
 
 /// Panel window: transparent overlay layer, glass content, Esc hides.
-fn panel(
+pub(super) fn panel(
     app: &gtk::Application,
     class: &str,
     ns: &'static str,
@@ -189,41 +189,4 @@ pub fn session(app: &gtk::Application) -> gtk::Window {
     }
     g.append(&row);
     panel(app, "session", "wol-panel-session", [false; 4], &g)
-}
-
-/// Window switcher: one tile per Hyprland client, rebuilt each time it is shown.
-pub fn switcher(app: &gtk::Application) -> gtk::Window {
-    let g = w::glass_panel(w::S2);
-    let row = w::hbox(w::S2);
-    g.append(&row);
-    let win = panel(app, "switcher", "wol-panel-switcher", [false; 4], &g);
-    win.connect_show(move |_| {
-        while let Some(c) = row.first_child() {
-            row.remove(&c);
-        }
-        let clients = crate::hypr::clients();
-        if clients.is_empty() {
-            row.append(&w::label("No open windows", "secondary"));
-        }
-        for c in clients {
-            let b = w::vbox(w::S1);
-            b.append(&w::app_icon(&c.class.to_lowercase(), w::ICON_XL));
-            let l = w::centered(&crate::clipboard::preview(&c.title), "secondary");
-            l.add_css_class("may-ellipsize");
-            l.set_max_width_chars(w::TILE_CHARS);
-            l.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            b.append(&l);
-            let btn = gtk::Button::builder().child(&b).build();
-            btn.add_css_class("session-item");
-            let addr = c.address;
-            btn.connect_clicked(move |b| {
-                let _ = crate::hypr::request(&format!("dispatch focuswindow address:{addr}"));
-                if let Some(w) = b.root().and_downcast::<gtk::Window>() {
-                    w.set_visible(false);
-                }
-            });
-            row.append(&btn);
-        }
-    });
-    win
 }

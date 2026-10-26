@@ -5,7 +5,16 @@ use gtk::{gio, glib, prelude::*};
 use std::rc::Rc;
 
 /// `$XDG_RUNTIME_DIR/wol-shell.sock`: `toggle|show|hide <panel>`, `reload`.
-pub fn shell_socket(panels: Panels, osd: Rc<Osd>, sys: Rc<dyn crate::system::System>) {
+/// Surfaces with their own command semantics (e.g. the switcher); true = handled.
+pub type Handlers = Vec<Rc<dyn Fn(&protocol::Command) -> bool>>;
+
+pub fn shell_socket(
+    panels: Panels,
+    handlers: Handlers,
+    osd: Rc<Osd>,
+    sys: Rc<dyn crate::system::System>,
+) {
+    let handlers = Rc::new(handlers);
     let path = protocol::socket_path(&crate::kit::runtime_dir());
     let _ = std::fs::remove_file(&path);
     let listener = gio::SocketListener::new();
@@ -20,7 +29,8 @@ pub fn shell_socket(panels: Panels, osd: Rc<Osd>, sys: Rc<dyn crate::system::Sys
     }
     glib::spawn_future_local(async move {
         while let Ok((conn, _)) = listener.accept_future().await {
-            let (panels, osd, sys) = (panels.clone(), osd.clone(), sys.clone());
+            let (panels, osd, sys, handlers) =
+                (panels.clone(), osd.clone(), sys.clone(), handlers.clone());
             glib::spawn_future_local(async move {
                 let input = gio::DataInputStream::new(&conn.input_stream());
                 while let Ok(Some(line)) =
@@ -30,7 +40,9 @@ pub fn shell_socket(panels: Panels, osd: Rc<Osd>, sys: Rc<dyn crate::system::Sys
                         eprintln!("wol-shell: bad command '{line}'");
                         continue;
                     };
-                    run(&cmd, &panels, &osd, &*sys);
+                    if !handlers.iter().any(|h| h(&cmd)) {
+                        run(&cmd, &panels, &osd, &*sys);
+                    }
                 }
             });
         }

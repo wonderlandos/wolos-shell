@@ -274,3 +274,10 @@ button.setup-start { min-height: 32px; padding: 0 24px; border-radius: 999px; ma
 image.setup-done-icon { background: var(--accent); color: var(--accent-text); border-radius: 999px; padding: 16px; }
 image.setup-done-icon.pop { animation: setup-pop 420ms cubic-bezier(.34,1.56,.64,1) 1; }
 .setup-field selection, .setup-field text selection { background: var(--accent); color: var(--accent-text); }
+
+/* ---- App switcher (Super+Tab) ---- */
+.switcher-strip { padding: 16px 16px 10px 16px; border-radius: 28px; }
+.switcher-tile { min-width: 88px; }
+.switcher-ring { padding: 6px; border-radius: 20px; border: 3px solid transparent; }
+.switcher-tile.selected .switcher-ring { border-color: var(--accent); background: alpha(var(--accent), 0.18); }
+.switcher-name { font-size: 13px; font-weight: 600; }

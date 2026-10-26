@@ -11,6 +11,7 @@ pub mod protocol;
 pub mod search;
 pub mod setup;
 pub mod status;
+pub mod switcher;
 pub mod system;
 pub mod theme;
 

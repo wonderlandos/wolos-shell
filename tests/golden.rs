@@ -105,6 +105,33 @@ fn cases() -> Vec<Case> {
                 l.root.clone()
             }),
         },
+        Case {
+            name: "switcher".into(),
+            size: (900, 200),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let c = |a: &str, class: &str, f: i64| shell::hypr::Client {
+                    focus: f,
+                    ..shell::hypr::Client::new(a, class, "")
+                };
+                let apps = shell::switcher::apps(
+                    &[
+                        c("0x1", "foot", 0),
+                        c("0x2", "wol-files", 1),
+                        c("0x3", "firefox", 2),
+                        c("0x4", "foot", 3),
+                        c("0x5", "wol-settings", 4),
+                        c("0x6", "wol-mail", 5),
+                    ],
+                    &[],
+                );
+                let s = ui::switcher::Strip::new(&apps, 1);
+                s.root.set_halign(gtk::Align::Center);
+                s.root.set_valign(gtk::Align::Center);
+                s.root.clone().upcast()
+            }),
+        },
     ];
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
         for st in shell::setup::STEPS {

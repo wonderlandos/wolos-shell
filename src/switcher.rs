@@ -1,0 +1,160 @@
+//! App switcher (Super+Tab): Hyprland clients grouped by app class, most recently used first.
+use crate::hypr::Client;
+
+/// One app in the strip; `address` is its most recently focused window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct App {
+    pub class: String,
+    pub name: String,
+    pub icon: String,
+    pub address: String,
+}
+
+/// Groups clients by class (case-insensitive), ordered by each app's most recent focus.
+/// Names and icons come from the dock pins, then installed .desktop entries.
+pub fn apps(clients: &[Client], installed: &[crate::desktop::Entry]) -> Vec<App> {
+    use crate::apps::{PINS, frontmost_name, icon_for};
+    let mut sorted: Vec<&Client> = clients.iter().filter(|c| !c.class.is_empty()).collect();
+    sorted.sort_by_key(|c| c.focus);
+    let mut out: Vec<App> = Vec::new();
+    for c in sorted {
+        let class = c.class.to_lowercase();
+        if out.iter().all(|a| a.class != class) {
+            out.push(App {
+                name: frontmost_name(&class, "", PINS, installed),
+                icon: icon_for(&class, PINS, installed),
+                class,
+                address: c.address.clone(),
+            });
+        }
+    }
+    out
+}
+
+/// Selection while Super is held. Opening selects the previous app (index 1), like macOS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cycle {
+    pub index: usize,
+    pub len: usize,
+}
+
+impl Cycle {
+    pub fn open(len: usize) -> Self {
+        Cycle {
+            index: usize::from(len > 1),
+            len,
+        }
+    }
+    pub fn next(self) -> Self {
+        self.step(1)
+    }
+    pub fn prev(self) -> Self {
+        self.step(self.len.saturating_sub(1))
+    }
+    fn step(self, by: usize) -> Self {
+        Cycle {
+            index: if self.len == 0 {
+                0
+            } else {
+                (self.index + by) % self.len
+            },
+            ..self
+        }
+    }
+}
+
+/// What a shell-socket command does to the switcher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Op {
+    Open,
+    Next,
+    Prev,
+    /// Super released: focus the selection and close.
+    Commit,
+    None,
+}
+
+/// `show|toggle switcher` opens or advances, `show switcher-prev` goes back, `hide switcher` commits.
+pub fn op(verb: crate::protocol::Verb, target: &str, visible: bool) -> Op {
+    use crate::protocol::Verb::*;
+    match (verb, target, visible) {
+        (Show | Toggle, "switcher", false) => Op::Open,
+        (Show | Toggle, "switcher", true) => Op::Next,
+        (Show | Toggle, "switcher-prev", true) => Op::Prev,
+        (Show | Toggle, "switcher-prev", false) => Op::Open,
+        (Hide, "switcher" | "switcher-prev", true) => Op::Commit,
+        _ => Op::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn c(addr: &str, class: &str, focus: i64) -> Client {
+        Client {
+            focus,
+            ..Client::new(addr, class, "")
+        }
+    }
+
+    #[test]
+    fn groups_by_class_in_mru_order() {
+        let got = apps(
+            &[
+                c("0x1", "foot", 2),
+                c("0x2", "firefox", 0),
+                c("0x3", "Foot", 1),
+                c("0x4", "wol-files", 3),
+            ],
+            &[],
+        );
+        let v: Vec<(&str, &str)> = got
+            .iter()
+            .map(|a| (a.class.as_str(), a.address.as_str()))
+            .collect();
+        assert_eq!(
+            v,
+            [("firefox", "0x2"), ("foot", "0x3"), ("wol-files", "0x4")]
+        );
+        assert!(apps(&[], &[]).is_empty());
+        let names: Vec<&str> = got.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["Browser", "Terminal", "Files"]);
+    }
+
+    #[test]
+    fn cycle_wraps_both_ways() {
+        for (len, open, next, prev) in [(0, 0, 0, 0), (1, 0, 0, 0), (2, 1, 0, 0), (3, 1, 2, 0)] {
+            let o = Cycle::open(len);
+            assert_eq!(
+                (o.index, o.next().index, o.prev().index),
+                (open, next, prev),
+                "len {len}"
+            );
+        }
+        assert_eq!(Cycle::open(3).prev().prev().index, 2);
+    }
+
+    #[test]
+    fn socket_ops() {
+        use crate::protocol::Verb::*;
+        for (verb, target, visible, want) in [
+            (Show, "switcher", false, Op::Open),
+            (Toggle, "switcher", false, Op::Open),
+            (Show, "switcher", true, Op::Next),
+            (Toggle, "switcher", true, Op::Next),
+            (Show, "switcher-prev", true, Op::Prev),
+            (Show, "switcher-prev", false, Op::Open),
+            (Hide, "switcher", true, Op::Commit),
+            (Hide, "switcher", false, Op::None),
+            (Reload, "", true, Op::None),
+            (Show, "osd", true, Op::None),
+        ] {
+            assert_eq!(
+                op(verb, target, visible),
+                want,
+                "{verb:?} {target} {visible}"
+            );
+        }
+    }
+}
