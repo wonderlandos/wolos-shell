@@ -191,3 +191,31 @@ label.avatar { background: linear-gradient(160deg, #a0a0a8, #6e6e78); color: whi
 label.avatar-s { font-size: 13px; }
 label.avatar-l { font-size: 22px; }
 label.avatar-xl { font-size: 22px; }
+
+/* ---- Settings additions (appended) ---- */
+.dock-shelf.flat button.dock-tile:hover { margin-top: 0; margin-bottom: 0; }
+.dock-hotzone { min-height: 4px; }
+button.preview-tile, button.swatch { background: none; border: none; box-shadow: none; padding: 0; min-width: 0; min-height: 0; }
+button.preview-tile { padding: 4px; border-radius: 10px; }
+button.preview-tile .preview-frame { border-radius: 6px; box-shadow: 0 0 0 1px var(--line); }
+button.preview-tile:checked .preview-frame { box-shadow: 0 0 0 3px var(--accent); }
+button.preview-tile:checked label { font-weight: 600; }
+button.swatch { border-radius: 999px; padding: 2px; }
+button.swatch:checked { box-shadow: 0 0 0 2px var(--line); }
+image.accent-icon { color: var(--accent); }
+.toolbar-sheet .sheet { margin-top: 8px; }
+.swatch-row { padding: 4px 0; }
+scale.slider.row-slider trough { min-height: 16px; background: linear-gradient(var(--control), var(--control)) center / 100% 4px no-repeat; border-radius: 0; }
+scale.slider.row-slider highlight { min-height: 16px; background: linear-gradient(var(--accent), var(--accent)) center / 100% 4px no-repeat; border-radius: 0; }
+scale.slider.row-slider slider { margin: 0; }
+label.footnote { margin: -16px 12px 0 12px; }
+.card-list.preview-card { padding: 12px; }
+flowbox.wrap-row > flowboxchild { padding: 0; background: none; }
+scale.slider.row-slider trough, scale.slider.row-slider highlight { border: none; box-shadow: none; outline: none; }
+.app-window .list-row image { color: var(--text); }
+.app-window .list-row image.accent-icon { color: var(--accent); }
+button.choice-row { border-radius: 0; }
+button.choice-row .list-row { min-height: 44px; padding: 0 12px; }
+.card-list > button.choice-row + button.choice-row { border-top: 1px solid var(--line); }
+.card-list > box > button.choice-row + button.choice-row { border-top: 1px solid var(--line); }
+.list-row.hero-row { min-height: 64px; }

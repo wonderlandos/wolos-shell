@@ -118,10 +118,13 @@ fn cases() -> Vec<Case> {
                 wallpaper: false,
                 build: Box::new(move || {
                     let a = ui::settings::content(
-                        &shell::system::Fake,
+                        Rc::new(shell::system::Fake),
                         &ui::settings::Host {
                             hostname: "wonderland".into(),
                             users: vec!["alice".into(), "dinah".into()],
+                            os: "FreeBSD 15.1-RELEASE".into(),
+                            processor: "Apple M2 (8 cores)".into(),
+                            memory: "16 GB".into(),
                         },
                     );
                     a.select(p);

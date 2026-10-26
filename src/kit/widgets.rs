@@ -445,8 +445,16 @@ impl AppWindow {
         let sidebar = gtk::ListBox::new();
         sidebar.add_css_class("sidebar");
         sidebar.set_width_request(SIDEBAR_WIDTH);
+        sidebar.set_vexpand(true);
+        // Scrolls when the window is shorter than the page list (never forces the window taller).
+        let side = gtk::ScrolledWindow::builder()
+            .child(&sidebar)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_width(true)
+            .build();
+        side.add_css_class("sidebar-scroll");
         if with_sidebar {
-            body.append(&sidebar);
+            body.append(&side);
         }
         let content = gtk::Stack::builder()
             .transition_type(gtk::StackTransitionType::Crossfade)
@@ -463,12 +471,12 @@ impl AppWindow {
         }
         // Narrow windows hide the sidebar (HIG: collapsible); content keeps the full width.
         if with_sidebar {
-            let sb = sidebar.clone();
+            let sb = side.clone();
             root.connect_realize(move |r| {
                 let Some(win) = r.root().and_downcast::<gtk::Window>() else {
                     return;
                 };
-                let fit = |w: &gtk::Window, sb: &gtk::ListBox| {
+                let fit = |w: &gtk::Window, sb: &gtk::ScrolledWindow| {
                     let on = w.default_width() >= NARROW;
                     if sb.is_visible() != on {
                         sb.set_visible(on);
@@ -803,3 +811,281 @@ impl UserPanel {
         glib::idle_add_local_once(move || p.add_css_class("shake"));
     }
 }
+
+// ---- Settings components (appended) ----
+
+/// Appearance preview tile and accent swatch metrics.
+pub const PREVIEW: (i32, i32) = (112, 72);
+pub const SWATCH: i32 = 20;
+/// Toolbar sheet width (Authenticate, Join, Add User).
+pub const SHEET_WIDTH: i32 = 360;
+
+/// Token colours one preview slice paints (from a resolved theme, never literals).
+#[derive(Clone, Copy, Debug)]
+pub struct Palette {
+    pub surface: shared::theme::Color,
+    pub sidebar: shared::theme::Color,
+    pub card: shared::theme::Color,
+    pub line: shared::theme::Color,
+    pub dim: shared::theme::Color,
+    pub accent: shared::theme::Color,
+}
+
+impl Palette {
+    pub fn of(t: &crate::theme::Theme) -> Self {
+        let c = |k: &str| {
+            t.tokens
+                .get(k)
+                .and_then(|v| shared::theme::Color::parse(v))
+                .unwrap_or(shared::theme::Color::WHITE)
+        };
+        Palette {
+            surface: c("surface"),
+            sidebar: c("sidebar"),
+            card: c("card"),
+            line: c("line"),
+            dim: c("dim"),
+            accent: c("accent"),
+        }
+    }
+}
+
+fn rgba(cr: &gtk::cairo::Context, c: shared::theme::Color) {
+    cr.set_source_rgba(
+        c.r as f64 / 255.0,
+        c.g as f64 / 255.0,
+        c.b as f64 / 255.0,
+        c.a,
+    );
+}
+
+fn rounded(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+    use std::f64::consts::{FRAC_PI_2, PI};
+    cr.new_sub_path();
+    cr.arc(x + w - r, y + r, r, -FRAC_PI_2, 0.0);
+    cr.arc(x + w - r, y + h - r, r, 0.0, FRAC_PI_2);
+    cr.arc(x + r, y + h - r, r, FRAC_PI_2, PI);
+    cr.arc(x + r, y + r, r, PI, 3.0 * FRAC_PI_2);
+    cr.close_path();
+}
+
+/// Miniature window (sidebar, card, accent pill) per palette; several palettes split the tile diagonally (Auto).
+fn draw_preview(cr: &gtk::cairo::Context, w: f64, h: f64, slices: &[Palette]) {
+    let n = slices.len().max(1) as f64;
+    for (i, p) in slices.iter().enumerate() {
+        cr.save().ok();
+        if slices.len() > 1 {
+            // Diagonal split: slice i covers its share of the width, slanted.
+            let x0 = w * i as f64 / n;
+            let x1 = w * (i + 1) as f64 / n;
+            let slant = h * 0.35;
+            cr.move_to(if i == 0 { -1.0 } else { x0 + slant / 2.0 }, 0.0);
+            cr.line_to(
+                if i + 1 == slices.len() {
+                    w + 1.0
+                } else {
+                    x1 + slant / 2.0
+                },
+                0.0,
+            );
+            cr.line_to(
+                if i + 1 == slices.len() {
+                    w + 1.0
+                } else {
+                    x1 - slant / 2.0
+                },
+                h,
+            );
+            cr.line_to(if i == 0 { -1.0 } else { x0 - slant / 2.0 }, h);
+            cr.close_path();
+            cr.clip();
+        }
+        rgba(cr, p.surface);
+        cr.paint().ok();
+        let sw = w * 0.3;
+        rgba(cr, p.sidebar.over(p.surface));
+        cr.rectangle(0.0, 0.0, sw, h);
+        cr.fill().ok();
+        // sidebar rows: one selected (accent), two dim
+        rgba(cr, p.accent);
+        rounded(cr, 6.0, 14.0, sw - 12.0, 7.0, 3.5);
+        cr.fill().ok();
+        rgba(cr, p.dim.over(p.sidebar.over(p.surface)));
+        for k in 0..2 {
+            rounded(cr, 6.0, 27.0 + 11.0 * k as f64, sw * 0.6, 4.0, 2.0);
+            cr.fill().ok();
+        }
+        // content card with text lines
+        let (cx, cy, cw, ch) = (sw + 8.0, 12.0, w - sw - 16.0, h - 24.0);
+        rgba(cr, p.card);
+        rounded(cr, cx, cy, cw, ch, 4.0);
+        cr.fill_preserve().ok();
+        rgba(cr, p.line.over(p.card));
+        cr.set_line_width(1.0);
+        cr.stroke().ok();
+        rgba(cr, p.dim.over(p.card));
+        for k in 0..3 {
+            let lw = cw * [0.7, 0.5, 0.6][k];
+            rounded(cr, cx + 6.0, cy + 8.0 + 9.0 * k as f64, lw - 12.0, 4.0, 2.0);
+            cr.fill().ok();
+        }
+        rgba(cr, p.accent);
+        rounded(cr, cx + cw - 26.0, cy + ch - 12.0, 20.0, 7.0, 3.5);
+        cr.fill().ok();
+        cr.restore().ok();
+    }
+}
+
+/// Appearance tile: drawn preview over a caption; checked = accent ring. Group tiles with `set_group`.
+pub fn theme_preview(slices: Vec<Palette>, title: &str, selected: bool) -> gtk::ToggleButton {
+    let area = gtk::DrawingArea::builder()
+        .content_width(PREVIEW.0)
+        .content_height(PREVIEW.1)
+        .build();
+    area.add_css_class("preview-frame");
+    area.set_overflow(gtk::Overflow::Hidden);
+    area.set_draw_func(move |_, cr, w, h| draw_preview(cr, w as f64, h as f64, &slices));
+    let b = vbox(S2);
+    area.set_halign(gtk::Align::Center);
+    b.append(&area);
+    b.append(&centered(title, ""));
+    let t = gtk::ToggleButton::builder()
+        .child(&b)
+        .active(selected)
+        .build();
+    t.add_css_class("preview-tile");
+    t
+}
+
+/// Accent circle; checked shows a centre dot in the accent's text colour.
+pub fn accent_swatch(
+    color: shared::theme::Color,
+    dot: shared::theme::Color,
+    name: &str,
+    selected: bool,
+) -> gtk::ToggleButton {
+    let area = gtk::DrawingArea::builder()
+        .content_width(SWATCH)
+        .content_height(SWATCH)
+        .build();
+    let t = gtk::ToggleButton::builder()
+        .child(&area)
+        .active(selected)
+        .tooltip_text(name)
+        .valign(gtk::Align::Center)
+        .build();
+    t.add_css_class("swatch");
+    let t2 = t.downgrade();
+    area.set_draw_func(move |_, cr, w, h| {
+        let (w, h) = (w as f64, h as f64);
+        rgba(cr, color);
+        cr.arc(w / 2.0, h / 2.0, w.min(h) / 2.0, 0.0, std::f64::consts::TAU);
+        cr.fill().ok();
+        if t2.upgrade().is_some_and(|t| t.is_active()) {
+            rgba(cr, dot);
+            cr.arc(w / 2.0, h / 2.0, w.min(h) / 6.0, 0.0, std::f64::consts::TAU);
+            cr.fill().ok();
+        }
+    });
+    let a2 = area.clone();
+    t.connect_toggled(move |_| a2.queue_draw());
+    t
+}
+
+pub fn text_field(placeholder: &str) -> gtk::Entry {
+    let e = gtk::Entry::builder().placeholder_text(placeholder).build();
+    e.add_css_class("text-field");
+    e
+}
+
+/// Selectable list row: icon, title (+ subtitle), checkmark when selected.
+pub fn choice_row(icon_name: &str, title: &str, subtitle: &str, selected: bool) -> gtk::Button {
+    let check = icon("object-select-symbolic", ICON);
+    check.add_css_class("accent-icon");
+    check.set_opacity(if selected { 1.0 } else { 0.0 });
+    let b = gtk::Button::builder()
+        .child(&list_row(
+            icon_name,
+            title,
+            subtitle,
+            Some(check.upcast_ref()),
+        ))
+        .build();
+    b.add_css_class("row-button");
+    b.add_css_class("choice-row");
+    b
+}
+
+/// Indeterminate or fractional progress (long work in place, HIG §3).
+pub fn progress() -> gtk::ProgressBar {
+    let p = gtk::ProgressBar::new();
+    p.set_hexpand(true);
+    p.set_valign(gtk::Align::Center);
+    p.add_css_class("progress");
+    p
+}
+
+/// Sheet that slides down from the AppWindow toolbar (HIG §1), centred, fixed width.
+pub fn toolbar_sheet(aw: &AppWindow, child: &impl IsA<gtk::Widget>) -> gtk::Revealer {
+    let r = sheet(child);
+    toolbar_place(aw, &r);
+    r
+}
+
+/// Places an existing sheet (e.g. [`AuthSheet::revealer`]) under the toolbar, over the content.
+pub fn toolbar_place(aw: &AppWindow, r: &gtk::Revealer) {
+    r.set_halign(gtk::Align::Center);
+    r.set_valign(gtk::Align::Start);
+    r.set_width_request(SHEET_WIDTH);
+    r.add_css_class("toolbar-sheet");
+    // Overlay the content so opening a sheet never reflows the page.
+    if let Some(body) = aw.content.parent().and_downcast::<gtk::Box>() {
+        if let Some(o) = body.parent().and_downcast::<gtk::Overlay>() {
+            o.add_overlay(r);
+        } else {
+            let o = gtk::Overlay::new();
+            o.set_vexpand(true);
+            aw.root.remove(&body);
+            o.set_child(Some(&body));
+            aw.root.append(&o);
+            o.add_overlay(r);
+            if aw.status.parent().is_some_and(|p| p == aw.root) {
+                aw.root.reorder_child_after(&aw.status, Some(&o));
+            }
+        }
+    }
+}
+
+/// Slider for list rows: the knob stays inside its 16px trough (layout check clean).
+pub fn row_slider(value: f64, changed: impl Fn(f64) + 'static) -> gtk::Scale {
+    let s = slider(value, changed);
+    s.add_css_class("row-slider");
+    s
+}
+
+/// Secondary footnote under a section (wraps; never widens the page).
+pub fn footnote(text: &str) -> gtk::Label {
+    let l = label(text, "secondary");
+    l.set_wrap(true);
+    l.add_css_class("footnote");
+    l
+}
+
+/// Horizontal row that wraps onto more lines when narrow (preview tiles, swatches). Not selectable.
+pub fn wrap_row(spacing: i32, max_per_line: u32) -> gtk::FlowBox {
+    let f = gtk::FlowBox::builder()
+        .selection_mode(gtk::SelectionMode::None)
+        .column_spacing(spacing as u32)
+        .row_spacing(spacing as u32)
+        .max_children_per_line(max_per_line)
+        .min_children_per_line(1)
+        .homogeneous(true)
+        .halign(gtk::Align::Center)
+        .valign(gtk::Align::Center)
+        .build();
+    f.add_css_class("wrap-row");
+    f
+}
+
+/// Minimum width of a trailing value in info rows (About), in characters.
+pub const VALUE_CHARS: i32 = 18;

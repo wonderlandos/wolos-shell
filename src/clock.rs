@@ -49,6 +49,12 @@ pub fn menubar(buf: &mut String, t: Stamp) {
     );
 }
 
+/// Menu bar clock without the date (Settings > Menu Bar > Show date off): "14:05".
+pub fn menubar_time(buf: &mut String, t: Stamp) {
+    buf.clear();
+    let _ = write!(buf, "{:02}:{:02}", t.hour, t.minute);
+}
+
 pub fn lock_time(buf: &mut String, t: Stamp) {
     buf.clear();
     let _ = write!(buf, "{}:{:02}", t.hour, t.minute);
