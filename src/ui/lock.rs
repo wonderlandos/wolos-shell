@@ -195,7 +195,10 @@ impl Login {
         foot.set_halign(gtk::Align::Center);
         foot.add_css_class("login-power");
         for p in Power::ALL {
-            foot.append(&action(p.icon(), p.label(), move || p.run()).0);
+            let run = move || {
+                gtk::gio::spawn_blocking(move || login::power(login::LOGIN_SOCKET, p));
+            };
+            foot.append(&action(login::power_icon(p), login::power_label(p), run).0);
         }
         let root = screen(&body(&stack, Some(foot.upcast_ref())));
         let l = Rc::new(Login {
