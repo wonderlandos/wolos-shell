@@ -89,32 +89,62 @@ fn prefers_dark() -> bool {
     gtk::Settings::default().is_some_and(|s| s.is_gtk_application_prefer_dark_theme())
 }
 
-/// Blurred wallpaper, decoded off the main thread; follows the light/dark preference.
+thread_local! {
+    /// Blurred wallpaper per file: decoded once per process.
+    static BACKDROPS: RefCell<std::collections::HashMap<PathBuf, gtk::gdk::MemoryTexture>> =
+        Default::default();
+}
+
+/// Runs `f` on light/dark changes while `owner` lives (the handler is dropped with it).
+fn on_dark_change(owner: &impl IsA<gtk::Widget>, f: impl Fn() + 'static) {
+    let Some(s) = gtk::Settings::default() else {
+        return;
+    };
+    let id = s.connect_gtk_application_prefer_dark_theme_notify(move |_| f());
+    let id = RefCell::new(Some(id));
+    owner.connect_destroy(move |_| {
+        if let Some(id) = id.take() {
+            s.disconnect(id);
+        }
+    });
+}
+
+/// Blurred wallpaper, decoded off the main thread (synchronously in fixed-time golden mode) and cached;
+/// follows the light/dark preference.
 fn backdrop() -> gtk::Picture {
     let pic = gtk::Picture::builder()
         .content_fit(gtk::ContentFit::Cover)
         .can_shrink(true)
         .build();
     pic.add_css_class("lock-backdrop");
-    let load = {
-        let pic = pic.clone();
-        move || {
-            let Some(path) = wallpaper_file(prefers_dark()) else {
-                return;
-            };
-            let pic = pic.clone();
-            glib::spawn_future_local(async move {
-                let r = gtk::gio::spawn_blocking(move || blurred_wallpaper(&path)).await;
-                if let Ok(Some(t)) = r {
-                    pic.set_paintable(Some(&t));
-                }
-            });
+    let weak = pic.downgrade();
+    let load = move || {
+        let (Some(pic), Some(path)) = (weak.upgrade(), wallpaper_file(prefers_dark())) else {
+            return;
+        };
+        if let Some(t) = BACKDROPS.with_borrow(|c| c.get(&path).cloned()) {
+            pic.set_paintable(Some(&t));
+            return;
         }
+        let store = |path: PathBuf, t: gtk::gdk::MemoryTexture, pic: &gtk::Picture| {
+            pic.set_paintable(Some(&t));
+            BACKDROPS.with_borrow_mut(|c| c.insert(path, t));
+        };
+        if std::env::var_os("WOL_FAKE_NOW").is_some() {
+            if let Some(t) = blurred_wallpaper(&path) {
+                store(path, t, &pic);
+            }
+            return;
+        }
+        glib::spawn_future_local(async move {
+            let p2 = path.clone();
+            if let Ok(Some(t)) = gtk::gio::spawn_blocking(move || blurred_wallpaper(&p2)).await {
+                store(path, t, &pic);
+            }
+        });
     };
     load();
-    if let Some(s) = gtk::Settings::default() {
-        s.connect_gtk_application_prefer_dark_theme_notify(move |_| load());
-    }
+    on_dark_change(&pic, load);
     pic
 }
 
@@ -123,8 +153,11 @@ pub(crate) fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
     let o = gtk::Overlay::new();
     o.add_css_class("lock-screen");
     let tone = {
-        let o = o.clone();
+        let weak = o.downgrade();
         move || {
+            let Some(o) = weak.upgrade() else {
+                return;
+            };
             if prefers_dark() {
                 o.remove_css_class("light")
             } else {
@@ -133,9 +166,7 @@ pub(crate) fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
         }
     };
     tone();
-    if let Some(s) = gtk::Settings::default() {
-        s.connect_gtk_application_prefer_dark_theme_notify(move |_| tone());
-    }
+    on_dark_change(&o, tone);
     o.set_child(Some(&backdrop()));
     let scrim = w::vbox(0);
     scrim.add_css_class("lock-scrim");
@@ -172,6 +203,7 @@ pub struct Login {
     pub panel: Rc<w::UserPanel>,
     pub back: gtk::Button,
     selected: Rc<RefCell<String>>,
+    failures: std::cell::Cell<u32>,
 }
 
 impl Login {
@@ -207,6 +239,7 @@ impl Login {
             panel,
             back,
             selected: Default::default(),
+            failures: Default::default(),
         });
         for u in users {
             let t = gtk::Button::builder().build();
@@ -241,9 +274,24 @@ impl Login {
     /// Shows `user`'s password pill.
     pub fn pick(&self, user: &str) {
         *self.selected.borrow_mut() = user.to_string();
+        self.failures.set(0);
         self.panel.set_user(user);
         self.stack.set_visible_child_name("password");
         self.panel.field.grab_focus();
+    }
+
+    /// Wrong password: after three, the account's hint replaces the message.
+    pub fn failed(&self, v: Verdict) {
+        if v != Verdict::Denied {
+            return;
+        }
+        self.failures.set(self.failures.get() + 1);
+        let user = self.selected();
+        if let Some(h) =
+            login::hint_message(self.failures.get(), login::read_hint(&user).as_deref())
+        {
+            self.panel.message.set_label(&h);
+        }
     }
 
     pub fn selected(&self) -> String {
@@ -275,6 +323,7 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
     panel: Rc<w::UserPanel>,
     check: impl Fn() -> C + 'static,
     ok: impl Fn() + Clone + 'static,
+    failed: impl Fn(Verdict) + Clone + 'static,
 ) {
     let check = Rc::new(check);
     let p2 = panel.clone();
@@ -282,7 +331,7 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
         let pw = f.text().to_string();
         f.set_sensitive(false);
         p2.message.set_label("");
-        let (p, check, ok) = (p2.clone(), check(), ok.clone());
+        let (p, check, ok, failed) = (p2.clone(), check(), ok.clone(), failed.clone());
         glib::spawn_future_local(async move {
             let v = gtk::gio::spawn_blocking(move || check(pw))
                 .await
@@ -293,6 +342,7 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
             } else {
                 p.reject(v.message());
                 p.field.grab_focus();
+                failed(v);
             }
         });
     });
@@ -318,6 +368,7 @@ pub fn run_lock() -> glib::ExitCode {
                 unlock();
                 app2.quit();
             },
+            |_| {},
         );
         panel.field.grab_focus();
     });
@@ -369,7 +420,7 @@ pub fn run_login() -> glib::ExitCode {
         let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
         let l = Login::new(&login::users(&passwd, &shells));
         win.set_child(Some(&l.root));
-        let l2 = l.clone();
+        let (l2, l4) = (l.clone(), l.clone());
         wire(
             l.panel.clone(),
             move || {
@@ -377,6 +428,7 @@ pub fn run_login() -> glib::ExitCode {
                 move |pw: String| login::login(login::LOGIN_SOCKET, &user, &pw)
             },
             || std::process::exit(0),
+            move |v| l4.failed(v),
         );
         let keys = gtk::EventControllerKey::new();
         let l3 = l.clone();

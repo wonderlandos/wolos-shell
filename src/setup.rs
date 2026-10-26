@@ -82,7 +82,7 @@ const fn lang(
     }
 }
 
-pub const LANGUAGES: [Language; 8] = [
+pub const LANGUAGES: [Language; 7] = [
     lang("English", "United States", "en_US.UTF-8", "us"),
     lang("English", "United Kingdom", "en_GB.UTF-8", "gb"),
     lang("Português", "Brasil", "pt_BR.UTF-8", "br"),
@@ -90,49 +90,10 @@ pub const LANGUAGES: [Language; 8] = [
     lang("Español", "España", "es_ES.UTF-8", "es"),
     lang("Français", "France", "fr_FR.UTF-8", "fr"),
     lang("Deutsch", "Deutschland", "de_DE.UTF-8", "de"),
-    lang("Italiano", "Italia", "it_IT.UTF-8", "it"),
 ];
 
-pub struct Keyboard {
-    pub name: &'static str,
-    /// xkb layout
-    pub layout: &'static str,
-}
-
-pub const KEYBOARDS: [Keyboard; 8] = [
-    Keyboard {
-        name: "U.S.",
-        layout: "us",
-    },
-    Keyboard {
-        name: "British",
-        layout: "gb",
-    },
-    Keyboard {
-        name: "Brazilian (ABNT2)",
-        layout: "br",
-    },
-    Keyboard {
-        name: "Portuguese",
-        layout: "pt",
-    },
-    Keyboard {
-        name: "Spanish",
-        layout: "es",
-    },
-    Keyboard {
-        name: "French (AZERTY)",
-        layout: "fr",
-    },
-    Keyboard {
-        name: "German (QWERTZ)",
-        layout: "de",
-    },
-    Keyboard {
-        name: "Italian",
-        layout: "it",
-    },
-];
+/// (xkb layout, name): the same list Settings > Keyboard offers.
+pub const KEYBOARDS: [(&str, &str); 8] = wol_core::prefs::LAYOUTS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Appearance {
@@ -177,6 +138,22 @@ pub fn account_name(full: &str) -> String {
         .collect()
 }
 
+/// Account card fields (problems are shown under the one they concern).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Field {
+    FullName,
+    Name,
+    Password,
+    Verify,
+    Hint,
+}
+
+/// Avatar text: initials, "?" before any input.
+pub fn initials_or_placeholder(full: &str) -> String {
+    let i = crate::login::initials(full);
+    if i.is_empty() { "?".into() } else { i }
+}
+
 /// Everything the assistant collects.
 #[derive(Clone, Debug, Default)]
 pub struct Draft {
@@ -196,7 +173,7 @@ impl Draft {
     pub fn set_language(&mut self, i: usize) {
         self.language = i.min(LANGUAGES.len() - 1);
         let km = LANGUAGES[self.language].keymap;
-        self.keyboard = KEYBOARDS.iter().position(|k| k.layout == km).unwrap_or(0);
+        self.keyboard = KEYBOARDS.iter().position(|k| k.0 == km).unwrap_or(0);
     }
 
     /// Derives the account name until the user edits it.
@@ -212,24 +189,32 @@ impl Draft {
         self.name = name.to_string();
     }
 
-    /// First thing to fix on the account card (one sentence), or None to continue.
-    pub fn account_problem(&self) -> Option<&'static str> {
+    /// First thing to fix on the account card: the field and one sentence; None to continue.
+    pub fn account_problem(&self) -> Option<(Field, &'static str)> {
         if self.full_name.trim().is_empty() {
-            return Some("Enter your full name.");
+            return Some((Field::FullName, "Enter your full name."));
+        }
+        let rules = wol_core::settings::users::validate_account(&self.account());
+        if rules == Err("name") || self.name.is_empty() {
+            return Some((
+                Field::Name,
+                "Use lowercase letters and digits, starting with a letter.",
+            ));
         }
         if self.password.is_empty() {
-            return Some("Choose a password.");
+            return Some((Field::Password, "Choose a password."));
         }
         if self.password != self.verify {
-            return Some("Passwords don't match.");
+            return Some((Field::Verify, "Passwords don't match."));
         }
         if !self.hint.is_empty() && self.hint == self.password {
-            return Some("The hint can't be the password.");
+            return Some((Field::Hint, "The hint can't be the password."));
         }
-        match wol_core::settings::users::validate_account(&self.account()) {
+        match rules {
             Ok(()) => None,
-            Err("name") => Some("Use lowercase letters and digits for the account name."),
-            Err(_) => Some("Check the highlighted fields."),
+            Err("hint") => Some((Field::Hint, "Keep the hint short, without colons.")),
+            Err("full name") => Some((Field::FullName, "Remove colons from the name.")),
+            Err(_) => Some((Field::Password, "Choose a different password.")),
         }
     }
 
@@ -239,7 +224,7 @@ impl Draft {
             full_name: self.full_name.trim().to_string(),
             hint: self.hint.clone(),
             locale: LANGUAGES[self.language].locale.into(),
-            keymap: KEYBOARDS[self.keyboard].layout.into(),
+            keymap: KEYBOARDS[self.keyboard].0.into(),
             appearance: self.appearance.wire().into(),
             password: self.password.clone(),
         }
@@ -293,31 +278,44 @@ mod tests {
             .unwrap();
         let mut d = Draft::default();
         d.set_language(pt);
-        assert_eq!(KEYBOARDS[d.keyboard].layout, "br");
+        assert_eq!(KEYBOARDS[d.keyboard].0, "br");
         assert_eq!(LANGUAGES[0].locale, "en_US.UTF-8");
         assert!(
             LANGUAGES
                 .iter()
-                .all(|l| KEYBOARDS.iter().any(|k| k.layout == l.keymap))
+                .all(|l| KEYBOARDS.iter().any(|k| k.0 == l.keymap))
         );
     }
 
     #[test]
     fn account_draft() {
+        use Field::*;
         let mut d = Draft::default();
-        assert_eq!(d.account_problem(), Some("Enter your full name."));
+        assert_eq!(
+            d.account_problem(),
+            Some((FullName, "Enter your full name."))
+        );
         d.set_full_name("Alice Liddell");
         assert_eq!(d.name, "aliceliddell");
         d.set_name("alice");
         d.set_full_name("Alice P. Liddell");
         assert_eq!(d.name, "alice", "edited account name stays");
-        assert_eq!(d.account_problem(), Some("Choose a password."));
+        d.set_name("Alice!");
+        assert_eq!(d.account_problem().map(|p| p.0), Some(Name));
+        d.set_name("alice");
+        assert_eq!(d.account_problem(), Some((Password, "Choose a password.")));
         d.password = "curiouser".into();
         d.verify = "curiouserr".into();
-        assert_eq!(d.account_problem(), Some("Passwords don't match."));
+        assert_eq!(
+            d.account_problem(),
+            Some((Verify, "Passwords don't match."))
+        );
         d.verify = "curiouser".into();
         d.hint = "curiouser".into();
-        assert_eq!(d.account_problem(), Some("The hint can't be the password."));
+        assert_eq!(
+            d.account_problem(),
+            Some((Hint, "The hint can't be the password."))
+        );
         d.hint = "white rabbit".into();
         assert_eq!(d.account_problem(), None);
         d.appearance = Appearance::Auto;
@@ -333,5 +331,7 @@ mod tests {
             ("alice", "Alice P. Liddell", "en_US.UTF-8", "us", "auto")
         );
         assert_eq!(wol_core::settings::users::validate_account(&a), Ok(()));
+        assert_eq!(initials_or_placeholder(""), "?");
+        assert_eq!(initials_or_placeholder("alice liddell"), "AL");
     }
 }

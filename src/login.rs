@@ -149,6 +149,23 @@ pub fn power(socket: &str, p: Power) -> Verdict {
     exchange(socket, &shared::login::encode_power(p))
 }
 
+/// Wrong passwords before the login window shows the account's hint.
+pub const HINT_AFTER: u32 = 3;
+
+/// "Hint: …" once `failures` reaches [`HINT_AFTER`] and a non-blank hint exists.
+pub fn hint_message(failures: u32, hint: Option<&str>) -> Option<String> {
+    let h = hint?.trim();
+    (failures >= HINT_AFTER && !h.is_empty()).then(|| format!("Hint: {h}"))
+}
+
+/// The hint file for `user` (written by wol-login at setup, ADR 0004).
+pub fn read_hint(user: &str) -> Option<String> {
+    if user.is_empty() || user.contains(['/', '\0']) || user.starts_with('.') {
+        return None;
+    }
+    std::fs::read_to_string(std::path::Path::new(shared::login::HINTS_DIR).join(user)).ok()
+}
+
 /// Owned-argument form for worker threads.
 pub fn authcheck_owned(password: String) -> Verdict {
     authcheck(&password)
@@ -184,6 +201,19 @@ mod tests {
         assert!(login_request("", "pw").is_none());
         assert!(login_request("a\nb", "pw").is_none());
         assert!(login_request("a", &"x".repeat(513)).is_none());
+    }
+
+    #[test]
+    fn hint_after_three_failures() {
+        for (n, hint, want) in [
+            (2, Some("white rabbit\n"), None),
+            (3, Some("white rabbit\n"), Some("Hint: white rabbit")),
+            (5, Some("white rabbit"), Some("Hint: white rabbit")),
+            (3, Some("  \n"), None),
+            (3, None, None),
+        ] {
+            assert_eq!(hint_message(n, hint).as_deref(), want, "{n} {hint:?}");
+        }
     }
 
     #[test]

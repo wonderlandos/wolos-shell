@@ -80,9 +80,41 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("notifications", notify::start(&app));
             drop(p);
             ipc::shell_socket(panels, osd, sys);
+            apply_setup();
         });
     });
     app.run_with_args::<&str>(&[])
+}
+
+/// First session after the setup assistant (ADR 0004): its keyboard layout becomes the Hyprland
+/// input fragment (unless one exists), then `setup.json` is marked applied. Auto appearance needs
+/// nothing here: no theme file means Auto (`kit::style`).
+fn apply_setup() {
+    use wol_core::prefs;
+    let home = wol_core::theme::config_home();
+    let (file, done) = (
+        home.join(prefs::SETUP_FILE),
+        home.join(prefs::SETUP_APPLIED),
+    );
+    let Ok(json) = std::fs::read_to_string(&file) else {
+        return;
+    };
+    let dir = home.join(prefs::HYPR_DIR);
+    let kb = dir.join("keyboard.conf");
+    if let (false, Some(conf)) = (kb.exists(), prefs::setup_keyboard(&json)) {
+        let user = home.join(prefs::HYPR_USER);
+        let glob = dir.join("*.conf");
+        let cur = std::fs::read_to_string(&user).ok();
+        let ok = std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&kb, conf).is_ok();
+        if let (true, Some(t)) = (
+            ok,
+            prefs::ensure_source(cur.as_deref(), &glob.to_string_lossy()),
+        ) {
+            let _ = std::fs::write(&user, t);
+        }
+        let _ = std::process::Command::new("hyprctl").arg("reload").spawn();
+    }
+    let _ = std::fs::rename(file, done);
 }
 
 /// One-window panel app (Control Center, Spotlight): Esc or focus loss quits.

@@ -4,6 +4,7 @@ use crate::theme;
 use gtk::{gdk, gio, glib, prelude::*};
 use std::cell::RefCell;
 use std::rc::Rc;
+use wol_core::theme::accent;
 
 /// Installs the theme + `extra` CSS and watches `$XDG_CONFIG_HOME/wol/theme` (inotify/kqueue via GIO, no polling).
 pub fn install(extra: &'static str) {
@@ -21,9 +22,19 @@ pub fn install(extra: &'static str) {
         let (provider, path, last) = (provider.clone(), path.clone(), last.clone());
         move || {
             let id = std::fs::read_to_string(&path).ok();
-            let dark = gtk::Settings::default()
-                .map(|s| s.is_gtk_application_prefer_dark_theme())
-                .unwrap_or(false);
+            let id = id
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from);
+            // Auto: light by day, dark at night (wol_core::theme::accent).
+            let dark = if accent::is_auto(id.as_deref()) {
+                accent::auto_is_dark(super::now().hour)
+            } else {
+                gtk::Settings::default()
+                    .map(|s| s.is_gtk_application_prefer_dark_theme())
+                    .unwrap_or(false)
+            };
             let t = theme::resolve(id.as_deref(), dark);
             if last.borrow_mut().set(t.id.clone()) {
                 provider.load_from_string(&theme::stylesheet(&t, extra));
@@ -34,6 +45,7 @@ pub fn install(extra: &'static str) {
         }
     };
     load();
+    auto_timer(Rc::new(load.clone()));
     if let Ok(m) =
         gio::File::for_path(&path).monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
     {
@@ -43,6 +55,16 @@ pub fn install(extra: &'static str) {
         std::mem::forget(m);
     }
     let _ = glib::MainContext::default();
+}
+
+/// Re-evaluates the theme at each light/dark switch time (only changes anything in Auto).
+fn auto_timer(load: Rc<dyn Fn()>) {
+    let t = super::now();
+    let secs = accent::secs_to_next_switch(t.hour, t.minute, t.second).max(1);
+    glib::timeout_add_seconds_local_once(secs, move || {
+        load();
+        auto_timer(load);
+    });
 }
 
 /// Writes the active theme id; every shell process reloads through its file monitor.

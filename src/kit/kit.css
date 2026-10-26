@@ -249,14 +249,27 @@ list.sidebar row.sidebar-search:hover { background: none; }
 .store-grid { margin-top: -8px; }
 .hero-banner button.get-button label { color: #1d1d1f; }
 
-/* ---- Setup assistant (wol-setup): glass card over the lock backdrop ---- */
-.setup-card { margin: 0; padding: 32px 40px 24px 40px; }
-label.setup-subtitle { color: var(--dim); }
-image.setup-icon, image.setup-done-icon { color: var(--accent); }
+/* ---- Setup assistant (wol-setup): content-sized glass card over the lock backdrop ---- */
+.setup-card { margin: 0; padding: 24px; }
+label.setup-subtitle { color: var(--dim); font-size: 13px; }
+image.setup-icon { color: var(--accent); }
 label.setup-hello { font-size: 96px; font-weight: 600; color: white; letter-spacing: -2px; text-shadow: 0 2px 16px rgba(0,0,0,0.30); }
 .lock-screen.light label.setup-hello { color: rgba(22,18,48,0.90); text-shadow: 0 1px 12px rgba(255,255,255,0.40); }
-.setup-card scrolledwindow { border-radius: var(--glass-radius-s); }
-.setup-card .card-list { background: var(--card); }
-button.setup-start { min-height: 32px; padding: 0 24px; margin-top: 8px; }
+label.setup-caption { font-size: 13px; font-weight: 500; }
+button.setup-go { min-width: 44px; min-height: 44px; padding: 0; border-radius: 999px; border: none; box-shadow: 0 4px 16px rgba(0,0,0,0.20); background: var(--accent); color: var(--accent-text); }
+button.setup-go:hover { background: color-mix(in srgb, var(--accent) 88%, white); }
+scrolledwindow.setup-list { background: var(--card); border: 1px solid var(--line); border-radius: var(--glass-radius-s); }
+button.setup-choice { border-radius: 0; padding: 0; margin: 0; min-height: 0; }
+button.setup-choice + button.setup-choice { box-shadow: inset 0 1px var(--line); }
+button.setup-choice .list-row.setup-row { min-height: 36px; padding: 0 12px; }
+.setup-row label { font-size: 13px; }
+.setup-row label.secondary { font-size: 13px; color: var(--dim); }
+entry.setup-field, .setup-field { min-height: 28px; }
+label.setup-problem { color: var(--danger); font-size: 12px; }
+label.avatar.setup-avatar { background: color-mix(in srgb, var(--accent) 22%, var(--card)); color: var(--accent); }
 .setup-card button.btn:disabled { opacity: 0.45; }
+button.setup-start { min-height: 32px; padding: 0 24px; border-radius: 999px; margin-top: 8px; }
+@keyframes setup-pop { from { transform: scale(0.6); } to { transform: scale(1); } }
 image.setup-done-icon { background: var(--accent); color: var(--accent-text); border-radius: 999px; padding: 16px; }
+image.setup-done-icon.pop { animation: setup-pop 420ms cubic-bezier(.34,1.56,.64,1) 1; }
+.setup-field selection, .setup-field text selection { background: var(--accent); color: var(--accent-text); }
