@@ -1,0 +1,170 @@
+/* WolOS shell. Port of Iara.Shell/theme.css + liquid glass (IaraOS ADR 0018). Colors: var(--token) only;
+   white/black rims and shadows are light, not theme. Compositor blurs wol-menubar, wol-dock, wol-panel-*. */
+:root {
+  --glass-fill: rgba(255,255,255,0.10);
+  --glass-fill-strong: rgba(255,255,255,0.18);
+  --glass-rim: rgba(255,255,255,0.55);
+  --glass-rim-soft: rgba(255,255,255,0.18);
+  --glass-radius: 24px;
+  --glass-radius-s: 12px;
+  --glass-spring: cubic-bezier(.34,1.56,.64,1);
+  --glass-motion: 320ms;
+  --bar-height: 28px;
+  --bar-fill: rgba(22,22,30,0.42);
+  --bar-rim: rgba(255,255,255,0.10);
+  --bar-text: rgba(255,255,255,0.94);
+  --bar-dim: rgba(255,255,255,0.55);
+  --bar-hover: rgba(255,255,255,0.16);
+  --bar-pill: rgba(255,255,255,0.08);
+}
+* { font-family: Inter, Cantarell, "Noto Sans", sans-serif; }
+
+/* Wallpaper */
+window.wallpaper {
+  background:
+    radial-gradient(circle at 18% 22%, rgba(255,128,96,0.95), transparent 45%),
+    radial-gradient(circle at 82% 30%, rgba(124,92,255,0.9), transparent 50%),
+    radial-gradient(circle at 50% 95%, rgba(0,190,255,0.85), transparent 55%),
+    linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04354a);
+}
+window.wallpaper picture { background: none; }
+
+/* Menu bar: macOS layout, right cluster in one pill. */
+window.menubar { background: var(--bar-fill); box-shadow: inset 0 -1px 0 var(--bar-rim); color: var(--bar-text); padding: 0 8px; min-height: var(--bar-height); }
+window.menubar label { color: var(--bar-text); font-weight: 500; font-size: 13px; }
+window.menubar image { color: var(--bar-text); -gtk-icon-size: 15px; }
+window.menubar .appname label, window.menubar .appname { font-weight: 700; }
+window.menubar button, window.menubar menubutton > button {
+  background: none; border: none; box-shadow: none; outline: none; color: var(--bar-text);
+  min-height: 22px; min-width: 0; padding: 0 8px; margin: 0; border-radius: 6px; transition: background 120ms ease;
+}
+window.menubar button:hover, window.menubar menubutton > button:hover, window.menubar menubutton > button:checked { background: var(--bar-hover); }
+window.menubar .logo { margin: 0 2px; -gtk-icon-size: 16px; }
+window.menubar .bar-pill { background: var(--bar-pill); box-shadow: inset 0 0 0 1px var(--bar-rim); border-radius: 999px; padding: 0 4px; margin: 3px 0; }
+window.menubar .bar-pill button { border-radius: 999px; }
+window.menubar .clock { font-variant-numeric: tabular-nums; }
+
+/* Menus */
+popover.wol-menu > contents { background: var(--glass); border-radius: 10px; padding: 5px; box-shadow: 0 8px 24px rgba(0,0,0,0.25); border: 1px solid var(--line); }
+popover.wol-menu button { background: none; border: none; box-shadow: none; border-radius: 5px; padding: 3px 18px 3px 10px; color: var(--text); font-size: 13px; }
+popover.wol-menu button:hover { background: var(--accent); color: var(--accent-text); }
+popover.wol-menu separator { margin: 4px 8px; background: var(--line); }
+tooltip { background: rgba(30,30,40,0.85); color: white; border-radius: 8px; }
+
+/* Layer windows are see-through; only the content box draws. */
+window.dock, window.panel, window.banners, window.controlcenter, window.spotlight { background: none; box-shadow: none; border: none; }
+
+/* Dock: liquid glass shelf, magnify on hover, running dot. */
+window.dock > box {
+  background: var(--glass-fill); border-radius: var(--glass-radius); padding: 6px 10px; margin: 28px 32px 10px 32px;
+  border: 1px solid var(--glass-rim-soft);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.22), 0 1px 3px rgba(0,0,0,0.18), inset 0 1px 0 var(--glass-rim);
+}
+window.dock button {
+  background: none; border: none; box-shadow: none; padding: 4px 4px 8px 4px; border-radius: 14px; min-width: 0; min-height: 0;
+  transition: all var(--glass-motion) var(--glass-spring);
+}
+window.dock button image { -gtk-icon-size: 48px; transition: all var(--glass-motion) var(--glass-spring); }
+window.dock button:hover { margin-top: -14px; padding: 8px 8px 12px 8px; }
+window.dock button.running { background: radial-gradient(circle at 50% 96%, rgba(255,255,255,0.95) 2px, transparent 3px); }
+window.dock separator { background: var(--glass-rim-soft); min-width: 1px; margin: 8px 4px; }
+
+/* Glass panels: notifications, OSD, clipboard, session, control center, spotlight. */
+.glass-panel {
+  background: var(--glass); color: var(--text); border-radius: 22px; margin: 28px; padding: 12px;
+  border: 1px solid rgba(255,255,255,0.55);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.22), 0 1px 3px rgba(0,0,0,0.18), inset 0 1px 0 var(--glass-rim);
+}
+.glass-panel label { color: var(--text); }
+.dim, .glass-panel .dim { color: var(--dim); font-size: 12px; }
+.title { font-weight: 700; font-size: 15px; }
+.strong { font-weight: 600; }
+
+/* Notifications */
+window.banners > box { margin: 36px 10px 10px 10px; }
+.notification { min-width: 340px; padding: 10px 12px; border-radius: 16px; }
+.notification .summary { font-weight: 600; }
+.notification .body { color: var(--dim); }
+.notification.critical { border-color: var(--danger); }
+
+/* OSD: centered pill above the dock */
+window.osd > box { margin-bottom: 110px; }
+window.osd .glass-panel { min-width: 220px; padding: 10px 16px; border-radius: 999px; }
+
+/* Session + clipboard */
+.session-item { background: none; border: none; box-shadow: none; padding: 8px 10px; border-radius: 14px; color: var(--text); }
+.session-item:hover { background: var(--control); }
+.session-item image { -gtk-icon-size: 32px; }
+window.clipboard .glass-panel { min-width: 460px; }
+window.clipboard scrolledwindow { min-height: 360px; }
+
+/* kit: Tile, Switch, Slider, Segmented, ListRow, Button, Avatar */
+.tile { background: var(--card); border-radius: 12px; padding: 10px 12px; }
+.tile-title { font-weight: 700; font-size: 12px; color: var(--dim); }
+.list-row { background: none; border: none; box-shadow: none; border-radius: 8px; padding: 6px 8px; color: var(--text); }
+.list-row:hover { background: var(--control); }
+.list-row .subtitle { color: var(--dim); font-size: 12px; }
+button.wol-button { background: var(--accent); color: var(--accent-text); border: none; box-shadow: none; border-radius: 6px; padding: 3px 12px; font-weight: 500; }
+button.wol-button.secondary { background: var(--control); color: var(--text); }
+button.wol-button.plain { background: none; color: var(--accent); }
+button.icon-button { background: none; border: none; box-shadow: none; border-radius: 999px; padding: 6px; color: var(--text); }
+button.icon-button:hover { background: var(--control); }
+button.icon-button.on { background: var(--accent); color: var(--accent-text); }
+.seg, .seg-on { border-radius: 8px; padding: 4px 18px; border: none; box-shadow: none; font-weight: 600; font-size: 12px; }
+.seg { background: var(--control); color: var(--text); }
+.seg-on { background: var(--accent); color: var(--accent-text); }
+switch { background: var(--control); border: none; border-radius: 999px; }
+switch:checked { background: var(--accent); }
+switch slider { background: white; border-radius: 999px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+scale trough { min-height: 6px; border-radius: 3px; background: var(--control); }
+scale highlight { background: var(--accent); border-radius: 3px; }
+scale slider { background: white; min-width: 18px; min-height: 18px; border-radius: 999px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+progressbar trough { min-height: 6px; border-radius: 3px; background: var(--control); }
+progressbar progress { background: var(--text); border-radius: 3px; min-height: 6px; }
+.avatar { background: linear-gradient(160deg, #a0a0a8, #6e6e78); color: white; border-radius: 999px; font-weight: 600; }
+.avatar-48 { min-width: 48px; min-height: 48px; font-size: 18px; }
+.avatar-96 { min-width: 96px; min-height: 96px; font-size: 36px; }
+entry.wol-field { background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; }
+entry.wol-field:focus-within { outline: 3px solid var(--selection, rgba(124,92,255,0.35)); }
+
+/* Control Center */
+window.controlcenter .glass-panel { min-width: 320px; margin: 16px; border-radius: 18px; }
+
+/* Spotlight */
+window.spotlight .glass-panel { min-width: 640px; margin: 30px; padding: 0; border-radius: 18px; }
+window.spotlight .search-bar { padding: 12px 18px; }
+window.spotlight .search-bar image { -gtk-icon-size: 22px; color: var(--dim); }
+window.spotlight entry { font-size: 22px; background: none; border: none; box-shadow: none; outline: none; color: var(--text); }
+window.spotlight .hits { padding: 0 8px 8px 8px; }
+.hit { background: none; border: none; box-shadow: none; border-radius: 9px; padding: 6px 10px; }
+.hit image { -gtk-icon-size: 28px; }
+.hit:hover, .hit:focus, .hit.selected { background: var(--accent); }
+.hit:hover label, .hit:focus label, .hit.selected label { color: var(--accent-text); }
+.hit .hit-title { font-size: 14px; }
+.hit .kind { font-size: 12px; color: var(--dim); }
+
+/* Lock + login window (IaraOS ADR 0022/0024) */
+window.lock-window { background: linear-gradient(160deg, #4b3f8f, #1f5f8f 55%, #0c1830); }
+.lock-body { padding: 80px 0 120px 0; }
+.lock-time { font-size: 96px; font-weight: 600; color: white; text-shadow: 0 2px 12px rgba(0,0,0,0.4); }
+.lock-date { font-size: 22px; font-weight: 500; color: rgba(255,255,255,0.9); }
+.lock-name { font-size: 17px; font-weight: 600; color: white; }
+.lock-field { min-width: 280px; border-radius: 999px; background: rgba(255,255,255,0.25); color: white; border: none; box-shadow: none; padding: 4px 14px; }
+.lock-message { color: rgba(255,255,255,0.85); font-size: 12px; min-height: 16px; }
+@keyframes shake { 0%, 100% { margin-left: 0; margin-right: 0; } 20%, 60% { margin-left: 24px; margin-right: 0; } 40%, 80% { margin-left: 0; margin-right: 24px; } }
+.lock-field.shake { animation: shake 400ms ease-in-out 1; }
+
+/* Settings (AppWindow + sidebar, IaraKit HIG) */
+window.settings { background: var(--surface); color: var(--text); }
+window.settings .sidebar { background: var(--sidebar); min-width: 210px; padding: 8px; border-right: 1px solid var(--line); }
+window.settings .sidebar row { border-radius: 6px; padding: 5px 8px; color: var(--text); }
+window.settings .sidebar row:selected { background: var(--accent); color: var(--accent-text); }
+window.settings .page { padding: 20px 28px; }
+window.settings .page-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+window.settings .group { background: var(--card); border-radius: 10px; border: 1px solid var(--line); }
+window.settings .group > row, window.settings .group .row { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+window.settings listbox.sidebar { background: var(--sidebar); }
+window.settings .sidebar row { background: none; margin: 1px 0; }
+window.settings .sidebar row:hover { background: var(--control); }
+window.settings .sidebar row:selected, window.settings .sidebar row:selected:hover { background: var(--accent); }
+window.settings .sidebar row:selected label, window.settings .sidebar row:selected image { color: var(--accent-text); }
