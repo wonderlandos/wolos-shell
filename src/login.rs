@@ -3,7 +3,7 @@
 use std::io::{Read, Write};
 
 pub const AUTHCHECK: &str = "/usr/local/libexec/wol-authcheck";
-pub const LOGIN_SOCKET: &str = "/var/run/wol-login.sock";
+pub const LOGIN_SOCKET: &str = shared::login::SOCKET;
 pub const MAX_PASSWORD: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,10 +78,15 @@ pub fn login(socket: &str, user: &str, password: &str) -> Verdict {
     let Some(req) = login_request(user, password) else {
         return Verdict::Denied;
     };
+    exchange(socket, &req)
+}
+
+/// One request, write side closed, one-line reply.
+fn exchange(socket: &str, req: &[u8]) -> Verdict {
     let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket) else {
         return Verdict::Error;
     };
-    if s.write_all(&req).is_err() || s.shutdown(std::net::Shutdown::Write).is_err() {
+    if s.write_all(req).is_err() || s.shutdown(std::net::Shutdown::Write).is_err() {
         return Verdict::Error;
     }
     let mut r = String::new();
@@ -117,48 +122,27 @@ pub fn users(passwd: &str, shells: &str) -> Vec<String> {
         .collect()
 }
 
-/// Login window power buttons (FreeBSD base commands).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Power {
-    Sleep,
-    Restart,
-    ShutDown,
+pub use shared::login::Power;
+
+pub fn power_label(p: Power) -> &'static str {
+    match p {
+        Power::Sleep => "Sleep",
+        Power::Restart => "Restart",
+        Power::ShutDown => "Shut Down",
+    }
 }
 
-impl Power {
-    pub const ALL: [Power; 3] = [Power::Sleep, Power::Restart, Power::ShutDown];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Power::Sleep => "Sleep",
-            Power::Restart => "Restart",
-            Power::ShutDown => "Shut Down",
-        }
+pub fn power_icon(p: Power) -> &'static str {
+    match p {
+        Power::Sleep => "weather-clear-night-symbolic",
+        Power::Restart => "view-refresh-symbolic",
+        Power::ShutDown => "system-shutdown-symbolic",
     }
+}
 
-    pub fn icon(self) -> &'static str {
-        match self {
-            Power::Sleep => "weather-clear-night-symbolic",
-            Power::Restart => "view-refresh-symbolic",
-            Power::ShutDown => "system-shutdown-symbolic",
-        }
-    }
-
-    pub fn argv(self) -> &'static [&'static str] {
-        match self {
-            Power::Sleep => &["/usr/sbin/acpiconf", "-s", "3"],
-            Power::Restart => &["/sbin/shutdown", "-r", "now"],
-            Power::ShutDown => &["/sbin/shutdown", "-p", "now"],
-        }
-    }
-
-    /// Fire and forget; failure (no privilege) is reported on stderr.
-    pub fn run(self) {
-        let a = self.argv();
-        if let Err(e) = std::process::Command::new(a[0]).args(&a[1..]).spawn() {
-            eprintln!("wol-loginwindow: {}: {e}", a[0]);
-        }
-    }
+/// Blocking; run off the GTK thread. wol-login (root) runs it (ADR 0003).
+pub fn power(socket: &str, p: Power) -> Verdict {
+    exchange(socket, &shared::login::encode_power(p))
 }
 
 /// Owned-argument form for worker threads.
@@ -199,18 +183,26 @@ mod tests {
     }
 
     #[test]
-    fn power_commands() {
-        for (p, argv) in [
-            (Power::Sleep, &["/usr/sbin/acpiconf", "-s", "3"][..]),
-            (Power::Restart, &["/sbin/shutdown", "-r", "now"][..]),
-            (Power::ShutDown, &["/sbin/shutdown", "-p", "now"][..]),
-        ] {
-            assert_eq!(p.argv(), argv);
-        }
+    fn power_goes_to_wol_login() {
         assert_eq!(
-            Power::ALL.map(Power::label),
+            Power::ALL.map(power_label),
             ["Sleep", "Restart", "Shut Down"]
         );
+        let dir = std::env::temp_dir().join(format!("wol-power-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let sock = dir.join("s");
+        let l = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let srv = std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            let mut req = Vec::new();
+            c.read_to_end(&mut req).unwrap();
+            c.write_all(b"ok\n").unwrap();
+            req
+        });
+        assert_eq!(power(sock.to_str().unwrap(), Power::Restart), Verdict::Ok);
+        assert_eq!(srv.join().unwrap(), b"!restart\n");
+        assert_eq!(power("/nonexistent/sock", Power::Sleep), Verdict::Error);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
