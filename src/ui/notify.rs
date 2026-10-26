@@ -163,33 +163,101 @@ pub fn banner_ms(n: &Note) -> Option<u32> {
     }
 }
 
+/// Where a new banner goes, given the banners on screen as (app, stacked count), top first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Place {
+    /// New group at the top.
+    Top,
+    /// Same app already showing: replace that banner, stack count becomes `count`.
+    Stack { index: usize, count: u32 },
+}
+
+pub fn place(shown: &[(String, u32)], app: &str) -> Place {
+    match shown
+        .iter()
+        .position(|(a, _)| !app.is_empty() && a.eq_ignore_ascii_case(app))
+    {
+        Some(index) => Place::Stack {
+            index,
+            count: shown[index].1 + 1,
+        },
+        None => Place::Top,
+    }
+}
+
+/// Notification Center row (same layout as a banner, no stack).
 fn card(n: &Note) -> gtk::Box {
-    let c = w::glass_panel(w::S1);
+    banner(n, 1)
+}
+
+/// macOS banner: 344 px glass card, app icon, app name + "now", bold title, body up to 2 lines.
+/// `count` > 1 draws the group's stacked edges under the card.
+pub fn banner(n: &Note, count: u32) -> gtk::Box {
+    let outer = w::vbox(0);
+    outer.add_css_class("banner-group");
+    let c = w::glass_panel(0);
     c.add_css_class("notification");
     if n.critical {
         c.add_css_class("critical");
     }
     let row = w::hbox(w::S3);
-    let img = w::icon(
-        if n.icon.is_empty() {
-            "dialog-information-symbolic"
-        } else {
-            &n.icon
-        },
-        w::ICON_M,
-    );
+    let icon = if n.icon.is_empty() {
+        crate::apps::icon_for(&n.app, crate::apps::PINS, &[])
+    } else {
+        n.icon.clone()
+    };
+    let img = if icon.starts_with('/') {
+        let i = gtk::Image::from_file(&icon);
+        i.set_pixel_size(w::ICON_M);
+        i
+    } else {
+        w::app_icon(&icon, w::ICON_M)
+    };
     row.append(&img);
     let text = w::vbox(0);
-    text.append(&w::label(&n.app, "secondary"));
-    text.append(&w::label(&n.summary, "title"));
+    let head = w::hbox(w::S2);
+    let app = w::label(&n.app.to_uppercase(), "banner-app");
+    app.set_hexpand(true);
+    app.set_max_width_chars(1);
+    app.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    app.add_css_class("may-ellipsize");
+    head.append(&app);
+    head.append(&w::label("now", "banner-time"));
+    text.append(&head);
+    let title = w::label(&n.summary, "banner-title");
+    title.add_css_class("may-ellipsize");
+    title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    title.set_max_width_chars(1);
+    text.append(&title);
     if !n.body.is_empty() {
-        let b = w::label(&n.body, "");
+        let b = w::label(&n.body, "banner-body");
         b.set_wrap(true);
+        b.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        b.set_lines(2);
+        b.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        b.add_css_class("may-ellipsize");
+        b.set_max_width_chars(1);
         text.append(&b);
+    }
+    if count > 1 {
+        text.append(&w::label(
+            &format!("{} more notifications", count - 1),
+            "banner-more",
+        ));
     }
     row.append(&text);
     c.append(&row);
-    c
+    outer.append(&c);
+    for edge in ["banner-edge-1", "banner-edge-2"]
+        .iter()
+        .take((count as usize).saturating_sub(1).min(2))
+    {
+        let e = w::vbox(0);
+        e.add_css_class("banner-edge");
+        e.add_css_class(edge);
+        outer.append(&e);
+    }
+    outer
 }
 
 /// Starts the D-Bus server; returns the Notification Center panel.
@@ -225,6 +293,9 @@ pub fn start(app: &gtk::Application) -> gtk::Window {
         ),
     );
     let stack = w::vbox(0);
+    // Width first: a Fill-height stack would ask the 2-line bodies for width-for-height and widen.
+    stack.set_valign(gtk::Align::Start);
+    stack.set_halign(gtk::Align::End);
     banners.set_child(Some(&stack));
     let center_list = w::vbox(0);
     let g = w::glass_panel(w::S2);
@@ -249,72 +320,113 @@ pub fn start(app: &gtk::Application) -> gtk::Window {
     center.set_child(Some(&g));
 
     glib::spawn_future_local(async move {
-        // Banners on screen by id; entries leave on dismiss, expiry, close or replacement.
-        let shown: Rc<RefCell<HashMap<u32, gtk::Box>>> = Default::default();
-        let forget = |shown: &RefCell<HashMap<u32, gtk::Box>>, id: u32, c: &gtk::Box| {
-            let mut m = shown.borrow_mut();
-            if m.get(&id) == Some(c) {
-                m.remove(&id);
-            }
-        };
-        let hide = |stack: &gtk::Box, banners: &gtk::ApplicationWindow, c: &gtk::Box| {
-            if c.parent().is_some() {
-                stack.remove(c);
-            }
-            if stack.first_child().is_none() {
-                banners.set_visible(false);
+        // One banner per app, newest group on top; a group's ids leave together.
+        struct Group {
+            app: String,
+            ids: Vec<u32>,
+            rev: gtk::Revealer,
+            generation: u32,
+        }
+        let groups: Rc<RefCell<Vec<Group>>> = Default::default();
+        let next_gen = Rc::new(std::cell::Cell::new(0u32));
+        // Removes the group holding `rev`; returns its ids.
+        let drop_group = {
+            let (groups, stack, banners) = (groups.clone(), stack.clone(), banners.clone());
+            move |rev: &gtk::Revealer| -> Vec<u32> {
+                let mut g = groups.borrow_mut();
+                let Some(i) = g.iter().position(|x| &x.rev == rev) else {
+                    return vec![];
+                };
+                let gr = g.remove(i);
+                stack.remove(&gr.rev);
+                if g.is_empty() {
+                    banners.set_visible(false);
+                }
+                gr.ids
             }
         };
         while let Ok(ev) = rx.recv().await {
             let n = match ev {
                 Event::Show(n) => n,
                 Event::Close(id) => {
-                    if let Some(c) = shown.borrow_mut().remove(&id) {
-                        hide(&stack, &banners, &c);
+                    let rev = {
+                        let mut g = groups.borrow_mut();
+                        let Some(gr) = g.iter_mut().find(|x| x.ids.contains(&id)) else {
+                            continue;
+                        };
+                        gr.ids.retain(|&x| x != id);
+                        gr.ids.is_empty().then(|| gr.rev.clone())
+                    };
+                    if let Some(rev) = rev {
+                        drop_group(&rev);
                     }
                     continue;
                 }
             };
-            let old = shown.borrow_mut().remove(&n.id);
-            if let Some(old) = old {
-                hide(&stack, &banners, &old);
-            }
             center_list.prepend(&card(&n));
-            let c = card(&n);
-            let click = gtk::GestureClick::new();
-            let (s2, b2, c2, closed2, id, sh) = (
-                stack.clone(),
-                banners.clone(),
-                c.clone(),
-                closed.clone(),
-                n.id,
-                shown.clone(),
-            );
-            click.connect_released(move |_, _, _, _| {
-                forget(&sh, id, &c2);
-                hide(&s2, &b2, &c2);
-                closed2(id, CloseReason::Dismissed);
-            });
-            c.add_controller(click);
-            stack.append(&c);
-            shown.borrow_mut().insert(n.id, c.clone());
-            banners.set_visible(true);
+            let generation = next_gen.get().wrapping_add(1);
+            next_gen.set(generation);
+            let shown: Vec<(String, u32)> = groups
+                .borrow()
+                .iter()
+                .map(|g| (g.app.clone(), g.ids.len() as u32))
+                .collect();
+            let rev = match place(&shown, &n.app) {
+                Place::Stack { index, count } => {
+                    let mut g = groups.borrow_mut();
+                    let gr = &mut g[index];
+                    if !gr.ids.contains(&n.id) {
+                        gr.ids.push(n.id);
+                    }
+                    gr.generation = generation;
+                    debug_assert!(count >= gr.ids.len() as u32);
+                    gr.rev.set_child(Some(&banner(&n, gr.ids.len() as u32)));
+                    gr.rev.clone()
+                }
+                Place::Top => {
+                    let rev = gtk::Revealer::builder()
+                        .transition_type(gtk::RevealerTransitionType::SlideLeft)
+                        .child(&banner(&n, 1))
+                        .build();
+                    let click = gtk::GestureClick::new();
+                    let (r2, drop2, closed2) = (rev.clone(), drop_group.clone(), closed.clone());
+                    click.connect_released(move |_, _, _, _| {
+                        for id in drop2(&r2) {
+                            closed2(id, CloseReason::Dismissed);
+                        }
+                    });
+                    rev.add_controller(click);
+                    stack.prepend(&rev);
+                    groups.borrow_mut().insert(
+                        0,
+                        Group {
+                            app: n.app.clone(),
+                            ids: vec![n.id],
+                            rev: rev.clone(),
+                            generation,
+                        },
+                    );
+                    banners.set_visible(true);
+                    let r2 = rev.clone();
+                    glib::idle_add_local_once(move || r2.set_reveal_child(true));
+                    rev
+                }
+            };
             if let Some(ms) = banner_ms(&n) {
-                let (stack, banners, closed, id, sh) = (
-                    stack.clone(),
-                    banners.clone(),
-                    closed.clone(),
-                    n.id,
-                    shown.clone(),
-                );
+                let (groups, drop_group, closed) =
+                    (groups.clone(), drop_group.clone(), closed.clone());
                 glib::timeout_add_local_once(
                     std::time::Duration::from_millis(ms as u64),
                     move || {
-                        // Only the banner that is still showing expires (a replacement has its own timer).
-                        if c.parent().is_some() {
-                            forget(&sh, id, &c);
-                            hide(&stack, &banners, &c);
-                            closed(id, CloseReason::Expired);
+                        // Only the group's latest note expires it (a newer note has its own timer).
+                        let live = groups
+                            .borrow()
+                            .iter()
+                            .any(|g| g.rev == rev && g.generation == generation);
+                        if live {
+                            for id in drop_group(&rev) {
+                                closed(id, CloseReason::Expired);
+                            }
                         }
                     },
                 );
@@ -337,6 +449,20 @@ mod tests {
             critical,
             timeout_ms: t,
         }
+    }
+
+    #[test]
+    fn banners_group_per_app() {
+        let shown = vec![("Mail".to_string(), 1), ("Music".to_string(), 3)];
+        for (app, want) in [
+            ("Mail", Place::Stack { index: 0, count: 2 }),
+            ("music", Place::Stack { index: 1, count: 4 }),
+            ("Calendar", Place::Top),
+            ("", Place::Top),
+        ] {
+            assert_eq!(place(&shown, app), want, "{app}");
+        }
+        assert_eq!(place(&[], "Mail"), Place::Top);
     }
 
     #[test]

@@ -151,7 +151,8 @@ button.hit.selected { background: var(--accent); }
 button.hit.selected label { color: var(--accent-text); }
 
 /* ---- Notifications / OSD / session ---- */
-.notification { min-width: 344px; padding: 12px; margin: 0 0 8px 0; }
+/* 344 px outer width (macOS): 318 + 2 x 12 padding + 2 x 1 border. */
+.notification { min-width: 318px; padding: 10px 12px; margin: 0; border-radius: 16px; }
 .notification.critical { border-color: var(--danger); }
 .osd-pill { border-radius: 999px; padding: 8px 16px; min-width: 216px; margin-bottom: 112px; }
 progressbar trough { min-height: 4px; border-radius: 2px; background: var(--control); }
@@ -302,3 +303,14 @@ button.capture-mode:checked image { color: var(--accent); }
 button.capture-go { margin-left: 6px; min-height: 28px; padding: 0 14px; }
 .capture-thumb { border-radius: 10px; border: 4px solid white; margin: 0 24px 24px 0; box-shadow: 0 12px 32px rgba(0,0,0,0.35); }
 .menu-heading { font-size: 12px; font-weight: 600; color: var(--dim); padding: 4px 8px 2px 8px; }
+
+/* ---- Notification banners ---- */
+window.banners .banner-group, .banners-preview .banner-group { margin: 8px 12px 0 0; }
+.banner-app { font-size: 11px; font-weight: 500; color: var(--dim); }
+.banner-time { font-size: 11px; color: var(--dim); }
+.banner-title { font-size: 13px; font-weight: 700; }
+.banner-body { font-size: 13px; }
+.banner-more { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.banner-edge { min-height: 6px; border-radius: 0 0 12px 12px; background: var(--glass); border: 1px solid var(--glass-hairline); border-top: none; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+.banner-edge-1 { margin: 0 8px; }
+.banner-edge-2 { margin: 0 16px; min-height: 5px; }
