@@ -5,9 +5,9 @@ use crate::kit::{
     surface::{Keyboard, Spec},
     widgets as w,
 };
-use crate::system::{ActionError, System};
+use crate::system::{Action, ActionError, System};
 use gtk::{glib, prelude::*};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 pub const DND_FILE: &str = "wol/dnd";
@@ -29,22 +29,38 @@ fn dnd_path() -> std::path::PathBuf {
     std::path::Path::new(&kit::config_home()).join(DND_FILE)
 }
 
-type Action = Box<dyn Fn() -> Result<(), ActionError>>;
-
 struct Ui {
     sys: Rc<dyn System>,
     message: gtk::Label,
     auth: w::AuthSheet,
+    /// Admin action waiting for the password.
     pending: RefCell<Option<Action>>,
+    /// Slider actions: one in flight per kind, newest value wins (no fork storm while dragging).
+    busy: RefCell<std::collections::HashMap<&'static str, Option<Action>>>,
+    /// True while a snapshot pushes values into widgets (their handlers must not act).
+    syncing: Cell<bool>,
 }
 
 impl Ui {
-    /// Runs an action; `NeedsAuth` opens the Authenticate sheet and retries after `authorize`.
-    fn act(self: &Rc<Self>, f: impl Fn() -> Result<(), ActionError> + 'static) {
-        match f() {
+    /// Runs `a` off the UI thread; `NeedsAuth`/`Denied` open the Authenticate sheet and retry after Allow.
+    fn act(self: &Rc<Self>, a: Action) {
+        let rx = self.sys.spawn(a.clone());
+        let u = self.clone();
+        glib::spawn_future_local(async move {
+            let Ok(r) = rx.recv().await else { return };
+            u.done(a, r);
+        });
+    }
+    fn done(self: &Rc<Self>, a: Action, r: Result<(), ActionError>) {
+        match r {
             Ok(()) => self.message.set_visible(false),
-            Err(ActionError::NeedsAuth) => {
-                *self.pending.borrow_mut() = Some(Box::new(f));
+            Err(e @ (ActionError::NeedsAuth | ActionError::Denied)) => {
+                self.auth.message.set_label(if e == ActionError::Denied {
+                    e.message()
+                } else {
+                    ""
+                });
+                *self.pending.borrow_mut() = Some(a);
                 self.auth.revealer.set_reveal_child(true);
                 self.auth.field.grab_focus();
             }
@@ -54,18 +70,63 @@ impl Ui {
             }
         }
     }
+    /// Coalesced variant of [`Ui::act`] for sliders.
+    fn act_latest(self: &Rc<Self>, kind: &'static str, a: Action) {
+        if self.syncing.get() {
+            return;
+        }
+        if let Some(slot) = self.busy.borrow_mut().get_mut(kind) {
+            *slot = Some(a);
+            return;
+        }
+        self.busy.borrow_mut().insert(kind, None);
+        let rx = self.sys.spawn(a.clone());
+        let u = self.clone();
+        glib::spawn_future_local(async move {
+            let r = rx.recv().await.unwrap_or(Ok(()));
+            let next = u.busy.borrow_mut().remove(kind).flatten();
+            if r.is_err() {
+                u.done(a, r);
+            }
+            if let Some(n) = next {
+                u.act_latest(kind, n);
+            }
+        });
+    }
     fn allow(self: &Rc<Self>) {
         let pw = self.auth.field.text();
         self.auth.field.set_text("");
         match self.sys.authorize(&pw) {
             Ok(()) => {
                 self.auth.revealer.set_reveal_child(false);
-                if let Some(f) = self.pending.borrow_mut().take() {
-                    self.act(f);
+                if let Some(a) = self.pending.borrow_mut().take() {
+                    self.act(a);
                 }
             }
             Err(e) => self.auth.message.set_label(e.message()),
         }
+    }
+}
+
+fn scale_in(w: &gtk::Widget) -> Option<gtk::Scale> {
+    if let Some(s) = w.downcast_ref::<gtk::Scale>() {
+        return Some(s.clone());
+    }
+    let mut c = w.first_child();
+    while let Some(ch) = c {
+        if let Some(s) = scale_in(&ch) {
+            return Some(s);
+        }
+        c = ch.next_sibling();
+    }
+    None
+}
+
+fn bluetooth_label(bt: Option<bool>) -> &'static str {
+    match bt {
+        Some(true) => "On",
+        Some(false) => "Off",
+        None => "Unavailable",
     }
 }
 
@@ -79,6 +140,8 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
         message: w::label("", "secondary"),
         auth: w::authenticate_sheet("Control Center"),
         pending: Default::default(),
+        busy: Default::default(),
+        syncing: Cell::new(false),
     });
     {
         let u = ui.clone();
@@ -114,7 +177,7 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
     let top = w::hbox(w::S2);
     top.set_homogeneous(true);
     let conn = w::vbox(w::S2);
-    let wifi_on = net.wifi;
+    let wifi_on = sys.wifi_enabled().unwrap_or(net.wifi);
     let wifi = w::ControlTile::new(
         "network-wireless-symbolic",
         "Wi-Fi",
@@ -122,11 +185,9 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
         Some(wifi_on),
     );
     {
-        let (u, s, t) = (ui.clone(), sys.clone(), wifi.circle.clone());
+        let (u, t) = (ui.clone(), wifi.circle.clone());
         wifi.circle.connect_clicked(move |_| {
-            let on = !t.has_css_class("on");
-            let s = s.clone();
-            u.act(move || s.set_wifi(on));
+            u.act(Action::Wifi(!t.has_css_class("on")));
         });
     }
     {
@@ -139,20 +200,14 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
     let bluetooth = w::ControlTile::new(
         "bluetooth-active-symbolic",
         "Bluetooth",
-        match bt {
-            Some(true) => "On",
-            Some(false) => "Off",
-            None => "Unavailable",
-        },
+        bluetooth_label(bt),
         bt,
     );
     {
-        let (u, s) = (ui.clone(), sys.clone());
+        let u = ui.clone();
         let t = bluetooth.circle.clone();
         bluetooth.circle.connect_clicked(move |_| {
-            let on = !t.has_css_class("on");
-            let s = s.clone();
-            u.act(move || s.set_bluetooth(on));
+            u.act(Action::Bluetooth(!t.has_css_class("on")));
         });
     }
     conn.append(&bluetooth.root);
@@ -206,29 +261,27 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
     top.append(&right);
     main.append(&top);
 
-    if let Some(b) = sys.brightness() {
-        let (u, s) = (ui.clone(), sys.clone());
-        main.append(&w::control_slider(
+    let display = {
+        let u = ui.clone();
+        w::control_slider(
             "Display",
             "display-brightness-symbolic",
-            b as f64,
-            move |v| {
-                let s = s.clone();
-                u.act(move || s.set_brightness(v as u8))
-            },
-        ));
-    }
+            sys.brightness().unwrap_or(0) as f64,
+            move |v| u.act_latest("brightness", Action::Brightness(v as u8)),
+        )
+    };
+    display.set_visible(sys.brightness().is_some());
+    main.append(&display);
     let audio = sys.audio();
-    let (u, s) = (ui.clone(), sys.clone());
-    let sound = w::control_slider(
-        "Sound",
-        crate::status::volume(audio),
-        audio.volume.unwrap_or(0) as f64,
-        move |v| {
-            let s = s.clone();
-            u.act(move || s.set_volume(v as u8))
-        },
-    );
+    let sound = {
+        let u = ui.clone();
+        w::control_slider(
+            "Sound",
+            crate::status::volume(audio),
+            audio.volume.unwrap_or(0) as f64,
+            move |v| u.act_latest("volume", Action::Volume(v as u8)),
+        )
+    };
     main.append(&sound);
 
     if let Some(np) = sys.now_playing() {
@@ -239,7 +292,7 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
         t.append(&w::label(&np.title, "title"));
         t.append(&w::label(&np.artist, "secondary"));
         r.append(&t);
-        let (u, s) = (ui.clone(), sys.clone());
+        let u = ui.clone();
         r.append(&w::icon_button(
             if np.playing {
                 "media-playback-pause-symbolic"
@@ -247,10 +300,7 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
                 "media-playback-start-symbolic"
             },
             "Play or pause",
-            move || {
-                let s = s.clone();
-                u.act(move || s.media_toggle())
-            },
+            move || u.act(Action::MediaToggle),
         ));
         main.append(&w::module(&r));
     }
@@ -258,11 +308,15 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
     let tiles = w::hbox(w::S2);
     tiles.set_homogeneous(true);
     if let Some(on) = sys.night_light() {
-        let (u, s) = (ui.clone(), sys.clone());
+        let u = ui.clone();
         let t = w::square_tile("night-light-symbolic", "Night Shift", move |b| {
             let on = !b.has_css_class("on");
-            let s = s.clone();
-            u.act(move || s.set_night_light(on));
+            if on {
+                b.add_css_class("on")
+            } else {
+                b.remove_css_class("on")
+            }
+            u.act(Action::NightLight(on));
         });
         if on {
             t.add_css_class("on");
@@ -283,6 +337,35 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
     main.append(&tiles);
     ui.message.set_visible(false);
     main.append(&ui.message);
+
+    // Live: the backend snapshot refreshes off-thread; widgets follow it.
+    if let Some(rx) = sys.watch() {
+        let (u, display, sound) = (ui.clone(), display.clone(), sound.clone());
+        let (wifi, bluetooth) = (Rc::new(wifi), Rc::new(bluetooth));
+        glib::spawn_future_local(async move {
+            while rx.recv().await.is_ok() {
+                let s = &u.sys;
+                u.syncing.set(true);
+                let nets = s.wifi_networks();
+                wifi.set_subtitle(&crate::system::wifi_subtitle(s.network(), &nets));
+                wifi.set_on(s.wifi_enabled().unwrap_or(false));
+                bluetooth.set_subtitle(bluetooth_label(s.bluetooth()));
+                bluetooth.set_on(s.bluetooth().unwrap_or(false));
+                display.set_visible(s.brightness().is_some());
+                if let (Some(b), Some(sc)) = (s.brightness(), scale_in(display.upcast_ref()))
+                    && !u.busy.borrow().contains_key("brightness")
+                {
+                    sc.set_value(b as f64);
+                }
+                if let (Some(v), Some(sc)) = (s.audio().volume, scale_in(sound.upcast_ref()))
+                    && !u.busy.borrow().contains_key("volume")
+                {
+                    sc.set_value(v as f64);
+                }
+                u.syncing.set(false);
+            }
+        });
+    }
     panel.upcast()
 }
 
@@ -322,9 +405,10 @@ fn wifi_page(ui: &Rc<Ui>, pages: &gtk::Stack) -> gtk::Box {
     {
         let (u, pw, id, r) = (ui.clone(), join_pw.clone(), ssid.clone(), join.clone());
         row.append(&w::button("Join", w::Kind::Primary, move || {
-            let (s, id, p) = (u.sys.clone(), id.borrow().clone(), pw.text().to_string());
+            let (id, p) = (id.borrow().clone(), pw.text().to_string());
+            pw.set_text("");
             r.set_reveal_child(false);
-            u.act(move || s.wifi_join(&id, Some(&p)));
+            u.act(Action::WifiJoin(id, Some(p)));
         }));
     }
     join_box.append(&row);
@@ -353,8 +437,7 @@ fn wifi_page(ui: &Rc<Ui>, pages: &gtk::Stack) -> gtk::Box {
                 t.set_label(&format!("Join “{}”", n.ssid));
                 r.set_reveal_child(true);
             } else {
-                let (s, id) = (u.sys.clone(), n.ssid.clone());
-                u.act(move || s.wifi_join(&id, None));
+                u.act(Action::WifiJoin(n.ssid.clone(), None));
             }
         });
         list.append(&b);

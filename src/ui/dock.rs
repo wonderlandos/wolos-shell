@@ -41,8 +41,48 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
 pub fn build(app: &gtk::Application) -> (gtk::ApplicationWindow, Rc<Dock>) {
     let win = super::window(app, "dock", Spec::dock());
     let d = content(&crate::hypr::running_classes(&crate::hypr::clients()));
-    win.set_child(Some(&d.root));
+    // Autohide: the shelf slides away and a thin hot zone at the bottom edge brings it back.
+    let reveal = gtk::Revealer::builder()
+        .child(&d.root)
+        .transition_type(gtk::RevealerTransitionType::SlideUp)
+        .reveal_child(true)
+        .build();
+    let zone = w::vbox(0);
+    zone.add_css_class("dock-hotzone");
+    zone.append(&reveal);
+    let hide = Rc::new(std::cell::Cell::new(false));
+    let motion = gtk::EventControllerMotion::new();
+    {
+        let (r, h) = (reveal.clone(), hide.clone());
+        let r2 = r.clone();
+        motion.connect_enter(move |_, _, _| r2.set_reveal_child(true));
+        motion.connect_leave(move |_| {
+            if h.get() {
+                r.set_reveal_child(false)
+            }
+        });
+    }
+    zone.add_controller(motion);
+    win.set_child(Some(&zone));
+    {
+        let (root, win) = (d.root.clone(), win.clone());
+        super::ipc::on_reload(move |p| {
+            hide.set(p.dock_autohide);
+            reveal.set_reveal_child(!p.dock_autohide);
+            kit::surface::set_exclusive(&win, !p.dock_autohide);
+            set_magnify(&root, p.dock_magnify);
+        });
+    }
     (win, d)
+}
+
+/// Settings > Dock > Magnification: tiles lift on hover only when on.
+pub fn set_magnify(root: &gtk::Box, on: bool) {
+    if on {
+        root.remove_css_class("flat")
+    } else {
+        root.add_css_class("flat")
+    }
 }
 
 impl Dock {

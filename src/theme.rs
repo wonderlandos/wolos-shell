@@ -5,12 +5,16 @@ use wol_core::theme::{self as core_theme, ThemeCatalog, active};
 pub type Theme = core_theme::ResolvedTheme;
 
 thread_local! {
-    static CATALOG: ThemeCatalog = ThemeCatalog::load(&core_theme::search_paths(&core_theme::config_home()));
+    static CATALOG: ThemeCatalog = core_theme::accent::variants()
+        .into_iter()
+        .fold(ThemeCatalog::load(&core_theme::search_paths(&core_theme::config_home())), ThemeCatalog::with);
 }
 
 /// Saved id (None = follow appearance) -> resolved theme; unknown ids fall back to the variant default.
+/// `wol-auto-<accent>` follows `prefer_dark` (`wol_core::theme::accent`).
 pub fn resolve(saved: Option<&str>, prefer_dark: bool) -> Theme {
-    let id = active::effective(saved, prefer_dark);
+    let saved = core_theme::accent::effective(saved, prefer_dark);
+    let id = active::effective(saved.as_deref(), prefer_dark);
     CATALOG.with(|c| {
         c.resolve(&id)
             .or_else(|_| {
@@ -60,6 +64,9 @@ mod tests {
         assert_eq!(resolve(None, true).variant, Variant::Dark);
         assert_eq!(resolve(Some("garbage"), false).variant, Variant::Light);
         assert_eq!(resolve(Some("wol-dark"), false).id, "wol-dark");
+        assert_eq!(resolve(Some("wol-light-blue"), true).id, "wol-light-blue");
+        assert_eq!(resolve(Some("wol-auto-green"), true).id, "wol-dark-green");
+        assert_eq!(resolve(Some("wol-auto-green"), false).id, "wol-light-green");
     }
 
     #[test]

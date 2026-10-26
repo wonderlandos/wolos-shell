@@ -37,10 +37,30 @@ pub fn shell_socket(panels: Panels, osd: Rc<Osd>, sys: Rc<dyn crate::system::Sys
     });
 }
 
+thread_local! {
+    static RELOAD: std::cell::RefCell<Vec<OnReload>> = Default::default();
+}
+use wol_core::prefs::ShellPrefs;
+type OnReload = Box<dyn Fn(&ShellPrefs)>;
+
+/// `$XDG_CONFIG_HOME/wolos/shell.json` (written by Settings > Menu Bar & Dock).
+pub fn shell_prefs() -> ShellPrefs {
+    let p = std::path::Path::new(&crate::kit::config_home()).join(wol_core::prefs::SHELL_FILE);
+    ShellPrefs::parse(std::fs::read_to_string(p).ok().as_deref())
+}
+
+/// Calls `f` with the current prefs now and after every `reload`.
+pub fn on_reload(f: impl Fn(&ShellPrefs) + 'static) {
+    f(&shell_prefs());
+    RELOAD.with(|r| r.borrow_mut().push(Box::new(f)));
+}
+
 fn run(cmd: &protocol::Command, panels: &Panels, osd: &Rc<Osd>, sys: &dyn crate::system::System) {
     if cmd.verb == protocol::Verb::Reload {
-        return;
-    } // theme reloads through its file monitor
+        // Theme reloads through its file monitor; shell prefs here.
+        let p = shell_prefs();
+        return RELOAD.with(|r| r.borrow().iter().for_each(|f| f(&p)));
+    }
     if cmd.target == "osd" && cmd.verb == protocol::Verb::Show {
         let a = sys.audio();
         return osd.show(crate::status::volume(a), a.volume.unwrap_or(0));

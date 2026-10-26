@@ -113,6 +113,23 @@ fn dev(w: &impl IsA<gtk::Window>, s: Spec) {
     }
 }
 
+/// Reserve (or release) screen space at runtime: Dock autohide.
+#[cfg(feature = "layer-shell")]
+pub fn set_exclusive(w: &impl IsA<gtk::Window>, on: bool) {
+    use gtk4_layer_shell::LayerShell;
+    if !gtk4_layer_shell::is_supported() {
+        return;
+    }
+    if on {
+        w.auto_exclusive_zone_enable();
+    } else {
+        w.set_exclusive_zone(0);
+    }
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn set_exclusive(_w: &impl IsA<gtk::Window>, _on: bool) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

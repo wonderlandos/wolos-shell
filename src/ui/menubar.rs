@@ -21,6 +21,8 @@ pub struct Bar {
     network: gtk::Image,
     battery: gtk::Image,
     volume: gtk::Image,
+    percent: gtk::Label,
+    show_percent: std::cell::Cell<bool>,
     /// Last values pushed to widgets: no relabel/redraw when unchanged.
     seen: RefCell<Seen>,
     name_seen: RefCell<Changed<String>>,
@@ -66,10 +68,18 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         w::icon("battery-good-symbolic", w::ICON),
         w::icon("audio-volume-high-symbolic", w::ICON),
     );
+    let percent = w::label("", "");
+    let battery_box = w::hbox(w::S1);
+    battery_box.append(&percent);
+    battery_box.append(&battery);
     for (img, tip, argv) in [
-        (&battery, "Battery", &["wol-control-center"][..]),
-        (&network, "Wi-Fi", &["wol-control-center"][..]),
-        (&volume, "Sound", &["wol-control-center"][..]),
+        (
+            battery_box.upcast_ref::<gtk::Widget>(),
+            "Battery",
+            &["wol-control-center"][..],
+        ),
+        (network.upcast_ref(), "Wi-Fi", &["wol-control-center"][..]),
+        (volume.upcast_ref(), "Sound", &["wol-control-center"][..]),
     ] {
         let b = w::menubar_item(img);
         b.set_tooltip_text(Some(tip));
@@ -99,23 +109,53 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     });
     root.append(&cb);
     let buf = RefCell::new(String::with_capacity(32));
-    kit::every_minute(move || {
-        let mut b = buf.borrow_mut();
-        crate::clock::menubar(&mut b, kit::now());
-        if clock.text() != b.as_str() {
-            clock.set_label(&b);
-        }
-    });
+    let show_date = Rc::new(std::cell::Cell::new(true));
+    let tick = {
+        let (clock, show_date) = (clock.clone(), show_date.clone());
+        Rc::new(move || {
+            let mut b = buf.borrow_mut();
+            if show_date.get() {
+                crate::clock::menubar(&mut b, kit::now());
+            } else {
+                crate::clock::menubar_time(&mut b, kit::now());
+            }
+            if clock.text() != b.as_str() {
+                clock.set_label(&b);
+            }
+        })
+    };
+    {
+        let tick = tick.clone();
+        kit::every_minute(move || tick());
+    }
     let bar = Rc::new(Bar {
         root,
         appname,
         network,
         battery,
         volume,
+        percent,
+        show_percent: Default::default(),
         seen: Default::default(),
         name_seen: Default::default(),
     });
     refresh(&bar, sys, None);
+    {
+        // Settings > Menu Bar: applied live on `reload`.
+        let (b, battery) = (Rc::downgrade(&bar), sys.battery());
+        super::ipc::on_reload(move |p| {
+            show_date.set(p.show_date);
+            tick();
+            if let Some(b) = b.upgrade() {
+                b.show_percent.set(p.battery_percent);
+                b.percent.set_visible(p.battery_percent);
+                if b.percent.text().is_empty() {
+                    b.percent
+                        .set_label(&battery.map_or(String::new(), |x| format!("{}%", x.percent)));
+                }
+            }
+        });
+    }
     bar
 }
 
@@ -139,10 +179,19 @@ fn refresh(bar: &Bar, sys: &dyn crate::system::System, osd: Option<&Rc<Osd>>) {
     }
     let b = status::battery(sys.battery());
     if s.1.set(b) {
-        if let Some(p) = bar.battery.parent() {
+        // icon -> box -> menubar button
+        if let Some(p) = bar.battery.parent().and_then(|p| p.parent()) {
             p.set_visible(b.is_some())
         }
         bar.battery.set_icon_name(b);
+    }
+    if bar.show_percent.get()
+        && let Some(x) = sys.battery()
+    {
+        let t = format!("{}%", x.percent);
+        if bar.percent.text() != t {
+            bar.percent.set_label(&t);
+        }
     }
     let v = status::volume(audio);
     if s.2.set(v) {
