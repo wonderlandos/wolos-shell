@@ -167,23 +167,20 @@ pub fn build(app: &gtk::Application) -> gtk::Window {
             },
         );
         win.set_child(Some(&child));
-        // Visible windows only: grim reads the screen (wlr-screencopy), one region per window.
+        // Each window's own contents (covered or not) via hyprland_toplevel_export_v1.
         for (addr, pic) in pics {
-            let Some(c) = clients.iter().find(|c| c.address == addr) else {
-                continue;
-            };
-            let geom = format!("{},{} {}x{}", c.at[0], c.at[1], c.size[0], c.size[1]);
             glib::spawn_future_local(async move {
                 let out = gtk::gio::spawn_blocking(move || {
-                    std::process::Command::new("grim")
-                        .args(["-g", &geom, "-"])
+                    std::process::Command::new("wol-window-shot")
+                        .arg(&addr)
                         .output()
                         .ok()
                         .filter(|o| o.status.success())
-                        .and_then(|o| gdk::Texture::from_bytes(&glib::Bytes::from(&o.stdout)).ok())
+                        .map(|o| o.stdout)
                 })
                 .await;
-                if let Ok(Some(t)) = out {
+                let Ok(Some(bytes)) = out else { return };
+                if let Some(t) = texture(&bytes) {
                     pic.set_paintable(Some(&t));
                     if let Some(icon) = pic.next_sibling() {
                         icon.set_visible(false);
@@ -193,4 +190,23 @@ pub fn build(app: &gtk::Application) -> gtk::Window {
         }
     });
     win.upcast()
+}
+
+/// `wol-window-shot` output -> texture.
+fn texture(bytes: &[u8]) -> Option<gdk::MemoryTexture> {
+    use crate::winshot::{Layout, decode, layout};
+    let (f, px) = decode(bytes)?;
+    let format = match layout(f.format)? {
+        Layout::Bgra => gdk::MemoryFormat::B8g8r8a8,
+        Layout::Bgrx => gdk::MemoryFormat::B8g8r8x8,
+        Layout::Rgba => gdk::MemoryFormat::R8g8b8a8,
+        Layout::Rgbx => gdk::MemoryFormat::R8g8b8x8,
+    };
+    Some(gdk::MemoryTexture::new(
+        f.width as i32,
+        f.height as i32,
+        format,
+        &glib::Bytes::from(&px[..(f.stride * f.height) as usize]),
+        f.stride as usize,
+    ))
 }

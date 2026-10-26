@@ -16,6 +16,7 @@ pub mod status;
 pub mod switcher;
 pub mod system;
 pub mod theme;
+pub mod winshot;
 
 pub mod kit;
 pub mod ui;
