@@ -4,7 +4,12 @@
 pub const TOLERANCE: i32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct Rect { pub x: i32, pub y: i32, pub w: i32, pub h: i32 }
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Node {
@@ -20,7 +25,10 @@ pub struct Node {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Issue { pub path: String, pub message: String }
+pub struct Issue {
+    pub path: String,
+    pub message: String,
+}
 
 pub fn find(root: &Node) -> Vec<Issue> {
     let mut out = Vec::new();
@@ -29,29 +37,48 @@ pub fn find(root: &Node) -> Vec<Issue> {
 }
 
 fn walk(n: &Node, out: &mut Vec<Issue>) {
-    if n.clipped_text { out.push(Issue { path: n.path.clone(), message: format!("{} text is clipped", n.path) }); }
+    if n.clipped_text {
+        out.push(Issue {
+            path: n.path.clone(),
+            message: format!("{} text is clipped", n.path),
+        });
+    }
     if !n.clips {
-        for c in &n.children { overflow(n.rect, c, out); }
+        for c in &n.children {
+            overflow(n.rect, c, out);
+        }
     }
     if n.row {
         let centre = n.rect.y * 2 + n.rect.h;
         for c in &n.children {
             let off = (c.rect.y * 2 + c.rect.h - centre).abs() / 2;
             if off > TOLERANCE {
-                out.push(Issue { path: c.path.clone(), message: format!("{} is {off} px off the row's vertical centre", c.path) });
+                out.push(Issue {
+                    path: c.path.clone(),
+                    message: format!("{} is {off} px off the row's vertical centre", c.path),
+                });
             }
         }
     }
-    for c in &n.children { walk(c, out); }
+    for c in &n.children {
+        walk(c, out);
+    }
 }
 
 fn overflow(p: Rect, c: &Node, out: &mut Vec<Issue>) {
     let b = c.rect;
     for (px, side) in [
-        (b.x + b.w - (p.x + p.w), "on the right"), (b.y + b.h - (p.y + p.h), "at the bottom"),
-        (p.x - b.x, "on the left"), (p.y - b.y, "at the top"),
+        (b.x + b.w - (p.x + p.w), "on the right"),
+        (b.y + b.h - (p.y + p.h), "at the bottom"),
+        (p.x - b.x, "on the left"),
+        (p.y - b.y, "at the top"),
     ] {
-        if px > TOLERANCE { out.push(Issue { path: c.path.clone(), message: format!("{} overflowed by {px} px {side}", c.path) }); }
+        if px > TOLERANCE {
+            out.push(Issue {
+                path: c.path.clone(),
+                message: format!("{} overflowed by {px} px {side}", c.path),
+            });
+        }
     }
 }
 
@@ -59,7 +86,13 @@ fn overflow(p: Rect, c: &Node, out: &mut Vec<Issue>) {
 mod tests {
     use super::*;
 
-    fn n(path: &str, x: i32, y: i32, w: i32, h: i32) -> Node { Node { path: path.into(), rect: Rect { x, y, w, h }, ..Default::default() } }
+    fn n(path: &str, x: i32, y: i32, w: i32, h: i32) -> Node {
+        Node {
+            path: path.into(),
+            rect: Rect { x, y, w, h },
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn fits_is_clean() {
@@ -70,7 +103,12 @@ mod tests {
 
     #[test]
     fn overflow_each_side() {
-        for (c, side) in [(n("c", 10, 0, 100, 40), "right"), (n("c", 0, 5, 10, 40), "bottom"), (n("c", -3, 0, 10, 10), "left"), (n("c", 0, -3, 10, 10), "top")] {
+        for (c, side) in [
+            (n("c", 10, 0, 100, 40), "right"),
+            (n("c", 0, 5, 10, 40), "bottom"),
+            (n("c", -3, 0, 10, 10), "left"),
+            (n("c", 0, -3, 10, 10), "top"),
+        ] {
             let mut root = n("root", 0, 0, 100, 40);
             root.children = vec![c];
             let i = find(&root);

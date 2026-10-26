@@ -205,6 +205,83 @@ impl System for Sysfs {
     }
 }
 
+/// Deterministic data for golden renders and UI work without hardware (`WOL_FAKE_SYSTEM=1`).
+pub struct Fake;
+
+impl System for Fake {
+    fn battery(&self) -> Option<Battery> {
+        Some(Battery {
+            percent: 82,
+            status: BatteryStatus::Discharging,
+        })
+    }
+    fn audio(&self) -> Audio {
+        Audio {
+            volume: Some(64),
+            muted: false,
+            mic: Some(50),
+            mic_muted: false,
+        }
+    }
+    fn network(&self) -> Network {
+        Network {
+            online: true,
+            wifi: true,
+            signal: Some(80),
+        }
+    }
+    fn brightness(&self) -> Option<u8> {
+        Some(72)
+    }
+    fn wifi_networks(&self) -> Vec<WifiNetwork> {
+        vec![
+            WifiNetwork {
+                ssid: "Wonderland".into(),
+                signal: 88,
+                secure: true,
+                connected: true,
+            },
+            WifiNetwork {
+                ssid: "Rabbit Hole 5G".into(),
+                signal: 60,
+                secure: true,
+                connected: false,
+            },
+            WifiNetwork {
+                ssid: "Tea Party".into(),
+                signal: 30,
+                secure: false,
+                connected: false,
+            },
+        ]
+    }
+    fn bluetooth(&self) -> Option<bool> {
+        Some(true)
+    }
+    fn outputs(&self) -> Vec<String> {
+        vec!["Speakers".into(), "Headphones".into()]
+    }
+    fn now_playing(&self) -> Option<NowPlaying> {
+        Some(NowPlaying {
+            title: "White Rabbit".into(),
+            artist: "Jefferson Airplane".into(),
+            playing: true,
+        })
+    }
+    fn night_light(&self) -> Option<bool> {
+        Some(false)
+    }
+}
+
+/// `WOL_FAKE_SYSTEM=1` -> `Fake`, else the platform reader.
+pub fn default_system() -> std::rc::Rc<dyn System> {
+    if std::env::var_os("WOL_FAKE_SYSTEM").is_some() {
+        std::rc::Rc::new(Fake)
+    } else {
+        std::rc::Rc::new(Sysfs::default())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

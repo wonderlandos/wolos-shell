@@ -4,7 +4,7 @@ use crate::login::{self, Verdict};
 use gtk::{glib, prelude::*};
 use std::rc::Rc;
 
-fn body(panel: &gtk::Box, picker: Option<gtk::Box>) -> gtk::Box {
+pub fn body(panel: &gtk::Box, picker: Option<gtk::Box>) -> gtk::Box {
     let b = w::vbox(0);
     b.add_css_class("lock-body");
     b.append(&w::clock_header());
@@ -18,7 +18,7 @@ fn body(panel: &gtk::Box, picker: Option<gtk::Box>) -> gtk::Box {
     b
 }
 
-fn user_name() -> String {
+pub fn user_name() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".into())
 }
 
@@ -119,9 +119,9 @@ pub fn run_login() -> glib::ExitCode {
         let panel = Rc::new(w::UserPanel::new(&first));
         let selected = Rc::new(std::cell::RefCell::new(first));
         let picker = (users.len() > 1).then(|| {
-            let row = w::hbox(16);
+            let row = w::hbox(w::S4);
             row.set_halign(gtk::Align::Center);
-            row.set_margin_bottom(24);
+            row.set_margin_bottom(w::S6);
             let name_label = panel
                 .root
                 .observe_children()
@@ -129,7 +129,7 @@ pub fn run_login() -> glib::ExitCode {
                 .and_downcast::<gtk::Label>();
             for u in &users {
                 let b = gtk::Button::builder()
-                    .child(&w::avatar(u, 48))
+                    .child(&w::avatar(u, w::AVATAR_L))
                     .tooltip_text(u)
                     .build();
                 b.add_css_class("icon-button");

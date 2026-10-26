@@ -117,6 +117,11 @@ pub fn users(passwd: &str, shells: &str) -> Vec<String> {
         .collect()
 }
 
+/// Owned-argument form for worker threads.
+pub fn authcheck_owned(password: String) -> Verdict {
+    authcheck(&password)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,9 +161,4 @@ mod tests {
         let pw = "root:*:0:0::0:0:Charlie:/root:/bin/sh\nklee:*:1001:1001::0:0:K:/home/klee:/bin/sh\nnobody:*:65534:65534::0:0::/:/bin/sh\nsvc:*:1002:1:::::/usr/sbin/nologin";
         assert_eq!(users(pw, "# c\n/bin/sh\n/bin/csh\n"), ["klee"]);
     }
-}
-
-/// Owned-argument form for worker threads.
-pub fn authcheck_owned(password: String) -> Verdict {
-    authcheck(&password)
 }

@@ -15,7 +15,7 @@ pub fn install(extra: &'static str) {
         gtk::STYLE_PROVIDER_PRIORITY_USER,
     );
     icons(&display);
-    let path = theme::active_path(&super::config_home());
+    let path = theme::active_path();
     let last = Rc::new(RefCell::new(Changed::<String>::new()));
     let load = {
         let (provider, path, last) = (provider.clone(), path.clone(), last.clone());
@@ -47,17 +47,11 @@ pub fn install(extra: &'static str) {
 
 /// Writes the active theme id; every shell process reloads through its file monitor.
 pub fn set_active(id: &str) -> std::io::Result<()> {
-    let p = theme::active_path(&super::config_home());
-    if let Some(d) = p.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    std::fs::write(p, id)
+    theme::save(id)
 }
 
 pub fn active_id() -> Option<String> {
-    std::fs::read_to_string(theme::active_path(&super::config_home()))
-        .ok()
-        .map(|s| s.trim().to_string())
+    theme::saved()
 }
 
 /// WolOS icons: installed share dir, else the repo's design/ tree (dev).
@@ -71,5 +65,28 @@ fn icons(display: &gdk::Display) {
         if std::path::Path::new(p).is_dir() {
             theme.add_search_path(p);
         }
+    }
+}
+
+thread_local! { static FIXED: std::cell::OnceCell<gtk::CssProvider> = const { std::cell::OnceCell::new() }; }
+
+/// Loads one theme, no file watch (golden renders).
+pub fn apply(t: &theme::Theme, extra: &str) {
+    let display = gdk::Display::default().expect("display");
+    FIXED.with(|c| {
+        let p = c.get_or_init(|| {
+            let p = gtk::CssProvider::new();
+            gtk::style_context_add_provider_for_display(
+                &display,
+                &p,
+                gtk::STYLE_PROVIDER_PRIORITY_USER,
+            );
+            icons(&display);
+            p
+        });
+        p.load_from_string(&theme::stylesheet(t, extra));
+    });
+    if let Some(s) = gtk::Settings::default() {
+        s.set_gtk_application_prefer_dark_theme(t.variant == theme::Variant::Dark);
     }
 }

@@ -1,12 +1,41 @@
 //! Rust port of the React.Iara/IaraKit pieces the shell uses: layer surfaces, theme loading, glass widgets.
+pub mod check;
 pub mod style;
 pub mod surface;
 pub mod widgets;
 
+/// Installed WolOS icon dir, else the repo design tree (dev, tests).
+pub const ICON_DIRS: [&str; 3] = [
+    "/usr/local/share/wol/icons",
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/apps"),
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/brand"),
+];
+
+/// Full-colour SVG for an app icon name.
+pub fn icon_file(name: &str) -> Option<std::path::PathBuf> {
+    ICON_DIRS
+        .iter()
+        .map(|d| std::path::Path::new(d).join(format!("{name}.svg")))
+        .find(|p| p.exists())
+}
+
 use gtk::glib;
+
+/// Fixed time for golden renders (`WOL_FAKE_NOW=1`): Mon 26 Oct 14:05.
+pub const FAKE_NOW: crate::clock::Stamp = crate::clock::Stamp {
+    weekday: 1,
+    day: 26,
+    month: 10,
+    hour: 14,
+    minute: 5,
+    second: 0,
+};
 
 /// Local wall clock as pure-logic fields.
 pub fn now() -> crate::clock::Stamp {
+    if std::env::var_os("WOL_FAKE_NOW").is_some() {
+        return FAKE_NOW;
+    }
     let t = glib::DateTime::now_local().expect("local time");
     crate::clock::Stamp {
         weekday: t.day_of_week() as u8,
@@ -37,8 +66,12 @@ pub fn spawn(argv: &[String]) {
     let Some((p, a)) = argv.split_first() else {
         return;
     };
-    if let Err(e) = std::process::Command::new(p).args(a).spawn() {
-        eprintln!("wol: {p}: {e}");
+    match std::process::Command::new(p).args(a).spawn() {
+        // Reap off the main thread so a long-running shell never collects zombies.
+        Ok(mut c) => {
+            std::thread::spawn(move || c.wait());
+        }
+        Err(e) => eprintln!("wol: {p}: {e}"),
     }
 }
 
@@ -61,7 +94,6 @@ pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static
     win.connect_map(move |w| {
         let (w, dir) = (w.clone(), dir.clone());
         glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || {
-            eprintln!("snapshot {name}");
             let p = gtk::WidgetPaintable::new(Some(&w));
             let (wd, ht) = (w.width().max(1), w.height().max(1));
             let snap = gtk::Snapshot::new();

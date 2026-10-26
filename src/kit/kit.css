@@ -1,0 +1,175 @@
+/* WolOS kit stylesheet: the only visual style (HIG). Colours: var(--token). Glass light (white/black rims and
+   shadows) is fixed material, not theme. Spacing 4/8/12/16/24/32; radius 6 controls, 10 cards, 16/24 panels;
+   type 13 body, 11 secondary, 22 large title (Inter). */
+:root {
+  --glass-radius: 24px;
+  --glass-radius-m: 16px;
+  --glass-radius-s: 10px;
+  --glass-spring: cubic-bezier(.34,1.56,.64,1);
+  --glass-motion: 320ms;
+  --glass-rim: rgba(255,255,255,0.50);
+  --glass-hairline: rgba(255,255,255,0.22);
+  --glass-shadow: 0 8px 32px rgba(0,0,0,0.24), 0 1px 4px rgba(0,0,0,0.16);
+  --bar-fill: rgba(30,30,36,0.28);
+  --bar-text: rgba(255,255,255,0.96);
+  --bar-hover: rgba(255,255,255,0.18);
+  --dock-fill: rgba(255,255,255,0.22);
+  --control-off: rgba(128,128,136,0.28);
+}
+window, popover, tooltip { font-family: Inter, "SF Pro Text", Cantarell, "Noto Sans", sans-serif; font-size: 13px; }
+* { -gtk-icon-shadow: none; }
+label.title { font-weight: 600; }
+label.secondary, .secondary label { font-size: 11px; color: var(--dim); }
+label.large-title { font-size: 22px; font-weight: 600; }
+
+/* Layer windows are see-through; only content draws. */
+window.wallpaper, window.menubar, window.dock, window.panel, window.banners, window.controlcenter, window.spotlight, window.preview { background: none; box-shadow: none; border: none; }
+window.wallpaper { background: linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04354a); }
+
+/* ---- Menu bar: 28px translucent strip ---- */
+.menubar-strip { min-height: 28px; background: var(--bar-fill); padding: 0 8px; }
+.menubar-strip label, .menubar-strip image { color: var(--bar-text); }
+.menubar-strip image { -gtk-icon-size: 16px; }
+.menubar-strip .app-name { font-weight: 700; }
+button.menubar-item, .menubar-strip menubutton > button {
+  background: none; border: none; box-shadow: none; outline: none; min-height: 24px; min-width: 0;
+  padding: 0 7px; margin: 0; border-radius: 6px; transition: background 120ms ease;
+}
+button.menubar-item:hover, .menubar-strip menubutton > button:hover, .menubar-strip menubutton > button:checked { background: var(--bar-hover); }
+
+/* ---- Menus ---- */
+popover.menu > contents { background: var(--glass); border-radius: var(--glass-radius-s); padding: 4px; box-shadow: var(--glass-shadow); border: 1px solid var(--line); }
+button.menu-item { background: none; border: none; box-shadow: none; border-radius: 6px; padding: 4px 12px; min-height: 0; }
+button.menu-item label { color: var(--text); }
+button.menu-item:hover { background: var(--accent); }
+button.menu-item:hover label { color: var(--accent-text); }
+popover.menu separator { margin: 4px 8px; background: var(--line); }
+tooltip { background: var(--glass); color: var(--text); border-radius: 6px; border: 1px solid var(--line); }
+tooltip label { font-size: 11px; color: var(--text); }
+
+/* ---- Dock: glass shelf, 56px tiles, 8px gaps, running dot ---- */
+.dock-shelf {
+  background: color-mix(in srgb, var(--glass) 50%, transparent); border-radius: var(--glass-radius); padding: 4px 8px 0 8px; margin: 24px 32px 8px 32px;
+  border: 1px solid var(--glass-hairline); box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim);
+}
+button.dock-tile { background: none; border: none; box-shadow: none; padding: 0; margin: 0; min-width: 0; min-height: 0; border-radius: 12px;
+  transition: margin var(--glass-motion) var(--glass-spring); }
+button.dock-tile:hover { margin-top: -8px; margin-bottom: 8px; }
+.running-dot { min-width: 4px; min-height: 4px; margin: 2px 0 2px 0; border-radius: 999px; background: rgba(255,255,255,0.92); }
+.dock-shelf separator { background: var(--glass-hairline); min-width: 1px; margin: 8px 0 12px 0; }
+
+/* ---- Glass panels ---- */
+.glass-panel {
+  background: var(--glass); border-radius: var(--glass-radius-m); padding: 12px; margin: 24px;
+  border: 1px solid var(--glass-hairline); box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim);
+}
+.glass-panel label, .glass-panel image { color: var(--text); }
+
+/* ---- Control Center ---- */
+.module { background: var(--card); border-radius: var(--glass-radius-s); padding: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
+.control { min-height: 36px; }
+button.control-circle { min-width: 28px; min-height: 28px; padding: 0; border-radius: 999px; border: none; box-shadow: none; background: var(--control-off); }
+button.control-circle image { color: var(--text); }
+button.control-circle.on { background: var(--accent); }
+button.control-circle.on image { color: var(--accent-text); }
+button.control-circle:disabled { opacity: 0.45; }
+button.control-detail { background: none; border: none; box-shadow: none; padding: 0; min-height: 0; border-radius: 6px; }
+button.control-detail:hover { background: var(--control); }
+button.square-tile { background: var(--card); border: none; box-shadow: 0 1px 2px rgba(0,0,0,0.08); border-radius: var(--glass-radius-s); padding: 8px 4px; min-height: 0; }
+button.square-tile:hover { background: var(--control); }
+scale.slider.fat { padding: 0; margin: 0; }
+scale.slider.fat trough { min-height: 24px; border-radius: 999px; background: var(--control-off); border: none; }
+scale.slider.fat highlight { min-height: 24px; border-radius: 999px; background: var(--accent); }
+scale.slider.fat slider { min-width: 24px; min-height: 24px; margin: 0 -1px; padding: 0; border-radius: 999px; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.30); border: none; }
+image.fat-icon { margin-left: 4px; color: var(--accent-text); }
+.back-row button { padding: 0 4px; }
+
+/* ---- Controls ---- */
+button.btn { border: none; box-shadow: none; min-height: 24px; padding: 0 12px; border-radius: 6px; }
+button.btn-default { background: var(--control); color: var(--text); }
+button.btn-primary { background: var(--accent); color: var(--accent-text); }
+button.btn-destructive { background: var(--danger); color: var(--accent-text); }
+button.btn-plain { background: none; color: var(--accent); }
+button.btn label { font-weight: 500; }
+button.icon-button { background: none; border: none; box-shadow: none; border-radius: 6px; padding: 4px; min-width: 0; min-height: 0; color: var(--text); }
+button.icon-button:hover { background: var(--control); }
+switch.toggle { background: var(--control-off); border: none; border-radius: 999px; min-width: 38px; min-height: 22px; padding: 2px; }
+switch.toggle:checked { background: var(--accent); }
+switch.toggle slider { background: white; border-radius: 999px; min-width: 18px; min-height: 18px; margin: 0; box-shadow: 0 1px 2px rgba(0,0,0,0.3); border: none; }
+switch.toggle image { color: transparent; }
+scale.slider trough { min-height: 4px; border-radius: 2px; background: var(--control); }
+scale.slider highlight { background: var(--accent); border-radius: 2px; }
+scale.slider slider { background: white; min-width: 16px; min-height: 16px; margin: -6px 0; border-radius: 999px; box-shadow: 0 1px 3px rgba(0,0,0,0.3); border: none; }
+.segmented { background: var(--control); border-radius: 6px; padding: 2px; }
+.segmented button { background: none; border: none; box-shadow: none; min-height: 20px; padding: 0 8px; border-radius: 4px; color: var(--text); }
+.segmented button:checked { background: var(--card); box-shadow: 0 1px 2px rgba(0,0,0,0.16); }
+entry.search-field, entry.text-field, entry.text-field, entry.search-field {
+  background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 6px; min-height: 24px; padding: 0 8px; box-shadow: none; }
+dropdown.dropdown > button { background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 6px; min-height: 24px; padding: 0 8px; box-shadow: none; }
+.dim-icon { color: var(--dim); }
+.empty-state { padding: 32px; }
+
+/* ---- Lists ---- */
+.card-list { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); }
+.card-list > * { border-top: 1px solid var(--line); }
+.card-list > *:first-child { border-top: none; }
+.list-row { min-height: 40px; padding: 0 12px; }
+.list-row label { color: var(--text); }
+button.row-button { background: none; border: none; box-shadow: none; padding: 0; border-radius: 6px; min-height: 0; }
+button.row-button .list-row { min-height: 32px; padding: 0 8px; }
+button.row-button:hover { background: var(--control); }
+.sheet { background: var(--card); border-radius: var(--glass-radius-s); padding: 16px; margin-bottom: 8px; border: 1px solid var(--line); box-shadow: var(--glass-shadow); }
+
+/* ---- AppWindow (HIG §1) ---- */
+.app-window { background: var(--surface); }
+.app-window label { color: var(--text); }
+.toolbar { min-height: 52px; padding: 0 16px; background: var(--glass); border-bottom: 1px solid var(--line); }
+.traffic-lights { margin-right: 16px; }
+button.light { min-width: 12px; min-height: 12px; padding: 0; border-radius: 999px; border: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
+button.light.close { background: var(--danger); }
+button.light.minimize { background: var(--warning); }
+button.light.zoom { background: var(--success); }
+list.sidebar { background: var(--sidebar); padding: 8px; border-right: 1px solid var(--line); }
+list.sidebar row { background: none; padding: 0 8px; min-height: 28px; border-radius: 6px; margin: 0; }
+list.sidebar row.source-item:hover { background: var(--control); }
+list.sidebar row:selected, list.sidebar row:selected:hover { background: var(--accent); }
+list.sidebar row:selected label, list.sidebar row:selected image { color: var(--accent-text); }
+list.sidebar row image { color: var(--accent); }
+label.source-section { font-size: 11px; font-weight: 600; color: var(--dim); margin-top: 8px; }
+.content { background: var(--surface); }
+.page { padding: 24px; }
+label.status-bar { min-height: 24px; padding: 0 16px; border-top: 1px solid var(--line); }
+
+/* ---- Spotlight ---- */
+.spotlight-panel { padding: 0; }
+.spotlight-bar { min-height: 52px; padding: 0 16px; }
+.spotlight-bar image { color: var(--dim); }
+.spotlight-bar text, .spotlight-bar text placeholder { font-size: 22px; background: none; border: none; box-shadow: none; outline: none; color: var(--text); }
+.spotlight-hits { padding: 0 8px 8px 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+button.hit { background: none; border: none; box-shadow: none; border-radius: 6px; padding: 4px 8px; min-height: 0; }
+button.hit.selected { background: var(--accent); }
+button.hit.selected label { color: var(--accent-text); }
+
+/* ---- Notifications / OSD / session ---- */
+.notification { min-width: 344px; padding: 12px; margin: 0 0 8px 0; }
+.notification.critical { border-color: var(--danger); }
+.osd-pill { border-radius: 999px; padding: 8px 16px; min-width: 216px; margin-bottom: 112px; }
+progressbar trough { min-height: 4px; border-radius: 2px; background: var(--control); }
+progressbar progress { background: var(--text); border-radius: 2px; min-height: 4px; }
+button.session-item { background: none; border: none; box-shadow: none; padding: 8px 12px; border-radius: 12px; }
+button.session-item:hover { background: var(--control); }
+
+/* ---- Lock / login (shell display type is the one exception to the type scale) ---- */
+window.lock-window { background: linear-gradient(160deg, #4b3f8f, #1f5f8f 55%, #0c1830); }
+.lock-body { padding: 64px 0 96px 0; }
+label.lock-time { font-size: 96px; font-weight: 600; color: white; text-shadow: 0 2px 12px rgba(0,0,0,0.4); }
+label.lock-date { font-size: 22px; font-weight: 500; color: rgba(255,255,255,0.9); }
+label.lock-name { font-weight: 600; color: white; }
+entry.lock-field { border-radius: 999px; background: rgba(255,255,255,0.25); color: white; border: none; box-shadow: none; min-height: 32px; padding: 0 12px; }
+label.lock-message { color: rgba(255,255,255,0.85); font-size: 11px; min-height: 16px; }
+@keyframes shake { 0%, 100% { margin-left: 0; margin-right: 0; } 20%, 60% { margin-left: 24px; margin-right: 0; } 40%, 80% { margin-left: 0; margin-right: 24px; } }
+entry.lock-field.shake { animation: shake 400ms ease-in-out 1; }
+label.avatar { background: linear-gradient(160deg, #a0a0a8, #6e6e78); color: white; border-radius: 999px; font-weight: 600; }
+label.avatar-s { font-size: 13px; }
+label.avatar-l { font-size: 22px; }
+label.avatar-xl { font-size: 22px; }
