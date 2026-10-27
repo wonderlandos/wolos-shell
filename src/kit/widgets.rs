@@ -1108,21 +1108,26 @@ pub fn toolbar_place(aw: &AppWindow, r: &gtk::Revealer) {
     r.set_width_request(SHEET_WIDTH);
     r.add_css_class("toolbar-sheet");
     // Overlay the content so opening a sheet never reflows the page.
-    if let Some(body) = aw.content.parent().and_downcast::<gtk::Box>() {
-        if let Some(o) = body.parent().and_downcast::<gtk::Overlay>() {
-            o.add_overlay(r);
-        } else {
-            let o = gtk::Overlay::new();
-            o.set_vexpand(true);
-            aw.root.remove(&body);
-            o.set_child(Some(&body));
-            aw.root.append(&o);
-            o.add_overlay(r);
-            if aw.status.parent().is_some_and(|p| p == aw.root) {
-                aw.root.reorder_child_after(&aw.status, Some(&o));
-            }
-        }
+    content_overlay(aw).add_overlay(r);
+}
+
+/// The overlay over `aw`'s body (sidebar + content), created the first time it is needed.
+pub fn content_overlay(aw: &AppWindow) -> gtk::Overlay {
+    let body = aw.content.parent().and_downcast::<gtk::Box>();
+    if let Some(o) = body.as_ref().and_then(|b| b.parent().and_downcast::<gtk::Overlay>()) {
+        return o;
     }
+    let o = gtk::Overlay::new();
+    o.set_vexpand(true);
+    if let Some(body) = body {
+        aw.root.remove(&body);
+        o.set_child(Some(&body));
+    }
+    aw.root.append(&o);
+    if aw.status.parent().is_some_and(|p| p == aw.root) {
+        aw.root.reorder_child_after(&aw.status, Some(&o));
+    }
+    o
 }
 
 /// Slider for list rows: the knob stays inside its 16px trough (layout check clean).
@@ -1344,5 +1349,36 @@ impl AppWindow {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
         self.content.add_named(&scroll, Some(name));
+    }
+}
+
+impl AppWindow {
+    /// Space between sidebar groups (System Settings-style, no header).
+    pub fn source_gap(&self) {
+        let r = gtk::ListBoxRow::builder()
+            .child(&vbox(0))
+            .selectable(false)
+            .activatable(false)
+            .build();
+        r.add_css_class("source-gap");
+        self.sidebar.append(&r);
+    }
+
+    /// Shows the page `name`: its sidebar row when it has one, else a [`hidden_page`](Self::hidden_page)
+    /// (subpages, search results) with the sidebar selection cleared.
+    pub fn open(&self, name: &str) {
+        let mut i = 0;
+        while let Some(r) = self.sidebar.row_at_index(i) {
+            if r.widget_name().eq_ignore_ascii_case(name) {
+                self.sidebar.select_row(Some(&r));
+                self.content.set_visible_child_name(&r.widget_name());
+                return;
+            }
+            i += 1;
+        }
+        if self.content.child_by_name(name).is_some() {
+            self.sidebar.unselect_all();
+            self.content.set_visible_child_name(name);
+        }
     }
 }

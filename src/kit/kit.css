@@ -353,3 +353,69 @@ window.banners .banner-group, .banners-preview .banner-group { margin: 8px 0 0 0
 .banner-edge { min-height: 6px; border-radius: 0 0 12px 12px; background: var(--glass); border: 1px solid var(--glass-hairline); border-top: none; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
 .banner-edge-1 { margin: 0 8px; }
 .banner-edge-2 { margin: 0 16px; min-height: 5px; }
+
+/* ---- Form rows (kit/form.rs) ---- */
+.slider-row { padding: 8px 12px; }
+.stepper-value { font-variant-numeric: tabular-nums; margin-right: 4px; }
+button.nav-row { background: none; border: none; box-shadow: none; padding: 0; border-radius: 0; min-height: 0; }
+.card-list > button.nav-row:not(:first-child) { border-top: 1px solid var(--line); }
+button.nav-row:hover { background: alpha(var(--text), 0.04); }
+.card-list > button.nav-row:first-child { border-radius: var(--glass-radius-s) var(--glass-radius-s) 0 0; }
+.card-list > button.nav-row:last-child { border-radius: 0 0 var(--glass-radius-s) var(--glass-radius-s); }
+.notice { padding-top: 8px; padding-bottom: 8px; background: alpha(var(--warning), 0.10); }
+image.warning-icon, .app-window .list-row image.warning-icon { color: var(--warning); }
+label.dim-label { color: var(--dim); }
+button.shortcut-recorder { background: var(--control); border: 1px solid var(--line); box-shadow: none; border-radius: 6px; min-height: 22px; min-width: 72px; padding: 0 8px; }
+button.shortcut-recorder:hover { border-color: var(--dim); }
+button.shortcut-recorder:disabled { background: none; border-color: transparent; }
+button.shortcut-recorder:disabled label { color: var(--dim); }
+button.shortcut-recorder.recording { border-color: var(--accent); box-shadow: 0 0 0 2px alpha(var(--accent), 0.35); }
+button.shortcut-recorder.recording label { color: var(--dim); }
+button.shortcut-recorder.conflict { border-color: var(--warning); box-shadow: 0 0 0 2px alpha(var(--warning), 0.30); }
+button.wallpaper-tile .wallpaper-thumb { border-radius: 6px; box-shadow: 0 0 0 1px var(--line); }
+button.wallpaper-tile:checked .wallpaper-thumb { box-shadow: 0 0 0 3px var(--accent); }
+
+list.sidebar row.source-gap { min-height: 12px; }
+list.sidebar row.source-gap:hover { background: none; }
+.subpage-header { margin-left: -4px; }
+
+/* ---- Pickers (kit/pickers.rs): Looks previews and preset cards, colour wells, usage bar, key caps ---- */
+.preview-row { padding: 12px; }
+.looks-preview { border-radius: 8px; box-shadow: 0 0 0 1px var(--line); }
+button.preset-card .looks-preview { border-radius: 6px; }
+button.preset-card:checked .looks-preview { box-shadow: 0 0 0 3px var(--accent); }
+button.preset-card label.preset-name { font-weight: 600; margin-top: 4px; }
+button.preset-card label { margin: 0 2px; }
+button.preset-card:checked label.secondary { font-weight: normal; }
+menubutton.color-well > button { min-width: 0; min-height: 0; padding: 2px; border-radius: 999px; background: none; border: none; box-shadow: none; }
+menubutton.color-well > button:hover { box-shadow: 0 0 0 2px var(--line); }
+.color-palette { padding: 8px; }
+.usage-row { padding: 12px; }
+.usage-bar { min-height: 12px; border-radius: 6px; background: var(--control); }
+.usage-segment { min-height: 12px; }
+.usage-bar > :first-child { border-radius: 6px 0 0 6px; }
+.usage-bar > :last-child { border-radius: 0 6px 6px 0; }
+.usage-0 { background: var(--accent); }
+.usage-1 { background: var(--warning); }
+.usage-2 { background: var(--success); }
+.usage-3 { background: var(--danger); }
+.usage-4 { background: var(--dim); }
+.usage-free { background: none; }
+.usage-dot { min-width: 8px; min-height: 8px; border-radius: 999px; }
+/* Key caps and recorders: one face for every symbol (no font fallback mixing glyph sizes). */
+label.keycap, button.shortcut-recorder label { font-family: Inter, "DejaVu Sans", sans-serif; font-feature-settings: "tnum"; }
+label.keycap { min-width: 22px; min-height: 22px; padding: 0 4px; border-radius: 6px; background: var(--control); border: 1px solid var(--line); font-size: 13px; }
+.key-legend { padding: 8px 12px; }
+label.status-line { margin: 0 12px; }
+.app-window .card-list label.perf-hint, label.perf-hint { color: var(--warning); }
+.app-window .list-row image.dim-icon, image.dim-icon { color: var(--dim); }
+.app-window .list-row.attention > image { color: var(--warning); }
+.app-window .list-row.all-good > image { color: var(--success); }
+
+/* ---- Toast (kit/toast.rs): one line + one action, floating at the bottom of a window ---- */
+.toast { background: var(--glass); border: 1px solid var(--line); border-radius: 999px; box-shadow: var(--glass-shadow); padding: 4px 4px 4px 16px; margin-bottom: 16px; }
+.toast > label { color: var(--text); }
+.toast button.btn label { color: var(--accent); }
+.toast button.btn { min-height: 0; padding: 4px 12px; border-radius: 999px; color: var(--accent); font-weight: 600; }
+/* Rows that can't be used right now (Assistants & Automation while off) read as paused. */
+.app-window .card-list:disabled, .app-window .list-row:disabled { opacity: 0.5; }
