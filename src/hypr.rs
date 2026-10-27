@@ -125,6 +125,26 @@ pub fn parse_active_client(json: &str) -> Option<Client> {
         .filter(|c| !c.address.is_empty())
 }
 
+/// `j/layers` -> namespaces of every mapped layer surface, all outputs and levels.
+pub fn parse_layers(json: &str) -> Vec<String> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+    let mut out = Vec::new();
+    for mon in v.as_object().into_iter().flat_map(|m| m.values()) {
+        for level in mon["levels"]
+            .as_object()
+            .into_iter()
+            .flat_map(|l| l.values())
+        {
+            for l in level.as_array().into_iter().flatten() {
+                if let Some(n) = l["namespace"].as_str() {
+                    out.push(n.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
 /// `j/monitors`: the focused output's logical box minus reserved areas (menu bar, dock).
 pub fn parse_zone(json: &str) -> Option<(i32, i32, i32, i32)> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;

@@ -3,6 +3,7 @@ pub mod approval;
 pub mod capture;
 pub mod control_center;
 pub mod dock;
+pub mod force_quit;
 pub mod installer;
 pub mod ipc;
 pub mod lock;
@@ -29,6 +30,7 @@ pub fn window(app: &gtk::Application, class: &str, spec: surface::Spec) -> gtk::
     let w = gtk::ApplicationWindow::new(app);
     w.add_css_class(class);
     surface::place(&w, spec);
+    surface::terminal_clipboard_keys(&w);
     w
 }
 
@@ -59,7 +61,8 @@ pub fn run_shell() -> glib::ExitCode {
         let panels: Panels = Default::default();
         let (bar_win, bar) = menubar::build(app, &*sys);
         mark(t0, "menubar");
-        let (dock_win, dock) = dock::build(app);
+        let (dock_win, dock, dock_keys) = dock::build(app);
+        let bar_keys = menubar::keyboard(&bar_win, &bar.root);
         mark(t0, "dock");
         kit::snapshot_on_map(&bar_win, "menubar");
         kit::snapshot_on_map(&dock_win, "dock");
@@ -89,9 +92,11 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("osd", osd.window.clone());
             p.insert("clipboard", panels::clipboard(&app));
             p.insert("session", panels::session(&app));
-            p.insert("notifications", notify::start(&app));
+            let (center, dismiss) = notify::start(&app);
+            p.insert("notifications", center);
             p.insert("overview", overview::build(&app));
             p.insert("control-center", control_center::panel(&app, sys.clone()));
+            p.insert("force-quit", force_quit::build(&app));
             let (shot, record) = capture::build(&app);
             p.insert("screenshot", shot);
             drop(p);
@@ -99,6 +104,7 @@ pub fn run_shell() -> glib::ExitCode {
             let handlers: ipc::Handlers = vec![
                 Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
                 record,
+                keyboard_handler(bar_keys, dock_keys, dismiss),
             ];
             let approver = approval::handler(&app, sys.clone());
             ipc::shell_socket(panels, handlers, approver, osd, sys);
@@ -106,6 +112,26 @@ pub fn run_shell() -> glib::ExitCode {
         });
     });
     app.run_with_args::<&str>(&[])
+}
+
+/// `wol shell show menubar|dock` (⌃F2, ⌃F3) moves the keyboard into that bar, `hide` gives it
+/// back; `wol shell hide banners` (Esc) dismisses every notification banner.
+fn keyboard_handler(
+    bar: Rc<dyn Fn(bool)>,
+    dock: Rc<dyn Fn(bool)>,
+    dismiss: Rc<dyn Fn()>,
+) -> Rc<dyn Fn(&crate::protocol::Command) -> bool> {
+    use crate::protocol::Verb;
+    Rc::new(move |c: &crate::protocol::Command| {
+        let take = matches!(c.verb, Verb::Show | Verb::Toggle);
+        match (c.target.as_str(), c.verb) {
+            ("menubar", Verb::Show | Verb::Toggle | Verb::Hide) => bar(take),
+            ("dock", Verb::Show | Verb::Toggle | Verb::Hide) => dock(take),
+            ("banners", Verb::Hide | Verb::Toggle) => dismiss(),
+            _ => return false,
+        }
+        true
+    })
 }
 
 /// First session after the setup assistant (ADR 0004): its keyboard layout becomes the Hyprland

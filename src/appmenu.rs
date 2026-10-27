@@ -16,6 +16,193 @@ pub enum Act {
     Fill,
     Centre,
     ToDesktop(u8),
+    /// An app command (⌘C …) handed to the app in front as its own key.
+    Key(Cmd),
+}
+
+/// App commands. ⌘ is Command: the app in front gets the key it listens for (Ctrl on this
+/// system, the terminal's own key in a terminal). `wol-app <verb>` sends it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cmd {
+    Copy,
+    Paste,
+    Cut,
+    Undo,
+    Redo,
+    SelectAll,
+    Save,
+    Open,
+    Print,
+    Find,
+    FindNext,
+    NewTab,
+    /// Closes the tab, else the window (the app's Ctrl+W).
+    Close,
+    New,
+    Reload,
+    Location,
+    ZoomIn,
+    ZoomOut,
+    ActualSize,
+    /// ⌃⌘Space: GTK text fields open their emoji chooser on Ctrl+.
+    Emoji,
+}
+
+impl Cmd {
+    pub const ALL: [Cmd; 20] = [
+        Cmd::Copy,
+        Cmd::Paste,
+        Cmd::Cut,
+        Cmd::Undo,
+        Cmd::Redo,
+        Cmd::SelectAll,
+        Cmd::Save,
+        Cmd::Open,
+        Cmd::Print,
+        Cmd::Find,
+        Cmd::FindNext,
+        Cmd::NewTab,
+        Cmd::Close,
+        Cmd::New,
+        Cmd::Reload,
+        Cmd::Location,
+        Cmd::ZoomIn,
+        Cmd::ZoomOut,
+        Cmd::ActualSize,
+        Cmd::Emoji,
+    ];
+
+    /// (`wol-app` verb, Hyprland MODS, key) of the ⌘ shortcut in the shipped conf.
+    const fn spec(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Cmd::Copy => ("copy", "SUPER", "C"),
+            Cmd::Paste => ("paste", "SUPER", "V"),
+            Cmd::Cut => ("cut", "SUPER", "X"),
+            Cmd::Undo => ("undo", "SUPER", "Z"),
+            Cmd::Redo => ("redo", "SUPER SHIFT", "Z"),
+            Cmd::SelectAll => ("select-all", "SUPER", "A"),
+            Cmd::Save => ("save", "SUPER", "S"),
+            Cmd::Open => ("open", "SUPER", "O"),
+            Cmd::Print => ("print", "SUPER", "P"),
+            Cmd::Find => ("find", "SUPER", "F"),
+            Cmd::FindNext => ("find-next", "SUPER", "G"),
+            Cmd::NewTab => ("new-tab", "SUPER", "T"),
+            Cmd::Close => ("close", "SUPER", "W"),
+            Cmd::New => ("new", "SUPER", "N"),
+            Cmd::Reload => ("reload", "SUPER", "R"),
+            Cmd::Location => ("location", "SUPER", "L"),
+            Cmd::ZoomIn => ("zoom-in", "SUPER", "equal"),
+            Cmd::ZoomOut => ("zoom-out", "SUPER", "minus"),
+            Cmd::ActualSize => ("actual-size", "SUPER", "0"),
+            Cmd::Emoji => ("emoji", "CTRL SUPER", "Space"),
+        }
+    }
+    pub fn verb(self) -> &'static str {
+        self.spec().0
+    }
+    /// The shortcut as the conf spells it (MODS, key).
+    pub fn keys(self) -> (&'static str, &'static str) {
+        let (_, m, k) = self.spec();
+        (m, k)
+    }
+}
+
+/// What the app in front receives for a [`Cmd`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Handoff {
+    /// One tap of MODS + key (Hyprland `sendshortcut`) to the keyboard focus.
+    Keys(&'static str, &'static str),
+    /// Close the window (a terminal's Ctrl+W deletes a word).
+    CloseWindow,
+    /// Nothing: the app has no such command and its Ctrl key would do harm.
+    Nothing,
+}
+
+/// A terminal app: does it have tabs, and its find key (with Ctrl+Shift).
+struct Term {
+    tabs: bool,
+    find: &'static str,
+}
+
+const fn term(tabs: bool, find: &'static str) -> Term {
+    Term { tabs, find }
+}
+
+/// Terminal window classes (lowercase). Their copy/paste/new window are Ctrl+Shift+C/V/N.
+const TERMINALS: [(&str, Term); 10] = [
+    ("foot", term(false, "R")),
+    ("footclient", term(false, "R")),
+    ("alacritty", term(false, "F")),
+    ("xterm", term(false, "F")),
+    ("kitty", term(true, "F")),
+    ("org.wezfurlong.wezterm", term(true, "F")),
+    ("com.mitchellh.ghostty", term(true, "F")),
+    ("org.gnome.console", term(true, "F")),
+    ("org.gnome.ptyxis", term(true, "F")),
+    ("gnome-terminal-server", term(true, "F")),
+];
+
+/// What `c` sends to an app of window class `class` ("" = no window: desktop or a shell panel).
+pub fn send(c: Cmd, class: &str) -> Handoff {
+    let class = class.to_ascii_lowercase();
+    let Some((_, t)) = TERMINALS.iter().find(|t| t.0 == class) else {
+        return match c {
+            Cmd::Emoji => Handoff::Keys("CTRL", "period"),
+            _ => {
+                let (_, m, k) = c.spec();
+                Handoff::Keys(
+                    if m.contains("SHIFT") {
+                        "CTRL SHIFT"
+                    } else {
+                        "CTRL"
+                    },
+                    k,
+                )
+            }
+        };
+    };
+    match c {
+        Cmd::Copy => Handoff::Keys("CTRL SHIFT", "C"),
+        Cmd::Paste => Handoff::Keys("CTRL SHIFT", "V"),
+        Cmd::New => Handoff::Keys("CTRL SHIFT", "N"),
+        Cmd::Find => Handoff::Keys("CTRL SHIFT", t.find),
+        Cmd::ZoomIn | Cmd::ZoomOut | Cmd::ActualSize => Handoff::Keys("CTRL", c.spec().2),
+        Cmd::NewTab if t.tabs => Handoff::Keys("CTRL SHIFT", "T"),
+        Cmd::Close if t.tabs => Handoff::Keys("CTRL SHIFT", "W"),
+        Cmd::Close => Handoff::CloseWindow,
+        _ => Handoff::Nothing,
+    }
+}
+
+/// Hyprland request for `c` with `class`/`address` in front; `panel` = a shell panel that may hold
+/// the keyboard is open (then a window is never closed: the user may be typing in the panel).
+/// `sendshortcut` over the socket is a press and release, so the app sees one tap, never a held key.
+pub fn key_batch(c: Cmd, class: &str, address: &str, panel: bool) -> Option<String> {
+    match send(c, class) {
+        Handoff::Keys(m, k) => Some(format!("dispatch sendshortcut {m}, {k},")),
+        Handoff::CloseWindow if !panel && !address.is_empty() => {
+            Some(format!("dispatch closewindow address:{address}"))
+        }
+        _ => None,
+    }
+}
+
+/// Shell surfaces that never take the keyboard (kit::surface specs and the banner/OSD panels).
+const NO_KEYBOARD: [&str; 7] = [
+    "wol-wallpaper",
+    "wol-desktop",
+    "wol-menubar",
+    "wol-dock",
+    "wol-panel-banners",
+    "wol-panel-osd",
+    "wol-panel-capture-thumb",
+];
+
+/// True when a mapped WolOS layer may hold the keyboard (Spotlight, Control Center, sheets…).
+pub fn panel_has_keys(namespaces: &[String]) -> bool {
+    namespaces
+        .iter()
+        .any(|n| n.starts_with("wol-") && !NO_KEYBOARD.contains(&n.as_str()))
 }
 
 /// Menu row: label ("" = separator), shortcut shown right-aligned, action.
@@ -88,6 +275,7 @@ pub fn verb(a: Act) -> Option<String> {
         Act::Fill => "fill".into(),
         Act::Centre => "centre".into(),
         Act::ToDesktop(n) => format!("desktop {n}"),
+        Act::Key(c) => c.verb().into(),
     })
 }
 
@@ -106,6 +294,10 @@ pub fn parse_verb(v: &str) -> Option<Act> {
         ("desktop", Some(n)) => match n.parse() {
             Ok(n) if (1..=DESKTOPS).contains(&n) => Act::ToDesktop(n),
             _ => return None,
+        },
+        (v, None) => match Cmd::ALL.into_iter().find(|c| c.verb() == v) {
+            Some(c) => Act::Key(c),
+            None => return None,
         },
         _ => return None,
     };
@@ -181,6 +373,7 @@ pub fn batch(
             )]
         }
         Act::ToDesktop(n) => vec![format!("dispatch movetoworkspace {n},address:{at}")],
+        Act::Key(c) => return key_batch(c, &front.class, at, false),
     };
     (!cmds.is_empty()).then(|| format!("[[BATCH]]{}", cmds.join(";")))
 }
@@ -308,6 +501,86 @@ mod tests {
             "[[BATCH]]dispatch sendshortcut CTRL, comma, address:0xa"
         );
         assert_eq!(batch(Act::About, &front, &all, ZONE), None);
+    }
+
+    /// Terminals: ⌘C/⌘V copy and paste (Ctrl+Shift+C/V); a terminal's Ctrl+letter is a control
+    /// character (Ctrl+C interrupts, Ctrl+Z suspends, Ctrl+S freezes output), so none is ever sent.
+    #[test]
+    fn terminals_get_their_own_keys_and_never_a_control_character() {
+        use Handoff::*;
+        for (cmd, class, want) in [
+            (Cmd::Copy, "foot", Keys("CTRL SHIFT", "C")),
+            (Cmd::Paste, "foot", Keys("CTRL SHIFT", "V")),
+            (Cmd::Paste, "Alacritty", Keys("CTRL SHIFT", "V")),
+            (Cmd::New, "foot", Keys("CTRL SHIFT", "N")),
+            (Cmd::Find, "foot", Keys("CTRL SHIFT", "R")),
+            (Cmd::Find, "kitty", Keys("CTRL SHIFT", "F")),
+            (Cmd::ZoomIn, "foot", Keys("CTRL", "equal")),
+            (Cmd::ActualSize, "footclient", Keys("CTRL", "0")),
+            (Cmd::Close, "foot", CloseWindow),
+            (Cmd::Close, "org.gnome.Console", Keys("CTRL SHIFT", "W")),
+            (Cmd::NewTab, "kitty", Keys("CTRL SHIFT", "T")),
+            (Cmd::NewTab, "foot", Nothing),
+            (Cmd::Undo, "foot", Nothing),
+            (Cmd::Save, "foot", Nothing),
+            (Cmd::Copy, "Firefox", Keys("CTRL", "C")),
+            (Cmd::Close, "firefox", Keys("CTRL", "W")),
+            (Cmd::Redo, "org.gnome.TextEditor", Keys("CTRL SHIFT", "Z")),
+            (Cmd::Emoji, "org.gnome.TextEditor", Keys("CTRL", "period")),
+            // Empty desktop or a shell panel in front: the keyboard focus gets the Ctrl key.
+            (Cmd::Paste, "", Keys("CTRL", "V")),
+        ] {
+            assert_eq!(send(cmd, class), want, "{cmd:?} in {class}");
+        }
+        for class in TERMINALS.iter().map(|t| t.0) {
+            for c in Cmd::ALL {
+                if let Keys(m, k) = send(c, class) {
+                    let letter = k.len() == 1 && k.as_bytes()[0].is_ascii_alphabetic();
+                    assert!(!letter || m.contains("SHIFT"), "{c:?} in {class}: {m} {k}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn commands_dispatch_to_the_keyboard_focus() {
+        assert_eq!(
+            key_batch(Cmd::Copy, "org.gnome.TextEditor", "0xa", false).as_deref(),
+            Some("dispatch sendshortcut CTRL, C,")
+        );
+        assert_eq!(
+            key_batch(Cmd::Copy, "foot", "0xa", true).as_deref(),
+            Some("dispatch sendshortcut CTRL SHIFT, C,"),
+            "a panel field takes Ctrl+Shift+C too (kit::widgets::terminal_clipboard_keys)"
+        );
+        assert_eq!(
+            key_batch(Cmd::Close, "foot", "0xa", false).as_deref(),
+            Some("dispatch closewindow address:0xa")
+        );
+        // A shell panel may hold the keyboard: ⌘W must not close the terminal behind it.
+        assert_eq!(key_batch(Cmd::Close, "foot", "0xa", true), None);
+        assert_eq!(
+            key_batch(Cmd::Close, "", "", false).as_deref(),
+            Some("dispatch sendshortcut CTRL, W,"),
+            "no window in front: the panel with the keyboard gets Ctrl+W"
+        );
+        assert_eq!(key_batch(Cmd::Undo, "foot", "0xa", false), None);
+        for c in Cmd::ALL {
+            assert_eq!(parse_verb(&verb(Act::Key(c)).unwrap()), Some(Act::Key(c)));
+        }
+        assert_ne!(parse_verb("zoom"), parse_verb("zoom-in"));
+    }
+
+    /// Surfaces that never take the keyboard do not count as a panel in front.
+    #[test]
+    fn keyboard_panels_from_layer_namespaces() {
+        let j = r#"{"eDP-1":{"levels":{"0":[{"namespace":"wol-wallpaper"}],"2":[{"namespace":"wol-menubar"},{"namespace":"wol-dock"}],"3":[{"namespace":"wol-panel-banners"},{"namespace":"wol-panel-osd"}]}}}"#;
+        assert!(!panel_has_keys(&crate::hypr::parse_layers(j)));
+        let j = r#"{"eDP-1":{"levels":{"3":[{"namespace":"wol-panel-spotlight"}]}}}"#;
+        assert!(panel_has_keys(&crate::hypr::parse_layers(j)));
+        assert!(!panel_has_keys(&crate::hypr::parse_layers(
+            r#"{"eDP-1":{"levels":{"3":[{"namespace":"waybar"}]}}}"#
+        )));
     }
 
     #[test]

@@ -97,3 +97,66 @@ fn notification_closed_reasons() {
         assert!(matches!(rx.recv().await.unwrap(), Event::Close(id) if id == c));
     });
 }
+
+/// Buttons answer the app: ActionInvoked with the key, then NotificationClosed (2, dismissed).
+/// The server says it does actions (notify-send and GLib only send them then).
+#[test]
+fn actions_are_invoked_then_closed() {
+    let Some(d) = daemon() else {
+        eprintln!("skipped: no dbus-daemon");
+        return;
+    };
+    async_io::block_on(async {
+        use futures_lite::StreamExt;
+        let (tx, rx) = async_channel::unbounded();
+        let bus = Bus::serve(Some(&d.1), tx).await.expect("serve");
+        let client = zbus::connection::Builder::address(d.1.as_str())
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let p = zbus::Proxy::new(
+            &client,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        )
+        .await
+        .unwrap();
+        let caps: Vec<String> = p.call("GetCapabilities", &()).await.unwrap();
+        assert!(caps.iter().any(|c| c == "actions"), "{caps:?}");
+        let mut invoked = p.receive_signal("ActionInvoked").await.unwrap();
+        let mut closed = p.receive_signal("NotificationClosed").await.unwrap();
+        let hints: HashMap<&str, Value> = HashMap::new();
+        let id: u32 = p
+            .call(
+                "Notify",
+                &(
+                    "WolOS",
+                    0u32,
+                    "",
+                    "Graphics driver installed",
+                    "Restart to finish setting up your graphics card.",
+                    vec!["default", "", "restart", "Restart"],
+                    hints,
+                    -1i32,
+                ),
+            )
+            .await
+            .unwrap();
+        let Event::Show(n) = rx.recv().await.unwrap() else {
+            panic!("no banner");
+        };
+        assert_eq!(n.actions[1], ("restart".to_string(), "Restart".to_string()));
+        assert!(bus.invoke(id, "restart").await.unwrap());
+        let m = invoked.next().await.unwrap();
+        assert_eq!(
+            m.body().deserialize::<(u32, String)>().unwrap(),
+            (id, "restart".to_string())
+        );
+        let m = closed.next().await.unwrap();
+        assert_eq!(m.body().deserialize::<(u32, u32)>().unwrap(), (id, 2));
+        // Answered once: a second click does nothing.
+        assert!(!bus.invoke(id, "restart").await.unwrap());
+    });
+}

@@ -343,6 +343,7 @@ fn cases() -> Vec<Case> {
                     critical: false,
                     timeout_ms: -1,
                     image: String::new(),
+                    actions: vec![],
                 };
                 let col = w::vbox(0);
                 col.add_css_class("banners-preview");
@@ -383,6 +384,31 @@ fn cases() -> Vec<Case> {
                         "/../../design/wallpapers/wonderland-day.svg"
                     )
                     .into(),
+                    actions: vec![],
+                };
+                let col = w::vbox(0);
+                col.add_css_class("banners-preview");
+                col.append(&ui::notify::banner(&note, 1));
+                col.upcast()
+            }),
+        },
+        Case {
+            name: "banner-action".into(),
+            size: (420, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                // The NVIDIA driver finished installing online: one Restart button.
+                let note = shell::ui::notify::Note {
+                    id: 1,
+                    app: "WolOS".into(),
+                    icon: String::new(),
+                    summary: "Graphics driver installed".into(),
+                    body: "Restart to finish setting up your graphics card.".into(),
+                    critical: false,
+                    timeout_ms: -1,
+                    image: String::new(),
+                    actions: vec![("restart".into(), "Restart".into())],
                 };
                 let col = w::vbox(0);
                 col.add_css_class("banners-preview");
@@ -476,6 +502,8 @@ fn cases() -> Vec<Case> {
                     );
                     match page {
                         "choose" => i.pick(0),
+                        "choose-windows" => i.pick(1),
+                        "secure-boot" => i.show(Page::SecureBoot),
                         "installing" => {
                             i.show_progress(&Report::new(Stage::Packages, 53), Some(200.0))
                         }
@@ -502,8 +530,6 @@ fn cases() -> Vec<Case> {
                             pkg_search: false,
                         },
                     );
-                        "choose-windows" => i.pick(1),
-                        "secure-boot" => i.show(Page::SecureBoot),
                     if p == "Search" {
                         s.search_now("photo");
                     } else {
