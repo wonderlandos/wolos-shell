@@ -1336,17 +1336,9 @@ impl Live {
             .clone();
         let me = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let s = if cfg!(target_os = "freebsd") {
-                // swapinfo(8) runs at most every 30 s: never on the main loop.
-                match gio::spawn_blocking(move || src.lock().map(|mut s| s.read()).ok()).await {
-                    Ok(Some(s)) => s,
-                    _ => return,
-                }
-            } else {
-                match src.lock() {
-                    Ok(mut s) => s.read(),
-                    Err(_) => return,
-                }
+            let s = match src.lock() {
+                Ok(mut s) => s.read(),
+                Err(_) => return,
             };
             let Some(l) = me.upgrade() else { return };
             let mut cpu = l.cpu.borrow_mut();
