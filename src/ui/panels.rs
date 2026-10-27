@@ -8,22 +8,26 @@ use gtk::{gdk, glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-const WALLPAPERS: [&str; 2] = [
-    "/usr/local/share/wolos/wallpapers/wonderland-dusk.svg",
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../design/wallpapers/wonderland-dusk.svg"
-    ),
-];
+/// Seconds between two looks at the clock for the Dynamic wallpaper.
+const DYNAMIC_TICK: u32 = 60;
 
+/// The desktop picture: the saved choice (`wol wallpaper set`, Settings > Wallpaper), followed
+/// live through the shell reload and the choice file; Dynamic follows the clock.
 pub fn wallpaper(app: &gtk::Application) -> gtk::ApplicationWindow {
     let win = super::window(app, "wallpaper", Spec::wallpaper());
-    // Decoded off the main thread: the CSS gradient shows until the picture is ready (fast first frame).
-    if let Some(p) = WALLPAPERS.iter().find(|p| std::path::Path::new(p).exists()) {
-        let pic = gtk::Picture::new();
-        pic.set_content_fit(gtk::ContentFit::Cover);
-        win.set_child(Some(&pic));
-        let p = p.to_string();
+    let pic = gtk::Picture::new();
+    pic.set_content_fit(gtk::ContentFit::Cover);
+    win.set_child(Some(&pic));
+    let shown: RefCell<Option<std::path::PathBuf>> = Default::default();
+    let show = Rc::new(move || {
+        let now = crate::kit::pickers::desktop_wallpaper();
+        if *shown.borrow() == now {
+            return;
+        }
+        shown.replace(now.clone());
+        let Some(p) = now else { return };
+        // Decoded off the main thread: the CSS gradient shows until the picture is ready.
+        let pic = pic.clone();
         glib::spawn_future_local(async move {
             if let Ok(Ok(t)) =
                 gtk::gio::spawn_blocking(move || gdk::Texture::from_filename(p)).await
@@ -31,7 +35,29 @@ pub fn wallpaper(app: &gtk::Application) -> gtk::ApplicationWindow {
                 pic.set_paintable(Some(&t));
             }
         });
+    });
+    {
+        let s = show.clone();
+        super::ipc::on_reload(move |_| s());
     }
+    let choice = gtk::gio::File::for_path(
+        std::path::Path::new(&crate::kit::config_home()).join(shared::theme::WALLPAPER_FILE),
+    );
+    if let Ok(m) = choice.monitor_file(
+        gtk::gio::FileMonitorFlags::NONE,
+        gtk::gio::Cancellable::NONE,
+    ) {
+        let s = show.clone();
+        m.connect_changed(move |_, _, _, _| s());
+        // The monitor lives as long as the window.
+        win.connect_destroy(move |_| {
+            m.cancel();
+        });
+    }
+    glib::timeout_add_seconds_local(DYNAMIC_TICK, move || {
+        show();
+        glib::ControlFlow::Continue
+    });
     win
 }
 
@@ -388,4 +414,26 @@ pub fn session(app: &gtk::Application) -> gtk::Window {
         }
     });
     win
+}
+
+#[cfg(test)]
+mod tests {
+    /// `wol wallpaper set` and Settings save the choice; the desktop showed one hard-coded picture.
+    #[test]
+    fn desktop_follows_the_saved_wallpaper() {
+        let src = include_str!("panels.rs");
+        let body =
+            &src[src.find("pub fn wallpaper(").unwrap()..src.find("/// Panel window").unwrap()];
+        for want in [
+            "pickers::desktop_wallpaper()",
+            "ipc::on_reload",
+            "monitor_file",
+        ] {
+            assert!(body.contains(want), "{want}");
+        }
+        assert!(
+            !src.contains(concat!("wonderland-dusk", ".svg")),
+            "a hard-coded picture"
+        );
+    }
 }
