@@ -72,8 +72,7 @@ pub fn load_all() -> Vec<Entry> {
     } else if let Ok(h) = std::env::var("HOME") {
         dirs.push(Path::new(&h).join(".local/share"));
     }
-    let sys =
-        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/share".into());
+    let sys = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/share".into());
     dirs.extend(sys.split(':').filter(|s| !s.is_empty()).map(PathBuf::from));
     let mut seen = std::collections::HashSet::new();
     let mut files = Vec::new();
