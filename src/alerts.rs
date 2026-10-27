@@ -1,7 +1,9 @@
-//! Low battery and full disk notifications, checked with the menu bar poll. Levels come from
-//! `wol_core::power::policy` (20, 10, 5 %, sleep at 3 %); the sentences from [`crate::copy`].
+//! Low battery, full disk and updates-ready notifications, checked with the menu bar poll.
+//! Battery levels come from `wol_core::power::policy` (20, 10, 5 %, sleep at 3 %), updates from
+//! `wol_core::update::check`; the sentences from [`crate::copy`].
 use crate::status::{Battery, BatteryStatus};
 use wol_core::power::policy::{self, Alert};
+use wol_core::update::check::Updates;
 
 /// Below this share of free space on the startup disk, warn once (until it is back above
 /// [`DISK_CLEAR_PERCENT`]).
@@ -25,6 +27,8 @@ pub struct Alerts {
     battery: Option<u8>,
     disk_warned: bool,
     polls: u32,
+    /// The update check already notified about (its `checked` time).
+    updates_shown: u64,
 }
 
 impl Alerts {
@@ -63,6 +67,14 @@ impl Alerts {
         Some(Notice::Show(s, body, false))
     }
 
+    /// The daily update check's findings: a notice once per check that found something.
+    pub fn updates(&mut self, u: Option<Updates>) -> Option<Notice> {
+        let u = u.filter(|u| u.notify_after(self.updates_shown))?;
+        self.updates_shown = u.checked;
+        let (s, body) = crate::copy::updates_ready(u.count(), !u.security.is_empty());
+        Some(Notice::Show(s, body, false))
+    }
+
     /// Disk is checked on every [`DISK_EVERY_POLLS`]th poll, starting with the first.
     pub fn disk_due(&mut self) -> bool {
         let due = self.polls.is_multiple_of(DISK_EVERY_POLLS);
@@ -91,15 +103,17 @@ thread_local! {
     static STATE: std::cell::RefCell<Alerts> = std::cell::RefCell::new(Alerts::default());
 }
 
-/// Menu bar poll hook: battery every time, disk every few minutes.
+/// Menu bar poll hook: battery every time, disk and updates every few minutes.
 pub fn poll(b: Option<Battery>) {
-    let (battery, disk_due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
-    let disk = if disk_due {
-        startup_disk().and_then(|(f, t)| STATE.with_borrow_mut(|a| a.disk(f, t)))
+    let (battery, due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
+    let (disk, updates) = if due {
+        let u = Updates::read(std::path::Path::new(wol_core::update::check::DIR));
+        let disk = startup_disk();
+        STATE.with_borrow_mut(|a| (disk.and_then(|(f, t)| a.disk(f, t)), a.updates(u)))
     } else {
-        None
+        (None, None)
     };
-    for n in battery.into_iter().chain(disk) {
+    for n in battery.into_iter().chain(disk).chain(updates) {
         act(n);
     }
 }
@@ -191,11 +205,45 @@ mod tests {
     }
 
     #[test]
+    fn updates_notify_once_per_check() {
+        let mut a = Alerts::default();
+        let found = |t: &str, audit: &str| {
+            Updates::parse(
+                t,
+                "curl-8.1 <   needs updating\nfirefox-1 <   needs updating\n",
+                audit,
+                "",
+            )
+        };
+        assert_eq!(a.updates(None), None, "never checked");
+        let Some(Notice::Show(s, body, false)) = a.updates(found("100", "")) else {
+            panic!()
+        };
+        assert_eq!(s, "Updates Available");
+        assert_eq!(
+            body,
+            "WolOS has 2 updates ready. Open Software Update to install them."
+        );
+        assert_eq!(a.updates(found("100", "")), None, "same check: once");
+        let Some(Notice::Show(_, body, _)) = a.updates(found("200", "curl-8.1")) else {
+            panic!()
+        };
+        assert!(body.contains("including security fixes"), "{body}");
+        assert_eq!(
+            a.updates(Updates::parse("300", "", "", "")),
+            None,
+            "up to date"
+        );
+    }
+
+    #[test]
     fn alert_sentences_pass_the_copy_lint() {
         // Bodies are sentences; summaries are titles.
         let (_, b) = crate::copy::battery_low(10);
         let (_, db) = crate::copy::disk_full("2 GB");
-        for t in [b.as_str(), crate::copy::BATTERY_SLEEP.1, &db] {
+        let (_, u1) = crate::copy::updates_ready(1, false);
+        let (_, u2) = crate::copy::updates_ready(4, true);
+        for t in [b.as_str(), crate::copy::BATTERY_SLEEP.1, &db, &u1, &u2] {
             assert!(
                 crate::copy::lint(t).is_empty(),
                 "{t}: {:?}",
