@@ -19,9 +19,7 @@ pub fn parse_check(out: Option<&str>) -> UpdateState {
     match out.and_then(|o| serde_json::from_str::<Vec<String>>(o.trim()).ok()) {
         Some(v) if v.is_empty() => UpdateState::UpToDate,
         Some(v) => UpdateState::Available(v),
-        None => UpdateState::Failed(
-            "Could not check for updates. Make sure pkg is installed and you are online.".into(),
-        ),
+        None => UpdateState::Failed(crate::copy::UPDATE_CHECK.into()),
     }
 }
 
@@ -122,7 +120,7 @@ pub(super) fn page(ctx: &Rc<Ctx>) -> gtk::Box {
                             v.len(),
                             if v.len() == 1 { "" } else { "s" }
                         ),
-                        "Updates install into a new boot environment.".into(),
+                        "WolOS saves a restore point before updating.".into(),
                     )
                 }
                 UpdateState::Installing => (
@@ -171,7 +169,7 @@ pub(super) fn page(ctx: &Rc<Ctx>) -> gtk::Box {
                 Rc::new(move |r| {
                     show(&match r {
                         Ok(()) => UpdateState::Installed,
-                        Err(e) => UpdateState::Failed(e.message().into()),
+                        Err(e) => UpdateState::Failed(crate::copy::update(e).into()),
                     })
                 }),
             );

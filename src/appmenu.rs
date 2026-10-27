@@ -9,6 +9,8 @@ pub enum Act {
     Hide,
     HideOthers,
     Quit,
+    /// Ends the app's process (a frozen app ignores Quit).
+    ForceQuit,
     Minimise,
     Zoom,
     Fill,
@@ -45,6 +47,8 @@ pub fn app_menu(name: &str, class: &str) -> Vec<Row> {
         row("Hide Others".into(), Some("Super+Alt+H"), Act::HideOthers),
         sep(),
         row(format!("Quit {name}"), Some("Super+Q"), Act::Quit),
+        // Named and in the menu on purpose: no key kills the frontmost app by accident.
+        row(format!("Force Quit {name}"), None, Act::ForceQuit),
     ]);
     m
 }
@@ -78,6 +82,7 @@ pub fn verb(a: Act) -> Option<String> {
         Act::Hide => "hide".into(),
         Act::HideOthers => "hide-others".into(),
         Act::Quit => "quit".into(),
+        Act::ForceQuit => "force-quit".into(),
         Act::Minimise => "minimise".into(),
         Act::Zoom => "zoom".into(),
         Act::Fill => "fill".into(),
@@ -93,6 +98,7 @@ pub fn parse_verb(v: &str) -> Option<Act> {
         ("hide", None) => Act::Hide,
         ("hide-others", None) => Act::HideOthers,
         ("quit", None) => Act::Quit,
+        ("force-quit", None) => Act::ForceQuit,
         ("minimise", None) => Act::Minimise,
         ("zoom", None) => Act::Zoom,
         ("fill", None) => Act::Fill,
@@ -149,6 +155,11 @@ pub fn batch(
             .filter(|c| c.class == front.class)
             .map(|c| format!("dispatch closewindow address:{}", c.address))
             .collect(),
+        Act::ForceQuit => clients
+            .iter()
+            .filter(|c| c.class == front.class)
+            .map(|c| format!("dispatch killwindow address:{}", c.address))
+            .collect(),
         Act::Minimise => vec![hide_cmd(front)],
         Act::Zoom => vec!["dispatch fullscreen 1".into()],
         Act::Fill => vec![
@@ -201,6 +212,7 @@ mod tests {
                 ("Hide Others", Some("Super+Alt+H")),
                 ("", None),
                 ("Quit Terminal", Some("Super+Q")),
+                ("Force Quit Terminal", None),
             ]
         );
         let editor = app_menu("Text Editor", "org.gnome.TextEditor");
@@ -240,6 +252,7 @@ mod tests {
             Act::Hide,
             Act::HideOthers,
             Act::Quit,
+            Act::ForceQuit,
             Act::Minimise,
             Act::Zoom,
             Act::Fill,
@@ -275,6 +288,11 @@ mod tests {
         assert_eq!(
             b(Act::Quit),
             "[[BATCH]]dispatch closewindow address:0xa;dispatch closewindow address:0xb"
+        );
+        // A frozen app ignores closewindow: Force Quit ends it, every window of the app.
+        assert_eq!(
+            b(Act::ForceQuit),
+            "[[BATCH]]dispatch killwindow address:0xa;dispatch killwindow address:0xb"
         );
         assert_eq!(
             b(Act::Minimise),
