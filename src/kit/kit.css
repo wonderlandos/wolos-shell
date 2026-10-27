@@ -155,6 +155,9 @@ button.row-button { background: none; border: none; box-shadow: none; padding: 0
 button.row-button .list-row { min-height: 32px; padding: 0 8px; }
 button.row-button:hover { background: var(--control); }
 .sheet { background: var(--card); border-radius: var(--glass-radius-s); padding: 16px; margin-bottom: 8px; border: 1px solid var(--line); box-shadow: var(--glass-shadow); }
+/* Helper approval: the sheet is the glass panel itself; same inset on every side. */
+.glass-panel.approval { padding: 16px; }
+.glass-panel.approval .sheet { background: none; border: none; box-shadow: none; padding: 0; margin: 0; }
 
 /* ---- AppWindow (HIG §1) ---- */
 .app-window { background: var(--surface); }

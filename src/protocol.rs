@@ -1,5 +1,6 @@
 //! Shell socket (port of Iara.Core.Shell.ShellCommand): one line `<verb> [panel]`, e.g. `toggle switcher`.
-//! Path `$XDG_RUNTIME_DIR/wol-shell.sock`; sent by `wol shell ...` and keybinds.
+//! Path `$XDG_RUNTIME_DIR/wol-shell.sock`; sent by `wol shell ...` and keybinds. `approve <json>`
+//! comes from `wol mcp` (helper approvals, `ui::approval`).
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Verb {
@@ -7,6 +8,9 @@ pub enum Verb {
     Show,
     Hide,
     Reload,
+    /// `approve <json>`: a helper asks for an administrator change ([`shared::shell::Approval`]);
+    /// the target is the JSON, verbatim. Never logged (a Wi-Fi password may be in it).
+    Approve,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,6 +26,13 @@ pub fn socket_path(runtime_dir: &str) -> std::path::PathBuf {
 }
 
 pub fn parse(line: &str) -> Option<Command> {
+    if let Some(json) = line.trim_start().strip_prefix("approve ") {
+        let json = json.trim();
+        return (!json.is_empty()).then(|| Command {
+            verb: Verb::Approve,
+            target: json.into(),
+        });
+    }
     let mut w = line.split_whitespace();
     let verb = match w.next()?.to_ascii_lowercase().as_str() {
         "toggle" => Verb::Toggle,
@@ -71,6 +82,16 @@ mod tests {
         for bad in ["", "toggle", "reload x", "fly osd", "show a b"] {
             assert_eq!(parse(bad), None, "{bad}");
         }
+    }
+
+    /// `approve <json>`: a helper's admin request for the approval sheet; JSON kept verbatim.
+    #[test]
+    fn approve_keeps_the_request_verbatim() {
+        let j = r#"{"helper":"Claude Desktop","tool":"wifi join","request":{"action":"wifi-join","ssid":"My Home"}}"#;
+        let c = parse(&format!("approve {j}\n")).unwrap();
+        assert_eq!((c.verb, c.target.as_str()), (Verb::Approve, j));
+        assert_eq!(parse("approve"), None);
+        assert_eq!(parse("approve   "), None);
     }
 
     #[test]

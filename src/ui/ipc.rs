@@ -4,13 +4,16 @@ use crate::{hypr, protocol};
 use gtk::{gio, glib, prelude::*};
 use std::rc::Rc;
 
-/// `$XDG_RUNTIME_DIR/wol-shell.sock`: `toggle|show|hide <panel>`, `reload`.
+/// `$XDG_RUNTIME_DIR/wol-shell.sock`: `toggle|show|hide <panel>`, `reload`, `approve <json>`.
 /// Surfaces with their own command semantics (e.g. the switcher); true = handled.
 pub type Handlers = Vec<Rc<dyn Fn(&protocol::Command) -> bool>>;
+/// Takes an `approve` request (JSON, verbatim) and the connection to answer on (`ui::approval`).
+pub type Approver = Rc<dyn Fn(String, gio::SocketConnection)>;
 
 pub fn shell_socket(
     panels: Panels,
     handlers: Handlers,
+    approver: Approver,
     osd: Rc<Osd>,
     sys: Rc<dyn crate::system::System>,
 ) {
@@ -29,8 +32,13 @@ pub fn shell_socket(
     }
     glib::spawn_future_local(async move {
         while let Ok((conn, _)) = listener.accept_future().await {
-            let (panels, osd, sys, handlers) =
-                (panels.clone(), osd.clone(), sys.clone(), handlers.clone());
+            let (panels, osd, sys, handlers, approver) = (
+                panels.clone(),
+                osd.clone(),
+                sys.clone(),
+                handlers.clone(),
+                approver.clone(),
+            );
             glib::spawn_future_local(async move {
                 let input = gio::DataInputStream::new(&conn.input_stream());
                 while let Ok(Some(line)) =
@@ -40,6 +48,12 @@ pub fn shell_socket(
                         eprintln!("wol-shell: bad command '{line}'");
                         continue;
                     };
+                    // One request per connection; the answer goes back on it. Never logged (a
+                    // Wi-Fi password may be in it).
+                    if cmd.verb == protocol::Verb::Approve {
+                        approver(cmd.target, conn.clone());
+                        break;
+                    }
                     if !handlers.iter().any(|h| h(&cmd)) {
                         run(&cmd, &panels, &osd, &sys);
                     }

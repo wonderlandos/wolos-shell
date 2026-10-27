@@ -407,8 +407,15 @@ pub fn sheet(child: &impl IsA<gtk::Widget>) -> gtk::Revealer {
 /// Admin authorization sheet (IaraOS ADR 0026).
 pub struct AuthSheet {
     pub revealer: gtk::Revealer,
+    pub icon: gtk::Image,
+    /// "Authenticate"; helper approvals put the request here (wraps).
+    pub title: gtk::Label,
+    /// Who asks and why (helper approvals name the helper and the change).
+    pub why: gtk::Label,
     pub field: gtk::PasswordEntry,
     pub cancel: gtk::Button,
+    /// Hidden unless the caller offers a lasting yes (helper approvals: Always Allow).
+    pub always: gtk::Button,
     pub allow: gtk::Button,
     pub message: gtk::Label,
 }
@@ -416,9 +423,13 @@ pub struct AuthSheet {
 pub fn authenticate_sheet(who: &str) -> AuthSheet {
     let b = vbox(S2);
     let head = hbox(S3);
-    head.append(&icon("system-lock-screen-symbolic", ICON_M));
+    let icon = icon("system-lock-screen-symbolic", ICON_M);
+    head.append(&icon);
     let t = vbox(0);
-    t.append(&label("Authenticate", "title"));
+    t.set_hexpand(true);
+    let title = label("Authenticate", "title");
+    title.set_wrap(true);
+    t.append(&title);
     let why = label(
         &format!("{who} is trying to make changes. Enter your password to allow this."),
         "secondary",
@@ -434,22 +445,27 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
     let row = hbox(S2);
     row.append(&spacer());
     let cancel = button("Cancel", Kind::Default, || {});
+    let always = button("Always Allow", Kind::Default, || {});
+    always.set_visible(false);
     let allow = button("Allow", Kind::Primary, || {});
     row.append(&cancel);
+    row.append(&always);
     row.append(&allow);
     b.append(&row);
     AuthSheet {
         revealer: sheet(&b),
+        icon,
+        title,
+        why,
         field,
         cancel,
+        always,
         allow,
         message,
     }
 }
 
 // ---- App scaffold ----
-    let always = button("Always Allow", Kind::Default, || {});
-    always.set_visible(false);
 
 /// HIG §1 AppWindow: 52px glass toolbar (traffic lights, title, actions, search), 220px sidebar, content, status bar.
 pub struct AppWindow {
