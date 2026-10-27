@@ -1,7 +1,5 @@
-//! Accounts: users and the Add User sheet.
+//! Users & Groups: the people who log in (name, full name, login shell) and the Add User sheet.
 use super::*;
-
-// ---- Accounts ----
 
 /// "Alice Liddell" -> "alice".
 pub fn account_name(full: &str) -> String {
@@ -16,22 +14,82 @@ pub fn account_name(full: &str) -> String {
         .to_string()
 }
 
-pub(super) fn page(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Box {
-    let p = w::page("Accounts");
-    let status = status_label();
-    let list = w::vbox(0);
-    let add_row = |list: &gtk::Box, u: &str, sub: &str| {
-        let r = w::list_row("", u, sub, None);
-        r.prepend(&w::avatar(u, w::ICON_M));
-        list.append(&r);
+/// One login user from passwd: (login, full name, shell name).
+pub(crate) fn people(passwd: &str, logins: &[String]) -> Vec<(String, String, String)> {
+    logins
+        .iter()
+        .map(|u| {
+            let f: Vec<&str> = passwd
+                .lines()
+                .find(|l| l.split(':').next() == Some(u.as_str()))
+                .map(|l| l.split(':').collect())
+                .unwrap_or_default();
+            let full = f.get(4).map_or("", |g| g.split(',').next().unwrap_or(""));
+            let shell = f.last().and_then(|s| s.rsplit('/').next()).unwrap_or("");
+            (u.clone(), full.replace('&', u), shell.to_string())
+        })
+        .collect()
+}
+
+fn person_row(login: &str, full: &str, shell: &str) -> gtk::Widget {
+    let sub = match (full.is_empty(), shell.is_empty()) {
+        (false, false) => format!("{login} · {shell}"),
+        (false, true) => login.to_string(),
+        (true, false) => shell.to_string(),
+        (true, true) => String::new(),
     };
-    if host.users.is_empty() {
-        list.append(&row("No other accounts", &w::label("", "secondary")));
+    let r = w::list_row("", if full.is_empty() { login } else { full }, &sub, None);
+    r.prepend(&w::avatar(login, w::ICON_M));
+    r.upcast()
+}
+
+pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
+    let (ctx, host, sheet) = (&e.ctx, &e.host, &e.sheets.user);
+    let p = w::page("Users & Groups");
+    let status = status_label();
+    // The Users card: one row per person, rebuilt when someone is added.
+    let list = w::vbox(0);
+    type People = Rc<RefCell<Vec<(String, String, String)>>>;
+    let known: People = Default::default();
+    let refill: Rc<dyn Fn()> = {
+        let (list, known) = (list.clone(), known.clone());
+        Rc::new(move || {
+            clear(&list);
+            let rows: Vec<gtk::Widget> = known
+                .borrow()
+                .iter()
+                .map(|(u, f, sh)| person_row(u, f, sh))
+                .collect();
+            if rows.is_empty() {
+                list.append(&w::section(
+                    "Users",
+                    &[
+                        w::list_row("system-users-symbolic", "No other accounts", "", None)
+                            .upcast(),
+                    ],
+                ));
+            } else {
+                list.append(&w::section("Users", &rows));
+            }
+        })
+    };
+    refill();
+    p.append(&list);
+    {
+        let (m, users, known, refill) = (
+            e.machine(),
+            host.users.clone(),
+            known.clone(),
+            refill.clone(),
+        );
+        off_thread(
+            move || people(&m.passwd(), &users),
+            move |v| {
+                *known.borrow_mut() = v;
+                refill();
+            },
+        );
     }
-    for u in &host.users {
-        add_row(&list, u, "");
-    }
-    p.append(&w::section("Users", &[list.clone().upcast()]));
 
     let full = w::text_field("Full name");
     let short = w::text_field("Account name");
@@ -64,14 +122,15 @@ pub(super) fn page(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Bo
     }
     {
         let (pass, verify) = (pass.clone(), verify.clone());
-        let (ctx, r, full, short, admin, st, list) = (
+        let (ctx, r, full, short, admin, st, known, refill) = (
             ctx.clone(),
             sheet.clone(),
             full.clone(),
             short.clone(),
             admin.clone(),
             status.clone(),
-            list.clone(),
+            known.clone(),
+            refill.clone(),
         );
         buttons.append(&w::button("Create User", w::Kind::Primary, move || {
             let (name, full_name) = (short.text().to_string(), full.text().to_string());
@@ -86,7 +145,13 @@ pub(super) fn page(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Bo
             verify.set_text("");
             r.set_reveal_child(false);
             say(&st, &format!("Creating “{name}”…"));
-            let (st, list, n2, f2) = (st.clone(), list.clone(), name.clone(), full_name.clone());
+            let (st, known, refill, n2, f2) = (
+                st.clone(),
+                known.clone(),
+                refill.clone(),
+                name.clone(),
+                full_name.clone(),
+            );
             ctx.act(
                 Action::UserAdd {
                     name,
@@ -97,9 +162,10 @@ pub(super) fn page(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Bo
                 Rc::new(move |res| match res {
                     Ok(()) => {
                         say(&st, "");
-                        let r = w::list_row("", &n2, &f2, None);
-                        r.prepend(&w::avatar(&n2, w::ICON_M));
-                        list.append(&r);
+                        known
+                            .borrow_mut()
+                            .push((n2.clone(), f2.clone(), "zsh".into()));
+                        refill();
                     }
                     Err(e) => say(&st, e.message()),
                 }),
@@ -118,6 +184,9 @@ pub(super) fn page(ctx: &Rc<Ctx>, host: &Host, sheet: &gtk::Revealer) -> gtk::Bo
         }));
     }
     p.append(&bar);
+    p.append(&w::footnote(
+        "New accounts get a private home folder and use zsh in Terminal.",
+    ));
     p.append(&status);
     p
 }
@@ -148,6 +217,20 @@ mod tests {
         ] {
             assert_eq!(account_name(full), want, "{full}");
         }
+    }
+
+    #[test]
+    fn people_from_passwd() {
+        let passwd = "alice:*:1001:1001:Alice Liddell,,,:/home/alice:/usr/local/bin/zsh\n\
+                      bill:*:1002:1002:& the Lizard:/home/bill:/bin/sh\n";
+        assert_eq!(
+            people(passwd, &["alice".into(), "bill".into(), "ghost".into()]),
+            [
+                ("alice".into(), "Alice Liddell".into(), "zsh".into()),
+                ("bill".into(), "bill the Lizard".into(), "sh".into()),
+                ("ghost".into(), String::new(), String::new()),
+            ]
+        );
     }
 
     #[test]

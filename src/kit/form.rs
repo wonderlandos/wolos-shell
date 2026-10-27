@@ -112,7 +112,11 @@ pub fn button_row(
     label: &str,
     clicked: impl Fn() + 'static,
 ) -> gtk::Widget {
-    row(title, subtitle, &w::button(label, w::Kind::Default, clicked))
+    row(
+        title,
+        subtitle,
+        &w::button(label, w::Kind::Default, clicked),
+    )
 }
 
 /// Row whose subtitle changes later (Do Not Disturb "On until 15:05"): the row and that label.

@@ -182,7 +182,14 @@ fn draw_window(
         for i in (1..=6).rev() {
             let e = spread * i as f64 / 6.0;
             shade(cr, if active { 0.05 } else { 0.035 });
-            w::rounded(cr, x - e, y - e + spread * 0.25, ww + 2.0 * e, wh + 2.0 * e, r + e);
+            w::rounded(
+                cr,
+                x - e,
+                y - e + spread * 0.25,
+                ww + 2.0 * e,
+                wh + 2.0 * e,
+                r + e,
+            );
             let _ = cr.fill();
         }
     }
@@ -238,14 +245,7 @@ fn draw_window(
     if active {
         rgba(cr, t.accent, 1.0);
         let (bw, bh) = (ww * 0.26, line * 2.2);
-        w::rounded(
-            cr,
-            x + ww - pad - bw,
-            y + wh - pad - bh,
-            bw,
-            bh,
-            bh / 2.0,
-        );
+        w::rounded(cr, x + ww - pad - bw, y + wh - pad - bh, bw, bh, bh / 2.0);
         let _ = cr.fill();
     }
     if !active && l.dim_inactive {
@@ -379,7 +379,13 @@ pub struct PresetCard {
 }
 
 impl PresetCard {
-    pub fn new(name: &str, description: &str, looks: &Looks, tokens: Tokens, selected: bool) -> Self {
+    pub fn new(
+        name: &str,
+        description: &str,
+        looks: &Looks,
+        tokens: Tokens,
+        selected: bool,
+    ) -> Self {
         let preview = LooksPreview::new(PRESET_THUMB, looks, tokens);
         let b = w::vbox(S1);
         b.append(&preview.root);
@@ -673,7 +679,10 @@ mod tests {
         let day = wallpaper_for(Some(DYNAMIC_CHOICE), 9).unwrap();
         assert!(day.ends_with("wonderland-day.svg"), "{day:?}");
         let missing = wallpaper_for(Some("/nonexistent.png"), 9).unwrap();
-        assert!(missing.ends_with("wonderland-dusk.svg"), "falls back to the default");
+        assert!(
+            missing.ends_with("wonderland-dusk.svg"),
+            "falls back to the default"
+        );
         assert_eq!(wallpaper_for(None, 9), Some(missing));
     }
 }

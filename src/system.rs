@@ -31,6 +31,16 @@ pub enum Action {
     PkgUpgrade,
     /// App Store: catalog id or package name (`wol_core::store`).
     PkgInstall(String),
+    /// Settings: save desktop prefs and apply the changed Hyprland keywords live (`wol_core::hyprprefs`).
+    Desktop(Box<wol_core::hyprprefs::DesktopPrefs>),
+    /// Settings > Keyboard > Shortcuts: save overrides and rebind live.
+    Shortcuts(Box<wol_core::shortcuts::Overrides>),
+    /// Pause (true) or resume WolOS shortcuts while a shortcut is being recorded.
+    ShortcutCapture(bool),
+    /// Settings > Restore: start from this restore point (ZFS boot environment) next time.
+    BootEnvironment(String),
+    /// Settings: one allow-listed administrator request (wol-admind validates it again).
+    Admin(shared::admin::AdminRequest),
 }
 
 pub type Done = async_channel::Receiver<Result<(), ActionError>>;
@@ -137,6 +147,31 @@ pub trait System: Send + Sync {
         let (tx, rx) = async_channel::bounded(1);
         let _ = tx.try_send(Err(ActionError::Unavailable));
         rx
+    }
+    // Settings > Assistants & Automation, Restore (archicture/modules/automation.md).
+    /// Helper policy and the helpers seen in the audit log.
+    fn helpers(&self) -> wol_core::automation::Status {
+        wol_core::automation::Status::default()
+    }
+    /// The off switch for every helper.
+    fn set_helpers_enabled(&self, _on: bool) -> Result<(), ActionError> {
+        Err(ActionError::Unavailable)
+    }
+    /// Allow or deny one capability (`wol_core::automation::CAPABILITIES` id).
+    fn set_helper_capability(&self, _id: &str, _allowed: bool) -> Result<(), ActionError> {
+        Err(ActionError::Unavailable)
+    }
+    /// Settings changes, newest first.
+    fn history(&self) -> Vec<wol_core::journal::Entry> {
+        Vec::new()
+    }
+    /// Undoes one change (None = the latest) and reloads what it touched; Err = why not.
+    fn undo(&self, _id: Option<u64>) -> Result<wol_core::journal::Entry, String> {
+        Err("Undo is not available here.".into())
+    }
+    /// Restore points (ZFS boot environments), empty without them.
+    fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
+        Vec::new()
     }
     /// Blocking dispatch of one action (backends call this off the UI thread).
     fn perform(&self, a: &Action) -> Result<(), ActionError> {
@@ -427,6 +462,69 @@ impl System for Fake {
             ],
         }]
     }
+    // Settings > Assistants & Automation and Restore: a helper seen once, a few changes, restore points.
+    fn helpers(&self) -> wol_core::automation::Status {
+        let mut s = wol_core::automation::status(
+            &wol_core::automation::policy::Policy {
+                enabled: false,
+                ..Default::default()
+            },
+            &[],
+        );
+        s.helpers = vec![wol_core::automation::audit::HelperSeen {
+            name: "Claude".into(),
+            via: "MCP".into(),
+            first: 0,
+            last: 0,
+            actions: 12,
+            refused: 1,
+        }];
+        s
+    }
+    fn history(&self) -> Vec<wol_core::journal::Entry> {
+        let now = wol_core::journal::now();
+        [
+            (4, 300, "settings", "theme"),
+            (3, 2 * 3600, "mcp:Claude", "wallpaper"),
+            (2, 26 * 3600, "settings", "desktop"),
+            (1, 3 * 86_400, "cli", "shortcuts"),
+        ]
+        .into_iter()
+        .map(|(id, ago, by, what)| wol_core::journal::Entry {
+            id,
+            t: now - ago,
+            by: by.into(),
+            what: what.into(),
+            changes: vec![],
+            undoes: None,
+        })
+        .collect()
+    }
+    fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
+        let be = |name: &str, active, created: &str, space: &str| wol_core::update::be::BootEnv {
+            name: name.into(),
+            active,
+            next_boot: active,
+            mountpoint: active.then(|| "/".into()),
+            space: space.into(),
+            created: created.into(),
+        };
+        vec![
+            be("default", true, "2026-10-01 09:12", "9.8G"),
+            be(
+                "wol-before-update-1792514400",
+                false,
+                "2026-10-20 18:40",
+                "412M",
+            ),
+            be(
+                "wol-before-update-1791789780",
+                false,
+                "2026-10-12 08:03",
+                "380M",
+            ),
+        ]
+    }
 }
 
 // ---- Real backend ----
@@ -582,6 +680,23 @@ impl Inner {
             } => c.add_user(name, full_name, *admin, password, &pw),
             Action::PkgUpgrade => c.pkg_upgrade(&pw),
             Action::PkgInstall(t) => c.pkg_install(t, &pw),
+            Action::Desktop(p) => wol_core::hyprprefs::apply_desktop(&*c.host, &config_home(), p)
+                .map(drop)
+                .map_err(|_| wol_core::controls::ControlError::Failed),
+            Action::Shortcuts(o) => {
+                wol_core::hyprprefs::apply_shortcuts(&*c.host, &config_home(), o)
+                    .map(drop)
+                    .map_err(|_| wol_core::controls::ControlError::Failed)
+            }
+            Action::ShortcutCapture(on) => {
+                if wol_core::hyprprefs::capture(&*c.host, *on) {
+                    Ok(())
+                } else {
+                    Err(wol_core::controls::ControlError::Unavailable)
+                }
+            }
+            Action::BootEnvironment(name) => c.boot_environment(name, &pw),
+            Action::Admin(req) => admin(req, &pw),
             Action::MediaToggle | Action::Power(_) => {
                 Err(wol_core::controls::ControlError::Unavailable)
             }
@@ -611,6 +726,19 @@ impl Inner {
         }
         r.map_err(ActionError::from)
     }
+}
+
+/// One wol-admind request (validated here first: a malformed one never leaves the process).
+fn admin(
+    req: &shared::admin::AdminRequest,
+    pw: &str,
+) -> Result<(), wol_core::controls::ControlError> {
+    use wol_core::controls::{ControlError, admin_request, from_reply};
+    if wol_core::admin::validate(req).is_some() {
+        return Err(ControlError::Invalid);
+    }
+    admin_request(std::path::Path::new(shared::admin::SOCKET), req, pw)
+        .map_or(Err(ControlError::Unavailable), from_reply)
 }
 
 /// Real system: `wol_core::controls` on a background thread; the UI only reads the snapshot.
@@ -878,6 +1006,34 @@ impl System for CoreSystem {
             .unwrap_or_else(|e| e.into_inner())
             .push(tx);
         Some(rx)
+    }
+    fn helpers(&self) -> wol_core::automation::Status {
+        wol_core::automation::user_status()
+    }
+    fn set_helpers_enabled(&self, on: bool) -> Result<(), ActionError> {
+        wol_core::automation::set_enabled(&journal(), BY, on, wol_core::journal::now())
+            .map(drop)
+            .map_err(|_| ActionError::Failed)
+    }
+    fn set_helper_capability(&self, id: &str, allowed: bool) -> Result<(), ActionError> {
+        wol_core::automation::set_capability(&journal(), BY, id, allowed, wol_core::journal::now())
+            .map(drop)
+            .map_err(|_| ActionError::Failed)
+    }
+    fn history(&self) -> Vec<wol_core::journal::Entry> {
+        let mut e = journal().entries();
+        e.reverse();
+        e
+    }
+    fn undo(&self, id: Option<u64>) -> Result<wol_core::journal::Entry, String> {
+        let e = journal()
+            .undo(id, BY, wol_core::journal::now())
+            .map_err(|e| crate::copy::undo(&e).to_string())?;
+        after_undo(&self.inner.c, &wol_core::journal::reload_for(&e));
+        Ok(e)
+    }
+    fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
+        wol_core::update::be::read(&*self.inner.c.host).unwrap_or_default()
     }
 }
 

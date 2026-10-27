@@ -65,9 +65,9 @@ pub(super) fn page(ctx: &Rc<Ctx>) -> gtk::Box {
                 else {
                     return;
                 };
-                let dfile = config(prefs::HYPR_DIR).join("displays.conf");
-                let text = prefs::displays_conf(read(&dfile).as_deref(), &rule);
-                let _ = write(&dfile, &text);
+                let rel = format!("{}/displays.conf", prefs::HYPR_DIR);
+                let text = prefs::displays_conf(read(&config(&rel)).as_deref(), &rule);
+                let _ = save_journaled("displays", &rel, Some(&text));
                 let st = status.clone();
                 ctx.act(
                     Action::Monitor(rule),

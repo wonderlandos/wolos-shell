@@ -23,8 +23,9 @@ pub fn parse_check(out: Option<&str>) -> UpdateState {
     }
 }
 
-pub(super) fn page(ctx: &Rc<Ctx>) -> gtk::Box {
-    let p = w::page("Software Update");
+pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
+    let ctx = &e.ctx;
+    let p = general::subpage(e, "Software Update");
     let icon = w::icon("software-update-available-symbolic", w::ICON_M);
     icon.add_css_class("accent-icon");
     let title = w::label("", "title");
@@ -36,7 +37,9 @@ pub(super) fn page(ctx: &Rc<Ctx>) -> gtk::Box {
     text.set_valign(gtk::Align::Center);
     text.append(&title);
     text.append(&detail);
-    let spin = gtk::Spinner::new();
+    let spin = w::spinner();
+    spin.set_spinning(false);
+    spin.set_vexpand(false);
     let head = w::hbox(w::S3);
     head.add_css_class("list-row");
     head.add_css_class("hero-row");

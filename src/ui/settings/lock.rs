@@ -1,10 +1,8 @@
-//! Lock & Idle: hypridle timeouts.
+//! Lock Screen: when the screen locks (hypridle timeouts, journaled so the change can be undone).
 use super::*;
 
-// ---- Lock & Idle ----
-
-pub(super) fn page() -> gtk::Box {
-    let p = w::page("Lock & Idle");
+pub(super) fn page(_: &Rc<Env>) -> gtk::Box {
+    let p = w::page("Lock Screen");
     let file = config(prefs::IDLE_FILE);
     let (secs, sleep) = prefs::parse_hypridle(read(&file).as_deref());
     let cur = Rc::new(std::cell::Cell::new((secs, sleep)));
@@ -12,7 +10,7 @@ pub(super) fn page() -> gtk::Box {
         let cur = cur.clone();
         move || {
             let (s, z) = cur.get();
-            let _ = write(&file, &prefs::hypridle_conf(s, z));
+            let _ = save_journaled("idle", prefs::IDLE_FILE, Some(&prefs::hypridle_conf(s, z)));
             // hypridle reads its config at start: restart it on the new file.
             background(vec![argv(&["pkill", "-x", "hypridle"])]);
             glib::timeout_add_local_once(std::time::Duration::from_millis(300), || {
