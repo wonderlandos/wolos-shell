@@ -93,10 +93,6 @@ scale.slider.fat slider { min-width: 24px; min-height: 24px; margin: 0 -1px; pad
 image.fat-icon { margin-left: 4px; color: var(--accent-text); }
 .back-row button { padding: 0 4px; }
 
-/* ---- Controls ---- */
-button.btn { border: none; box-shadow: none; min-height: 24px; padding: 0 12px; border-radius: 6px; }
-button.btn-default { background: var(--control); color: var(--text); }
-button.btn-primary { background: var(--accent); color: var(--accent-text); }
 /* ---- Control surfaces (kit/controls.rs): tiles, device rows, detail pages, sliders, media, battery ---- */
 .icon-circle { border-radius: 999px; background: var(--control-off); color: var(--text); }
 .icon-circle.on { background: var(--accent); color: var(--accent-text); }
@@ -128,6 +124,10 @@ button.media-button { min-width: 28px; min-height: 28px; padding: 0; border-radi
 progressbar.media-progress trough { border: none; box-shadow: none; }
 progressbar.media-progress progress { background: var(--dim); border-color: var(--dim); }
 
+/* ---- Controls ---- */
+button.btn { border: none; box-shadow: none; min-height: 24px; padding: 0 12px; border-radius: 6px; }
+button.btn-default { background: var(--control); color: var(--text); }
+button.btn-primary { background: var(--accent); color: var(--accent-text); }
 button.btn-destructive { background: var(--danger); color: var(--accent-text); }
 button.btn-plain { background: none; color: var(--accent); }
 button.btn label { font-weight: 500; }
@@ -403,6 +403,48 @@ button.shortcut-recorder.conflict { border-color: var(--warning); box-shadow: 0 
 button.wallpaper-tile .wallpaper-thumb { border-radius: 6px; box-shadow: 0 0 0 1px var(--line); }
 button.wallpaper-tile:checked .wallpaper-thumb { box-shadow: 0 0 0 3px var(--accent); }
 
+/* ---- Data display (kit/data.rs): widget cards, label roles and tones, badge, meter, gauge, chart, clock, month grid ---- */
+/* Widget figures (time, temperature) use 34 px display type: the second exception to the type scale (HIG). */
+window.desktop { background: none; box-shadow: none; border: none; }
+.widget-card { background: var(--glass); color: var(--text); border-radius: var(--glass-radius); padding: 16px; border: 1px solid var(--glass-hairline); box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim); }
+/* One surface per card: Kit modules inside a widget card (Now Playing, layout "card" groups) draw flat. */
+.widget-card .module { background: none; box-shadow: none; padding: 0; border-radius: 0; }
+label.display { font-size: 34px; font-weight: 600; letter-spacing: -0.5px; }
+label.caption { font-size: 11px; font-weight: 600; letter-spacing: 0.4px; }
+.tone-text { color: var(--text); }
+.tone-dim { color: var(--dim); }
+.tone-accent { color: var(--accent); }
+.tone-success { color: var(--success); }
+.tone-warning { color: var(--warning); }
+.tone-danger { color: var(--danger); }
+label.badge { font-size: 11px; font-weight: 600; min-height: 18px; padding: 0 8px; border-radius: 999px; background: var(--control); color: var(--text); }
+label.badge.tone-accent { background: alpha(var(--accent), 0.20); }
+label.badge.tone-success { background: alpha(var(--success), 0.24); }
+label.badge.tone-warning { background: alpha(var(--warning), 0.24); }
+label.badge.tone-danger { background: alpha(var(--danger), 0.22); }
+progressbar.meter trough { min-height: 6px; border-radius: 3px; background: alpha(var(--text), 0.12); border: none; box-shadow: none; }
+progressbar.meter progress { min-height: 6px; border-radius: 3px; background: var(--text); }
+progressbar.meter.tone-dim progress { background: var(--dim); }
+progressbar.meter.tone-accent progress { background: var(--accent); }
+progressbar.meter.tone-success progress { background: var(--success); }
+progressbar.meter.tone-warning progress { background: var(--warning); }
+progressbar.meter.tone-danger progress { background: var(--danger); }
+label.gauge-value-small { font-size: 11px; font-weight: 600; }
+label.gauge-value-medium { font-size: 13px; font-weight: 600; }
+label.gauge-value-large { font-size: 22px; font-weight: 600; }
+.clock-pin { min-width: 6px; min-height: 6px; border-radius: 999px; background: var(--accent); }
+.month-grid label.day { font-size: 11px; font-weight: 500; min-width: 22px; min-height: 22px; border-radius: 999px; }
+.month-grid.compact label.day { min-width: 16px; min-height: 16px; }
+.month-grid label.day.today { background: var(--accent); color: var(--accent-text); font-weight: 700; }
+.widget-card picture.picture { border-radius: 6px; }
+button.corner-button { min-width: 20px; min-height: 20px; padding: 0; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.24); }
+button.corner-button:hover { background: var(--control); }
+/* Edit Widgets: the card being dragged, where it will land, and the gallery. */
+.widget-card.dragging { opacity: 0.9; box-shadow: 0 12px 32px rgba(0,0,0,0.30), inset 0 1px 0 var(--glass-rim); }
+.drop-mark { border-radius: var(--glass-radius); background: alpha(var(--text), 0.10); border: 1px solid alpha(var(--text), 0.18); }
+.widget-gallery button.row-button.selected { background: var(--control); }
+/* Opaque: desktop cards behind the gallery never show through its text. */
+.glass-panel.widget-gallery { background: var(--surface); }
 list.sidebar row.source-gap { min-height: 12px; }
 list.sidebar row.source-gap:hover { background: none; }
 .subpage-header { margin-left: -4px; }

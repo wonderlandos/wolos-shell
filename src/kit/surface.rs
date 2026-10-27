@@ -40,9 +40,11 @@ pub struct Spec {
 
 impl Spec {
     pub fn zone(&self) -> Zone {
-        match (self.exclusive, self.anchor) {
-            (true, _) => Zone::Reserve,
-            (false, [true, true, true, true]) => Zone::Ignore,
+        match (self.exclusive, self.anchor, self.layer) {
+            (true, _, _) => Zone::Reserve,
+            // Desktop widgets fill the area between the menu bar and the Dock.
+            (false, [true, true, true, true], Layer::Bottom) => Zone::Respect,
+            (false, [true, true, true, true], _) => Zone::Ignore,
             _ => Zone::Respect,
         }
     }
@@ -84,6 +86,17 @@ impl Spec {
         Spec {
             namespace: "wol-wallpaper",
             layer: Layer::Background,
+            anchor: [true; 4],
+            exclusive: false,
+            keyboard: Keyboard::None,
+        }
+    }
+    /// Desktop widgets: above the wallpaper, below windows, inside the menu bar and Dock zones.
+    /// Edit Widgets raises it above windows (`set_layer`) and lets it take the keyboard.
+    pub const fn desktop() -> Self {
+        Spec {
+            namespace: "wol-desktop",
+            layer: Layer::Bottom,
             anchor: [true; 4],
             exclusive: false,
             keyboard: Keyboard::None,
@@ -165,6 +178,29 @@ pub fn set_exclusive(w: &impl IsA<gtk::Window>, on: bool) {
 
 #[cfg(not(feature = "layer-shell"))]
 pub fn set_exclusive(_w: &impl IsA<gtk::Window>, _on: bool) {}
+
+/// Move a surface between layers and keyboard modes at runtime (Edit Widgets).
+#[cfg(feature = "layer-shell")]
+pub fn set_layer(w: &impl IsA<gtk::Window>, layer: Layer, keyboard: Keyboard) {
+    use gtk4_layer_shell::{KeyboardMode, Layer as L, LayerShell};
+    if !gtk4_layer_shell::is_supported() {
+        return;
+    }
+    w.set_layer(match layer {
+        Layer::Background => L::Background,
+        Layer::Bottom => L::Bottom,
+        Layer::Top => L::Top,
+        Layer::Overlay => L::Overlay,
+    });
+    w.set_keyboard_mode(match keyboard {
+        Keyboard::None => KeyboardMode::None,
+        Keyboard::OnDemand => KeyboardMode::OnDemand,
+        Keyboard::Exclusive => KeyboardMode::Exclusive,
+    });
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn set_layer(_w: &impl IsA<gtk::Window>, _layer: Layer, _keyboard: Keyboard) {}
 
 /// Keyboard mode of the menu bar and the Dock while invoked (⌃F2, ⌃F3). Hyprland 0.56 gives a
 /// mapped layer the keyboard on a None -> Exclusive change only (LayerSurface.cpp), not OnDemand.
@@ -321,6 +357,7 @@ mod tests {
             (Spec::menubar(), Zone::Reserve),
             (Spec::dock(), Zone::Reserve),
             (Spec::wallpaper(), Zone::Ignore),
+            (Spec::desktop(), Zone::Respect),
             (
                 Spec::panel("wol-panel-overview", [true; 4], Keyboard::Exclusive),
                 Zone::Ignore,

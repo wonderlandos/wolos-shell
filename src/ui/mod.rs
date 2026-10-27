@@ -16,6 +16,10 @@ pub mod setup;
 pub mod spotlight;
 pub mod store;
 pub mod switcher;
+pub mod widgets;
+pub mod widgets_builtin;
+pub mod widgets_gallery;
+pub mod widgets_layout;
 
 use crate::kit::{self, surface};
 use gtk::{glib, prelude::*};
@@ -85,6 +89,9 @@ pub fn run_shell() -> glib::ExitCode {
                 kit::reveal::boot_mark("desktop shown");
             });
             wall.present();
+            // Desktop widgets (ADR 0010): above the wallpaper, below windows.
+            let (desk, board) = widgets::build(&app, sys.clone());
+            desk.present();
             let osd = panels::Osd::build(&app);
             menubar::poll_status(bar.clone(), sys.clone());
             ipc::hypr_events(bar, dock);
@@ -104,6 +111,7 @@ pub fn run_shell() -> glib::ExitCode {
             let handlers: ipc::Handlers = vec![
                 Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
                 record,
+                Rc::new(move |c: &crate::protocol::Command| board.command(c)),
                 keyboard_handler(bar_keys, dock_keys, dismiss),
             ];
             let approver = approval::handler(&app, sys.clone());

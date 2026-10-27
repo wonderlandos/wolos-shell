@@ -169,3 +169,41 @@ fn no_raw_error_text_on_screen() {
         bad.join("\n")
     );
 }
+
+/// Desktop widgets: what the card says when a widget can't show its data. The developer's detail
+/// (exit code, JSON path) is behind "Show Details", never the sentence.
+#[test]
+fn widget_sentences_pass() {
+    use wol_core::widgets::SourceError as E;
+    let all = [
+        E::NotFound("./friends.sh".into()),
+        E::Timeout(5),
+        E::Failed {
+            code: Some(3),
+            stderr: "no token".into(),
+        },
+        E::TooLarge,
+        E::BadJson("line 1, column 2".into()),
+        E::NeedsConsent("api.example.com".into()),
+        E::Offline("api.example.com".into()),
+    ];
+    for e in &all {
+        assert_clean(
+            &format!("widget {e:?}"),
+            &copy::widget_source(e, "Game Friends"),
+        );
+    }
+    assert_clean("widget problems", &copy::widget_problems("Stocks"));
+    assert_clean("widget missing", copy::WIDGET_MISSING);
+    assert_clean("widget newer", copy::WIDGET_NEWER);
+    assert_clean("city search", copy::CITY_SEARCH);
+    assert_clean("weather offline", copy::WEATHER_OFFLINE);
+}
+
+/// `wol games steam` notifications: Steam opened from the Dock or Launchpad has no terminal.
+#[test]
+fn games_notices_pass() {
+    for (title, body) in wol_core::games::notice::ALL {
+        assert_clean(&format!("games “{title}”"), body);
+    }
+}
