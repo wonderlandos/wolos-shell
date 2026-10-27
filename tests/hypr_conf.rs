@@ -139,16 +139,131 @@ fn volume_keys_ask_the_shell_for_the_osd() {
 }
 
 /// Live perf: spawning wol-control-center per click took 52 ms median, 109 ms p95 to the first
-/// frame (process + GTK + D-Bus setup). The shell keeps it resident; keys toggle the panel.
+/// frame (process + GTK + D-Bus setup). The shell keeps it resident; the menu bar toggles the panel.
 #[test]
 fn control_center_is_a_resident_shell_panel() {
-    assert!(
-        CONF.lines()
-            .any(|l| l.trim() == "bind = $mod, A, exec, wol shell toggle control-center")
-    );
     let bar = include_str!("../src/ui/menubar.rs");
+    assert!(bar.contains(r#"&["wol", "shell", "toggle", "control-center"]"#));
     assert!(
         !bar.contains("\"wol-control-center\""),
         "menu bar must not spawn the app"
     );
+}
+
+/// ⌘ is Command (J13): a plain ⌘+letter belongs to the app in front. Super+A/F/N/L/E took
+/// ⌘A/F/N/L/E from every app; now each one is an app command, Quit, Hide or Minimise.
+#[test]
+fn plain_command_letters_belong_to_the_app() {
+    use wol_core::shortcuts::{SUPER, parse};
+    let binds = parse(CONF);
+    let mut letters = 0;
+    for b in &binds {
+        let k = b.combo.key.as_bytes();
+        if b.combo.mods != SUPER || k.len() != 1 || !k[0].is_ascii_alphabetic() {
+            continue;
+        }
+        letters += 1;
+        let verb = (b.dispatcher == "exec")
+            .then(|| b.args.strip_prefix("wol-app "))
+            .flatten();
+        assert!(
+            verb.and_then(shell::appmenu::parse_verb).is_some(),
+            "⌘{}: system shortcut on an app letter ({} {})",
+            b.combo.key,
+            b.dispatcher,
+            b.args
+        );
+    }
+    assert!(letters >= 18, "{letters}");
+    for gone in [
+        "wol shell toggle control-center",
+        "wol shell toggle notifications",
+        "wol theme toggle",
+        "nautilus",
+    ] {
+        assert!(
+            !binds.iter().any(|b| b.args == gone),
+            "{gone} keeps a shortcut"
+        );
+    }
+}
+
+/// Mac muscle memory: every app command ⌘ shortcut is bound to `wol-app <verb>`, and an app gets
+/// the same key with Ctrl for ⌘ (⇧⌘Z: Ctrl+Shift+Z).
+#[test]
+fn every_command_shortcut_reaches_the_app_as_ctrl() {
+    use shell::appmenu::{Cmd, Handoff, send};
+    use wol_core::shortcuts::{CTRL, Combo, SUPER, parse};
+    let binds = parse(CONF);
+    let mut keys = Vec::new();
+    for c in Cmd::ALL {
+        let (mods, key) = c.keys();
+        let combo = Combo::parse(mods, key).unwrap();
+        let b = binds
+            .iter()
+            .find(|b| b.combo.same(&combo))
+            .unwrap_or_else(|| panic!("{c:?}: {} not bound", combo.label()));
+        assert_eq!(
+            (b.dispatcher.as_str(), b.args.as_str()),
+            ("exec", format!("wol-app {}", c.verb()).as_str()),
+            "{c:?}"
+        );
+        assert_eq!(
+            shell::appmenu::parse_verb(c.verb()),
+            Some(shell::appmenu::Act::Key(c))
+        );
+        if combo.mods & CTRL != 0 {
+            continue; // ⌃⌘Space (Emoji) has no Ctrl twin
+        }
+        let Handoff::Keys(m, k) = send(c, "org.gnome.TextEditor") else {
+            panic!("{c:?}: apps get nothing");
+        };
+        assert_eq!(
+            Combo::parse(m, k),
+            Some(Combo {
+                mods: combo.mods & !SUPER | CTRL,
+                key: combo.key.clone()
+            }),
+            "{c:?}"
+        );
+        keys.push(combo.label());
+    }
+    for want in [
+        "⌘C", "⌘V", "⌘X", "⌘Z", "⇧⌘Z", "⌘A", "⌘S", "⌘O", "⌘P", "⌘F", "⌘G", "⌘T", "⌘W", "⌘N", "⌘R",
+        "⌘L", "⌘=", "⌘-", "⌘0",
+    ] {
+        assert!(keys.iter().any(|k| k == want), "{want} not an app command");
+    }
+}
+
+/// macOS system shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
+/// ⌥⌘Esc (Force Quit), ⌃F2 (menu bar), ⌃F3 (Dock), and Esc (non-consuming) dismisses banners.
+#[test]
+fn system_shortcuts_are_the_mac_ones() {
+    use wol_core::shortcuts::{Combo, parse};
+    let binds = parse(CONF);
+    for (mods, key, flags, action) in [
+        ("SUPER", "Space", "", "wol-spotlight"),
+        ("SUPER SHIFT", "3", "", "wol-screenshot full"),
+        ("SUPER SHIFT", "4", "", "wol-screenshot region"),
+        ("SUPER SHIFT", "5", "", "wol shell show screenshot"),
+        ("CTRL", "Up", "", "wol shell toggle overview"),
+        ("SUPER", "Up", "", "wol shell toggle overview"),
+        ("SUPER", "Tab", "", "wol shell show switcher"),
+        ("CTRL SUPER", "Q", "", "wol-lock"),
+        ("SUPER ALT", "Escape", "", "wol shell toggle force-quit"),
+        ("CTRL", "F2", "", "wol shell show menubar"),
+        ("CTRL", "F3", "", "wol shell show dock"),
+        ("", "Escape", "n", "wol shell hide banners"),
+    ] {
+        let c = Combo::parse(mods, key).unwrap();
+        assert!(
+            binds.iter().any(|b| b.combo.same(&c)
+                && b.flags == flags
+                && b.dispatcher == "exec"
+                && b.args == action),
+            "{} ({flags}) should run {action}",
+            c.label()
+        );
+    }
 }

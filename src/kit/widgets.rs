@@ -45,6 +45,8 @@ pub const OVERVIEW_TITLE: i32 = 28;
 pub const CAPTURE_THUMB: (i32, i32) = (200, 125);
 /// About <App> panel width.
 pub const ABOUT_WIDTH: i32 = 280;
+/// Force Quit Applications panel: width, list height before it scrolls (about six apps).
+pub const FORCE_QUIT: (i32, i32) = (360, 240);
 
 pub fn vbox(spacing: i32) -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Vertical, spacing)

@@ -41,6 +41,8 @@ button.menubar-item, .menubar-strip menubutton > button {
   padding: 0 7px; margin: 0; border-radius: 6px; transition: background 120ms ease;
 }
 button.menubar-item:hover, .menubar-strip menubutton > button:hover, .menubar-strip menubutton > button:checked { background: var(--bar-hover); }
+/* ⌃F2: the item with the keyboard looks hovered (arrows move it, Esc gives the keyboard back). */
+button.menubar-item:focus-visible, .menubar-strip menubutton > button:focus-visible { background: var(--bar-hover); }
 
 /* ---- Menus ---- */
 popover.menu > contents { background: var(--glass); border-radius: var(--glass-radius-s); padding: 4px; box-shadow: var(--glass-shadow); border: 1px solid var(--line); }
@@ -61,6 +63,8 @@ tooltip label { font-size: 11px; color: var(--text); }
 button.dock-tile { background: none; border: none; box-shadow: none; padding: 0; margin: 0; min-width: 0; min-height: 0; border-radius: 12px;
   transition: margin var(--glass-motion) var(--glass-spring); }
 button.dock-tile:hover { margin-top: -8px; margin-bottom: 8px; }
+/* ⌃F3: the tile with the keyboard gets an accent ring. */
+button.dock-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .running-dot { min-width: 4px; min-height: 4px; margin: 2px 0 2px 0; border-radius: 999px; background: rgba(255,255,255,0.92); }
 .dock-shelf separator { background: var(--glass-hairline); min-width: 1px; margin: 8px 0 12px 0; }
 
@@ -188,6 +192,10 @@ label.status-bar { min-height: 24px; padding: 0 16px; border-top: 1px solid var(
 button.hit { background: none; border: none; box-shadow: none; border-radius: 6px; padding: 4px 8px; min-height: 0; }
 button.hit.selected { background: var(--accent); }
 button.hit.selected label { color: var(--accent-text); }
+/* Force Quit Applications (⌥⌘Esc): a list card of open apps, the chosen one in accent. */
+.force-quit-list { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); padding: 4px; }
+.force-quit-list > label { padding: 16px 8px; }
+.force-quit button.btn:disabled { opacity: 0.45; }
 
 /* ---- Notifications / OSD / session ---- */
 /* 344 px outer width (macOS): 318 + 2 x 12 padding + 2 x 1 border. */
@@ -368,6 +376,7 @@ window.banners .banner-group, .banners-preview .banner-group { margin: 8px 0 0 0
 .banner-title { font-size: 13px; font-weight: 700; }
 .banner-body { font-size: 13px; }
 .banner-more { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.banner-thumb { border-radius: 6px; border: 1px solid var(--line); }
 .banner-edge { min-height: 6px; border-radius: 0 0 12px 12px; background: var(--glass); border: 1px solid var(--glass-hairline); border-top: none; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
 .banner-edge-1 { margin: 0 8px; }
 .banner-edge-2 { margin: 0 16px; min-height: 5px; }
