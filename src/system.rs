@@ -83,6 +83,17 @@ pub trait System: Send + Sync {
     fn set_night_light(&self, _on: bool) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
+    /// Power source, mode and what this machine can steer (Settings > Battery, Control Center):
+    /// `wol_core::power::policy::status`. None where nothing is read (previews).
+    fn power_status(&self) -> Option<wol_core::power::policy::Status> {
+        None
+    }
+    /// Firewall, remote login, system log, kernel hardening (Privacy & Security):
+    /// `wol_core::security::status`. How each app permission is enforced is
+    /// `wol_core::security::enforcement`.
+    fn security_status(&self) -> Option<wol_core::security::Status> {
+        None
+    }
     fn power_mode(&self) -> Option<PowerMode> {
         None
     }
@@ -717,6 +728,18 @@ impl System for CoreSystem {
     fn keyboard_brightness(&self) -> Option<u8> {
         self.inner.lock().keyboard
     }
+    fn power_status(&self) -> Option<wol_core::power::policy::Status> {
+        use wol_core::power::policy;
+        let host = &*self.inner.c.host;
+        let saved = std::fs::read_to_string(policy::STATE_FILE).ok();
+        let facts = policy::facts(&|argv: &[&str]| host.run(argv));
+        let state = policy::State::parse(saved.as_deref());
+        Some(policy::status(&facts, &state))
+    }
+    fn security_status(&self) -> Option<wol_core::security::Status> {
+        let host = &*self.inner.c.host;
+        Some(wol_core::security::status(&|argv: &[&str]| host.run(argv)))
+    }
     fn power_mode(&self) -> Option<PowerMode> {
         self.inner.lock().low_power.map(|l| {
             if l {
@@ -949,6 +972,27 @@ mod tests {
         );
         assert_eq!(s.brightness(), None);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Settings > Battery, Control Center and Privacy & Security read the policies' own status.
+    #[test]
+    fn power_and_security_status_come_from_the_host() {
+        use wol_core::system::fake::FakeHost;
+        let h = Arc::new(FakeHost::new(false));
+        h.command("sysctl -n hw.acpi.acline", "0\n");
+        h.command("sysctl -n hw.acpi.battery.life", "64\n");
+        h.command("sysrc -n pf_enable", "YES\n");
+        let sys = CoreSystem::with_ticks(
+            Controls::new(h),
+            Sysfs::default(),
+            None,
+            std::sync::mpsc::channel().1,
+        );
+        let p = sys.power_status().unwrap();
+        assert_eq!(p.source, wol_core::power::policy::Source::Battery);
+        assert_eq!(p.battery, Some(64));
+        assert_eq!(sys.security_status().unwrap().firewall, Some(true));
+        assert!(Fake.power_status().is_none(), "previews read nothing");
     }
 
     /// Volume keys: the OSD waited for the next poll (up to 10 s). `refresh_audio` reads the
