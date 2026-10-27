@@ -8,6 +8,7 @@ pub mod clock;
 pub mod copy;
 pub mod desktop;
 pub mod files;
+pub mod focus;
 pub mod hypr;
 pub mod install;
 pub mod layout;
@@ -21,6 +22,7 @@ pub mod status;
 pub mod switcher;
 pub mod system;
 pub mod theme;
+pub mod widgets;
 pub mod winshot;
 
 pub mod kit;

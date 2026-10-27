@@ -197,6 +197,37 @@ pub fn undo_errors() -> [UndoError; 5] {
     ]
 }
 
+// ---- Desktop widgets (the card's sentence; the developer's detail sits behind Show Details) ----
+
+/// A widget's data source did not give it data.
+pub fn widget_source(e: &wol_core::widgets::SourceError, name: &str) -> String {
+    use wol_core::widgets::SourceError as E;
+    match e {
+        E::NotFound(_) => format!("{name} is missing a file it needs. Reinstall it, or remove it."),
+        E::Timeout(_) => format!("{name} is taking too long to update. It tries again soon."),
+        E::Failed { .. } | E::TooLarge | E::BadJson(_) => {
+            format!("{name} couldn't get its data. It tries again soon.")
+        }
+        E::NeedsConsent(host) => format!("Allow {name} to read data from {host}."),
+        E::Offline(_) => format!("{name} can't reach the internet. It updates when you're online."),
+    }
+}
+
+/// A widget package whose description has mistakes (each listed under Show Details).
+pub fn widget_problems(name: &str) -> String {
+    format!("{name} can't be shown. Its developer can fix it with the details.")
+}
+
+/// A widget on the desktop whose package is gone.
+pub const WIDGET_MISSING: &str = "This widget isn't installed. Reinstall it, or remove it.";
+/// A widget kind from a newer WolOS.
+pub const WIDGET_NEWER: &str = "This widget needs a newer version of WolOS.";
+/// The Weather city search got no answer.
+pub const CITY_SEARCH: &str =
+    "Couldn't search for cities. Check that you're online, then try again.";
+/// Weather with nothing cached and no network.
+pub const WEATHER_OFFLINE: &str = "No forecast right now. It updates when you're back online.";
+
 // ---- Battery, disk and session power (notifications and the confirm sheet) ----
 
 /// Battery notification at 20, 10 and 5 %: summary, body.
