@@ -4,6 +4,7 @@ pub mod apps;
 pub mod capture;
 pub mod clipboard;
 pub mod clock;
+pub mod copy;
 pub mod desktop;
 pub mod hypr;
 pub mod layout;

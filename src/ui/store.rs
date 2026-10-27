@@ -136,7 +136,7 @@ fn wire(
                 }
                 Err(e) => {
                     set(w::TileState::Get);
-                    say(&st, &format!("{name} was not installed. {}", e.message()));
+                    say(&st, &crate::copy::install(e, &name));
                 }
             }),
         );
@@ -314,7 +314,7 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
                             v.len(),
                             if v.len() == 1 { "" } else { "s" }
                         ),
-                        "Updates install into a new boot environment.".into(),
+                        "WolOS saves a restore point before updating.".into(),
                     )
                 }
                 UpdateState::Installing => (
@@ -345,7 +345,7 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
                     Rc::new(move |r| {
                         show(match r {
                             Ok(()) => UpdateState::Installed,
-                            Err(e) => UpdateState::Failed(e.message().into()),
+                            Err(e) => UpdateState::Failed(crate::copy::update(e).into()),
                         })
                     }),
                 );

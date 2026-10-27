@@ -173,7 +173,11 @@ pub enum ActionError {
     NeedsAuth,
     Denied,
     NotAdmin,
+    /// The request was refused before it ran (e.g. a Wi-Fi password of the wrong length).
+    Invalid,
     Failed,
+    /// Wi-Fi join: the network refused the password.
+    WrongPassword,
 }
 
 impl From<wol_core::controls::ControlError> for ActionError {
@@ -184,20 +188,17 @@ impl From<wol_core::controls::ControlError> for ActionError {
             C::NeedsAuth => Self::NeedsAuth,
             C::Denied => Self::Denied,
             C::NotAdmin => Self::NotAdmin,
-            C::Invalid | C::Failed => Self::Failed,
+            C::Invalid => Self::Invalid,
+            C::Failed => Self::Failed,
+            C::WrongPassword => Self::WrongPassword,
         }
     }
 }
 
 impl ActionError {
+    /// The sentence for any surface ([`crate::copy::action`]; contexts have their own there).
     pub fn message(self) -> &'static str {
-        match self {
-            ActionError::Unavailable => "Unavailable on this computer",
-            ActionError::NeedsAuth => "Administrator password required",
-            ActionError::Denied => "Incorrect password",
-            ActionError::NotAdmin => "Only administrators can make this change",
-            ActionError::Failed => "The change did not work. Try again.",
-        }
+        crate::copy::action(self)
     }
 }
 

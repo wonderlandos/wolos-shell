@@ -1,12 +1,12 @@
 //! `wol-app <verb>`: menu bar app/Window menu actions on the frontmost window (also bound to keys).
-//! Verbs: settings hide hide-others quit minimise zoom fill centre `desktop N`.
+//! Verbs: settings hide hide-others quit force-quit minimise zoom fill centre `desktop N`.
 use shell::{appmenu, hypr};
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(act) = appmenu::parse_verb(&args.join(" ")) else {
         eprintln!(
-            "usage: wol-app settings|hide|hide-others|quit|minimise|zoom|fill|centre|desktop N"
+            "usage: wol-app settings|hide|hide-others|quit|force-quit|minimise|zoom|fill|centre|desktop N"
         );
         return std::process::ExitCode::from(2);
     };
