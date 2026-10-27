@@ -13,7 +13,7 @@ pub mod widgets;
 
 /// Installed WolOS icon dir, else the repo design tree (dev, tests).
 pub const ICON_DIRS: [&str; 3] = [
-    "/usr/local/share/icons/WolOS/scalable/apps",
+    "/usr/share/icons/WolOS/scalable/apps",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/apps"),
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/brand"),
 ];
@@ -28,7 +28,7 @@ pub fn icon_file(name: &str) -> Option<std::path::PathBuf> {
 
 /// Installed store icons (`image/build.sh`), else the repo tree (dev, tests).
 pub const STORE_ICON_DIRS: [&str; 2] = [
-    "/usr/local/share/wolos/store-icons",
+    "/usr/share/wolos/store-icons",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/store"),
 ];
 

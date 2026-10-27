@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 const WALLPAPER_DIRS: [&str; 2] = [
-    "/usr/local/share/wolos/wallpapers",
+    "/usr/share/wolos/wallpapers",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers"),
 ];
 /// The backdrop is decoded small, blurred on the CPU (edge-clamped: no dark rim) and scaled up.

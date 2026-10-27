@@ -66,7 +66,7 @@ pub(crate) fn enforcement_note(caps: &[&str]) -> String {
     note.join(" ")
 }
 
-/// "On", "4 of 6 on"; None when the kernel could not be asked (not FreeBSD).
+/// "On", "4 of 6 on"; None when the kernel could not be asked.
 pub(crate) fn protections_line(checks: &[Check]) -> Option<String> {
     let known: Vec<&Check> = checks.iter().filter(|c| c.now.is_some()).collect();
     if known.is_empty() {
@@ -225,7 +225,7 @@ mod tests {
             assert!(KINDS.iter().any(|k| k.0 == c), "{c}");
         }
         assert_eq!(
-            app_of(&[], "/usr/local/bin/obs"),
+            app_of(&[], "/usr/bin/obs"),
             ("obs".into(), w::PACKAGE_ICON.into())
         );
     }

@@ -27,7 +27,7 @@ pub const PAGE_MS: u32 = super::reveal::REVEAL_MS;
 
 /// Installed illustrations (`image/build.sh`), else the repo design tree (dev, tests).
 pub const ILLUSTRATION_DIRS: [&str; 2] = [
-    "/usr/local/share/wolos/illustrations",
+    "/usr/share/wolos/illustrations",
     concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../design/illustrations/png"

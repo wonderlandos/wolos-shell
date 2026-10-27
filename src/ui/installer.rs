@@ -447,7 +447,7 @@ fn output(argv: &[String]) -> String {
 }
 
 fn has_sudo() -> bool {
-    std::path::Path::new("/usr/local/bin/sudo").exists()
+    std::path::Path::new("/usr/bin/sudo").exists()
 }
 
 /// `install-check <disk>` (read-only, a few milliseconds).

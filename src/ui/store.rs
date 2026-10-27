@@ -32,7 +32,7 @@ impl Env {
         )];
         dirs.extend(
             std::env::var("XDG_DATA_DIRS")
-                .unwrap_or_else(|_| "/usr/local/share:/usr/share".into())
+                .unwrap_or_else(|_| "/usr/share".into())
                 .split(':')
                 .map(PathBuf::from),
         );
