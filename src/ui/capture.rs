@@ -5,6 +5,9 @@ use gtk::{gdk, gio, glib, prelude::*};
 use std::cell::Cell;
 use std::rc::Rc;
 
+/// `wol shell show screen-record`: the toolbar opens in Record Entire Screen mode.
+pub const RECORD: &str = "screen-record";
+
 /// Seconds the thumbnail stays.
 const THUMB_SECS: u32 = 5;
 
@@ -14,6 +17,8 @@ pub struct Toolbar {
     pub options: Rc<Cell<Options>>,
     pub capture: gtk::Button,
     pub close: gtk::Button,
+    /// One toggle per mode, in `Mode::ALL` order.
+    pub modes: Vec<(Mode, gtk::ToggleButton)>,
 }
 
 impl Toolbar {
@@ -33,6 +38,7 @@ impl Toolbar {
         capture.add_css_class("capture-go");
 
         let mut first: Option<gtk::ToggleButton> = None;
+        let mut modes = Vec::new();
         for m in Mode::ALL {
             if matches!(m, Mode::Screen | Mode::RecordScreen) {
                 row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
@@ -56,6 +62,7 @@ impl Toolbar {
                 }
             });
             row.append(&b);
+            modes.push((m, b));
         }
         row.append(&gtk::Separator::new(gtk::Orientation::Vertical));
 
@@ -72,6 +79,14 @@ impl Toolbar {
             options: opts_c,
             capture,
             close,
+            modes,
+        }
+    }
+
+    /// Selects `m` (its toggle updates the mode and the capture button label).
+    pub fn select(&self, m: Mode) {
+        if let Some((_, b)) = self.modes.iter().find(|(x, _)| *x == m) {
+            b.set_active(true);
         }
     }
 }
@@ -175,14 +190,32 @@ fn active_window() -> Option<String> {
     ))
 }
 
-/// The toolbar surface (bottom centre) and its thumbnail surface (bottom right).
-pub fn build(app: &gtk::Application) -> gtk::Window {
+/// Shell command handler for [`RECORD`]: show/toggle opens the toolbar in Record Entire Screen mode.
+pub type Handler = Rc<dyn Fn(&crate::protocol::Command) -> bool>;
+
+/// The toolbar surface (bottom centre) and its thumbnail surface (bottom right), plus the
+/// [`RECORD`] handler (Control Center Record tile).
+pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
     let win = super::window(app, "panel", Spec::capture_bar());
     win.add_css_class("capture");
     let thumb_win = super::window(app, "panel", Spec::capture_thumb());
     thumb_win.add_css_class("capture");
-    let bar = Toolbar::new(Mode::Selection, Options::default());
+    let bar = Rc::new(Toolbar::new(Mode::Selection, Options::default()));
     win.set_child(Some(&bar.root));
+    let record: Handler = {
+        let (bar, win) = (bar.clone(), win.clone());
+        Rc::new(move |c: &crate::protocol::Command| {
+            if c.target != RECORD {
+                return false;
+            }
+            let show = crate::protocol::apply(c.verb, win.is_visible());
+            if show {
+                bar.select(Mode::RecordScreen);
+            }
+            win.set_visible(show);
+            true
+        })
+    };
     // Return captures (macOS); the button holds focus whenever the bar opens.
     let cap = bar.capture.clone();
     win.connect_show(move |_| {
@@ -237,5 +270,5 @@ pub fn build(app: &gtk::Application) -> gtk::Window {
             });
         });
     });
-    win.upcast()
+    (win.upcast(), record)
 }
