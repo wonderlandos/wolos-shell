@@ -87,12 +87,14 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("notifications", notify::start(&app));
             p.insert("overview", overview::build(&app));
             p.insert("control-center", control_center::panel(&app, sys.clone()));
-            p.insert("screenshot", capture::build(&app));
+            let (shot, record) = capture::build(&app);
+            p.insert("screenshot", shot);
             drop(p);
             let sw = switcher::Switcher::build(&app);
-            let handlers: ipc::Handlers = vec![Rc::new(move |c: &crate::protocol::Command| {
-                sw.command(c.verb, &c.target)
-            })];
+            let handlers: ipc::Handlers = vec![
+                Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
+                record,
+            ];
             ipc::shell_socket(panels, handlers, osd, sys);
             apply_setup();
         });

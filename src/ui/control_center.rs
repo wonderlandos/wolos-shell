@@ -12,6 +12,13 @@ use std::rc::Rc;
 
 pub const DND_FILE: &str = "wol/dnd";
 
+/// Every argv the Control Center spawns (tests/cc_spawns.rs checks each resolves).
+pub const SPAWNS: &[&[&str]] = &[SCREENSHOT, RECORD];
+/// Screenshot tile: the capture toolbar, like Super+Shift+5.
+const SCREENSHOT: &[&str] = &["wol", "shell", "show", "screenshot"];
+/// Record tile: the capture toolbar in Record Entire Screen mode.
+const RECORD: &[&str] = &["wol", "shell", "show", crate::ui::capture::RECORD];
+
 pub fn run() -> glib::ExitCode {
     super::run_panel_app(
         "org.wolos.controlcenter",
@@ -369,15 +376,15 @@ fn build(sys: Rc<dyn System>) -> (gtk::Widget, Rc<dyn Fn()>) {
         }
         tiles.append(&t);
     }
-    for (icon, title, verb) in [
-        ("camera-photo-symbolic", "Screenshot", "screenshot"),
-        ("media-record-symbolic", "Record", "record"),
+    for (icon, title, argv) in [
+        ("camera-photo-symbolic", "Screenshot", SCREENSHOT),
+        ("media-record-symbolic", "Record", RECORD),
     ] {
         tiles.append(&w::square_tile(icon, title, move |b| {
             if let Some(win) = b.root().and_downcast::<gtk::Window>() {
                 win.close();
             }
-            kit::spawn(&["wol".into(), "capture".into(), verb.into()]);
+            kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         }));
     }
     main.append(&tiles);
