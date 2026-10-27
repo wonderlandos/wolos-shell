@@ -108,6 +108,7 @@ pub fn run_shell() -> glib::ExitCode {
             ];
             let approver = approval::handler(&app, sys.clone());
             ipc::shell_socket(panels, handlers, approver, osd, sys);
+            spotlight::keep_file_index();
             apply_setup();
         });
     });
