@@ -1369,7 +1369,7 @@ mod tests {
             })
         });
         let be = R::BootEnvironment {
-            name: "wol-before-update-1".into(),
+            name: "wolos-b".into(),
         };
         assert_eq!(approve(&c, &be, "good"), Ok(()));
         let change = R::Change {
@@ -1386,10 +1386,10 @@ mod tests {
             *sent.lock().unwrap(),
             [
                 "revoke ",
-                "boot-environment wol-before-update-1",
+                "boot-environment wolos-b",
                 "revoke ",
                 "revoke ",
-                "boot-environment wol-before-update-1",
+                "boot-environment wolos-b",
                 "revoke "
             ]
         );
@@ -1441,7 +1441,10 @@ mod tests {
             .command("cat /sys/class/power_supply/AC/online", "0\n")
             .command("cat /sys/class/power_supply/BAT0/type", "Battery\n")
             .command("cat /sys/class/power_supply/BAT0/capacity", "64\n");
-        h.command("sysrc -n pf_enable", "YES\n");
+        h.command(
+            "systemctl show -p UnitFileState --value nftables.service",
+            "enabled\n",
+        );
         let sys = CoreSystem::with_ticks(
             Controls::new(h),
             Sysfs::default(),

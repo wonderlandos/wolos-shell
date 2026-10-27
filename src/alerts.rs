@@ -266,12 +266,7 @@ mod tests {
     fn updates_notify_once_per_check() {
         let mut a = Alerts::default();
         let found = |t: &str, audit: &str| {
-            Updates::parse(
-                t,
-                "curl-8.1 <   needs updating\nfirefox-1 <   needs updating\n",
-                audit,
-                "",
-            )
+            Updates::parse(t, "curl 8.1-1 -> 8.2-1\nfirefox 1-1 -> 2-1\n", audit, "")
         };
         assert_eq!(a.updates(None), None, "never checked");
         let Some(Notice::Show(s, body, false)) = a.updates(found("100", "")) else {
@@ -283,7 +278,7 @@ mod tests {
             "WolOS has 2 updates ready. Open Software Update to install them."
         );
         assert_eq!(a.updates(found("100", "")), None, "same check: once");
-        let Some(Notice::Show(_, body, _)) = a.updates(found("200", "curl-8.1")) else {
+        let Some(Notice::Show(_, body, _)) = a.updates(found("200", "curl")) else {
             panic!()
         };
         assert!(body.contains("including security fixes"), "{body}");

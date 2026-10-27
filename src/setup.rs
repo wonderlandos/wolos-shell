@@ -671,8 +671,11 @@ mod tests {
         )
         .unwrap();
         let _ = std::fs::remove_file(root.join("etc/localtime"));
-        std::os::unix::fs::symlink("/usr/share/zoneinfo/Europe/Madrid", root.join("etc/localtime"))
-            .unwrap();
+        std::os::unix::fs::symlink(
+            "/usr/share/zoneinfo/Europe/Madrid",
+            root.join("etc/localtime"),
+        )
+        .unwrap();
         let r = Hints::read(&root);
         assert_eq!(
             (r.zone.as_deref(), r.keymap.as_deref()),
