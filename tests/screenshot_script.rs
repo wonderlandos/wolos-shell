@@ -54,3 +54,58 @@ fn prints_the_path_and_returns_while_the_clipboard_daemon_lives() {
         "{printed}"
     );
 }
+
+/// ⇧⌘3 saves to the Desktop (macOS) and the banner names the folder, never the full path; the
+/// picture rides along as the banner's thumbnail (`image-path` hint).
+#[test]
+fn saves_to_the_desktop_and_the_banner_shows_a_thumbnail_not_a_path() {
+    let tmp = std::env::temp_dir().join(format!("wol-shot-banner-{}", std::process::id()));
+    let bin = tmp.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let said = tmp.join("notify-args");
+    stub(&bin, "grim", r#"for a; do f=$a; done; printf png > "$f""#);
+    stub(&bin, "wl-copy", "cat >/dev/null");
+    stub(
+        &bin,
+        "notify-send",
+        &format!(
+            r#"for a; do printf '%s\n' "$a"; done > '{}'"#,
+            said.display()
+        ),
+    );
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = std::process::Command::new("sh")
+        .args([SCRIPT, "full"])
+        .env("PATH", path)
+        .env("HOME", &tmp)
+        .env_remove("XDG_DESKTOP_DIR")
+        .env_remove("WOL_SCREENSHOT_QUIET")
+        .output()
+        .unwrap();
+    let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let args = std::fs::read_to_string(&said).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        printed.starts_with(&format!("{}/Desktop/Screenshot ", tmp.display())),
+        "{printed}"
+    );
+    let args: Vec<&str> = args.lines().collect();
+    assert!(args.contains(&"Screenshot saved to Desktop"), "{args:?}");
+    assert!(
+        args.contains(&format!("string:image-path:{printed}").as_str()),
+        "{args:?}"
+    );
+    assert!(
+        !args.contains(&printed.as_str()),
+        "the path as text: {args:?}"
+    );
+}
