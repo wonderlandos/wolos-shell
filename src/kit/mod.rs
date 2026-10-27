@@ -1,7 +1,10 @@
 //! Rust port of the React.Iara/IaraKit pieces the shell uses: layer surfaces, theme loading, glass widgets.
 pub mod check;
+pub mod form;
+pub mod pickers;
 pub mod style;
 pub mod surface;
+pub mod toast;
 pub mod widgets;
 
 /// Installed WolOS icon dir, else the repo design tree (dev, tests).
