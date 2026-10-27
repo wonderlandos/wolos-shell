@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn people_from_passwd() {
-        let passwd = "alice:*:1001:1001:Alice Liddell,,,:/home/alice:/usr/local/bin/zsh\n\
+        let passwd = "alice:*:1001:1001:Alice Liddell,,,:/home/alice:/usr/bin/zsh\n\
                       bill:*:1002:1002:& the Lizard:/home/bill:/bin/sh\n";
         assert_eq!(
             people(passwd, &["alice".into(), "bill".into(), "ghost".into()]),

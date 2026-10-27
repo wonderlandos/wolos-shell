@@ -27,7 +27,7 @@ const ANGLES: [(u16, &str); 4] = [
 /// Shipped Looks in a source checkout (development and goldens), when the system dir is absent.
 const SOURCE_LOOKS: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../desktop/overlay/usr/local/share/wolos/looks"
+    "/../../desktop/overlay/usr/share/wolos/looks"
 );
 
 fn config_home() -> PathBuf {

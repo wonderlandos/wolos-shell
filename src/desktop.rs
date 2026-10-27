@@ -64,7 +64,7 @@ pub fn exec_argv(exec: &str) -> Vec<String> {
     out
 }
 
-/// XDG data dirs (+ /usr/local/share for FreeBSD), first id wins, sorted by name.
+/// XDG data dirs, first id wins, sorted by name.
 pub fn load_all() -> Vec<Entry> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Ok(h) = std::env::var("XDG_DATA_HOME") {
@@ -73,7 +73,7 @@ pub fn load_all() -> Vec<Entry> {
         dirs.push(Path::new(&h).join(".local/share"));
     }
     let sys =
-        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/share".into());
     dirs.extend(sys.split(':').filter(|s| !s.is_empty()).map(PathBuf::from));
     let mut seen = std::collections::HashSet::new();
     let mut files = Vec::new();

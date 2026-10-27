@@ -1,8 +1,8 @@
-//! Auth wire formats. Lock: `/usr/local/libexec/wol-authcheck`, password on stdin, exit 0 ok / 1 denied / 2 error (ADR 0023).
+//! Auth wire formats. Lock: `/usr/lib/wol-authcheck`, password on stdin, exit 0 ok / 1 denied / 2 error (ADR 0023).
 //! Login window: `/var/run/wol-login.sock`, `user\n` + password, write side closed, reply `ok|denied|error` (ADR 0024).
 use std::io::{Read, Write};
 
-pub const AUTHCHECK: &str = "/usr/local/libexec/wol-authcheck";
+pub const AUTHCHECK: &str = "/usr/lib/wol-authcheck";
 pub const LOGIN_SOCKET: &str = shared::login::SOCKET;
 pub const MAX_PASSWORD: usize = 512;
 

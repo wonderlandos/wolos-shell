@@ -2,11 +2,11 @@
 //! `libexec/wolos/install-run` and what the progress page says. Pure; UI in `ui::installer`.
 
 /// Erases the disk and installs (root; checks the disk against `install-disks` again).
-pub const RUN: &str = "/usr/local/libexec/wolos/install-run";
+pub const RUN: &str = "/usr/lib/wolos/install-run";
 /// Disks that are not the boot media, one per line.
-pub const DISKS: &str = "/usr/local/libexec/wolos/install-disks";
+pub const DISKS: &str = "/usr/lib/wolos/install-disks";
 /// Facts about one disk before anything is written (`size`, `os`, `secureboot`, `refuse` lines).
-pub const CHECK: &str = "/usr/local/libexec/wolos/install-check";
+pub const CHECK: &str = "/usr/lib/wolos/install-check";
 
 /// What `install-check <disk>` found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -425,10 +425,7 @@ Providers:
     fn the_scripts_speak_this_protocol() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/");
         let mut seen = Vec::new();
-        for f in [
-            "files/usr/local/libexec/wolos/install-run",
-            "installerconfig",
-        ] {
+        for f in ["files/usr/lib/wolos/install-run"] {
             let text = std::fs::read_to_string(format!("{root}{f}")).unwrap();
             // echo/printf lines ("%d" is a percent) and install-run's `say <stage> <percent> ...`.
             let printed = text.match_indices(MARK).map(|(i, _)| &text[i..]);
@@ -459,7 +456,6 @@ Providers:
             Stage::Files,
             Stage::Boot,
             Stage::Settings,
-            Stage::Packages,
             Stage::Finish,
             Stage::Failed,
         ] {
@@ -534,7 +530,7 @@ Providers:
         );
         let script = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../image/files/usr/local/libexec/wolos/install-check"
+            "/../../image/files/usr/lib/wolos/install-check"
         );
         let text = std::fs::read_to_string(script).unwrap();
         for w in [

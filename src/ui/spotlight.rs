@@ -343,7 +343,7 @@ mod tests {
         };
         let idx = index(vec![
             e("org.gnome.Geary.desktop", "Geary", "geary"),
-            e("firefox.desktop", "Firefox", "/usr/local/bin/firefox"),
+            e("firefox.desktop", "Firefox", "/usr/bin/firefox"),
             e(
                 "org.gnome.Calculator.desktop",
                 "Calculator",

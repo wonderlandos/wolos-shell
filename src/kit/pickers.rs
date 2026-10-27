@@ -69,7 +69,7 @@ impl Tokens {
 
 /// Shipped wallpapers: installed, else the repo's design tree (dev, tests).
 pub const WALLPAPER_DIRS: [&str; 2] = [
-    "/usr/local/share/wolos/wallpapers",
+    "/usr/share/wolos/wallpapers",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers"),
 ];
 /// Day, dusk and night pictures of the Dynamic wallpaper, in that order.
