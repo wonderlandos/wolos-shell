@@ -2,7 +2,8 @@
 name = "shell"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
+authors.workspace = true
 description = "WolOS shell UI: menu bar, dock, notifications, control center, spotlight, lock, login, settings"
 
 [features]
