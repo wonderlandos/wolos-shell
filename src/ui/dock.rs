@@ -29,7 +29,12 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
     root.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     root.append(
         &w::DockTile::new("wolos-trash", "Trash", || {
-            kit::spawn(&["wol-files".into(), "trash:".into()])
+            kit::spawn(
+                &apps::TRASH
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>(),
+            )
         })
         .button,
     );

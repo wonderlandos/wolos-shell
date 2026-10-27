@@ -20,8 +20,10 @@ pub const SETTINGS_PAGES: [&str; 7] = [
 ];
 
 pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
+    // Pinned apps come from PINS below (WolOS name, icon, launcher), never twice.
     let mut v: Vec<Item> = apps
         .into_iter()
+        .filter(|e| crate::apps::pin_for_entry(e, crate::apps::PINS).is_none())
         .map(|e| Item::new(&e.name, "Application", &e.icon, e.exec))
         .collect();
     for p in crate::apps::PINS {
@@ -195,5 +197,42 @@ mod tests {
                 .any(|i| i.title == "Accounts" && i.exec == ["wol-settings", "Accounts"])
         );
         assert_eq!(search::search(&idx, "term", 1)[0].title, "Terminal");
+    }
+
+    #[test]
+    fn pinned_apps_appear_once_under_their_wolos_name() {
+        // Launchpad listed "Geary" (its .desktop) and "Mail" (the pin) for the same app.
+        let e = |id: &str, name: &str, exec: &str| crate::desktop::Entry {
+            id: id.into(),
+            name: name.into(),
+            exec: vec![exec.into()],
+            icon: id.trim_end_matches(".desktop").into(),
+        };
+        let idx = index(vec![
+            e("org.gnome.Geary.desktop", "Geary", "geary"),
+            e("firefox.desktop", "Firefox", "/usr/local/bin/firefox"),
+            e(
+                "org.gnome.Calculator.desktop",
+                "Calculator",
+                "gnome-calculator",
+            ),
+        ]);
+        let titles: Vec<&str> = idx.iter().map(|i| i.title.as_str()).collect();
+        for (name, n) in [
+            ("Mail", 1),
+            ("Geary", 0),
+            ("Browser", 1),
+            ("Firefox", 0),
+            ("Calculator", 1),
+        ] {
+            assert_eq!(titles.iter().filter(|t| **t == name).count(), n, "{name}");
+        }
+        let mail = idx.iter().find(|i| i.title == "Mail").unwrap();
+        assert_eq!(
+            (mail.icon.as_str(), mail.exec.as_slice()),
+            ("wolos-mail", &["geary".to_string()][..])
+        );
+        let web = idx.iter().find(|i| i.title == "Browser").unwrap();
+        assert_eq!(web.exec, ["firefox"]);
     }
 }

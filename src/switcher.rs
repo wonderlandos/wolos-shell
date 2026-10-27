@@ -130,7 +130,7 @@ mod tests {
                 c("0x1", "foot", 2),
                 c("0x2", "firefox", 0),
                 c("0x3", "Foot", 1),
-                c("0x4", "wol-files", 3),
+                c("0x4", "org.gnome.Nautilus", 3),
             ],
             &[],
         );
@@ -140,7 +140,11 @@ mod tests {
             .collect();
         assert_eq!(
             v,
-            [("firefox", "0x2"), ("foot", "0x3"), ("wol-files", "0x4")]
+            [
+                ("firefox", "0x2"),
+                ("foot", "0x3"),
+                ("org.gnome.nautilus", "0x4")
+            ]
         );
         assert!(apps(&[], &[]).is_empty());
         let names: Vec<&str> = got.iter().map(|a| a.name.as_str()).collect();

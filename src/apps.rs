@@ -13,13 +13,17 @@ pub struct Pin {
 /// an app that is not running and offer its menu.
 pub const DESKTOP_NAME: &str = "";
 
-/// Default dock (WolOS design icons).
+/// Dock Trash tile: opens the trash in Files.
+pub const TRASH: &[&str] = &["nautilus", "trash:///"];
+
+/// Default dock (WolOS design icons). Apps are mature ports (desktop/packages.txt): `id` is the app's
+/// Wayland app-id, which Hyprland reports as the window class (running dot, menu bar name).
 pub const PINS: &[Pin] = &[
     Pin {
-        id: "wol-files",
+        id: "org.gnome.Nautilus",
         name: "Files",
         icon: "wolos-files",
-        exec: &["wol-files"],
+        exec: &["nautilus"],
     },
     Pin {
         id: "wol-launcher",
@@ -34,34 +38,34 @@ pub const PINS: &[Pin] = &[
         exec: &["firefox"],
     },
     Pin {
-        id: "wol-mail",
+        id: "org.gnome.Geary",
         name: "Mail",
         icon: "wolos-mail",
-        exec: &["wol-mail"],
+        exec: &["geary"],
     },
     Pin {
-        id: "wol-music",
+        id: "io.bassi.Amberol",
         name: "Music",
         icon: "wolos-music",
-        exec: &["wol-music"],
+        exec: &["amberol"],
     },
     Pin {
-        id: "wol-photos",
+        id: "org.gnome.Shotwell",
         name: "Photos",
         icon: "wolos-photos",
-        exec: &["wol-photos"],
+        exec: &["shotwell"],
     },
     Pin {
-        id: "wol-calendar",
+        id: "org.gnome.Calendar",
         name: "Calendar",
         icon: "wolos-calendar",
-        exec: &["wol-calendar"],
+        exec: &["gnome-calendar"],
     },
     Pin {
-        id: "wol-notes",
+        id: "org.gnome.Gnote",
         name: "Notes",
         icon: "wolos-notes",
-        exec: &["wol-notes"],
+        exec: &["gnote"],
     },
     Pin {
         id: "foot",
@@ -81,20 +85,30 @@ fn program(exec0: &str) -> &str {
     exec0.rsplit('/').next().unwrap_or(exec0)
 }
 
-/// Running when a window class matches the pin id or its program (case-insensitive).
-pub fn is_running(p: &Pin, classes: &std::collections::HashSet<String>) -> bool {
-    classes.contains(&p.id.to_lowercase())
-        || p.exec
-            .first()
-            .is_some_and(|e| classes.contains(&program(e).to_lowercase()))
+/// Window classes that belong to the pin: its id (the app-id) and its program.
+fn pin_classes(p: &Pin) -> impl Iterator<Item = &str> {
+    std::iter::once(p.id).chain(p.exec.first().map(|e| program(e)))
 }
 
+/// Running when a window class (lowercased by `hypr::running_classes`) is one of the pin's.
+pub fn is_running(p: &Pin, classes: &std::collections::HashSet<String>) -> bool {
+    pin_classes(p).any(|c| classes.contains(&c.to_lowercase()))
+}
+
+/// App-ids are mixed case (org.gnome.Nautilus); compare case-insensitively.
 fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
-    let lc = class.to_lowercase();
     pins.iter().find(|p| {
-        p.id == lc
-            || p.exec.first().is_some_and(|e| program(e) == lc)
-            || p.name.eq_ignore_ascii_case(class)
+        pin_classes(p).any(|c| c.eq_ignore_ascii_case(class)) || p.name.eq_ignore_ascii_case(class)
+    })
+}
+
+/// The pin an installed .desktop entry is (desktop id or program), so Launchpad lists it once,
+/// under the WolOS name.
+pub fn pin_for_entry<'a>(e: &Entry, pins: &'a [Pin]) -> Option<&'a Pin> {
+    let id = e.id.trim_end_matches(".desktop");
+    let prog = e.exec.first().map(|x| program(x));
+    pins.iter().find(|p| {
+        pin_classes(p).any(|c| c.eq_ignore_ascii_case(id) || prog.is_some_and(|x| x == c))
     })
 }
 
