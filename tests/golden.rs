@@ -10,6 +10,10 @@ use std::rc::Rc;
 
 #[path = "golden_cases/widgets.rs"]
 mod widget_cases;
+#[path = "golden_cases/store_package.rs"]
+mod package_cases;
+#[path = "golden_cases/wol_file.rs"]
+mod wol_file;
 
 const WALL: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -586,6 +590,7 @@ fn cases() -> Vec<Case> {
     v.extend(control_center_cases());
     v.extend(form_kit_cases());
     v.extend(widget_cases::cases());
+    v.extend(package_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-windows-tiling-{tag}"),
