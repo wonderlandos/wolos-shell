@@ -23,16 +23,25 @@ pub fn preview(text: &str) -> String {
     }
 }
 
-/// Session menu action -> argv (FreeBSD; Hyprland exit for log out).
+/// Session menu action -> argv. Sleep, restart and shut down go through `wol power` (wol-admind:
+/// any account at the computer, no password; sleep locks first); Hyprland exit for log out.
 pub fn session_command(action: &str) -> Option<&'static [&'static str]> {
     Some(match action {
         "lock" => &["wol-lock"],
-        "sleep" => &["acpiconf", "-s", "3"],
-        "restart" => &["shutdown", "-r", "now"],
-        "shutdown" => &["shutdown", "-p", "now"],
+        "sleep" => &["wol", "power", "sleep"],
+        "restart" => &["wol", "power", "restart"],
+        "shutdown" => &["wol", "power", "shutdown"],
         "logout" => &["hyprctl", "dispatch", "exit"],
         _ => return None,
     })
+}
+
+/// Seconds the Restart / Shut Down / Log Out sheet waits before it acts by itself (macOS).
+pub const CONFIRM_SECS: u32 = 60;
+
+/// Actions that end every open app: asked first, with a countdown.
+pub fn needs_confirm(action: &str) -> bool {
+    matches!(action, "restart" | "shutdown" | "logout")
 }
 
 #[cfg(test)]
@@ -62,10 +71,38 @@ mod tests {
 
     #[test]
     fn session_actions() {
-        assert_eq!(
-            session_command("shutdown"),
-            Some(&["shutdown", "-p", "now"][..])
-        );
+        for (a, argv, confirm) in [
+            ("lock", &["wol-lock"][..], false),
+            ("sleep", &["wol", "power", "sleep"][..], false),
+            ("restart", &["wol", "power", "restart"][..], true),
+            ("shutdown", &["wol", "power", "shutdown"][..], true),
+            ("logout", &["hyprctl", "dispatch", "exit"][..], true),
+        ] {
+            assert_eq!(session_command(a), Some(argv), "{a}");
+            assert_eq!(needs_confirm(a), confirm, "{a}");
+            assert_eq!(
+                crate::copy::session_confirm(a, CONFIRM_SECS).is_some(),
+                confirm
+            );
+        }
         assert_eq!(session_command("dance"), None);
+        let (q, line, button) = crate::copy::session_confirm("shutdown", 60).unwrap();
+        assert_eq!(q, "Are you sure you want to shut down your computer now?");
+        assert_eq!(
+            line,
+            "If you do nothing, your computer will shut down automatically in 60 seconds."
+        );
+        assert_eq!(button, "Shut Down");
+        assert!(
+            crate::copy::session_confirm("logout", 1)
+                .unwrap()
+                .1
+                .ends_with("in 1 second.")
+        );
+        for a in ["shutdown", "restart", "logout"] {
+            let (q, line, _) = crate::copy::session_confirm(a, 60).unwrap();
+            assert!(q.starts_with("Are you sure") && q.ends_with('?'));
+            assert!(crate::copy::lint(&line).is_empty(), "{line}");
+        }
     }
 }

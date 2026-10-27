@@ -201,33 +201,191 @@ fn gio_none() -> Option<&'static gtk::gio::Cancellable> {
     None
 }
 
-pub fn session(app: &gtk::Application) -> gtk::Window {
-    let g = w::glass_panel(w::S2);
-    let row = w::hbox(w::S2);
-    for (icon, label, action) in [
-        ("system-lock-screen-symbolic", "Lock", "lock"),
-        ("weather-clear-night-symbolic", "Sleep", "sleep"),
-        ("system-reboot-symbolic", "Restart", "restart"),
-        ("system-shutdown-symbolic", "Shut Down", "shutdown"),
-        ("system-log-out-symbolic", "Log Out", "logout"),
-    ] {
-        let b = w::vbox(w::S1);
-        let i = w::icon(icon, w::ICON_M);
-        i.set_halign(gtk::Align::Center);
-        b.append(&i);
-        b.append(&w::centered(label, ""));
-        let btn = gtk::Button::builder().child(&b).build();
-        btn.add_css_class("session-item");
-        btn.connect_clicked(move |b| {
-            if let Some(win) = b.root().and_downcast::<gtk::Window>() {
-                win.set_visible(false);
+/// Restart / Shut Down / Log Out ask first (macOS): the question, a 60 s countdown, Cancel and
+/// the action. Doing nothing runs it; Cancel, Esc or closing the panel drops it.
+struct Confirm {
+    view: gtk::Box,
+    question: gtk::Label,
+    line: gtk::Label,
+    go: gtk::Button,
+    action: Cell<&'static str>,
+    left: Cell<u32>,
+    timer: RefCell<Option<glib::SourceId>>,
+}
+
+impl Confirm {
+    fn new(row: &gtk::Box) -> Rc<Confirm> {
+        let view = w::vbox(w::S2);
+        let question = w::label("", "title");
+        let line = w::label("", "secondary");
+        let buttons = w::hbox(w::S2);
+        buttons.set_halign(gtk::Align::End);
+        let go = w::button("", w::Kind::Primary, || {});
+        let c = Rc::new(Confirm {
+            view,
+            question,
+            line,
+            go,
+            action: Cell::new(""),
+            left: Cell::new(0),
+            timer: RefCell::new(None),
+        });
+        let (c2, r2) = (Rc::downgrade(&c), row.clone());
+        buttons.append(&w::button("Cancel", w::Kind::Default, move || {
+            if let Some(c) = c2.upgrade() {
+                c.stop();
+                c.view.set_visible(false);
+                r2.set_visible(true);
             }
-            if let Some(argv) = crate::clipboard::session_command(action) {
-                kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        }));
+        let c3 = Rc::downgrade(&c);
+        c.go.connect_clicked(move |_| {
+            if let Some(c) = c3.upgrade() {
+                c.run();
             }
         });
-        row.append(&btn);
+        buttons.append(&c.go);
+        c.view.append(&c.question);
+        c.view.append(&c.line);
+        c.view.append(&buttons);
+        c.view.set_visible(false);
+        c
     }
-    g.append(&row);
-    panel(app, "session", "wol-panel-session", [false; 4], &g)
+
+    fn show(self: &Rc<Self>, action: &'static str, row: &gtk::Box, countdown: bool) {
+        self.stop();
+        self.action.set(action);
+        self.left.set(crate::clipboard::CONFIRM_SECS);
+        self.render();
+        row.set_visible(false);
+        self.view.set_visible(true);
+        self.go.grab_focus();
+        if !countdown {
+            return;
+        }
+        let c = Rc::downgrade(self);
+        let id = glib::timeout_add_seconds_local(1, move || {
+            let Some(c) = c.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            c.left.set(c.left.get().saturating_sub(1));
+            if c.left.get() == 0 {
+                c.timer.take();
+                c.run();
+                return glib::ControlFlow::Break;
+            }
+            c.render();
+            glib::ControlFlow::Continue
+        });
+        self.timer.replace(Some(id));
+    }
+
+    fn render(&self) {
+        if let Some((q, line, button)) =
+            crate::copy::session_confirm(self.action.get(), self.left.get())
+        {
+            self.question.set_label(q);
+            self.line.set_label(&line);
+            self.go.set_label(button);
+        }
+    }
+
+    fn stop(&self) {
+        if let Some(id) = self.timer.take() {
+            id.remove();
+        }
+    }
+
+    fn run(&self) {
+        self.stop();
+        if let Some(win) = self.view.root().and_downcast::<gtk::Window>() {
+            win.set_visible(false);
+        }
+        if let Some(argv) = crate::clipboard::session_command(self.action.get()) {
+            kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        }
+    }
+}
+
+/// The session menu: Lock, Sleep, Restart, Shut Down, Log Out, and the confirm view the last
+/// three open.
+pub struct SessionMenu {
+    pub root: gtk::Box,
+    row: gtk::Box,
+    confirm: Rc<Confirm>,
+}
+
+impl SessionMenu {
+    pub fn new() -> SessionMenu {
+        let root = w::glass_panel(w::S2);
+        let row = w::hbox(w::S2);
+        let confirm = Confirm::new(&row);
+        for (icon, label, action) in [
+            ("system-lock-screen-symbolic", "Lock", "lock"),
+            ("weather-clear-night-symbolic", "Sleep", "sleep"),
+            ("system-reboot-symbolic", "Restart", "restart"),
+            ("system-shutdown-symbolic", "Shut Down", "shutdown"),
+            ("system-log-out-symbolic", "Log Out", "logout"),
+        ] {
+            let b = w::vbox(w::S1);
+            let i = w::icon(icon, w::ICON_M);
+            i.set_halign(gtk::Align::Center);
+            b.append(&i);
+            b.append(&w::centered(label, ""));
+            let btn = gtk::Button::builder().child(&b).build();
+            btn.add_css_class("session-item");
+            let (c, r) = (confirm.clone(), row.clone());
+            btn.connect_clicked(move |b| {
+                if crate::clipboard::needs_confirm(action) {
+                    c.show(action, &r, true);
+                    return;
+                }
+                if let Some(win) = b.root().and_downcast::<gtk::Window>() {
+                    win.set_visible(false);
+                }
+                if let Some(argv) = crate::clipboard::session_command(action) {
+                    kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+                }
+            });
+            row.append(&btn);
+        }
+        root.append(&row);
+        root.append(&confirm.view);
+        SessionMenu { root, row, confirm }
+    }
+
+    /// Ask before `action` (restart, shutdown, logout); the countdown starts.
+    pub fn ask(&self, action: &'static str) {
+        self.confirm.show(action, &self.row, true);
+    }
+
+    /// The question as it first shows, without a countdown running (goldens).
+    pub fn preview(&self, action: &'static str) {
+        self.confirm.show(action, &self.row, false);
+    }
+
+    /// Back to the five actions; any countdown stops.
+    pub fn reset(&self) {
+        self.confirm.stop();
+        self.confirm.view.set_visible(false);
+        self.row.set_visible(true);
+    }
+}
+
+impl Default for SessionMenu {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn session(app: &gtk::Application) -> gtk::Window {
+    let menu = SessionMenu::new();
+    let win = panel(app, "session", "wol-panel-session", [false; 4], &menu.root);
+    // Hidden (Esc, toggled away, clicked outside): the countdown stops and the icons come back.
+    win.connect_visible_notify(move |win| {
+        if !win.is_visible() {
+            menu.reset();
+        }
+    });
+    win
 }

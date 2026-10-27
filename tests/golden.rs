@@ -358,6 +358,27 @@ fn cases() -> Vec<Case> {
             });
         }
     }
+    // Session menu and the Restart / Shut Down / Log Out question (60 s countdown).
+    v.push(Case {
+        name: "session".into(),
+        size: (443, 142),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(|| ui::panels::SessionMenu::new().root.upcast()),
+    });
+    for (action, width) in [("shutdown", 448), ("logout", 440)] {
+        v.push(Case {
+            name: format!("session-confirm-{action}"),
+            size: (width, 144),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(move || {
+                let m = ui::panels::SessionMenu::new();
+                m.preview(action);
+                m.root.upcast()
+            }),
+        });
+    }
     v
 }
 

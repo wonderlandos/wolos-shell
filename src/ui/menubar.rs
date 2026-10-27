@@ -278,6 +278,7 @@ fn refresh(bar: &Bar, sys: &dyn crate::system::System) {
 pub fn poll_status(bar: Rc<Bar>, sys: Rc<dyn crate::system::System>) {
     glib::timeout_add_seconds_local(5, move || {
         refresh(&bar, &*sys);
+        crate::alerts::poll(sys.battery());
         glib::ControlFlow::Continue
     });
 }
