@@ -191,3 +191,55 @@ pub fn undo_errors() -> [UndoError; 5] {
         UndoError::Io("Permission denied (os error 13)".into()),
     ]
 }
+
+// ---- Battery, disk and session power (notifications and the confirm sheet) ----
+
+/// Battery notification at 20, 10 and 5 %: summary, body.
+pub fn battery_low(percent: u8) -> (String, String) {
+    (
+        "Low Battery".into(),
+        format!("Your battery has {percent}% left. Connect to power, or turn on Low Power Mode."),
+    )
+}
+
+/// The battery is about to run out: the computer locks and sleeps.
+pub const BATTERY_SLEEP: (&str, &str) = (
+    "Battery Empty",
+    "Your computer is going to sleep now. Connect to power to keep working.",
+);
+
+/// Under 5 % free on the startup disk: summary, body (`free` is "4.2 GB").
+pub fn disk_full(free: &str) -> (String, String) {
+    (
+        "Your Disk Is Almost Full".into(),
+        format!("Only {free} left. Empty the Trash or remove files you don't need."),
+    )
+}
+
+/// Restart, Shut Down and Log Out ask first (macOS): question, countdown line, button.
+pub fn session_confirm(action: &str, secs: u32) -> Option<(&'static str, String, &'static str)> {
+    let (q, what, button) = match action {
+        "shutdown" => (
+            "Are you sure you want to shut down your computer now?",
+            "your computer will shut down",
+            "Shut Down",
+        ),
+        "restart" => (
+            "Are you sure you want to restart your computer now?",
+            "your computer will restart",
+            "Restart",
+        ),
+        "logout" => (
+            "Are you sure you want to log out now?",
+            "you will be logged out",
+            "Log Out",
+        ),
+        _ => return None,
+    };
+    let unit = if secs == 1 { "second" } else { "seconds" };
+    Some((
+        q,
+        format!("If you do nothing, {what} automatically in {secs} {unit}."),
+        button,
+    ))
+}
