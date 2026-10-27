@@ -5,6 +5,8 @@
   --glass-radius: 24px;
   --glass-radius-m: 16px;
   --glass-radius-s: 10px;
+  /* Panel and card padding, all four sides (kit::widgets::INSET). */
+  --inset: 12px;
   --glass-spring: cubic-bezier(.34,1.56,.64,1);
   --glass-motion: 320ms;
   --glass-rim: rgba(255,255,255,0.50);
@@ -15,6 +17,9 @@
   --bar-hover: rgba(255,255,255,0.18);
   --dock-fill: rgba(255,255,255,0.22);
   --control-off: rgba(128,128,136,0.28);
+  /* Loader splash, console and compositor background: every first frame (kit::reveal, ADR 0012). */
+  --boot-black: #000000;
+  --on-art: #ffffff;
 }
 window, popover, tooltip { font-family: Inter, "SF Pro Text", Cantarell, "Noto Sans", sans-serif; font-size: 13px; }
 * { -gtk-icon-shadow: none; }
@@ -61,14 +66,13 @@ button.dock-tile:hover { margin-top: -8px; margin-bottom: 8px; }
 
 /* ---- Glass panels ---- */
 .glass-panel {
-  background: var(--glass); border-radius: var(--glass-radius-m); padding: 12px; margin: 24px;
+  background: var(--glass); border-radius: var(--glass-radius-m); padding: var(--inset); margin: 24px;
   border: 1px solid var(--glass-hairline); box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim);
 }
 .glass-panel label, .glass-panel image { color: var(--text); }
 
 /* ---- Control Center ---- */
-.module { background: var(--card); border-radius: var(--glass-radius-s); padding: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
-.control { min-height: 36px; }
+.module { background: var(--card); border-radius: var(--glass-radius-s); padding: var(--inset); box-shadow: 0 1px 2px rgba(0,0,0,0.08); }
 button.control-circle { min-width: 28px; min-height: 28px; padding: 0; border-radius: 999px; border: none; box-shadow: none; background: var(--control-off); }
 button.control-circle image { color: var(--text); }
 button.control-circle.on { background: var(--accent); }
@@ -89,6 +93,37 @@ image.fat-icon { margin-left: 4px; color: var(--accent-text); }
 button.btn { border: none; box-shadow: none; min-height: 24px; padding: 0 12px; border-radius: 6px; }
 button.btn-default { background: var(--control); color: var(--text); }
 button.btn-primary { background: var(--accent); color: var(--accent-text); }
+/* ---- Control surfaces (kit/controls.rs): tiles, device rows, detail pages, sliders, media, battery ---- */
+.icon-circle { border-radius: 999px; background: var(--control-off); color: var(--text); }
+.icon-circle.on { background: var(--accent); color: var(--accent-text); }
+.icon-circle.on .battery-glyph { color: var(--accent-text); }
+button.toggle-tile label { min-height: 28px; }
+button.toggle-tile { background: var(--card); border: none; border-radius: var(--glass-radius-s); padding: 8px 4px; min-height: 0; box-shadow: 0 1px 2px alpha(var(--text), 0.10); }
+button.toggle-tile:hover { background: var(--control); }
+button.device-button, button.detail-link { background: none; border: none; box-shadow: none; padding: 0 4px; border-radius: 6px; }
+button.device-button { min-height: 36px; }
+button.detail-link { min-height: 24px; }
+button.device-button:hover, button.detail-link:hover { background: var(--control); }
+/* Flat detail pages: content (glyphs, row text, switch, hairlines) sits 4 px inside the panel inset on
+   every side; only the rows' hover pills reach the inset. */
+.detail-head { min-height: 24px; padding-right: 4px; }
+.detail-head button.icon-button { min-width: 24px; min-height: 24px; padding: 0; }
+.detail-heading { margin: 4px 4px 0 4px; }
+.detail-empty { margin: 8px 4px; }
+.detail-status { margin: 4px 4px 0 4px; }
+.detail-page .sheet { margin-bottom: 0; box-shadow: none; }
+/* Compact header switch (16 px): it sits on the 4 px content line like the back chevron. */
+.detail-head switch.toggle { min-width: 28px; min-height: 12px; }
+.detail-head switch.toggle slider { min-width: 12px; min-height: 12px; }
+.detail-head switch.toggle image { -gtk-icon-size: 12px; }
+.detail-page separator { background: var(--line); min-height: 1px; margin: 0 4px; }
+button.slider-detail { min-width: 24px; min-height: 24px; padding: 0; border-radius: 999px; }
+.art { border-radius: 6px; background: var(--control); }
+.art.app { background: none; }
+button.media-button { min-width: 28px; min-height: 28px; padding: 0; border-radius: 999px; }
+progressbar.media-progress trough { border: none; box-shadow: none; }
+progressbar.media-progress progress { background: var(--dim); border-color: var(--dim); }
+
 button.btn-destructive { background: var(--danger); color: var(--accent-text); }
 button.btn-plain { background: none; color: var(--accent); }
 button.btn label { font-weight: 500; }
@@ -153,7 +188,7 @@ button.hit.selected label { color: var(--accent-text); }
 
 /* ---- Notifications / OSD / session ---- */
 /* 344 px outer width (macOS): 318 + 2 x 12 padding + 2 x 1 border. */
-.notification { min-width: 318px; padding: 10px 12px; margin: 0; border-radius: 16px; }
+.notification { min-width: 318px; padding: 12px; margin: 0; border-radius: 16px; }
 .notification.critical { border-color: var(--danger); }
 .osd-pill { border-radius: 999px; padding: 8px 16px; min-width: 216px; margin-bottom: 112px; }
 progressbar trough { min-height: 4px; border-radius: 2px; background: var(--control); }
@@ -162,7 +197,7 @@ button.session-item { background: none; border: none; box-shadow: none; padding:
 button.session-item:hover { background: var(--control); }
 
 /* ---- Lock / login (shell display type is the one exception to the type scale) ---- */
-window.lock-window { background: #0b0a1a; }
+window.lock-window { background: var(--boot-black); }
 
 .lock-scrim { background: linear-gradient(to bottom, rgba(0,0,0,0.18), rgba(0,0,0,0) 40%, rgba(0,0,0,0.22)); }
 .lock-body { padding: 56px 0 32px 0; }
@@ -278,7 +313,7 @@ image.setup-done-icon.pop { animation: setup-pop 420ms cubic-bezier(.34,1.56,.64
 .setup-field selection, .setup-field text selection { background: var(--accent); color: var(--accent-text); }
 
 /* ---- App switcher (Super+Tab) ---- */
-.switcher-strip { padding: 16px 16px 10px 16px; border-radius: 28px; }
+.switcher-strip { padding: 16px; border-radius: 28px; }
 .switcher-tile { min-width: 88px; }
 .switcher-ring { padding: 6px; border-radius: 20px; border: 3px solid transparent; }
 .switcher-tile.selected .switcher-ring { border-color: var(--accent); background: alpha(var(--accent), 0.18); }
@@ -295,7 +330,7 @@ button.overview-desktop-button, button.overview-window-button { background: none
 button.overview-window-button:hover .overview-window { outline: 3px solid var(--accent); outline-offset: 0; }
 
 /* ---- Screenshot toolbar ---- */
-.capture-bar { padding: 6px 8px; border-radius: 14px; margin: 24px 24px 64px 24px; }
+.capture-bar { padding: 8px; border-radius: 14px; margin: 24px 24px 64px 24px; }
 .capture-bar separator { margin: 8px 6px; background: var(--line); min-width: 1px; }
 button.capture-mode, button.capture-close, menubutton.capture-options > button { background: none; border: none; box-shadow: none; min-height: 32px; min-width: 32px; padding: 0 4px; border-radius: 8px; color: var(--text); }
 button.capture-mode:hover, button.capture-close:hover, menubutton.capture-options > button:hover { background: var(--control); }

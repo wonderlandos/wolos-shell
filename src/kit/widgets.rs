@@ -10,6 +10,8 @@ pub const S3: i32 = 12;
 pub const S4: i32 = 16;
 pub const S6: i32 = 24;
 pub const S8: i32 = 32;
+/// Padding of every glass panel and card, equal on all four sides (kit.css `--inset`).
+pub const INSET: i32 = S3;
 /// Icon sizes (HIG §2): rows/toolbar, file and app tiles.
 pub const ICON: i32 = 16;
 /// Toolbar glyphs (screenshot bar).
@@ -385,7 +387,21 @@ pub fn sheet(child: &impl IsA<gtk::Widget>) -> gtk::Revealer {
     gtk::Revealer::builder()
         .child(&card)
         .transition_type(gtk::RevealerTransitionType::SlideDown)
-        .build()
+        .visible(false)
+        .build();
+    // Collapsed, the sheet leaves the layout: a visible 0 px child still took its box's spacing
+    // (Control Center card sat 8 px lower than the panel's side insets).
+    r.connect_reveal_child_notify(|r| {
+        if r.reveals_child() {
+            r.set_visible(true)
+        }
+    });
+    r.connect_child_revealed_notify(|r| {
+        if !r.is_child_revealed() && !r.reveals_child() {
+            r.set_visible(false)
+        }
+    });
+    r
 }
 
 /// Admin authorization sheet (IaraOS ADR 0026).
@@ -432,6 +448,8 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
 }
 
 // ---- App scaffold ----
+    let always = button("Always Allow", Kind::Default, || {});
+    always.set_visible(false);
 
 /// HIG §1 AppWindow: 52px glass toolbar (traffic lights, title, actions, search), 220px sidebar, content, status bar.
 pub struct AppWindow {

@@ -43,6 +43,10 @@ fn every_control_center_spawn_is_a_real_command() {
                 );
             }
             ["wol", sub, ..] => panic!("{argv:?}: only `wol shell` is spawned, not `wol {sub}`"),
+            ["wol-settings", page] => assert!(
+                shell::ui::settings::PAGES.contains(page),
+                "{argv:?}: Settings has no page '{page}'"
+            ),
             [prog, ..] => assert!(installed(prog), "{argv:?}: {prog} is not installed"),
             [] => panic!("empty argv"),
         }

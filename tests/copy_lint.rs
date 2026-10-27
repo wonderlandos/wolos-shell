@@ -64,6 +64,8 @@ fn every_copy_sentence_passes() {
         assert_clean(&format!("update {e:?}"), copy::update(e));
     }
     assert_clean("update check", copy::UPDATE_CHECK);
+    // Progress, not an outcome: an ellipsis, no full stop (HIG §3).
+    assert_eq!(copy::wifi_joining("Home"), "Joining “Home”…");
     for e in copy::undo_errors() {
         assert_clean(&format!("undo {e:?}"), copy::undo(&e));
     }

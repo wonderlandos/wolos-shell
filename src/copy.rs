@@ -138,6 +138,11 @@ pub fn wifi_join(e: ActionError, name: &str) -> String {
     }
 }
 
+/// Progress while joining the Wi-Fi network `name` (Control Center's Wi-Fi page).
+pub fn wifi_joining(name: &str) -> String {
+    format!("Joining “{name}”…")
+}
+
 /// Installing the app `name` from the App Store.
 pub fn install(e: ActionError, name: &str) -> String {
     match e {

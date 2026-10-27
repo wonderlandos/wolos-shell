@@ -6,12 +6,13 @@ use gtk::{glib, prelude::*};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Last network, battery, volume icon and volume level pushed to widgets.
+/// Last network, battery, volume icon, volume level and Focus icon pushed to widgets.
 type Seen = (
     Changed<&'static str>,
     Changed<Option<&'static str>>,
     Changed<&'static str>,
     Changed<Option<u8>>,
+    Changed<Option<&'static str>>,
 );
 
 pub struct Bar {
@@ -22,6 +23,7 @@ pub struct Bar {
     network: gtk::Image,
     battery: gtk::Image,
     volume: gtk::Image,
+    focus: gtk::Image,
     percent: gtk::Label,
     show_percent: std::cell::Cell<bool>,
     /// Last values pushed to widgets: no relabel/redraw when unchanged.
@@ -122,11 +124,17 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         w::icon("battery-good-symbolic", w::ICON),
         w::icon("audio-volume-high-symbolic", w::ICON),
     );
+    let focus = w::icon("weather-clear-night-symbolic", w::ICON);
     let percent = w::label("", "");
     let battery_box = w::hbox(w::S1);
     battery_box.append(&percent);
     battery_box.append(&battery);
     for (img, tip, argv) in [
+        (
+            focus.upcast_ref::<gtk::Widget>(),
+            "Focus",
+            &["wol", "shell", "toggle", "control-center"][..],
+        ),
         (
             battery_box.upcast_ref::<gtk::Widget>(),
             "Battery",
@@ -207,12 +215,14 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         network,
         battery,
         volume,
+        focus,
         percent,
         show_percent: Default::default(),
         seen: Default::default(),
         name_seen: Default::default(),
     });
     refresh(&bar, sys);
+    follow_focus(&bar);
     {
         // Settings > Menu Bar: applied live on `reload`.
         let (b, battery) = (Rc::downgrade(&bar), sys.battery());
@@ -242,11 +252,35 @@ pub fn build(
     (win, bar)
 }
 
+/// ⌃F2 (`wol shell show menubar`): the keyboard moves into the bar, the WolOS menu focused;
+/// arrows move, Return opens. A menu closing, an item chosen, or Esc gives the keyboard back.
+pub fn keyboard(win: &gtk::ApplicationWindow, root: &gtk::Box) -> Rc<dyn Fn(bool)> {
+    let Some(first) = root.first_child() else {
+        return Rc::new(|_| {});
+    };
+    let access = kit::surface::keyboard_access(win, &first, |_| {});
+    let mut c = root.first_child();
+    while let Some(w) = c {
+        let a = access.clone();
+        if let Some(m) = w.downcast_ref::<gtk::MenuButton>() {
+            m.connect_active_notify(move |m| {
+                if !m.is_active() {
+                    a(false);
+                }
+            });
+        } else if let Some(b) = w.downcast_ref::<gtk::Button>() {
+            b.connect_clicked(move |_| a(false));
+        }
+        c = w.next_sibling();
+    }
+    access
+}
+
 /// One status read; widgets touched only on change. Volume change -> OSD.
 fn refresh(bar: &Bar, sys: &dyn crate::system::System) {
     let audio = sys.audio();
     let mut s = bar.seen.borrow_mut();
-    let n = status::network(sys.network());
+    let n = status::menubar_network(sys.network(), sys.wifi_enabled());
     if s.0.set(n) {
         bar.network.set_icon_name(Some(n));
     }
@@ -272,10 +306,58 @@ fn refresh(bar: &Bar, sys: &dyn crate::system::System) {
     }
     // The OSD is for volume keys only (`wol shell show osd` from wol-volume), not for polls.
     s.3.set(audio.volume);
+    set_focus(bar, &mut s.4);
+}
+
+/// Moon while Focus is on (a timer runs out on the next poll).
+fn set_focus(bar: &Bar, seen: &mut Changed<Option<&'static str>>) {
+    let f = crate::focus::menubar_icon(crate::focus::read());
+    if seen.set(f)
+        && let Some(b) = bar.focus.parent()
+    {
+        b.set_visible(f.is_some());
+    }
+}
+
+/// The moon follows the Focus file at once (Control Center writes it), not on the next poll.
+fn follow_focus(bar: &Rc<Bar>) {
+    use gtk::gio;
+    let Ok(m) = gio::File::for_path(crate::focus::path())
+        .monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+    else {
+        return;
+    };
+    let b = Rc::downgrade(bar);
+    m.connect_changed(move |_, _, _, _| {
+        if let Some(bar) = b.upgrade() {
+            set_focus(&bar, &mut bar.seen.borrow_mut().4);
+        }
+    });
+    // The bar lives for the whole session.
+    std::mem::forget(m);
+}
+
+thread_local! {
+    /// The session's menu bar and its system (set by [`poll_status`]) for [`refresh_now`].
+    static LIVE: RefCell<Option<(std::rc::Weak<Bar>, Rc<dyn crate::system::System>)>> =
+        const { RefCell::new(None) };
+}
+
+/// Re-reads the status icons now: Control Center calls this whenever its snapshot or one of its
+/// actions settles, so Wi-Fi, volume and battery in the bar never lag the 5 s poll.
+pub fn refresh_now() {
+    LIVE.with_borrow(|live| {
+        if let Some((bar, sys)) = live
+            && let Some(bar) = bar.upgrade()
+        {
+            refresh(&bar, &**sys);
+        }
+    });
 }
 
 /// 5 s timer on whole seconds (GLib coalesces wakeups).
 pub fn poll_status(bar: Rc<Bar>, sys: Rc<dyn crate::system::System>) {
+    LIVE.set(Some((Rc::downgrade(&bar), sys.clone())));
     glib::timeout_add_seconds_local(5, move || {
         refresh(&bar, &*sys);
         crate::alerts::poll(sys.battery());

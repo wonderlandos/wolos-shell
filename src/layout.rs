@@ -27,7 +27,51 @@ pub struct Node {
     pub clipped_text: bool,
     /// Must be allocated square (avatars are circles, never pills).
     pub square: bool,
+    /// Container whose content must sit centred in it (glass panels, cards).
+    pub inset: Inset,
+    /// Union of what the container's content draws, measured through layout-only wrappers (a
+    /// stretched box whose content sits centred in it). None: the children's union.
+    pub ink: Option<Rect>,
     pub children: Vec<Node>,
+}
+
+/// Symmetric-inset rule for containers, measured from the union of the children's allocations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Inset {
+    #[default]
+    None,
+    /// Left == right and top == bottom (cards, sheets, lists).
+    Card,
+    /// All four insets equal (glass panels, Control Center modules).
+    Panel,
+}
+
+/// Inset violation of `n`, if any: content offset from its container.
+fn insets(n: &Node) -> Option<String> {
+    if n.inset == Inset::None {
+        return None;
+    }
+    let kids: Vec<Rect> = match n.ink {
+        Some(r) => vec![r],
+        None => n.children.iter().map(|c| c.rect).collect(),
+    }
+    .into_iter()
+    .filter(|r| r.w > 0 && r.h > 0)
+    .collect();
+    let x0 = kids.iter().map(|r| r.x).min()?;
+    let y0 = kids.iter().map(|r| r.y).min()?;
+    let x1 = kids.iter().map(|r| r.x + r.w).max()?;
+    let y1 = kids.iter().map(|r| r.y + r.h).max()?;
+    let p = n.rect;
+    let (l, t, r, b) = (x0 - p.x, y0 - p.y, p.x + p.w - x1, p.y + p.h - y1);
+    let off = |a: i32, b: i32| (a - b).abs() > TOLERANCE;
+    let bad = off(l, r) || off(t, b) || (n.inset == Inset::Panel && off(t, l));
+    bad.then(|| {
+        format!(
+            "{} insets its content unevenly: left {l}, right {r}, top {t}, bottom {b} px",
+            n.path
+        )
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +113,12 @@ fn walk(n: &Node, view: Option<Rect>, out: &mut Vec<Issue>) {
         out.push(Issue {
             path: n.path.clone(),
             message: format!("{} text is clipped", n.path),
+        });
+    }
+    if let Some(message) = insets(n) {
+        out.push(Issue {
+            path: n.path.clone(),
+            message,
         });
     }
     if n.square && (n.rect.w - n.rect.h).abs() > TOLERANCE {
@@ -126,6 +176,63 @@ mod tests {
             rect: Rect { x, y, w, h },
             ..Default::default()
         }
+    }
+
+    /// Live review: the Control Center card sat 19 px below the glass top and 12 px from its
+    /// sides (a hidden sheet still took the panel's spacing). Panels inset equally on all four
+    /// sides; cards left == right and top == bottom.
+    #[test]
+    fn containers_inset_their_content_symmetrically() {
+        let with = |inset: Inset, kids: Vec<Node>| Node {
+            inset,
+            children: kids,
+            ..n("Box.glass-panel", 0, 0, 100, 100)
+        };
+        for (inset, kids, bad) in [
+            (Inset::Panel, vec![n("a", 13, 13, 74, 74)], 0),
+            (Inset::Panel, vec![n("a", 13, 21, 74, 66)], 1),
+            (Inset::Panel, vec![n("a", 8, 8, 84, 84)], 0),
+            (Inset::Panel, vec![n("a", 13, 8, 74, 84)], 1),
+            (Inset::Card, vec![n("a", 13, 8, 74, 84)], 0),
+            (Inset::Card, vec![n("a", 8, 8, 84, 80)], 1),
+            (
+                Inset::Card,
+                vec![n("a", 8, 8, 40, 20), n("b", 8, 72, 84, 20)],
+                0,
+            ),
+            (Inset::Card, vec![n("a", 9, 8, 82, 84)], 0),
+            (Inset::None, vec![n("a", 0, 30, 10, 10)], 0),
+            (Inset::Panel, vec![n("empty", 50, 50, 0, 0)], 0),
+        ] {
+            let got = find(&with(inset, kids.clone()));
+            assert_eq!(got.len(), bad, "{inset:?} {kids:?}: {got:?}");
+            if bad > 0 {
+                assert!(
+                    got[0].message.contains("Box.glass-panel"),
+                    "{}",
+                    got[0].message
+                );
+                assert!(got[0].message.contains("inset"), "{}", got[0].message);
+            }
+        }
+    }
+
+    /// Review: a card stretched to its neighbour's height centres its rows, so the drawn content
+    /// sat 17 px below the card top and 8 px from its sides while every wrapper box was flush.
+    #[test]
+    fn insets_are_measured_from_the_drawn_content() {
+        let card = |ink| Node {
+            inset: Inset::Panel,
+            ink,
+            children: vec![n("Box", 8, 8, 84, 84)],
+            ..n("Box.module", 0, 0, 100, 100)
+        };
+        assert!(find(&card(None)).is_empty());
+        let r = |x, y, w, h| Some(Rect { x, y, w, h });
+        assert!(find(&card(r(8, 8, 84, 84))).is_empty());
+        let i = find(&card(r(8, 17, 84, 66)));
+        assert_eq!(i.len(), 1, "{i:?}");
+        assert!(i[0].message.contains("top 17"), "{}", i[0].message);
     }
 
     #[test]

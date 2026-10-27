@@ -486,9 +486,216 @@ fn contrast_issues(win: &gtk::Window, tex: &gdk::Texture, classes: &[&str]) -> V
                 .downcast_ref::<gtk::Label>()
                 .is_some_and(|l| l.label().is_empty())
             {
+    v.extend(control_center_cases());
+    v.extend(form_kit_cases());
+    v.extend(widget_cases::cases());
+    for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
+        v.push(Case {
+            name: format!("settings-windows-tiling-{tag}"),
+            size: (sw, 1),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(|| {
+                let p = w::vbox(w::S4);
+                p.add_css_class("page");
+                p.add_css_class("app-window");
+                p.append(&ui::settings::windows_section(
+                    Rc::new(shell::system::Fake),
+                    wol_core::hyprprefs::DesktopPrefs {
+                        tiling: true,
+                        layout: wol_core::hyprprefs::Layout::Master,
+                        ..Default::default()
+                    },
+                ));
+                p.upcast()
+            }),
+        });
+    }
                 continue;
             }
             let Some(r) = wd.compute_bounds(win) else {
+/// Settings-style Kit components (`kit::form` and the pickers panes share), on the app surface.
+fn form_kit_cases() -> Vec<Case> {
+    use shell::kit::form as f;
+    use wol_core::shortcuts::Combo;
+    let case = |name: &str, build: fn() -> gtk::Widget| Case {
+        name: format!("kit-{name}"),
+        size: (w::APP_NARROW.0, 1),
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(move || {
+            let p = w::vbox(w::S4);
+            p.add_css_class("page");
+            p.add_css_class("app-window");
+            p.append(&build());
+            p.upcast()
+        }),
+    };
+    fn combo(m: &str, k: &str) -> Combo {
+        Combo::parse(m, k).unwrap()
+    }
+    vec![
+        case("form-rows", || {
+            w::section(
+                "Windows",
+                &[
+                    f::toggle_row(
+                        "Tile windows",
+                        "New windows fill the screen side by side",
+                        true,
+                        |_| {},
+                    ),
+                    f::picker_row("Layout", "", &["Dwindle", "Master"], 0, |_| {}),
+                    f::segmented_row("Appearance", "", &["Light", "Dark", "Auto"], 2, |_| {}),
+                    f::stepper_row("Gaps", "", 12, (0, 32, 4), |v| format!("{v} pt"), |_| {}),
+                    f::info_row("Processor", "Intel Core i5 (8 cores)"),
+                    f::entry_row("Computer name", "wonderland", "Name", |_| {}),
+                    f::nav_row("help-about-symbolic", "About", "Name, hardware, serial").upcast(),
+                ],
+            )
+            .upcast()
+        }),
+        case("slider-row", || {
+            w::section(
+                "",
+                &[
+                    f::slider_row(
+                        "Key repeat rate",
+                        (5.0, 60.0, 5.0),
+                        25.0,
+                        ("Slow", "Fast"),
+                        |_| {},
+                    ),
+                    f::slider_row(
+                        "Delay until repeat",
+                        (150.0, 1000.0, 50.0),
+                        400.0,
+                        ("Long", "Short"),
+                        |_| {},
+                    ),
+                ],
+            )
+            .upcast()
+        }),
+        case("shortcut-recorder", || {
+            let c = combo("SUPER", "Space");
+            let ok = f::ShortcutRecorder::new(Some(&c), |_| {}, |_| {});
+            let taken = f::ShortcutRecorder::new(Some(&combo("SUPER SHIFT", "4")), |_| {}, |_| {});
+            taken.set_conflict(true);
+            let off = f::ShortcutRecorder::new(None, |_| {}, |_| {});
+            let fixed =
+                f::ShortcutRecorder::new(Some(&combo("SUPER", "mouse:272")), |_| {}, |_| {});
+            fixed.set_editable(false);
+            let swap = w::button("Swap", w::Kind::Default, || {});
+            let cancel = w::button("Cancel", w::Kind::Plain, || {});
+            w::section(
+                "Screenshots",
+                &[
+                    f::row("Show Spotlight search", "", &ok.button),
+                    f::row("Capture the screen", "", &taken.button),
+                    f::notice("⇧⌘4 is used by “Capture a selection”.", &[swap, cancel]).upcast(),
+                    f::row("Record the screen", "", &off.button),
+                    f::row("Move window", "", &fixed.button),
+                ],
+            )
+            .upcast()
+        }),
+        case("permission-row", || {
+            w::section(
+                "Screen Recording",
+                &[
+                    f::permission_row(
+                        "wolos-browser",
+                        "Browser",
+                        "Can record the screen",
+                        true,
+                        |_| {},
+                    ),
+                    f::permission_row(
+                        "wolos-terminal",
+                        "Terminal",
+                        "Asked yesterday",
+                        false,
+                        |_| {},
+                    ),
+                ],
+            )
+            .upcast()
+        }),
+        case("wallpaper-tile", || {
+            let r = w::wrap_row(w::S3, 3);
+            let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers");
+            for (i, n) in ["wonderland-day", "wonderland-dusk", "wonderland-night"]
+                .iter()
+                .enumerate()
+            {
+                let p = std::path::PathBuf::from(format!("{dir}/{n}.svg"));
+                r.insert(&f::wallpaper_tile(Some(&p), n, i == 1), -1);
+            }
+            r.upcast()
+        }),
+        case("empty-state", || {
+            w::empty_state(
+                "bluetooth-disabled-symbolic",
+                "No Bluetooth Hardware",
+                "This computer has no Bluetooth adapter. Plug in a USB adapter to use wireless devices.",
+                None,
+            )
+            .upcast()
+        }),
+        case("search-field", || w::search_field("Search").upcast()),
+        case("preset-card", || {
+            use shell::kit::pickers::{PresetCard, Tokens};
+            use wol_core::looks::Looks;
+            let r = w::wrap_row(w::S3, 2);
+            let soft = Looks {
+                rounding: 18,
+                ..Looks::default()
+            };
+            for (name, about, l, on) in [
+                ("WolOS", "Soft glass, gentle motion.", Looks::default(), true),
+                ("Rounded", "Round corners and wide gaps.", soft, false),
+            ] {
+                let c = PresetCard::new(name, about, &l, Tokens::current(), on);
+                r.insert(&c.button, -1);
+            }
+            r.upcast()
+        }),
+        case("color-well", || {
+            use shell::kit::pickers::{ColorWell, Tokens};
+            let row = w::hbox(w::S2);
+            for hex in ["#7c5cffff", "#33ccffee", "#ffffff40"] {
+                row.append(&ColorWell::new(hex, &[], Tokens::current(), |_| {}).button);
+            }
+            w::section("", &[f::row("Border colours", "", &row)]).upcast()
+        }),
+        case("usage-bar", || {
+            let parts: Vec<(String, String, f64)> = [
+                ("Documents", "61 GB", 0.12),
+                ("Apps", "38 GB", 0.07),
+                ("System", "24 GB", 0.05),
+                ("Restore points", "12 GB", 0.02),
+                ("Other", "8 GB", 0.02),
+            ]
+            .iter()
+            .map(|(n, s, f)| ((*n).into(), (*s).into(), *f))
+            .collect();
+            shell::kit::pickers::usage_bar(&parts).upcast()
+        }),
+        case("key-legend", || {
+            shell::kit::pickers::key_legend(&ui::settings::KEY_LEGEND)
+        }),
+        case("toast", || {
+            let aw = w::AppWindow::new("", false, false);
+            let t = shell::kit::toast::Toast::new(&aw);
+            t.show("Wallpaper changed", "Undo", || {});
+            t.revealer.set_transition_duration(0);
+            aw.root.set_size_request(-1, 96);
+            aw.root.upcast()
+        }),
+    ]
+}
+
                 continue;
             };
             let c = contrast(&px, &r);
@@ -498,6 +705,142 @@ fn contrast_issues(win: &gtk::Window, tex: &gdk::Texture, classes: &[&str]) -> V
         }
     }
     out
+/// Control Center: laptop (battery) and desktop variants, every module on, each detail page, and
+/// its Kit components on their own.
+fn control_center_cases() -> Vec<Case> {
+    use shell::kit::controls as k;
+    use shell::system::{Fake, FakeDesktop, System};
+    use wol_core::prefs::ControlCenterPrefs;
+    let cc = |name: &str, sys: fn() -> Rc<dyn System>, all: bool, page: &'static str| Case {
+        name: name.into(),
+        size: (368, 1),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(move || {
+            let mut p = ControlCenterPrefs::default();
+            if all {
+                for (key, _) in ControlCenterPrefs::MODULES {
+                    p.set(key, true);
+                }
+            }
+            ui::control_center::content_with(sys(), p, page)
+        }),
+    };
+    let laptop: fn() -> Rc<dyn System> = || Rc::new(Fake);
+    let desktop: fn() -> Rc<dyn System> = || Rc::new(FakeDesktop);
+    let kit_case = |name: &str, build: fn() -> gtk::Widget| Case {
+        name: format!("kit-{name}"),
+        size: (368, 1),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(move || {
+            let p = w::glass_panel(w::S2);
+            p.set_width_request(w::CONTROL_CENTER_WIDTH);
+            p.append(&build());
+            p.upcast()
+        }),
+    };
+    vec![
+        cc("controlcenter-desktop", desktop, false, "main"),
+        cc("controlcenter-all", laptop, true, "main"),
+        cc("controlcenter-wifi", laptop, false, "wifi"),
+        cc("controlcenter-wifi-other", laptop, false, "wifi:other"),
+        cc("controlcenter-bluetooth", laptop, false, "bluetooth"),
+        cc("controlcenter-sound", laptop, false, "sound"),
+        cc("controlcenter-focus", laptop, false, "focus"),
+        kit_case("toggle-tile", || {
+            let r = w::hbox(w::S2);
+            r.set_homogeneous(true);
+            let on = k::ToggleTile::new("night-light-symbolic", "Night Shift");
+            on.set_on(true);
+            r.append(&on.button);
+            r.append(&k::ToggleTile::new("wolos-contrast-symbolic", "Increase Contrast").button);
+            r.append(&k::ToggleTile::new("camera-photo-symbolic", "Screenshot").button);
+            r.upcast()
+        }),
+        kit_case("device-row", || {
+            let c = w::vbox(0);
+            c.add_css_class("module");
+            for (icon, t, s, on, tr) in [
+                (
+                    "network-wireless-signal-excellent-symbolic",
+                    "Wonderland",
+                    "Connected",
+                    true,
+                    Some("system-lock-screen-symbolic"),
+                ),
+                (
+                    "bluetooth-active-symbolic",
+                    "Magic Trackpad",
+                    "",
+                    false,
+                    None,
+                ),
+                (
+                    "audio-speakers-symbolic",
+                    "Built-in Speakers",
+                    "",
+                    true,
+                    Some("object-select-symbolic"),
+                ),
+            ] {
+                c.append(&k::DeviceRow::new(icon, t, s, on, tr).button);
+            }
+            c.upcast()
+        }),
+        kit_case("detail-page", || {
+            let p = k::DetailPage::new(
+                "Bluetooth",
+                Some(true),
+                "Devices",
+                Some("Bluetooth Settings…"),
+            );
+            p.set_rows(&[], "No paired devices");
+            p.root.upcast()
+        }),
+        kit_case("slider-module", || {
+            k::SliderModule::new(
+                "Sound",
+                "audio-volume-medium-symbolic",
+                40.0,
+                |_| {},
+                Some("Output"),
+            )
+            .root
+            .upcast()
+        }),
+        kit_case("now-playing", || {
+            // Full card (widgets) with cover art missing: the player's app icon stands in; the
+            // compact card (Control Center) with no player known: the note.
+            let c = w::vbox(w::S2);
+            let full = k::NowPlayingCard::new();
+            full.set(&Fake.now_playing().unwrap());
+            full.set_app_icon(Fake.now_playing_icon().as_deref());
+            c.append(&full.root);
+            let compact = k::NowPlayingCard::compact();
+            compact.set(&Fake.now_playing().unwrap());
+            c.append(&compact.root);
+            c.upcast()
+        }),
+        kit_case("battery-tile", || {
+            use shell::status::BatteryStatus as B;
+            let r = w::hbox(w::S2);
+            r.set_homogeneous(true);
+            for (p, st, m, low) in [
+                (82, B::Discharging, Some(191), false),
+                (18, B::Discharging, Some(40), true),
+                (7, B::Discharging, Some(12), false),
+                (54, B::Charging, Some(80), false),
+            ] {
+                let t = k::BatteryTile::new();
+                t.set(p, st, m, low);
+                r.append(&t.button);
+            }
+            r.upcast()
+        }),
+    ]
+}
+
 }
 
 fn pixels(t: &gdk::Texture) -> (i32, i32, Vec<u8>) {
@@ -534,6 +877,11 @@ fn main() {
     let n = 40 + std::process::id() % 200;
     let display = format!(":{n}");
     let port = (18000 + n).to_string();
+    } else if case.starts_with("controlcenter")
+        || case.starts_with("kit-")
+        || case.starts_with("approval")
+    {
+        &["secondary", "title"]
     /// Kills the private broadwayd on every exit path (panics included).
     struct Kill(std::process::Child);
     impl Drop for Kill {
