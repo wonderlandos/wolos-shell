@@ -304,7 +304,7 @@ pub struct Host {
     pub hostname: String,
     pub users: Vec<String>,
     pub os: String,
-    /// "FreeBSD 15.1-RELEASE-p1" (`kern.ostype` + `kern.osrelease`).
+    /// "Linux 6.17.1-wolos" (`ostype` + `osrelease`): what the kernel reports.
     pub base: String,
     pub processor: String,
     pub memory: String,
@@ -341,7 +341,7 @@ impl Host {
             hostname: "wonderland".into(),
             users: vec!["alice".into(), "dinah".into()],
             os: "WolKernel".into(),
-            base: "FreeBSD 15.1-RELEASE-p1".into(),
+            base: "Linux 6.17.1-wolos".into(),
             processor: "Intel Core i5-1240P (12 cores)".into(),
             memory: "16 GB".into(),
             machine: Arc::new(Demo),

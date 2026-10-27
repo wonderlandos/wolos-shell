@@ -66,14 +66,6 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts) {
         &[
             info("System", &format!("WolOS {}", env!("CARGO_PKG_VERSION"))),
             info("Kernel", &f.kernel.label()),
-            info(
-                "Base",
-                if e.host.base.is_empty() {
-                    "FreeBSD"
-                } else {
-                    &e.host.base
-                },
-            ),
         ],
     ));
     let hw = form::nav_row("wolos-chip-symbolic", "Hardware", &hardware_summary(&f.hw));

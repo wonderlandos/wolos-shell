@@ -21,22 +21,17 @@ pub struct Sharing {
 /// Kernel facts for About.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Kernel {
-    /// `kern.ident`: "WolKernel" (kernel/conf/WolKernel; "WOLOS" before the rename).
-    pub ident: String,
-    /// `kern.osrelease`: "15.1-RELEASE-p1".
+    /// `uname -r` (/proc/sys/kernel/osrelease): "6.17.1-wolos".
     pub release: String,
 }
 
 impl Kernel {
-    /// "WolKernel 15.1" on the WolOS kernel, else "FreeBSD 15.1-RELEASE (GENERIC)".
+    /// "WolKernel 6.17.1" on the WolOS kernel (release ends in `-wolos`), else "Linux 6.17.1-arch1-1".
     pub fn label(&self) -> String {
-        let base = self.release.split('-').next().unwrap_or("");
-        if self.ident == "WolKernel" || self.ident == "WOLOS" {
-            format!("WolKernel {base}").trim().to_string()
-        } else if self.release.is_empty() {
-            self.ident.clone()
-        } else {
-            format!("FreeBSD {} ({})", self.release, self.ident)
+        match self.release.strip_suffix("-wolos") {
+            Some(v) => format!("WolKernel {v}"),
+            None if self.release.is_empty() => String::new(),
+            None => format!("Linux {}", self.release),
         }
     }
 }
@@ -151,10 +146,10 @@ impl Machine for Live {
     }
     fn kernel(&self) -> Kernel {
         Kernel {
-            ident: self.os().sysctl_string("kern.ident").unwrap_or_default(),
             release: self
                 .os()
-                .sysctl_string("kern.osrelease")
+                .read_text("/proc/sys/kernel/osrelease")
+                .map(|r| r.trim().to_string())
                 .unwrap_or_default(),
         }
     }
@@ -396,14 +391,13 @@ impl Machine for Demo {
     }
     fn consent(&self) -> Vec<(String, String)> {
         vec![
-            ("/usr/local/bin/obs".into(), "screen-capture".into()),
-            ("/usr/local/bin/ydotoold".into(), "input-injection".into()),
+            ("/usr/bin/obs".into(), "screen-capture".into()),
+            ("/usr/bin/ydotoold".into(), "input-injection".into()),
         ]
     }
     fn kernel(&self) -> Kernel {
         Kernel {
-            ident: "WolKernel".into(),
-            release: "15.1-RELEASE".into(),
+            release: "6.17.1-wolos".into(),
         }
     }
     fn power(&self) -> Option<wol_core::power::policy::Status> {
@@ -440,15 +434,16 @@ impl Machine for Demo {
     fn updates(&self) -> Option<wol_core::update::check::Updates> {
         Some(wol_core::update::check::Updates {
             checked: wol_core::journal::now().saturating_sub(3 * 3600),
-            packages: vec!["firefox".into(), "curl".into(), "mesa-dri".into()],
+            packages: vec!["firefox".into(), "curl".into(), "mesa".into()],
             security: vec!["curl".into()],
-            base: Some("15.1-RELEASE-p3".into()),
+            base: Some("2026.11".into()),
+            ..Default::default()
         })
     }
     fn passwd(&self) -> String {
         "root:*:0:0:Charlie &:/root:/bin/sh\n\
-         alice:*:1001:1001:Alice Liddell:/home/alice:/usr/local/bin/zsh\n\
-         dinah:*:1002:1002:Dinah:/home/dinah:/usr/local/bin/zsh\n"
+         alice:*:1001:1001:Alice Liddell:/home/alice:/usr/bin/zsh\n\
+         dinah:*:1002:1002:Dinah:/home/dinah:/usr/bin/zsh\n"
             .into()
     }
 }
@@ -459,27 +454,23 @@ mod tests {
 
     #[test]
     fn kernel_label() {
-        let k = |i: &str, r: &str| {
-            Kernel {
-                ident: i.into(),
-                release: r.into(),
-            }
-            .label()
-        };
-        assert_eq!(k("WolKernel", "15.1-RELEASE-p6"), "WolKernel 15.1");
-        assert_eq!(k("WOLOS", "15.1-RELEASE-p2"), "WolKernel 15.1");
-        assert_eq!(
-            k("GENERIC", "15.1-RELEASE"),
-            "FreeBSD 15.1-RELEASE (GENERIC)"
-        );
-        assert_eq!(k("GENERIC", ""), "GENERIC");
+        let k = |r: &str| Kernel { release: r.into() }.label();
+        assert_eq!(k("6.17.1-wolos"), "WolKernel 6.17.1");
+        assert_eq!(k("6.17.1-arch1-1"), "Linux 6.17.1-arch1-1");
+        assert_eq!(k(""), "");
     }
 
     #[test]
-    fn sharing_reads_rc_conf() {
-        let h = wol_core::system::fake::FakeHost::new(true);
-        h.command("sysrc -n sshd_enable", "YES\n")
-            .command("sysrc -n pf_enable", "NO\n");
+    fn sharing_reads_systemd_units() {
+        let h = wol_core::system::fake::FakeHost::linux();
+        h.command(
+            "systemctl show -p UnitFileState --value sshd.service",
+            "enabled\n",
+        )
+        .command(
+            "systemctl show -p UnitFileState --value nftables.service",
+            "disabled\n",
+        );
         let live = Live(Arc::new(h));
         assert_eq!(
             live.sharing(),

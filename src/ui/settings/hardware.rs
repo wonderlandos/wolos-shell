@@ -208,10 +208,10 @@ mod tests {
         assert_eq!(subtitle(&Device::default()), "Working");
         let odd = Device {
             state: State::Unsupported,
-            notes: vec!["This Wi-Fi card has no FreeBSD driver yet.".into()],
+            notes: vec!["This Wi-Fi card has no driver yet.".into()],
             ..Default::default()
         };
-        assert_eq!(subtitle(&odd), "This Wi-Fi card has no FreeBSD driver yet.");
+        assert_eq!(subtitle(&odd), "This Wi-Fi card has no driver yet.");
         assert_eq!(
             subtitle(&Device {
                 notes: vec![],

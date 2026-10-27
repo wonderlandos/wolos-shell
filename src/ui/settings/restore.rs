@@ -63,7 +63,7 @@ pub(crate) fn point_name(b: &wol_core::update::be::BootEnv) -> String {
     }
 }
 
-/// "20 October 2026, 18:40 · 412 MB" from `bectl`'s "2026-10-20 18:40" and "412M".
+/// "20 October 2026, 18:40 · 412 MB" from the snapshot list's "2026-10-20 18:40" and "412M".
 pub(crate) fn point_line(created: &str, space: &str) -> String {
     let when = (|| {
         let (date, time) = created.split_once(' ')?;
