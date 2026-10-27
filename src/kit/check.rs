@@ -179,7 +179,43 @@ pub fn issues(win: &gtk::Window) -> Vec<layout::Issue> {
         w: win.width(),
         h: win.height(),
     };
-    layout::find_in(frame, &tree(&child, root, ""))
+    let mut out = layout::find_in(frame, &tree(&child, root, ""));
+    out.extend(covered_cards(&child, root));
+    out
+}
+
+/// A floating sheet (`widget-gallery`) must never cover a desktop card.
+fn covered_cards(top: &gtk::Widget, root: &gtk::Widget) -> Vec<layout::Issue> {
+    let (mut sheets, mut cards) = (Vec::new(), Vec::new());
+    let mut stack = vec![top.clone()];
+    while let Some(w) = stack.pop() {
+        if !shown(&w) {
+            continue;
+        }
+        if w.has_css_class("widget-gallery") {
+            // Its own preview card is inside it, not under it.
+            sheets.push(bounds(&w, root));
+            continue;
+        } else if w.has_css_class("widget-card") {
+            cards.push((name(&w), bounds(&w, root)));
+        }
+        let mut c = w.first_child();
+        while let Some(x) = c {
+            c = x.next_sibling();
+            stack.push(x);
+        }
+    }
+    let hit = |a: &Rect, b: &Rect| {
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    };
+    sheets
+        .iter()
+        .flat_map(|s| cards.iter().filter(move |(_, c)| hit(s, c)))
+        .map(|(n, _)| layout::Issue {
+            path: n.clone(),
+            message: format!("{n} is covered by the widget gallery"),
+        })
+        .collect()
 }
 
 /// After the first layout: log issues; exit 1 when `WOL_LAYOUT_CHECK=exit`.

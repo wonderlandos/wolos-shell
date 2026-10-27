@@ -330,6 +330,20 @@ impl Board {
             }
             self.place(p);
         }
+        self.clear_gallery(&shown);
+    }
+
+    /// Keeps the gallery in the free side of the desktop, so it never covers a card.
+    fn clear_gallery(&self, shown: &[Placed]) {
+        let g = self.st.borrow().grid;
+        let total = 2 * g.m.margin + g.cols as i32 * g.m.pitch() - g.m.gap;
+        let spans = shown.iter().map(|p| {
+            let (x, _) = g.m.origin(p.col, p.row);
+            (x, x + g.m.size(p.size).0)
+        });
+        let (start, end) = gallery_margins(spans, total, g.m.margin);
+        self.gallery.root.set_margin_start(start);
+        self.gallery.root.set_margin_end(end);
     }
 
     fn origin(&self, p: &Placed) -> (f64, f64) {
@@ -856,6 +870,21 @@ fn local_units() -> Units {
 }
 
 /// Geocoding off the main loop; `done` runs on it.
+/// Gallery margins (start, end): the gallery sits on the wider side clear of every card span.
+fn gallery_margins(spans: impl Iterator<Item = (i32, i32)>, total: i32, pad: i32) -> (i32, i32) {
+    let (lo, hi) = spans.fold((i32::MAX, i32::MIN), |(lo, hi), (a, b)| {
+        (lo.min(a), hi.max(b))
+    });
+    if lo > hi {
+        return (0, 0);
+    }
+    if total - hi >= lo {
+        (hi + pad, 0)
+    } else {
+        (0, total - lo + pad)
+    }
+}
+
 fn search_places(q: String, done: super::widgets_gallery::Found) {
     glib::spawn_future_local(async move {
         let r = gio::spawn_blocking(move || {
@@ -1639,4 +1668,19 @@ pub fn build(
         let _ = &live;
     });
     (win, board)
+}
+
+#[cfg(test)]
+mod gallery_tests {
+    use super::gallery_margins;
+
+    #[test]
+    fn the_gallery_never_covers_a_card() {
+        assert_eq!(gallery_margins([(24, 368)].into_iter(), 1920, 24), (392, 0));
+        assert_eq!(
+            gallery_margins([(1500, 1896)].into_iter(), 1920, 24),
+            (0, 444)
+        );
+        assert_eq!(gallery_margins(std::iter::empty(), 1920, 24), (0, 0));
+    }
 }

@@ -38,6 +38,8 @@ pub const CLOCK_S: i32 = CARD_INNER;
 pub const CLOCK_L: i32 = 216;
 /// Cover art edges (small card, large card).
 pub const COVER_S: i32 = 56;
+/// Medium card: the art fills the card height.
+pub const COVER_M: i32 = CARD_INNER;
 pub const COVER_L: i32 = 152;
 /// Custom widget image edges (avatars, logos).
 pub const IMAGE_S: i32 = 24;

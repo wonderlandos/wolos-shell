@@ -496,32 +496,6 @@ fn controls(p: &media::Playing, large: bool) -> gtk::Box {
     r
 }
 
-/// Kit Now Playing (shared with Control Center), wired to this player.
-fn now_playing(p: &media::Playing) -> gtk::Box {
-    let c = k::NowPlayingCard::new();
-    c.set(&crate::system::NowPlaying {
-        title: p.title.clone(),
-        artist: p.artist.clone(),
-        playing: p.playing,
-        position: 0,
-        length: None,
-        art: p
-            .art
-            .as_ref()
-            .map(|a| format!("file://{}", a.to_string_lossy())),
-    });
-    for (b, ctl, on) in [
-        (&c.prev, media::Control::Previous, p.can_prev),
-        (&c.play, media::Control::PlayPause, true),
-        (&c.next, media::Control::Next, p.can_next),
-    ] {
-        let bus = p.bus.clone();
-        b.connect_clicked(move |_| media::control(&bus, ctl));
-        b.set_sensitive(on);
-    }
-    c.root
-}
-
 fn music(p: Option<&media::Playing>, size: Size) -> gtk::Box {
     let Some(p) = p else {
         return empty(
@@ -551,15 +525,21 @@ fn music(p: Option<&media::Playing>, size: Size) -> gtk::Box {
             b.append(&dim(&p.artist));
         }
         Size::Medium => {
-            let head = w::hbox(w::S2);
-            let cap = d::text("Now Playing", Role::Caption, Tone::Dim);
-            cap.set_hexpand(true);
-            cap.set_xalign(0.0);
-            head.append(&cap);
-            head.append(&d::text(&p.player, Role::Caption, Tone::Dim));
-            b.append(&head);
-            b.append(&d::fill());
-            b.append(&now_playing(p));
+            let row = w::hbox(w::S4);
+            row.add_css_class("no-row-check");
+            row.set_vexpand(true);
+            row.append(&d::cover(p.art.as_deref(), d::COVER_M));
+            let col = w::vbox(w::S1);
+            col.set_hexpand(true);
+            col.append(&d::text(&p.player, Role::Caption, Tone::Dim));
+            col.append(&t(&p.title, Role::Title));
+            col.append(&dim(&p.artist));
+            col.append(&d::fill());
+            let c = controls(p, true);
+            c.set_halign(gtk::Align::Start);
+            col.append(&c);
+            row.append(&col);
+            b.append(&row);
         }
         Size::Large => {
             b.set_spacing(w::S3);
