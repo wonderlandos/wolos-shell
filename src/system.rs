@@ -93,6 +93,10 @@ pub trait System: Send + Sync {
     fn authorize(&self, _password: &str) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
+    /// App icon of the player behind [`System::now_playing`] (cover art placeholder).
+    fn now_playing_icon(&self) -> Option<String> {
+        None
+    }
 
     /// Wi-Fi radio state (None = no Wi-Fi hardware/tooling).
     fn wifi_enabled(&self) -> Option<bool> {
@@ -453,6 +457,9 @@ impl Inner {
         self.snap.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    fn now_playing_icon(&self) -> Option<String> {
+        Some("wolos-music".into())
+    }
     /// Next refresh delay: fast only while a live watcher exists.
     fn period(&self) -> std::time::Duration {
         let mut w = self.watchers.lock().unwrap_or_else(|e| e.into_inner());
@@ -664,7 +671,57 @@ impl Default for CoreSystem {
 
 impl System for CoreSystem {
     fn battery(&self) -> Option<Battery> {
-        self.inner.files.battery()
+        let Some(b) = self.inner.lock().battery else {
+            return self.inner.files.battery();
+        };
+        Some(Battery {
+            percent: b.percent,
+            status: match b.charge {
+                Charge::Charging => BatteryStatus::Charging,
+                Charge::Discharging => BatteryStatus::Discharging,
+                Charge::Full => BatteryStatus::Full,
+            },
+        })
+    }
+    fn battery_time(&self) -> Option<u32> {
+        self.inner.lock().battery.and_then(|b| b.minutes)
+    }
+    fn now_playing(&self) -> Option<NowPlaying> {
+        self.inner.lock().media.as_ref().map(|m| NowPlaying {
+            title: m.title.clone(),
+            artist: m.artist.clone(),
+            playing: m.playing,
+            position: m.position,
+            length: m.length,
+            art: m.art.clone(),
+        })
+    }
+    fn now_playing_icon(&self) -> Option<String> {
+        let player = self.inner.lock().media.as_ref()?.player.clone()?;
+        Some(player_icon(&player))
+    }
+    fn bt_devices(&self) -> Vec<BtDevice> {
+        self.inner.lock().bt_devices.clone()
+    }
+    fn keyboard_brightness(&self) -> Option<u8> {
+        self.inner.lock().keyboard
+    }
+    fn power_mode(&self) -> Option<PowerMode> {
+        self.inner.lock().low_power.map(|l| {
+            if l {
+                PowerMode::LowPower
+            } else {
+                PowerMode::Automatic
+            }
+        })
+    }
+    fn accessibility(&self) -> Accessibility {
+        let a = self.inner.lock().a11y;
+        Accessibility {
+            reduce_motion: a.map(|a| a.reduce_motion),
+            zoom: a.map(|a| a.zoom),
+            increase_contrast: crate::kit::style::contrast_on(),
+        }
     }
     fn audio(&self) -> Audio {
         let v = self.inner.lock().volume;
@@ -964,3 +1021,73 @@ mod tests {
         assert!(s.volume.is_some() || s.wifi_on.is_some());
     }
 }
+/// MPRIS player name -> app icon (dock pin, installed entry, else the name), read once per player.
+fn player_icon(player: &str) -> String {
+    static SEEN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, icon)) = seen.iter().find(|(p, _)| p == player) {
+        return icon.clone();
+    }
+    let icon = crate::apps::icon_for(player, crate::apps::PINS, &crate::desktop::load_all());
+    seen.push((player.to_string(), icon.clone()));
+    icon
+}
+
+fn config_home() -> std::path::PathBuf {
+    crate::kit::config_home().into()
+}
+
+/// Journal actor for changes made in Settings, Control Center and the shell.
+const BY: &str = "settings";
+
+fn journal() -> wol_core::journal::Journal {
+    wol_core::journal::Journal::for_config(&config_home())
+}
+
+/// A helper's admin request after the user typed the password on the approval sheet. The session's
+/// cached authorization is forgotten first (the password is always checked) and again after (the
+/// helper is left nothing to reuse).
+pub fn approve(
+    c: &Controls,
+    req: &shared::shell::ApprovalRequest,
+    password: &str,
+) -> Result<(), ActionError> {
+    use shared::shell::ApprovalRequest as R;
+    // User-level changes run in the helper after Allow; never here, and wol-admind never hears of them.
+    if !req.is_admin() {
+        return Err(ActionError::Unavailable);
+    }
+    c.revoke();
+    let r = match req {
+        R::Wifi { on } => c.set_wifi(*on, password),
+        R::WifiJoin { ssid, password: p } => c.wifi_join(ssid, p.as_deref(), password),
+        R::Bluetooth { on } => c.set_bluetooth(*on, password),
+        R::BootEnvironment { name } => c.boot_environment(name, password),
+        R::Change { .. } => unreachable!("refused above"),
+    };
+    c.revoke();
+    // No password means no approval: the sheet asks again instead of reporting "unavailable".
+    r.map_err(|e| match ActionError::from(e) {
+        ActionError::NeedsAuth => ActionError::Denied,
+        e => e,
+    })
+}
+
+/// What an undo touched follows it: other apps restyle, shell prefs and Hyprland reload.
+fn after_undo(c: &Controls, r: &wol_core::journal::Reload) {
+    use wol_core::theme::{accent, active};
+    if let Some(saved) = &r.theme {
+        let dark = accent::auto_is_dark(crate::kit::now().hour);
+        let id = active::effective(accent::effective(saved.as_deref(), dark).as_deref(), dark);
+        if let Err(e) = wol_core::theme::apps::apply(&id, &config_home()) {
+            eprintln!("wol: app themes: {e}");
+        }
+    }
+    if r.shell {
+        crate::kit::spawn(&["wol".into(), "shell".into(), "reload".into()]);
+    }
+    if r.hyprland {
+        let _ = c.host.run(&["hyprctl", "reload"]);
+    }
+}
+

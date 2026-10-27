@@ -76,6 +76,16 @@ pub fn network(n: Network) -> &'static str {
     }
 }
 
+/// Menu bar network glyph: [`network`], except the struck-through Wi-Fi glyph while the radio is
+/// off (`wifi_on`, None = no Wi-Fi) and no wired link is up.
+pub fn menubar_network(n: Network, wifi_on: Option<bool>) -> &'static str {
+    if wifi_on == Some(false) && !(n.online && !n.wifi) {
+        "network-wireless-offline-symbolic"
+    } else {
+        network(n)
+    }
+}
+
 pub fn brightness_icon() -> &'static str {
     "display-brightness-symbolic"
 }
@@ -139,6 +149,38 @@ mod tests {
             }),
             Some("microphone-sensitivity-muted-symbolic")
         );
+    }
+
+    /// Wi-Fi switched off in Control Center: the menu bar shows the struck-through Wi-Fi glyph,
+    /// not a generic "offline"; a wired link still wins.
+    #[test]
+    fn menubar_network_follows_the_wifi_radio() {
+        let n = |online, wifi, signal| Network {
+            online,
+            wifi,
+            signal,
+        };
+        for (net, radio, want) in [
+            (
+                n(false, false, None),
+                Some(false),
+                "network-wireless-offline-symbolic",
+            ),
+            (n(true, false, None), Some(false), "network-wired-symbolic"),
+            (
+                n(false, false, None),
+                Some(true),
+                "network-offline-symbolic",
+            ),
+            (n(false, false, None), None, "network-offline-symbolic"),
+            (
+                n(true, true, Some(60)),
+                Some(true),
+                "network-wireless-signal-good-symbolic",
+            ),
+        ] {
+            assert_eq!(menubar_network(net, radio), want, "{net:?} {radio:?}");
+        }
     }
 
     #[test]
