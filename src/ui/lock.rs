@@ -1,5 +1,5 @@
 //! Lock screen (ext-session-lock, ADR 0022/0023) and login window (ADR 0024): clock, avatar, password.
-use crate::kit::{self, widgets as w};
+use crate::kit::{self, reveal, widgets as w};
 use crate::login::{self, Power, Verdict};
 use gtk::{glib, prelude::*};
 use std::cell::RefCell;
@@ -85,7 +85,7 @@ pub fn wallpaper_file(dark: bool) -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
-fn prefers_dark() -> bool {
+pub(crate) fn prefers_dark() -> bool {
     gtk::Settings::default().is_some_and(|s| s.is_gtk_application_prefer_dark_theme())
 }
 
@@ -93,6 +93,11 @@ thread_local! {
     /// Blurred wallpaper per file: decoded once per process.
     static BACKDROPS: RefCell<std::collections::HashMap<PathBuf, gtk::gdk::MemoryTexture>> =
         Default::default();
+}
+
+/// The blurred wallpaper is decoded: a first surface may fade in (`kit::reveal`).
+pub(crate) fn backdrop_ready() -> bool {
+    BACKDROPS.with_borrow(|c| !c.is_empty())
 }
 
 /// Runs `f` on light/dark changes while `owner` lives (the handler is dropped with it).
@@ -196,6 +201,23 @@ pub fn lock_screen(panel: &w::UserPanel) -> gtk::Widget {
     screen(&body(&panel.root, None))
 }
 
+/// Lock screen whose password can't be checked (wol-authcheck missing or broken): Restart
+/// appears under it, so nobody is stuck behind it. `shutdown` is the operator group's (every
+/// WolOS account); nothing of the session is shown or kept.
+fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box) {
+    let (restart, _) = action(
+        login::power_icon(login::Power::Restart),
+        login::power_label(login::Power::Restart),
+        || kit::spawn(&login::RESTART_NOW.map(String::from)),
+    );
+    let foot = w::hbox(0);
+    foot.add_css_class("login-power");
+    foot.set_halign(gtk::Align::Center);
+    foot.append(&restart);
+    foot.set_visible(false);
+    (screen(&body(&panel.root, Some(foot.upcast_ref()))), foot)
+}
+
 /// Login window: user tiles, then the picked user's password pill; power row at the foot.
 pub struct Login {
     pub root: gtk::Widget,
@@ -248,7 +270,11 @@ impl Login {
             let t = gtk::Button::builder().build();
             t.add_css_class("login-tile");
             let c = w::vbox(w::S3);
-            c.append(&w::avatar(shown, w::AVATAR_XL));
+            let av = w::avatar(shown, w::AVATAR_XL);
+            if let Some(tone) = login::read_avatar(u) {
+                kit::assistant::set_tone(&av, tone);
+            }
+            c.append(&av);
             c.append(&w::centered(shown, "lock-name"));
             t.set_child(Some(&c));
             let (l2, u, shown) = (Rc::downgrade(&l), u.clone(), shown.clone());
@@ -321,17 +347,18 @@ pub fn user_name() -> String {
     std::env::var("USER").unwrap_or_else(|_| "user".into())
 }
 
-/// Wires Enter -> blocking check off the main thread -> `ok` or shake.
+/// Wires Enter -> blocking check off the main thread -> `ok(password)` or shake.
 fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
     panel: Rc<w::UserPanel>,
     check: impl Fn() -> C + 'static,
-    ok: impl Fn() + Clone + 'static,
+    ok: impl Fn(String) + Clone + 'static,
     failed: impl Fn(Verdict) + Clone + 'static,
 ) {
     let check = Rc::new(check);
     let p2 = panel.clone();
     panel.field.connect_activate(move |f| {
         let pw = f.text().to_string();
+        let typed = pw.clone();
         f.set_sensitive(false);
         p2.message.set_label("");
         let (p, check, ok, failed) = (p2.clone(), check(), ok.clone(), failed.clone());
@@ -341,7 +368,7 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
                 .unwrap_or(Verdict::Error);
             p.field.set_sensitive(true);
             if v == Verdict::Ok {
-                ok()
+                ok(typed)
             } else {
                 p.reject(v.message());
                 p.field.grab_focus();
@@ -351,11 +378,67 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
     });
 }
 
+/// `wol-lock [--startup]`: a supervisor that keeps a lock screen up until one reports a real
+/// unlock (ADR 0012). A crashed lock screen leaves the session locked (ext-session-lock) and the next
+/// one takes it over (`misc:allow_session_lock_restore`). Nothing here ever unlocks.
 pub fn run_lock() -> glib::ExitCode {
+    if std::env::var_os(login::LOCK_UI_ENV).is_some() {
+        let startup = std::env::args().any(|a| a == login::STARTUP);
+        return run_lock_screen(startup);
+    }
+    let ui_args = login::lock_ui_args(&std::env::args().skip(1).collect::<Vec<_>>());
+    let exe = std::env::current_exe().unwrap_or_else(|_| "wol-lock".into());
+    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    let runtime = var("XDG_RUNTIME_DIR");
+    let socket = login::wayland_socket(&runtime, &var("WAYLAND_DISPLAY"));
+    // One supervisor per session: a second Super+L, or the restarted compositor's --locked-cmd
+    // while the previous supervisor already brings a lock screen back.
+    let guard = std::fs::File::create(std::path::Path::new(&runtime).join(login::LOCK_GUARD));
+    if let Ok(g) = &guard
+        && g.try_lock().is_err()
+    {
+        return glib::ExitCode::SUCCESS;
+    }
+    let mut attempt = 0;
+    loop {
+        let out = std::process::Command::new(&exe)
+            .args(&ui_args)
+            .env(login::LOCK_UI_ENV, "1")
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::inherit())
+            .output();
+        let unlocked = out
+            .as_ref()
+            .is_ok_and(|o| login::reported_unlock(&o.stdout));
+        match login::lock_exit(unlocked, socket.exists(), attempt) {
+            login::LockExit::Done => {
+                return if unlocked {
+                    glib::ExitCode::SUCCESS
+                } else {
+                    glib::ExitCode::FAILURE
+                };
+            }
+            login::LockExit::Respawn(delay) => {
+                let st = out
+                    .map(|o| o.status.to_string())
+                    .unwrap_or_else(|e| e.to_string());
+                eprintln!(
+                    "wol-lock: lock screen ended without an unlock ({st}); starting a new one"
+                );
+                std::thread::sleep(delay);
+                attempt += 1;
+            }
+        }
+    }
+}
+
+/// The lock screen itself. `startup`: fades in from the compositor's black, and the password
+/// typed here also opens the login keyring (nobody typed one at boot).
+fn run_lock_screen(startup: bool) -> glib::ExitCode {
     let app = gtk::Application::builder()
         .application_id("org.wolos.lock")
         .build();
-    app.connect_activate(|app| {
+    app.connect_activate(move |app| {
         kit::style::install("");
         let win = gtk::ApplicationWindow::new(app);
         win.add_css_class("lock-window");
@@ -363,18 +446,44 @@ pub fn run_lock() -> glib::ExitCode {
             &user_name(),
             &std::fs::read_to_string("/etc/passwd").unwrap_or_default(),
         )));
-        win.set_child(Some(&lock_screen(&panel)));
+        // The avatar in the colour picked in Setup, as on the login window.
+        if let (Some(tone), Some(av)) = (login::read_avatar(&user_name()), panel.root.first_child())
+        {
+            kit::assistant::set_tone(&av, tone);
+        }
+        let (screen, restart) = lock_screen_with_restart(&panel);
+        let shown = reveal::Reveal::new(&screen, startup);
+        win.set_child(Some(&shown.root));
+        if startup {
+            shown.show_when(backdrop_ready, || reveal::boot_mark("lock shown"));
+        }
         kit::snapshot_on_map(&win, "lock");
         let unlock = lock_surface(app, &win);
         let app2 = app.clone();
         wire(
             panel.clone(),
             || login::authcheck_owned,
-            move || {
+            move |password| {
                 unlock();
-                app2.quit();
+                println!("{}", login::UNLOCKED);
+                if !startup {
+                    app2.quit();
+                    return;
+                }
+                let app3 = app2.clone();
+                glib::spawn_future_local(async move {
+                    let _ = gtk::gio::spawn_blocking(move || {
+                        let r = zbus::blocking::Connection::session()
+                            .and_then(|c| login::unlock_login_keyring(&c, &password));
+                        if let Err(e) = r {
+                            eprintln!("wol-lock: login keyring: {e}");
+                        }
+                    })
+                    .await;
+                    app3.quit();
+                });
             },
-            |_| {},
+            move |v| restart.set_visible(v == Verdict::Error),
         );
         panel.field.grab_focus();
     });
@@ -425,7 +534,13 @@ pub fn run_login() -> glib::ExitCode {
         let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
         let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
         let l = Login::new(&login::login_users(&passwd, &shells));
-        win.set_child(Some(&l.root));
+        // Fades in from the compositor's black, and out to black for the session (ADR 0012).
+        let shown = reveal::Reveal::new(&l.root, true);
+        win.set_child(Some(&shown.root));
+        shown.show_when(backdrop_ready, || {
+            reveal::show_pointer();
+            reveal::boot_mark("login window shown");
+        });
         let (l2, l4) = (l.clone(), l.clone());
         wire(
             l.panel.clone(),
@@ -433,7 +548,7 @@ pub fn run_login() -> glib::ExitCode {
                 let user = l2.selected();
                 move |pw: String| login::login(login::LOGIN_SOCKET, &user, &pw)
             },
-            || std::process::exit(0),
+            |_| reveal::exit_faded(),
             move |v| l4.failed(v),
         );
         let keys = gtk::EventControllerKey::new();

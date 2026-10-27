@@ -3,6 +3,7 @@ pub mod approval;
 pub mod capture;
 pub mod control_center;
 pub mod dock;
+pub mod installer;
 pub mod ipc;
 pub mod lock;
 pub mod menubar;
@@ -76,7 +77,10 @@ pub fn run_shell() -> glib::ExitCode {
         let app = app.clone();
         glib::idle_add_local_once(move || {
             let wall = panels::wallpaper(&app);
-            wall.connect_map(move |_| mark(t0, "wallpaper map"));
+            wall.connect_map(move |_| {
+                mark(t0, "wallpaper map");
+                kit::reveal::boot_mark("desktop shown");
+            });
             wall.present();
             let osd = panels::Osd::build(&app);
             menubar::poll_status(bar.clone(), sys.clone());
