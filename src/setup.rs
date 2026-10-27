@@ -138,14 +138,15 @@ const ZONES: [(&str, &str); 14] = [
     ("Europe/Zurich", "de_DE.UTF-8"),
 ];
 
-/// FreeBSD console keymap (`keymap=` in rc.conf, `br.kbd`) -> xkb layout.
+/// Console keymap (`KEYMAP=` in vconsole.conf, `br-abnt2`, `de-latin1`) -> xkb layout.
 fn xkb_of_console(keymap: &str) -> Option<&'static str> {
-    let base = keymap.trim().trim_matches('"').trim_end_matches(".kbd");
-    let base = base.split('.').next().unwrap_or(base);
-    Some(match base {
+    let k = keymap.trim().trim_matches('"');
+    if k == "us-acentos" {
+        return Some("us(intl)");
+    }
+    Some(match k.split('-').next().unwrap_or(k) {
         "us" => "us",
-        "us.intl" | "intl" => "us(intl)",
-        "br" | "br275" => "br",
+        "br" => "br",
         "pt" => "pt",
         "uk" | "gb" => "gb",
         "de" => "de",
@@ -155,8 +156,8 @@ fn xkb_of_console(keymap: &str) -> Option<&'static str> {
     })
 }
 
-/// What the machine already knows: `LANG`, the time zone (`/var/db/zoneinfo`) and the console
-/// keymap (`keymap=` in `/etc/rc.conf`). Any of them may be missing.
+/// What the machine already knows: `LANG`, the time zone (`/etc/localtime` link) and the console
+/// keymap (`KEYMAP=` in `/etc/vconsole.conf`). Any of them may be missing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Hints {
     pub lang: Option<String>,
@@ -168,15 +169,20 @@ impl Hints {
     /// Reads the hints on this machine (`root` = `/`).
     pub fn read(root: &std::path::Path) -> Hints {
         let file = |p: &str| std::fs::read_to_string(root.join(p)).ok();
-        let keymap = file("etc/rc.conf").and_then(|rc| {
-            rc.lines()
+        let keymap = file("etc/vconsole.conf").and_then(|vc| {
+            vc.lines()
                 .rev()
-                .find_map(|l| l.trim().strip_prefix("keymap="))
+                .find_map(|l| l.trim().strip_prefix("KEYMAP="))
                 .map(|v| v.trim_matches('"').to_string())
         });
         Hints {
             lang: std::env::var("LANG").ok(),
-            zone: file("var/db/zoneinfo").map(|z| z.trim().to_string()),
+            zone: std::fs::read_link(root.join("etc/localtime"))
+                .ok()
+                .and_then(|l| {
+                    let l = l.to_string_lossy().into_owned();
+                    l.split_once("zoneinfo/").map(|(_, z)| z.to_string())
+                }),
             keymap,
         }
     }
@@ -644,33 +650,36 @@ mod tests {
             "LANG wins"
         );
         assert_eq!(
-            pick(&h(None, Some("Europe/London"), Some("us.kbd"))),
+            pick(&h(None, Some("Europe/London"), Some("us"))),
             ("en_GB.UTF-8", "us"),
             "the console keymap names the keyboard"
         );
         assert_eq!(
-            pick(&h(None, Some("Asia/Tokyo"), Some("jp.kbd"))),
+            pick(&h(None, Some("Asia/Tokyo"), Some("jp106"))),
             ("en_US.UTF-8", "us")
         );
         assert_eq!(
-            pick(&h(None, None, Some("\"br.kbd\""))),
+            pick(&h(None, None, Some("\"br-abnt2\""))),
             ("en_US.UTF-8", "br")
         );
 
         let root = std::env::temp_dir().join(format!("wol-setup-hints-{}", std::process::id()));
         std::fs::create_dir_all(root.join("etc")).unwrap();
-        std::fs::create_dir_all(root.join("var/db")).unwrap();
         std::fs::write(
-            root.join("etc/rc.conf"),
-            "hostname=\"x\"\nkeymap=\"de.kbd\"\n",
+            root.join("etc/vconsole.conf"),
+            "FONT=ter-v16n\nKEYMAP=de-latin1\n",
         )
         .unwrap();
-        std::fs::write(root.join("var/db/zoneinfo"), "Europe/Madrid\n").unwrap();
+        let _ = std::fs::remove_file(root.join("etc/localtime"));
+        std::os::unix::fs::symlink("/usr/share/zoneinfo/Europe/Madrid", root.join("etc/localtime"))
+            .unwrap();
         let r = Hints::read(&root);
         assert_eq!(
             (r.zone.as_deref(), r.keymap.as_deref()),
-            (Some("Europe/Madrid"), Some("de.kbd"))
+            (Some("Europe/Madrid"), Some("de-latin1"))
         );
+        assert_eq!(xkb_of_console("uk"), Some("gb"));
+        assert_eq!(xkb_of_console("us-acentos"), Some("us(intl)"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
