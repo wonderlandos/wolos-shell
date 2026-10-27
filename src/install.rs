@@ -73,6 +73,25 @@ pub const SECURE_BOOT_TEXT: &str = "This beta of WolOS can’t start while Secur
 Restart, open your computer's startup settings (often F2, F10, F12 or Delete), turn off \
 Secure Boot, then install again.";
 
+/// Why the screen stays on and the machine awake (idle inhibitors show it).
+pub const AWAKE_REASON: &str = "Installing WolOS";
+
+/// Keeps the machine awake exactly while the install runs: `set` says when to take or give back
+/// the inhibitors (Some(on)), None when nothing changes.
+#[derive(Debug, Default)]
+pub struct Awake {
+    on: bool,
+}
+
+impl Awake {
+    pub fn set(&mut self, installing: bool) -> Option<bool> {
+        (installing != self.on).then(|| {
+            self.on = installing;
+            installing
+        })
+    }
+}
+
 /// Prefix of every progress line `install-run` and the installer script print.
 pub const MARK: &str = "wolos-install: ";
 /// Title word of a bsdinstall error box (an extract error; the installer script replaces the
@@ -465,6 +484,16 @@ Providers:
         let bar: Vec<f64> = order.iter().map(|(r, t)| fraction(r, *t)).collect();
         assert!(bar.windows(2).all(|w| w[0] <= w[1]), "{bar:?}");
         assert_eq!(*bar.last().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn awake_only_while_installing() {
+        let mut a = Awake::default();
+        assert_eq!(a.set(false), None, "nothing held on the disk page");
+        assert_eq!(a.set(true), Some(true), "Erase and Install takes it");
+        assert_eq!(a.set(true), None, "held once");
+        assert_eq!(a.set(false), Some(false), "done or stopped gives it back");
+        assert_eq!(a.set(true), Some(true), "Try Again takes it again");
     }
 
     #[test]
