@@ -1,4 +1,4 @@
-//! Software Update: what the daily check found (FreeBSD's fixes, package updates, the ones that
+//! Software Update: what the daily check found (base system fixes, package updates, the ones that
 //! fix security problems), Check Now, and Update Now into a new boot environment.
 use super::*;
 use wol_core::update::check::Updates;
@@ -33,14 +33,14 @@ pub fn from_snapshot(u: Option<&Updates>) -> UpdateState {
         Some(u) => UpdateState::Available(
             u.base
                 .iter()
-                .map(|b| format!("FreeBSD {b}"))
+                .map(|b| format!("WolOS {b}"))
                 .chain(u.packages.iter().cloned())
                 .collect(),
         ),
     }
 }
 
-/// "FreeBSD 15.1-RELEASE-p3, firefox and curl", at most `max` names then "and 3 more" (the title
+/// "WolOS 2026.11, firefox and curl", at most `max` names then "and 3 more" (the title
 /// already says how many).
 pub fn names_line(names: &[String], max: usize) -> String {
     let shown: Vec<&str> = names.iter().take(max).map(String::as_str).collect();
@@ -281,14 +281,10 @@ mod tests {
         );
         u.packages = vec!["curl".into(), "git".into()];
         u.security = vec!["curl".into()];
-        u.base = Some("15.1-RELEASE-p3".into());
+        u.base = Some("2026.11".into());
         assert_eq!(
             from_snapshot(Some(&u)),
-            UpdateState::Available(vec![
-                "FreeBSD 15.1-RELEASE-p3".into(),
-                "curl".into(),
-                "git".into()
-            ])
+            UpdateState::Available(vec!["WolOS 2026.11".into(), "curl".into(), "git".into()])
         );
         assert_eq!(
             snapshot_line(&u, 10_300),
