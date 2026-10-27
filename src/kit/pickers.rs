@@ -12,7 +12,7 @@ use wol_core::looks::Looks;
 /// Preset card preview (16:10).
 pub const PRESET_THUMB: (i32, i32) = (176, 110);
 /// Large live preview at the top of Effects & Looks.
-pub const LOOKS_HERO: (i32, i32) = (352, 220);
+pub const LOOKS_HERO: (i32, i32) = (320, 200);
 /// Colour well diameter.
 pub const WELL: i32 = 22;
 /// Characters a preset description wraps at.
@@ -392,14 +392,12 @@ impl PresetCard {
         let n = w::label(name, "");
         n.add_css_class("preset-name");
         b.append(&n);
+        // Whole words only: descriptions are at most two short lines (`looks::DESCRIPTION_CHARS`).
         let d = w::label(description, "secondary");
         d.set_wrap(true);
-        d.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        d.set_lines(2);
+        d.set_wrap_mode(gtk::pango::WrapMode::Word);
         d.set_max_width_chars(PRESET_CHARS);
         d.set_width_chars(PRESET_CHARS);
-        d.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        d.add_css_class("may-ellipsize");
         d.set_visible(!description.is_empty());
         b.append(&d);
         let button = gtk::ToggleButton::builder()
