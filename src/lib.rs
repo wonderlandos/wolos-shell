@@ -8,6 +8,7 @@ pub mod clock;
 pub mod copy;
 pub mod desktop;
 pub mod hypr;
+pub mod install;
 pub mod layout;
 pub mod login;
 pub mod overview;

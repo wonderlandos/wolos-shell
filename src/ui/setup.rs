@@ -1,415 +1,495 @@
-//! Setup assistant (`wol-setup`, ADR 0004): one glass card per step over the blurred wallpaper.
-//! Runs as `_wollogin` on first boot; Wi-Fi and the account go to wol-login over its socket.
-use crate::kit::{self, widgets as w};
+//! Setup Assistant (`wol-setup`, ADR 0004, ADR 0013): the welcome art, then one card per question
+//! over the blurred wallpaper, the same glass as the login window and the lock screen. Runs as
+//! `_wollogin` on first boot; Wi-Fi and the account go to wol-login over its socket. Return
+//! continues, Escape goes back; Get Started fades to black into the desktop.
+use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList};
+use crate::kit::{self, reveal, widgets as w};
 use crate::login::{self, Verdict};
 use crate::setup::{
-    Appearance, Draft, Field, KEYBOARDS, LANGUAGES, STEPS, Step, initials_or_placeholder,
+    APPEARANCES, Appearance, Draft, Field, Flow, Hints, Job, KEYBOARDS, LANGUAGES, Next, STEPS,
+    Step, THEMES, WifiPick, initials_or_placeholder,
 };
-use crate::system::System;
+use crate::system::{System, WifiNetwork};
 use gtk::{glib, prelude::*};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-/// Greetings the welcome screen cross-fades through.
-const HELLOS: [&str; 6] = ["Hello", "Olá", "Hola", "Bonjour", "Hallo", "Ciao"];
-const HELLO_EVERY: std::time::Duration = std::time::Duration::from_millis(2600);
-const HELLO_FADE_MS: u32 = 900;
-const FIELDS: [Field; 5] = [
-    Field::FullName,
-    Field::Name,
-    Field::Password,
-    Field::Verify,
-    Field::Hint,
+const FIELDS: [(Field, &str, bool); 5] = [
+    (Field::FullName, "Full name", false),
+    (Field::Name, "Account name", false),
+    (Field::Password, "Password", true),
+    (Field::Verify, "Verify", true),
+    (Field::Hint, "Hint", false),
 ];
+
+/// The Wi-Fi page's parts that change with each scan.
+#[derive(Clone)]
+struct WifiUi {
+    holder: gtk::Box,
+    pw: gtk::Widget,
+    pw_row: gtk::Box,
+}
+
+/// `holder` shows `child` only.
+fn replace_child(holder: &gtk::Box, child: &impl IsA<gtk::Widget>) {
+    while let Some(c) = holder.first_child() {
+        holder.remove(&c);
+    }
+    holder.append(child);
+}
 
 pub struct Setup {
     pub root: gtk::Widget,
-    stack: gtk::Stack,
-    draft: Rc<RefCell<Draft>>,
-    /// Continue buttons; the account one follows the draft's rules.
-    account_next: RefCell<Option<gtk::Button>>,
-    /// Problem line under each account field; shown once that field was edited.
-    problems: RefCell<Vec<(Field, gtk::Label)>>,
-    touched: RefCell<Vec<Field>>,
-    editors: RefCell<Vec<(Field, gtk::Editable)>>,
-    done_message: gtk::Label,
+    pager: gtk::Stack,
+    flow: RefCell<Flow>,
+    cards: RefCell<Vec<(Step, Card)>>,
+    editors: RefCell<Vec<(Field, gtk::Widget)>>,
+    avatar: RefCell<Option<gtk::Label>>,
+    keyboard: RefCell<Option<gtk::DropDown>>,
+    wifi_ui: RefCell<Option<WifiUi>>,
+    scanning: Cell<bool>,
+    busy: Cell<bool>,
 }
 
 impl Setup {
+    /// Language and keyboard from this machine's hints (none in golden renders).
     pub fn new(sys: &dyn System) -> Rc<Setup> {
-        let stack = gtk::Stack::builder()
-            .transition_type(gtk::StackTransitionType::Crossfade)
-            .vhomogeneous(false)
-            .hhomogeneous(false)
-            .valign(gtk::Align::Center)
-            .halign(gtk::Align::Center)
-            .vexpand(true)
-            .build();
+        let hints = if std::env::var_os("WOL_FAKE_NOW").is_some() {
+            Hints::default()
+        } else {
+            Hints::read(std::path::Path::new("/"))
+        };
+        Setup::with(sys, &hints)
+    }
+
+    pub fn with(sys: &dyn System, hints: &Hints) -> Rc<Setup> {
+        let net = sys.network();
+        let pager = a::pager();
         let s = Rc::new(Setup {
-            root: super::lock::screen(&stack),
-            stack,
-            draft: Default::default(),
-            account_next: Default::default(),
-            problems: Default::default(),
-            touched: Default::default(),
+            root: super::lock::screen(&pager),
+            pager,
+            flow: RefCell::new(Flow::new(Draft::detected(hints), net.online && !net.wifi)),
+            cards: Default::default(),
             editors: Default::default(),
-            done_message: w::centered("", "setup-subtitle"),
+            avatar: Default::default(),
+            keyboard: Default::default(),
+            wifi_ui: Default::default(),
+            scanning: Cell::new(false),
+            busy: Cell::new(false),
         });
-        let pages: [(Step, gtk::Widget); 7] = [
-            (Step::Welcome, welcome(&s).upcast()),
-            (Step::Language, s.language().upcast()),
-            (Step::Keyboard, s.keyboard().upcast()),
-            (Step::Wifi, s.wifi(sys).upcast()),
-            (Step::Account, s.account().upcast()),
-            (Step::Appearance, s.appearance().upcast()),
-            (Step::Done, s.done().upcast()),
-        ];
-        for (st, p) in pages {
-            s.stack.add_named(&p, Some(st.id()));
+        s.pager.add_named(&s.welcome(), Some(Step::Welcome.id()));
+        for st in &STEPS[1..] {
+            let card = match st {
+                Step::Language => s.language(),
+                Step::Wifi => s.wifi(sys),
+                Step::Account => s.account(),
+                Step::Appearance => s.appearance(),
+                _ => s.done(),
+            };
+            s.wire(*st, &card);
+            s.pager.add_named(&card.root, Some(st.id()));
+            s.cards.borrow_mut().push((*st, card));
         }
-        s.refresh();
         s
     }
 
+    /// Shows `step` at once (golden renders, tests).
     pub fn show(&self, step: Step) {
-        self.stack.set_visible_child_name(step.id());
+        self.flow.borrow_mut().step = step;
+        self.pager
+            .set_transition_type(gtk::StackTransitionType::None);
+        self.pager.set_visible_child_name(step.id());
+        self.pager
+            .set_transition_type(gtk::StackTransitionType::Crossfade);
     }
 
     /// Types into an account field as the user would (goldens, tests).
     pub fn type_into(&self, f: Field, text: &str) {
-        if let Some((_, e)) = self.editors.borrow().iter().find(|(g, _)| *g == f) {
+        if let Some(e) = self.editor(f) {
             e.set_text(text);
         }
     }
 
-    fn go(&self, step: Option<Step>) {
-        if let Some(st) = step {
-            self.show(st);
+    fn editor(&self, f: Field) -> Option<gtk::Editable> {
+        self.editors
+            .borrow()
+            .iter()
+            .find(|(g, _)| *g == f)
+            .and_then(|(_, e)| e.clone().dynamic_cast::<gtk::Editable>().ok())
+    }
+
+    fn with_card(&self, step: Step, f: impl FnOnce(&Card)) {
+        if let Some((_, c)) = self.cards.borrow().iter().find(|(s, _)| *s == step) {
+            f(c)
         }
     }
 
-    fn current(&self) -> Step {
-        let id = self.stack.visible_child_name().unwrap_or_default();
-        STEPS
-            .into_iter()
-            .find(|s| s.id() == id)
-            .unwrap_or(Step::Welcome)
-    }
-
-    /// Account rules -> Continue sensitivity and the problem line under the concerned field.
-    fn refresh(&self) {
-        let problem = self.draft.borrow().account_problem();
-        if let Some(b) = &*self.account_next.borrow() {
-            b.set_sensitive(problem.is_none());
-        }
-        let touched = self.touched.borrow();
-        for (f, l) in self.problems.borrow().iter() {
-            let text = match problem {
-                Some((pf, why)) if pf == *f && touched.contains(f) => why,
-                _ => "",
-            };
-            l.set_label(text);
-            l.set_visible(!text.is_empty());
-        }
-    }
-
-    /// Card sized to its content: icon, title, subtitle, body, Back / Continue.
-    fn card(
-        self: &Rc<Self>,
-        step: Step,
-        icon: &str,
-        subtitle: &str,
-        body: &impl IsA<gtk::Widget>,
-        extra: Option<gtk::Widget>,
-    ) -> gtk::Box {
-        let c = w::glass_panel(w::S6);
-        c.add_css_class("setup-card");
-        c.set_width_request(w::SETUP_CARD_WIDTH);
-        let head = w::vbox(w::S2);
-        let i = w::icon(icon, w::ICON_L);
-        i.add_css_class("setup-icon");
-        i.set_halign(gtk::Align::Center);
-        head.append(&i);
-        head.append(&w::centered(step.title(), "large-title"));
-        let sub = w::centered(subtitle, "setup-subtitle");
-        sub.set_wrap(true);
-        head.append(&sub);
-        c.append(&head);
-        c.append(body);
-        let foot = w::hbox(w::S2);
+    /// Back and Continue of a card.
+    fn wire(self: &Rc<Self>, step: Step, card: &Card) {
         let me = Rc::downgrade(self);
-        foot.append(&w::button("Back", w::Kind::Default, move || {
+        card.next.connect_clicked(move |_| {
             if let Some(s) = me.upgrade() {
-                s.go(step.prev())
-            }
-        }));
-        foot.append(&w::spacer());
-        if let Some(x) = extra {
-            foot.append(&x);
-        }
-        let me = Rc::downgrade(self);
-        let next = w::button("Continue", w::Kind::Primary, move || {
-            if let Some(s) = me.upgrade() {
-                s.go(step.next())
+                s.next()
             }
         });
-        if step == Step::Account {
-            *self.account_next.borrow_mut() = Some(next.clone());
-        }
-        foot.append(&next);
-        c.append(&foot);
-        c
-    }
-
-    /// One-choice list showing whole rows only (scrolls past `SETUP_ROWS`).
-    fn choices(
-        self: &Rc<Self>,
-        rows: Vec<(String, Option<gtk::Widget>, Option<gtk::Widget>)>,
-        selected: usize,
-        picked: impl Fn(&Setup, usize) + 'static,
-    ) -> gtk::ScrolledWindow {
-        let picked = Rc::new(picked);
-        let list = w::vbox(0);
-        list.set_valign(gtk::Align::Start);
-        let checks: Rc<RefCell<Vec<gtk::Image>>> = Default::default();
-        let n = rows.len() as i32;
-        for (i, (title, lead, trail)) in rows.into_iter().enumerate() {
-            let row = w::hbox(w::S3);
-            row.add_css_class("list-row");
-            row.add_css_class("setup-row");
-            if let Some(l) = lead {
-                row.append(&l);
-            }
-            let t = w::label(&title, "");
-            t.set_hexpand(true);
-            row.append(&t);
-            if let Some(x) = trail {
-                row.append(&x);
-            }
-            let check = w::icon("object-select-symbolic", w::ICON);
-            check.add_css_class("accent-icon");
-            check.set_opacity(if i == selected { 1.0 } else { 0.0 });
-            row.append(&check);
-            checks.borrow_mut().push(check);
-            let b = gtk::Button::builder().child(&row).build();
-            b.add_css_class("row-button");
-            b.add_css_class("setup-choice");
-            let (me, cs, picked) = (Rc::downgrade(self), checks.clone(), picked.clone());
-            b.connect_clicked(move |_| {
-                for (j, c) in cs.borrow().iter().enumerate() {
-                    c.set_opacity(if i == j { 1.0 } else { 0.0 });
-                }
-                if let Some(s) = me.upgrade() {
-                    picked(&s, i);
-                }
-            });
-            list.append(&b);
-        }
-        let h = w::SETUP_ROW * n.min(w::SETUP_ROWS);
-        let sc = gtk::ScrolledWindow::builder()
-            .child(&list)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_height(h)
-            .max_content_height(h)
-            .build();
-        sc.add_css_class("setup-list");
-        sc.add_css_class("whole-rows");
-        sc
-    }
-
-    fn language(self: &Rc<Self>) -> gtk::Box {
-        let rows = LANGUAGES
-            .iter()
-            .map(|l| {
-                let r = w::label(l.region, "secondary");
-                (l.name.to_string(), None, Some(r.upcast()))
-            })
-            .collect();
-        let list = self.choices(rows, 0, |s, i| s.draft.borrow_mut().set_language(i));
-        self.card(
-            Step::Language,
-            "preferences-desktop-locale-symbolic",
-            "Choose your language and region.",
-            &list,
-            None,
-        )
-    }
-
-    fn keyboard(self: &Rc<Self>) -> gtk::Box {
-        let rows = KEYBOARDS
-            .iter()
-            .map(|k| {
-                let i = w::icon("input-keyboard-symbolic", w::ICON);
-                i.add_css_class("dim-icon");
-                (k.1.to_string(), Some(i.upcast()), None)
-            })
-            .collect();
-        let list = self.choices(rows, 0, |s, i| s.draft.borrow_mut().keyboard = i);
-        self.card(
-            Step::Keyboard,
-            "input-keyboard-symbolic",
-            "Choose the layout that matches your keyboard.",
-            &list,
-            None,
-        )
-    }
-
-    fn wifi(self: &Rc<Self>, sys: &dyn System) -> gtk::Box {
-        let nets = sys.wifi_networks();
-        let body = w::vbox(w::S3);
-        let join = w::vbox(w::S2);
-        let pw = w::password_field("Network password");
-        pw.add_css_class("setup-field");
-        join.append(&pw);
-        let row = w::hbox(w::S2);
-        let message = w::label("", "setup-problem");
-        message.set_hexpand(true);
-        row.append(&message);
-        join.append(&row);
-        join.set_visible(false);
-        let chosen: Rc<RefCell<Option<String>>> = Default::default();
-        if nets.is_empty() {
-            body.append(&w::empty_state(
-                "network-wireless-offline-symbolic",
-                "No networks found",
-                "You can join a network later in Control Center.",
-                None,
-            ));
-        } else {
-            let rows = nets
-                .iter()
-                .map(|n| {
-                    let sig = w::icon(
-                        crate::status::network(crate::status::Network {
-                            online: true,
-                            wifi: true,
-                            signal: Some(n.signal),
-                        }),
-                        w::ICON,
-                    );
-                    let lock = n.secure.then(|| {
-                        let l = w::icon("network-wireless-encrypted-symbolic", w::ICON);
-                        l.add_css_class("dim-icon");
-                        l.set_tooltip_text(Some("Secured"));
-                        l.upcast()
-                    });
-                    (n.ssid.clone(), Some(sig.upcast()), lock)
-                })
-                .collect();
-            let selected = nets.iter().position(|n| n.connected).unwrap_or(usize::MAX);
-            let nets2 = nets.clone();
-            let (j, c, p) = (join.clone(), chosen.clone(), pw.clone());
-            body.append(&self.choices(rows, selected, move |_, i| {
-                let n = &nets2[i];
-                *c.borrow_mut() = Some(n.ssid.clone());
-                j.set_visible(!n.connected);
-                p.set_visible(n.secure);
-                p.grab_focus();
-            }));
-        }
         let me = Rc::downgrade(self);
-        let (c, p, m) = (chosen.clone(), pw.clone(), message.clone());
-        let join_btn = w::button("Join", w::Kind::Default, move || {
-            let Some(ssid) = c.borrow().clone() else {
-                return;
-            };
-            let pass = p.text().to_string();
-            m.set_label("Joining…");
-            let (me, m) = (me.clone(), m.clone());
-            glib::spawn_future_local(async move {
-                let v = gtk::gio::spawn_blocking(move || {
-                    login::request(
-                        login::LOGIN_SOCKET,
-                        &shared::login::encode_wifi(&ssid, &pass),
-                    )
-                })
+        card.back.connect_clicked(move |_| {
+            if let Some(s) = me.upgrade() {
+                s.back()
+            }
+        });
+        card.back.set_visible(step != Step::Done);
+    }
+
+    /// Continue (button or Return).
+    pub fn next(self: &Rc<Self>) {
+        if self.busy.get() {
+            return;
+        }
+        let n = self.flow.borrow_mut().advance();
+        self.apply(n);
+    }
+
+    /// Back (button or Escape).
+    pub fn back(self: &Rc<Self>) {
+        if self.busy.get() {
+            return;
+        }
+        let from = self.flow.borrow().step;
+        if let Some(p) = self.flow.borrow_mut().back() {
+            self.with_card(from, |c| c.say("", false));
+            self.pager.set_visible_child_name(p.id());
+        }
+    }
+
+    fn apply(self: &Rc<Self>, n: Next) {
+        let step = self.flow.borrow().step;
+        self.clear_problems();
+        match n {
+            Next::Go(s) => {
+                for (_, c) in self.cards.borrow().iter() {
+                    c.say("", false);
+                }
+                self.pager.set_visible_child_name(s.id());
+                if s == Step::Wifi {
+                    self.scan();
+                }
+                if s == Step::Account
+                    && let Some(e) = self.editor(Field::FullName)
+                {
+                    e.grab_focus();
+                }
+            }
+            Next::Stay(field, why) => {
+                self.with_card(step, |c| c.say(&why, true));
+                if let Some(f) = field {
+                    self.mark(f);
+                }
+            }
+            Next::Run(job) => self.run(job),
+            Next::Finish => reveal::exit_faded(),
+        }
+    }
+
+    /// Field with the problem: outlined and focused.
+    fn mark(&self, f: Field) {
+        if let Some((_, e)) = self.editors.borrow().iter().find(|(g, _)| *g == f) {
+            e.add_css_class("problem");
+            e.grab_focus();
+        }
+    }
+
+    fn clear_problems(&self) {
+        for (_, e) in self.editors.borrow().iter() {
+            e.remove_css_class("problem");
+        }
+    }
+
+    /// Runs `job` through wol-login off the main thread, then lets the flow decide.
+    fn run(self: &Rc<Self>, job: Job) {
+        let step = self.flow.borrow().step;
+        let (req, doing) = match &job {
+            Job::JoinWifi { ssid, password } => (
+                shared::login::encode_wifi(ssid, password),
+                format!("Joining “{ssid}”…"),
+            ),
+            Job::CreateAccount(acc) => (acc.encode(), "Setting up your account…".to_string()),
+        };
+        self.busy.set(true);
+        self.with_card(step, |c| {
+            c.say(&doing, false);
+            c.set_busy(true);
+        });
+        let me = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let v = gtk::gio::spawn_blocking(move || login::request(login::LOGIN_SOCKET, &req))
                 .await
                 .unwrap_or(Verdict::Error);
-                if v == Verdict::Ok {
-                    m.set_label("");
-                    if let Some(s) = me.upgrade() {
-                        s.go(Step::Wifi.next());
-                    }
-                } else {
-                    m.set_label("Couldn't join. Check the password, or skip for now.");
-                }
-            });
+            let Some(s) = me.upgrade() else {
+                return;
+            };
+            s.busy.set(false);
+            s.with_card(step, |c| c.set_busy(false));
+            let n = s.flow.borrow_mut().job_done(&job, v);
+            s.apply(n);
         });
-        row.append(&join_btn);
-        body.append(&join);
+    }
+
+    fn welcome(self: &Rc<Self>) -> gtk::Widget {
         let me = Rc::downgrade(self);
-        let skip = w::button("Not Now", w::Kind::Plain, move || {
+        let go = w::button("Continue", w::Kind::Primary, move || {
             if let Some(s) = me.upgrade() {
-                s.go(Step::Wifi.next())
+                s.next()
             }
         });
-        self.card(
-            Step::Wifi,
-            "network-wireless-symbolic",
-            "Connect to the internet. You can skip this and join later.",
-            &body,
-            Some(skip.upcast()),
+        a::welcome(
+            "setup-welcome",
+            "Welcome to\nWolOS",
+            Step::Welcome.subtitle(),
+            &go,
         )
     }
 
-    fn account(self: &Rc<Self>) -> gtk::Box {
+    fn language(self: &Rc<Self>) -> Card {
+        let d = self.flow.borrow().draft.clone();
         let body = w::vbox(w::S4);
-        let avatar = w::avatar("", w::AVATAR_XL);
-        avatar.set_label(&initials_or_placeholder(""));
-        avatar.add_css_class("setup-avatar");
-        body.append(&avatar);
-        let form = w::vbox(w::S2);
-        let mk = |f: Field| -> gtk::Widget {
-            let (e, ph): (gtk::Widget, &str) = match f {
-                Field::FullName => (w::text_field("").upcast(), "Full name"),
-                Field::Name => (w::text_field("").upcast(), "Account name"),
-                Field::Password => (w::password_field("").upcast(), "Password"),
-                Field::Verify => (w::password_field("").upcast(), "Verify password"),
-                Field::Hint => (w::text_field("").upcast(), "Password hint (optional)"),
-            };
-            e.set_property("placeholder-text", ph);
-            e.add_css_class("setup-field");
-            e
-        };
-        let fields: Vec<(Field, gtk::Widget)> = FIELDS.iter().map(|f| (*f, mk(*f))).collect();
-        for (f, e) in &fields {
-            form.append(e);
-            let p = w::label("", "setup-problem");
-            p.set_wrap(true);
-            p.set_visible(false);
-            form.append(&p);
-            self.problems.borrow_mut().push((*f, p));
-            if *f == Field::Hint {
-                let note = w::label(
-                    "Shown on the login window after three wrong passwords. Don't use the password itself.",
-                    "secondary",
-                );
-                note.set_wrap(true);
-                form.append(&note);
+        let rows = LANGUAGES
+            .iter()
+            .map(|l| Choice {
+                icon: None,
+                title: l.name.into(),
+                detail: l.region.into(),
+                trail: None,
+            })
+            .collect();
+        let me = Rc::downgrade(self);
+        let list = ChoiceList::new(rows, Some(d.language), move |i| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().draft.set_language(i);
+                let k = s.flow.borrow().draft.keyboard;
+                if let Some(dd) = &*s.keyboard.borrow() {
+                    dd.set_selected(k as u32);
+                }
             }
+        });
+        body.append(&list.root);
+        let names: Vec<&str> = KEYBOARDS.iter().map(|k| k.1).collect();
+        let kb = w::dropdown(&names, d.keyboard as u32);
+        let me = Rc::downgrade(self);
+        kb.connect_selected_notify(move |dd| {
+            let Some(s) = me.upgrade() else {
+                return;
+            };
+            let i = (dd.selected() as usize).min(KEYBOARDS.len() - 1);
+            s.flow.borrow_mut().draft.keyboard = i;
+            if std::env::var_os("WOL_FAKE_NOW").is_none() {
+                kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
+            }
+        });
+        body.append(&a::form_row("Keyboard", &kb));
+        *self.keyboard.borrow_mut() = Some(kb);
+        Card::new(
+            Art::Icon("preferences-desktop-locale-symbolic"),
+            Step::Language.title(),
+            Step::Language.subtitle(),
+            &body,
+        )
+    }
+
+    fn wifi(self: &Rc<Self>, sys: &dyn System) -> Card {
+        let body = w::vbox(w::S4);
+        let holder = w::vbox(0);
+        holder.set_vexpand(true);
+        body.append(&holder);
+        let pw = w::password_field("Network password");
+        let pw_row = a::form_row("Password", &pw);
+        pw_row.set_visible(false);
+        body.append(&pw_row);
+        let me = Rc::downgrade(self);
+        pw.connect_changed(move |e| {
+            if let Some(s) = me.upgrade()
+                && let Some(wp) = &mut s.flow.borrow_mut().wifi
+            {
+                wp.password = e.text().to_string();
+            }
+        });
+        *self.wifi_ui.borrow_mut() = Some(WifiUi {
+            holder,
+            pw: pw.upcast(),
+            pw_row,
+        });
+        // What the system already knows; entering the page scans again (wol-login).
+        self.show_networks(sys.wifi_networks());
+        let card = Card::new(
+            Art::Icon("network-wireless-symbolic"),
+            Step::Wifi.title(),
+            Step::Wifi.subtitle(),
+            &body,
+        );
+        let me = Rc::downgrade(self);
+        card.add_action(&w::button("Not Now", w::Kind::Plain, move || {
+            if let Some(s) = me.upgrade()
+                && !s.busy.get()
+            {
+                let n = s.flow.borrow_mut().skip_wifi();
+                s.apply(n);
+            }
+        }));
+        card
+    }
+
+    /// Scans through wol-login (a few seconds, spinner meanwhile), then lists what it heard.
+    fn scan(self: &Rc<Self>) {
+        if self.scanning.replace(true) {
+            return;
         }
-        body.append(&form);
-        let editable = |f: Field| -> gtk::Editable {
-            fields
-                .iter()
-                .find(|(g, _)| *g == f)
-                .and_then(|(_, e)| e.clone().dynamic_cast::<gtk::Editable>().ok())
-                .expect("editable field")
+        if let Some(ui) = &*self.wifi_ui.borrow() {
+            replace_child(&ui.holder, &a::waiting("Looking for networks…"));
+            ui.pw_row.set_visible(false);
+        }
+        let me = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let found = gtk::gio::spawn_blocking(|| login::wifi_scan(login::LOGIN_SOCKET))
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let Some(s) = me.upgrade() else {
+                return;
+            };
+            s.scanning.set(false);
+            s.show_networks(
+                found
+                    .into_iter()
+                    .map(|n| WifiNetwork {
+                        ssid: n.ssid,
+                        signal: n.signal,
+                        secure: n.secure,
+                        connected: n.connected,
+                    })
+                    .collect(),
+            );
+        });
+    }
+
+    /// The network list (or how to find one); the joined network is the pick.
+    fn show_networks(self: &Rc<Self>, nets: Vec<WifiNetwork>) {
+        let Some(ui) = self.wifi_ui.borrow().as_ref().map(WifiUi::clone) else {
+            return;
         };
-        let name_field = editable(Field::Name);
-        for (f, e) in &fields {
+        self.flow.borrow_mut().wifi = nets.iter().find(|n| n.connected).map(|n| WifiPick {
+            ssid: n.ssid.clone(),
+            secure: n.secure,
+            connected: true,
+            password: String::new(),
+        });
+        ui.pw_row.set_visible(false);
+        if nets.is_empty() {
+            let me = Rc::downgrade(self);
+            let again = w::button("Look Again", w::Kind::Default, move || {
+                if let Some(s) = me.upgrade() {
+                    s.scan()
+                }
+            });
+            replace_child(
+                &ui.holder,
+                &w::empty_state(
+                    "network-wireless-offline-symbolic",
+                    "No networks found",
+                    "Move closer to your Wi-Fi and look again, or choose Not Now.",
+                    Some(again),
+                ),
+            );
+            return;
+        }
+        let rows = nets
+            .iter()
+            .map(|n| Choice {
+                icon: Some(
+                    crate::status::network(crate::status::Network {
+                        online: true,
+                        wifi: true,
+                        signal: Some(n.signal),
+                    })
+                    .into(),
+                ),
+                title: n.ssid.clone(),
+                detail: String::new(),
+                trail: n
+                    .secure
+                    .then(|| "network-wireless-encrypted-symbolic".into()),
+            })
+            .collect();
+        let selected = nets.iter().position(|n| n.connected);
+        let me = Rc::downgrade(self);
+        let list = ChoiceList::new(rows, selected, move |i| {
+            let Some(s) = me.upgrade() else {
+                return;
+            };
+            let n = &nets[i];
+            let pw = ui.pw.clone().dynamic_cast::<gtk::Editable>().ok();
+            s.flow.borrow_mut().wifi = Some(WifiPick {
+                ssid: n.ssid.clone(),
+                secure: n.secure,
+                connected: n.connected,
+                password: pw
+                    .as_ref()
+                    .map(|p| p.text().to_string())
+                    .unwrap_or_default(),
+            });
+            ui.pw_row.set_visible(n.secure && !n.connected);
+            if ui.pw_row.is_visible() {
+                ui.pw.grab_focus();
+            }
+        });
+        if let Some(ui) = &*self.wifi_ui.borrow() {
+            replace_child(&ui.holder, &list.root);
+        }
+    }
+
+    fn account(self: &Rc<Self>) -> Card {
+        let me = Rc::downgrade(self);
+        let picker = a::AvatarPicker::new(0, move |i| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().draft.avatar = i;
+            }
+        });
+        picker.avatar.set_label(&initials_or_placeholder(""));
+        *self.avatar.borrow_mut() = Some(picker.avatar.clone());
+        let form = w::vbox(w::S2);
+        for (f, title, secret) in FIELDS {
+            let e: gtk::Widget = if secret {
+                w::password_field("").upcast()
+            } else {
+                w::text_field("").upcast()
+            };
+            if f == Field::Hint {
+                e.set_property(
+                    "placeholder-text",
+                    "Optional, shown after three wrong passwords",
+                );
+            }
+            e.add_css_class("assistant-field");
+            form.append(&a::form_row(title, &e));
+            self.editors.borrow_mut().push((f, e));
+        }
+        let note = a::caption(
+            "This account is the administrator: it can install apps and change any setting.",
+        );
+        note.set_wrap(true);
+        form.append(&note);
+        for (f, e) in self.editors.borrow().iter() {
             let Ok(e) = e.clone().dynamic_cast::<gtk::Editable>() else {
                 continue;
             };
-            self.editors.borrow_mut().push((*f, e.clone()));
-            let (f, me, av, nf) = (*f, Rc::downgrade(self), avatar.clone(), name_field.clone());
+            let (f, me) = (*f, Rc::downgrade(self));
             e.connect_changed(move |e| {
                 let Some(s) = me.upgrade() else {
                     return;
                 };
                 let t = e.text().to_string();
-                {
-                    let mut d = s.draft.borrow_mut();
+                let derived = {
+                    let d = &mut s.flow.borrow_mut().draft;
                     match f {
                         Field::FullName => d.set_full_name(&t),
                         Field::Name => d.set_name(&t),
@@ -417,205 +497,140 @@ impl Setup {
                         Field::Verify => d.verify = t.clone(),
                         Field::Hint => d.hint = t.clone(),
                     }
+                    d.name.clone()
+                };
+                if let Some((_, w)) = s.editors.borrow().iter().find(|(g, _)| *g == f) {
+                    w.remove_css_class("problem");
                 }
                 if f == Field::FullName {
-                    av.set_label(&initials_or_placeholder(&t));
-                    let derived = s.draft.borrow().name.clone();
-                    if nf.text() != derived {
+                    if let Some(av) = &*s.avatar.borrow() {
+                        av.set_label(&initials_or_placeholder(&t));
+                    }
+                    if let Some(nf) = s.editor(Field::Name)
+                        && nf.text() != derived
+                    {
                         nf.set_text(&derived);
                     }
                 }
-                let mut touched = s.touched.borrow_mut();
-                if !touched.contains(&f) {
-                    touched.push(f);
-                }
-                drop(touched);
-                s.refresh();
             });
         }
-        self.card(
-            Step::Account,
-            "system-users-symbolic",
-            "This account can administer this computer.",
-            &body,
-            None,
+        Card::new(
+            Art::Widget(picker.root.upcast()),
+            Step::Account.title(),
+            Step::Account.subtitle(),
+            &form,
         )
     }
 
-    fn appearance(self: &Rc<Self>) -> gtk::Box {
+    fn appearance(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S4);
         let light = crate::theme::resolve(Some("wol-light"), false);
         let dark = crate::theme::resolve(Some("wol-dark"), true);
-        let tiles = w::hbox(w::S4);
-        tiles.set_halign(gtk::Align::Center);
-        let choices = [
-            (Appearance::Light, "Light", vec![w::Palette::of(&light)]),
-            (Appearance::Dark, "Dark", vec![w::Palette::of(&dark)]),
-            (
-                Appearance::Auto,
-                "Auto",
-                vec![w::Palette::of(&light), w::Palette::of(&dark)],
-            ),
-        ];
-        let mut first: Option<gtk::ToggleButton> = None;
-        let selected = self.draft.borrow().appearance;
-        for (a, title, slices) in choices {
-            let t = w::theme_preview(slices, title, a == selected);
-            match &first {
-                Some(f) => t.set_group(Some(f)),
-                None => first = Some(t.clone()),
-            }
-            let (d, light, dark) = (self.draft.clone(), light.clone(), dark.clone());
-            t.connect_toggled(move |t| {
-                if t.is_active() {
-                    d.borrow_mut().appearance = a;
-                    // Preview the choice on the assistant itself.
-                    match a {
-                        Appearance::Light => kit::style::apply(&light, ""),
-                        Appearance::Dark => kit::style::apply(&dark, ""),
-                        Appearance::Auto => {}
+        let selected = self.flow.borrow().draft.appearance;
+        let modes: Vec<gtk::ToggleButton> = APPEARANCES
+            .iter()
+            .map(|ap| {
+                let slices = match ap {
+                    Appearance::Light => vec![w::Palette::of(&light)],
+                    Appearance::Dark => vec![w::Palette::of(&dark)],
+                    Appearance::Auto => vec![w::Palette::of(&light), w::Palette::of(&dark)],
+                };
+                let t = w::theme_preview(slices, ap.title(), *ap == selected);
+                let (me, ap) = (Rc::downgrade(self), *ap);
+                t.connect_toggled(move |t| {
+                    if let Some(s) = me.upgrade()
+                        && t.is_active()
+                    {
+                        s.flow.borrow_mut().draft.appearance = ap;
+                        s.preview_look();
                     }
-                }
-            });
-            tiles.append(&t);
-        }
-        self.card(
-            Step::Appearance,
-            "preferences-desktop-appearance-symbolic",
-            "Auto is light by day and dark at night. Change it any time in System Settings.",
-            &tiles,
-            None,
+                });
+                t
+            })
+            .collect();
+        body.append(&a::tile_row(&modes));
+        let dark_now = super::lock::prefers_dark();
+        let looks: Vec<gtk::ToggleButton> = THEMES
+            .iter()
+            .enumerate()
+            .map(|(i, (accent, title))| {
+                let id = wol_core::theme::accent::theme_id(
+                    Some(if dark_now {
+                        shared::theme::Variant::Dark
+                    } else {
+                        shared::theme::Variant::Light
+                    }),
+                    accent,
+                );
+                let t = crate::theme::resolve(id.as_deref(), dark_now);
+                let tile = w::theme_preview(vec![w::Palette::of(&t)], title, i == 0);
+                let me = Rc::downgrade(self);
+                tile.connect_toggled(move |t| {
+                    if let Some(s) = me.upgrade()
+                        && t.is_active()
+                    {
+                        s.flow.borrow_mut().draft.theme = i;
+                        s.preview_look();
+                    }
+                });
+                tile
+            })
+            .collect();
+        body.append(&a::tile_row(&looks));
+        Card::new(
+            Art::Icon("preferences-desktop-appearance-symbolic"),
+            Step::Appearance.title(),
+            Step::Appearance.subtitle(),
+            &body,
         )
     }
 
-    /// No Back: the account exists once this card's button is pressed.
-    fn done(self: &Rc<Self>) -> gtk::Box {
-        let c = w::glass_panel(w::S4);
-        c.add_css_class("setup-card");
-        c.set_width_request(w::SETUP_CARD_WIDTH);
-        let i = w::icon("object-select-symbolic", w::ICON_M);
-        i.add_css_class("setup-done-icon");
-        // Gentle scale-in when the card appears (not in fixed-time golden renders).
-        if std::env::var_os("WOL_FAKE_NOW").is_none() {
-            let (i2, i3) = (i.clone(), i.clone());
-            c.connect_map(move |_| i2.add_css_class("pop"));
-            c.connect_unmap(move |_| i3.remove_css_class("pop"));
-        }
-        i.set_halign(gtk::Align::Center);
-        c.append(&i);
-        c.append(&w::centered(Step::Done.title(), "large-title"));
-        let sub = w::centered(
-            "Your account is ready. WolOS starts right away.",
-            "setup-subtitle",
+    /// The assistant itself takes the chosen look.
+    fn preview_look(&self) {
+        let d = self.flow.borrow().draft.clone();
+        let variant = match d.appearance {
+            Appearance::Light => Some(shared::theme::Variant::Light),
+            Appearance::Dark => Some(shared::theme::Variant::Dark),
+            Appearance::Auto => None,
+        };
+        let dark = match d.appearance {
+            Appearance::Light => false,
+            Appearance::Dark => true,
+            Appearance::Auto => super::lock::prefers_dark(),
+        };
+        let id = wol_core::theme::accent::theme_id(variant, d.accent());
+        kit::style::apply(&crate::theme::resolve(id.as_deref(), dark), "");
+    }
+
+    /// No Back: the account exists once this page shows.
+    fn done(self: &Rc<Self>) -> Card {
+        let c = Card::moment(
+            "keyhole",
+            Step::Done.title(),
+            Step::Done.subtitle(),
+            &a::blank(),
         );
-        sub.set_wrap(true);
-        c.append(&sub);
-        let me = Rc::downgrade(self);
-        let start = w::button("Start Using WolOS", w::Kind::Primary, move || {
-            if let Some(s) = me.upgrade() {
-                s.finish()
-            }
-        });
-        start.set_halign(gtk::Align::Center);
-        start.add_css_class("setup-start");
-        c.append(&start);
-        self.done_message.set_wrap(true);
-        c.append(&self.done_message);
+        c.next.set_label("Get Started");
         c
     }
-
-    /// Creates the account through wol-login; on `ok` wol-login starts the session and ends this greeter.
-    fn finish(self: &Rc<Self>) {
-        let req = self.draft.borrow().account().encode();
-        self.done_message.set_label("Creating your account…");
-        let m = self.done_message.clone();
-        glib::spawn_future_local(async move {
-            let v = gtk::gio::spawn_blocking(move || login::request(login::LOGIN_SOCKET, &req))
-                .await
-                .unwrap_or(Verdict::Error);
-            match v {
-                Verdict::Ok => std::process::exit(0),
-                Verdict::Denied => {
-                    m.set_label("The account couldn't be created. Go back and check it.")
-                }
-                Verdict::Error => m.set_label("Setup is unavailable. Restart and try again."),
-            }
-        });
-    }
-}
-
-/// Welcome: logo, cross-fading "Hello", accent arrow with "Get Started".
-fn welcome(s: &Rc<Setup>) -> gtk::Box {
-    let b = w::vbox(w::S6);
-    b.set_valign(gtk::Align::Center);
-    let logo = w::icon("wolos-mark", w::ICON_XL);
-    logo.set_halign(gtk::Align::Center);
-    b.append(&logo);
-    let hello = gtk::Stack::builder()
-        .transition_type(gtk::StackTransitionType::Crossfade)
-        .transition_duration(HELLO_FADE_MS)
-        .hhomogeneous(true)
-        .vhomogeneous(true)
-        .build();
-    for h in HELLOS {
-        hello.add_named(&w::centered(h, "setup-hello"), Some(h));
-    }
-    let h2 = hello.downgrade();
-    let i = std::cell::Cell::new(0usize);
-    glib::timeout_add_local(HELLO_EVERY, move || {
-        let Some(h) = h2.upgrade() else {
-            return glib::ControlFlow::Break;
-        };
-        i.set((i.get() + 1) % HELLOS.len());
-        h.set_visible_child_name(HELLOS[i.get()]);
-        glib::ControlFlow::Continue
-    });
-    b.append(&hello);
-    let me = Rc::downgrade(s);
-    let go = gtk::Button::builder()
-        .child(&w::icon("go-next-symbolic", w::ICON))
-        .tooltip_text("Get Started")
-        .halign(gtk::Align::Center)
-        .build();
-    go.add_css_class("setup-go");
-    go.connect_clicked(move |_| {
-        if let Some(s) = me.upgrade() {
-            s.go(Step::Welcome.next())
-        }
-    });
-    let v = w::vbox(w::S2);
-    v.append(&go);
-    let cap = w::centered("Get Started", "lock-caption");
-    cap.add_css_class("setup-caption");
-    v.append(&cap);
-    b.append(&v);
-    b
 }
 
 pub fn run() -> glib::ExitCode {
-    let app = gtk::Application::builder()
-        .application_id("org.wolos.setup")
-        .build();
-    app.connect_activate(|app| {
-        kit::style::install("");
-        let win = gtk::ApplicationWindow::new(app);
-        win.add_css_class("lock-window");
+    a::run("org.wolos.setup", "setup", |win| {
         let s = Setup::new(&*crate::system::default_system());
-        win.set_child(Some(&s.root));
-        let keys = gtk::EventControllerKey::new();
-        let s2 = s.clone();
-        keys.connect_key_pressed(move |_, k, _, _| {
-            let cur = s2.current();
-            if k == gtk::gdk::Key::Escape && cur != Step::Welcome && cur != Step::Done {
-                s2.go(cur.prev());
-                glib::Propagation::Stop
-            } else {
-                glib::Propagation::Proceed
-            }
+        // Fades in from the compositor's black; Get Started fades out to it (ADR 0012).
+        let shown = reveal::Reveal::new(&s.root, true);
+        win.set_child(Some(&shown.root));
+        shown.show_when(super::lock::backdrop_ready, || {
+            reveal::show_pointer();
+            reveal::boot_mark("setup shown");
         });
-        win.add_controller(keys);
-        kit::snapshot_on_map(&win, "setup");
-        win.fullscreen();
-        win.present();
-    });
-    app.run_with_args::<&str>(&[])
+        let k = s.flow.borrow().draft.keyboard;
+        if KEYBOARDS[k].0 != KEYBOARDS[0].0 {
+            kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[k].0));
+        }
+        // The key controller keeps the assistant alive with its window.
+        let s2 = s.clone();
+        a::keys(win, move || s.next(), move || s2.back());
+    })
 }

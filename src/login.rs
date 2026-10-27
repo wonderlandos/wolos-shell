@@ -18,7 +18,7 @@ impl Verdict {
         match self {
             Verdict::Ok => "",
             Verdict::Denied => "Incorrect password",
-            Verdict::Error => "Authentication unavailable",
+            Verdict::Error => "Your password can't be checked right now. Try again, or restart.",
         }
     }
 }
@@ -87,17 +87,23 @@ pub fn request(socket: &str, req: &[u8]) -> Verdict {
 }
 
 fn exchange(socket: &str, req: &[u8]) -> Verdict {
-    let Ok(mut s) = std::os::unix::net::UnixStream::connect(socket) else {
-        return Verdict::Error;
-    };
-    if s.write_all(req).is_err() || s.shutdown(std::net::Shutdown::Write).is_err() {
-        return Verdict::Error;
-    }
+    reply_to(socket, req).map_or(Verdict::Error, |r| from_reply(&r))
+}
+
+/// Whole reply to one request (write side closed first). Blocking.
+fn reply_to(socket: &str, req: &[u8]) -> Option<String> {
+    let mut s = std::os::unix::net::UnixStream::connect(socket).ok()?;
+    s.write_all(req).ok()?;
+    s.shutdown(std::net::Shutdown::Write).ok()?;
     let mut r = String::new();
-    if s.read_to_string(&mut r).is_err() {
-        return Verdict::Error;
-    }
-    from_reply(&r)
+    s.read_to_string(&mut r).ok()?;
+    Some(r)
+}
+
+/// Setup's Wi-Fi list: wol-login scans and answers (ADR 0013). None: wol-login unreachable.
+/// Blocking (a few seconds); run off the GTK thread.
+pub fn wifi_scan(socket: &str) -> Option<Vec<shared::login::SeenNetwork>> {
+    shared::login::decode_networks(&reply_to(socket, &shared::login::encode_wifi_scan())?)
 }
 
 /// Avatar initials: "Klee Lima" -> "KL", "root" -> "R".
@@ -155,6 +161,9 @@ pub fn display_name(user: &str, passwd: &str) -> String {
 
 pub use shared::login::Power;
 
+/// Restart from the lock screen when passwords can't be checked (operator group, no root).
+pub const RESTART_NOW: [&str; 3] = ["shutdown", "-r", "now"];
+
 pub fn power_label(p: Power) -> &'static str {
     match p {
         Power::Sleep => "Sleep",
@@ -193,9 +202,110 @@ pub fn read_hint(user: &str) -> Option<String> {
     std::fs::read_to_string(std::path::Path::new(shared::login::HINTS_DIR).join(user)).ok()
 }
 
+/// Avatar colour chosen in Setup (ADR 0013): one allow-listed tone, else None (grey).
+pub fn avatar_tone(text: &str) -> Option<&'static str> {
+    let t = text.trim();
+    shared::login::AVATAR_TONES
+        .iter()
+        .find(|a| **a == t)
+        .copied()
+}
+
+/// The avatar file for `user` (`/var/db/wolos/avatars/<user>`, written by wol-login at setup).
+pub fn read_avatar(user: &str) -> Option<&'static str> {
+    if user.is_empty() || user.contains(['/', '\0']) || user.starts_with('.') {
+        return None;
+    }
+    let p = std::path::Path::new(shared::login::AVATARS_DIR).join(user);
+    avatar_tone(&std::fs::read_to_string(p).ok()?)
+}
+
 /// Owned-argument form for worker threads.
 pub fn authcheck_owned(password: String) -> Verdict {
     authcheck(&password)
+}
+
+/// Printed by the lock screen on stdout right after a real unlock; nothing else ends the lock.
+pub const UNLOCKED: &str = "wol-lock: unlocked";
+/// Respawns before the supervisor gives up (the compositor still holds the session locked).
+pub const MAX_LOCK_RESPAWNS: u32 = 30;
+
+/// wol-lock supervisor (ADR 0012): what follows the end of a lock screen process.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LockExit {
+    Done,
+    Respawn(std::time::Duration),
+}
+
+/// A lock screen that ended without [`UNLOCKED`] crashed: Hyprland keeps the session locked
+/// (`misc:allow_session_lock_restore`) and a new one takes over, 100 ms .. 3 s apart.
+pub fn lock_exit(unlocked: bool, compositor_alive: bool, attempt: u32) -> LockExit {
+    if unlocked || !compositor_alive || attempt >= MAX_LOCK_RESPAWNS {
+        return LockExit::Done;
+    }
+    let ms = (100u64 << attempt.min(5)).min(3000);
+    LockExit::Respawn(std::time::Duration::from_millis(ms))
+}
+
+/// Set by the supervisor for the lock screen process it runs.
+pub const LOCK_UI_ENV: &str = "WOL_LOCK_UI";
+/// Held (flock) by the running supervisor, in `$XDG_RUNTIME_DIR`.
+pub const LOCK_GUARD: &str = "wol-lock.lock";
+/// `wol-lock --startup`: the session's first screen (locked start, crash restart, ADR 0012).
+pub const STARTUP: &str = "--startup";
+
+/// Arguments the supervisor passes on to the lock screen (only [`STARTUP`]).
+pub fn lock_ui_args(args: &[String]) -> Vec<String> {
+    args.iter().filter(|a| *a == STARTUP).cloned().collect()
+}
+
+/// `$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY` (absolute display paths as given; empty = `wayland-0`).
+pub fn wayland_socket(runtime: &str, display: &str) -> std::path::PathBuf {
+    let d = if display.is_empty() {
+        "wayland-0"
+    } else {
+        display
+    };
+    std::path::Path::new(runtime).join(d)
+}
+
+pub fn reported_unlock(stdout: &[u8]) -> bool {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .any(|l| l == UNLOCKED)
+}
+
+pub const SECRETS: &str = "org.freedesktop.secrets";
+pub const LOGIN_COLLECTION: &str = "/org/freedesktop/secrets/collection/login";
+
+/// Start-up lock (ADR 0012): nobody typed a password at boot, so the login keyring opens with the
+/// one typed at the lock screen (gnome-keyring's master-password call; `plain` transport stays on
+/// this private session bus connection). Blocking.
+pub fn unlock_login_keyring(conn: &zbus::blocking::Connection, password: &str) -> zbus::Result<()> {
+    use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
+    let root = "/org/freedesktop/secrets";
+    let reply = conn.call_method(
+        Some(SECRETS),
+        root,
+        Some("org.freedesktop.Secret.Service"),
+        "OpenSession",
+        &("plain", Value::from("")),
+    )?;
+    let (_, session): (OwnedValue, OwnedObjectPath) = reply.body().deserialize()?;
+    let secret = (
+        session.as_ref(),
+        Vec::<u8>::new(),
+        password.as_bytes(),
+        "text/plain",
+    );
+    conn.call_method(
+        Some(SECRETS),
+        root,
+        Some("org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface"),
+        "UnlockWithMasterPassword",
+        &(ObjectPath::try_from(LOGIN_COLLECTION)?, secret),
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -277,6 +387,50 @@ mod tests {
                 ("bo".into(), "bo".into())
             ]
         );
+    }
+
+    #[test]
+    fn a_crashed_lock_screen_comes_back_until_unlocked() {
+        use std::time::Duration;
+        // (unlocked, compositor alive, attempt) -> next
+        assert_eq!(lock_exit(true, true, 0), LockExit::Done);
+        assert_eq!(lock_exit(false, false, 0), LockExit::Done, "session over");
+        let delays: Vec<LockExit> = (0..8).map(|n| lock_exit(false, true, n)).collect();
+        assert_eq!(delays[0], LockExit::Respawn(Duration::from_millis(100)));
+        assert_eq!(delays[1], LockExit::Respawn(Duration::from_millis(200)));
+        assert_eq!(delays[7], LockExit::Respawn(Duration::from_secs(3)));
+        // Giving up never unlocks: the compositor keeps the session locked.
+        assert_eq!(lock_exit(false, true, MAX_LOCK_RESPAWNS), LockExit::Done);
+        // Only the line the lock screen prints after a real unlock counts.
+        assert!(reported_unlock(format!("x\n{UNLOCKED}\n").as_bytes()));
+        assert!(!reported_unlock(b"wol-lock: unlocked-ish\n"));
+        assert!(!reported_unlock(b""));
+    }
+
+    /// The supervisor respawns only while the compositor that holds the lock is alive.
+    #[test]
+    fn avatar_tone_is_allow_listed() {
+        assert_eq!(avatar_tone("green\n"), Some("green"));
+        assert_eq!(avatar_tone("neon"), None);
+        assert_eq!(avatar_tone("../x"), None);
+        assert_eq!(read_avatar("../etc/passwd"), None);
+    }
+
+    #[test]
+    fn compositor_alive_means_its_wayland_socket_exists() {
+        use std::path::Path;
+        assert_eq!(
+            wayland_socket("/var/run/user/1001", "wayland-1"),
+            Path::new("/var/run/user/1001/wayland-1")
+        );
+        assert_eq!(
+            wayland_socket("/var/run/user/1001", "/tmp/w-0"),
+            Path::new("/tmp/w-0")
+        );
+        assert_eq!(wayland_socket("/r", ""), Path::new("/r/wayland-0"));
+        // The lock UI runs under the supervisor; `--startup` passes through.
+        assert_eq!(lock_ui_args(&["--startup".into()]), ["--startup"]);
+        assert!(lock_ui_args(&["--evil".into(), "x".into()]).is_empty());
     }
 
     #[test]

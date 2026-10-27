@@ -290,30 +290,45 @@ list.sidebar row.sidebar-search:hover { background: none; }
 .store-grid { margin-top: -8px; }
 .hero-banner button.get-button label { color: #1d1d1f; }
 
-/* ---- Setup assistant (wol-setup): content-sized glass card over the lock backdrop ---- */
-.setup-card { margin: 24px; padding: 24px; }
-label.setup-subtitle { color: var(--dim); font-size: 13px; }
-image.setup-icon { color: var(--accent); }
-label.setup-hello { font-size: 96px; font-weight: 600; color: white; letter-spacing: -2px; text-shadow: 0 2px 16px rgba(0,0,0,0.30); }
-.lock-screen.light label.setup-hello { color: rgba(22,18,48,0.90); text-shadow: 0 1px 12px rgba(255,255,255,0.40); }
-label.setup-caption { font-size: 13px; font-weight: 500; }
-button.setup-go { min-width: 44px; min-height: 44px; padding: 0; border-radius: 999px; border: none; box-shadow: 0 4px 16px rgba(0,0,0,0.20); background: var(--accent); color: var(--accent-text); }
-button.setup-go:hover { background: color-mix(in srgb, var(--accent) 88%, white); }
-scrolledwindow.setup-list { background: var(--card); border: 1px solid var(--line); border-radius: var(--glass-radius-s); }
-button.setup-choice { border-radius: 0; padding: 0; margin: 0; min-height: 0; }
-button.setup-choice + button.setup-choice { box-shadow: inset 0 1px var(--line); }
-button.setup-choice .list-row.setup-row { min-height: 36px; padding: 0 12px; }
-.setup-row label { font-size: 13px; }
-.setup-row label.secondary { font-size: 13px; color: var(--dim); }
-entry.setup-field, .setup-field { min-height: 28px; }
-label.setup-problem { color: var(--danger); font-size: 12px; }
-label.avatar.setup-avatar { background: color-mix(in srgb, var(--accent) 22%, var(--card)); color: var(--accent); }
-.setup-card button.btn:disabled { opacity: 0.45; }
-button.setup-start { min-height: 32px; padding: 0 24px; border-radius: 999px; margin-top: 8px; }
-@keyframes setup-pop { from { transform: scale(0.6); } to { transform: scale(1); } }
-image.setup-done-icon { background: var(--accent); color: var(--accent-text); border-radius: 999px; padding: 16px; }
-image.setup-done-icon.pop { animation: setup-pop 420ms cubic-bezier(.34,1.56,.64,1) 1; }
-.setup-field selection, .setup-field text selection { background: var(--accent); color: var(--accent-text); }
+/* ---- Assistants (Setup, installer; ADR 0013): one fixed card per question over the lock backdrop ---- */
+.glass-panel.assistant-card { padding: 32px; }
+image.assistant-icon { color: var(--accent); }
+label.assistant-subtitle { color: var(--dim); font-size: 13px; }
+label.assistant-caption { color: var(--dim); font-size: 12px; }
+label.assistant-status { color: var(--dim); font-size: 12px; }
+label.assistant-status.problem { color: var(--danger); }
+scrolledwindow.assistant-list { background: var(--card); border: 1px solid var(--line); border-radius: var(--glass-radius-s); }
+button.assistant-choice { border-radius: 0; padding: 0; margin: 0; min-height: 0; }
+button.assistant-choice + button.assistant-choice { box-shadow: inset 0 1px var(--line); }
+button.assistant-choice .list-row.assistant-row { min-height: 36px; padding: 0 12px; }
+.assistant-row label { font-size: 13px; }
+.assistant-row label.secondary { font-size: 13px; color: var(--dim); }
+label.assistant-form-label { color: var(--dim); font-size: 13px; }
+.assistant-form-row entry, .assistant-form-row passwordentry, .assistant-form-row dropdown > button { min-height: 28px; }
+.assistant-field.problem { box-shadow: 0 0 0 2px alpha(var(--danger), 0.60); }
+.assistant-field selection, .assistant-field text selection { background: var(--accent); color: var(--accent-text); }
+.assistant-card button.btn { min-height: 28px; padding: 0 16px; }
+.assistant-card button.btn:disabled { opacity: 0.45; }
+label.avatar.assistant-avatar { font-size: 24px; }
+label.avatar.avatar-tone-violet, .tone-dot.avatar-tone-violet { background: linear-gradient(160deg, #a48bff, #6f4ff0); }
+label.avatar.avatar-tone-blue, .tone-dot.avatar-tone-blue { background: linear-gradient(160deg, #5cb0ff, #0a6fe0); }
+label.avatar.avatar-tone-green, .tone-dot.avatar-tone-green { background: linear-gradient(160deg, #5fcf7a, #1f8f3c); }
+label.avatar.avatar-tone-orange, .tone-dot.avatar-tone-orange { background: linear-gradient(160deg, #ffb04d, #e06a00); }
+label.avatar.avatar-tone-pink, .tone-dot.avatar-tone-pink { background: linear-gradient(160deg, #ff7fae, #d02a6e); }
+label.avatar.avatar-tone-graphite, .tone-dot.avatar-tone-graphite { background: linear-gradient(160deg, #a0a0a8, #5e5e68); }
+.tone-dot { border-radius: 999px; }
+button.tone-button { background: none; border: none; box-shadow: none; padding: 2px; min-width: 0; min-height: 0; border-radius: 999px; }
+button.tone-button:checked { box-shadow: 0 0 0 2px var(--accent); }
+.assistant-warning { padding: 12px; border-radius: var(--glass-radius-s); background: alpha(var(--warning), 0.12); border: 1px solid alpha(var(--warning), 0.40); }
+.assistant-warning label { font-size: 13px; }
+.assistant-progress progressbar trough { min-height: 6px; border-radius: 3px; border: none; box-shadow: none; background: alpha(var(--text), 0.12); }
+.assistant-progress progressbar progress { min-height: 6px; margin: 0; border-radius: 3px; border: none; background: var(--accent); }
+/* Welcome: the art is a dusk scene in both appearances, so its words stay light. */
+.hero-fallback { background: linear-gradient(160deg, #15103a, #2f2370 55%, #5a40b0); }
+.hero-column { margin-left: 72px; }
+label.hero-title { font-size: 60px; font-weight: 700; letter-spacing: -1px; color: var(--on-art); text-shadow: 0 2px 18px rgba(10,6,40,0.35); }
+label.hero-subtitle { font-size: 18px; color: alpha(var(--on-art), 0.82); }
+button.hero-action { min-height: 36px; padding: 0 28px; border-radius: 999px; font-size: 14px; }
 
 /* ---- App switcher (Super+Tab) ---- */
 .switcher-strip { padding: 16px; border-radius: 28px; }

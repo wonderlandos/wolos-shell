@@ -1,0 +1,385 @@
+//! Install WolOS (`wol-installer`, ADR 0013): choose the disk, watch it install, restart. The same
+//! cards as the Setup Assistant. The work is `install-run` as root; this app reads its progress
+//! lines and answers bsdinstall's error box so a failed run ends.
+use crate::install::{self, Disk, Report, Stage};
+use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList};
+use crate::kit::{self, reveal, widgets as w};
+use gtk::{glib, prelude::*};
+use std::cell::{Cell, RefCell};
+use std::io::{BufRead, Write};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Page {
+    Choose,
+    Installing,
+    Done,
+    Failed,
+}
+
+impl Page {
+    fn id(self) -> &'static str {
+        match self {
+            Page::Choose => "choose",
+            Page::Installing => "installing",
+            Page::Done => "done",
+            Page::Failed => "failed",
+        }
+    }
+}
+
+/// What the install process reports to the page.
+enum Event {
+    Report(Report),
+    ErrorBox,
+    Exit(bool),
+}
+
+pub struct Installer {
+    pub root: gtk::Widget,
+    pager: gtk::Stack,
+    disks: Vec<Disk>,
+    /// The picked disk; the list writes it, Return and Erase and Install read it.
+    chosen: Rc<Cell<Option<usize>>>,
+    list: Option<ChoiceList>,
+    choose: Card,
+    warning: gtk::Label,
+    progress: a::Progress,
+    page: Cell<Page>,
+    /// Last report and when its stage began; first package sample for the time estimate.
+    report: RefCell<(Report, Instant)>,
+    sample: Cell<Option<(f64, Instant)>>,
+    /// The failed page's subtitle says where it stopped.
+    failed: Card,
+    stdin: RefCell<Option<std::process::ChildStdin>>,
+}
+
+const ERASE_FIRST: &str = "Choose a disk. Everything on it will be erased.";
+
+impl Installer {
+    pub fn new(disks: Vec<Disk>) -> Rc<Installer> {
+        let pager = a::pager();
+        let body = w::vbox(w::S4);
+        let (warn_box, warning) = a::warning(ERASE_FIRST);
+        let one = (disks.len() == 1).then_some(0);
+        let me: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(one));
+        let mut list = None;
+        if disks.is_empty() {
+            body.append(&w::empty_state(
+                "drive-harddisk-symbolic",
+                "No disk found",
+                "Connect the disk you want to install on, then open Install WolOS again.",
+                None,
+            ));
+        } else {
+            let rows = disks
+                .iter()
+                .map(|d| Choice {
+                    icon: Some("drive-harddisk-symbolic".into()),
+                    title: d.title(),
+                    detail: install::size_text(d.bytes),
+                    trail: None,
+                })
+                .collect();
+            let (chosen, warn, ds) = (me.clone(), warning.clone(), disks.clone());
+            let l = ChoiceList::new(rows, one, move |i| {
+                chosen.set(Some(i));
+                warn.set_label(&erase_warning(&ds[i]));
+            });
+            body.append(&l.root);
+            list = Some(l);
+            if let Some(i) = one {
+                warning.set_label(&erase_warning(&disks[i]));
+            }
+        }
+        body.append(&warn_box);
+        let choose = Card::new(
+            Art::Illustration("white-rabbit"),
+            "Install WolOS",
+            "Choose the disk to install on.",
+            &body,
+        );
+        choose.next.set_label("Erase and Install");
+        choose.back.set_label("Cancel");
+        let progress = a::Progress::new();
+        let installing = Card::moment(
+            "pocket-watch",
+            "Installing WolOS",
+            "This takes a few minutes. Keep your computer plugged in.",
+            &progress.root,
+        );
+        installing.without_foot();
+        let done = Card::moment(
+            "keyhole",
+            "WolOS Is Installed",
+            "Restart to start using WolOS. Remove the installer stick when the screen goes black.",
+            &a::blank(),
+        );
+        done.back.set_visible(false);
+        done.next.set_label("Restart");
+        let failed = Card::moment(
+            "teacup",
+            "WolOS Couldn't Be Installed",
+            install::stopped_text(Stage::Finish),
+            &a::blank(),
+        );
+        failed.back.set_visible(false);
+        failed.next.set_label("Try Again");
+        failed.add_action(&w::button("Restart", w::Kind::Default, || {
+            kit::spawn(&install::restart_command())
+        }));
+        for (p, c) in [
+            (Page::Choose, &choose),
+            (Page::Installing, &installing),
+            (Page::Done, &done),
+            (Page::Failed, &failed),
+        ] {
+            pager.add_named(&c.root, Some(p.id()));
+        }
+        let s = Rc::new(Installer {
+            root: super::lock::screen(&pager),
+            pager,
+            disks,
+            chosen: me,
+            list,
+            choose,
+            warning,
+            progress,
+            page: Cell::new(Page::Choose),
+            report: RefCell::new((Report::new(Stage::Prepare, 0), Instant::now())),
+            sample: Cell::new(None),
+            failed,
+            stdin: RefCell::new(None),
+        });
+        let s2 = Rc::downgrade(&s);
+        s.choose.next.connect_clicked(move |_| {
+            if let Some(s) = s2.upgrade() {
+                s.next();
+            }
+        });
+        s.choose.back.connect_clicked(|_| std::process::exit(0));
+        done.next
+            .connect_clicked(|_| kit::spawn(&install::restart_command()));
+        let s3 = Rc::downgrade(&s);
+        s.failed.next.connect_clicked(move |_| {
+            if let Some(s) = s3.upgrade() {
+                s.show(Page::Choose);
+            }
+        });
+        s
+    }
+
+    pub fn show(&self, p: Page) {
+        self.page.set(p);
+        self.pager.set_visible_child_name(p.id());
+    }
+
+    /// Picks disk `i` as a click would (goldens).
+    pub fn pick(&self, i: usize) {
+        if let Some(d) = self.disks.get(i) {
+            self.chosen.set(Some(i));
+            self.warning.set_label(&erase_warning(d));
+            if let Some(l) = &self.list {
+                l.select(i);
+            }
+        }
+    }
+
+    /// Progress page at `r`, `left` seconds remaining (goldens).
+    pub fn show_progress(&self, r: &Report, left: Option<f64>) {
+        self.show(Page::Installing);
+        self.progress.set(
+            install::fraction(r, 0.0),
+            &format!(
+                "{} {}",
+                install::doing(r.stage),
+                install::remaining_text(left)
+            ),
+        );
+    }
+
+    /// Failed page, stopped during `at`.
+    pub fn show_failed(&self, at: Stage) {
+        self.failed.subtitle.set_label(install::stopped_text(at));
+        self.show(Page::Failed);
+    }
+
+    pub fn installing(&self) -> bool {
+        self.page.get() == Page::Installing
+    }
+
+    /// Return: Erase and Install on the first page, Restart or Try Again later.
+    pub fn next(self: &Rc<Self>) {
+        match self.page.get() {
+            Page::Choose => {
+                let Some(d) = self.chosen.get().and_then(|i| self.disks.get(i)) else {
+                    self.choose.say("Choose a disk to install on.", true);
+                    return;
+                };
+                if !d.big_enough() {
+                    self.choose.say(
+                        &format!("“{}” is too small. WolOS needs at least 16 GB.", d.title()),
+                        true,
+                    );
+                    return;
+                }
+                self.choose.say("", false);
+                let disk = d.name.clone();
+                self.start(&disk);
+            }
+            Page::Installing => {}
+            Page::Done => kit::spawn(&install::restart_command()),
+            Page::Failed => self.show(Page::Choose),
+        }
+    }
+
+    /// Runs `install-run <disk>`; progress lines come back through a channel polled on the UI thread.
+    fn start(self: &Rc<Self>, disk: &str) {
+        let sudo = std::path::Path::new("/usr/local/bin/sudo").exists();
+        let argv = install::install_command(disk, sudo);
+        eprintln!("wol-installer: {}", argv.join(" "));
+        let child = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .spawn();
+        let Ok(mut child) = child else {
+            self.show_failed(Stage::Prepare);
+            return;
+        };
+        *self.stdin.borrow_mut() = child.stdin.take();
+        let out = child.stdout.take();
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        std::thread::spawn(move || {
+            if let Some(out) = out {
+                let mut r = std::io::BufReader::new(out);
+                let mut buf = Vec::new();
+                // bsdinstall redraws with '\r'; split on both.
+                while r.read_until(b'\n', &mut buf).is_ok_and(|n| n > 0) {
+                    for part in String::from_utf8_lossy(&buf).split('\r') {
+                        if part.contains(install::BSDINSTALL_ERROR) {
+                            let _ = tx.send(Event::ErrorBox);
+                        }
+                        if let Some(r) = install::parse_line(part) {
+                            eprintln!("wol-installer: {:?} {}% {}", r.stage, r.percent, r.message);
+                            let _ = tx.send(Event::Report(r));
+                        }
+                    }
+                    buf.clear();
+                }
+            }
+            let ok = child.wait().is_ok_and(|s| s.success());
+            let _ = tx.send(Event::Exit(ok));
+        });
+        *self.report.borrow_mut() = (Report::new(Stage::Prepare, 0), Instant::now());
+        self.sample.set(None);
+        self.show_progress(&Report::new(Stage::Prepare, 0), None);
+        let me = Rc::downgrade(self);
+        glib::timeout_add_local(Duration::from_millis(250), move || {
+            let Some(s) = me.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            while let Ok(e) = rx.try_recv() {
+                match e {
+                    Event::Report(r) if r.stage == Stage::Failed => {
+                        let at = s.report.borrow().0.stage;
+                        s.show_failed(at);
+                    }
+                    Event::Report(r) => {
+                        // The bar's clock runs per stage (Files creeps from when it began).
+                        let mut cur = s.report.borrow_mut();
+                        let since = if r.stage == cur.0.stage {
+                            cur.1
+                        } else {
+                            Instant::now()
+                        };
+                        *cur = (r, since);
+                    }
+                    Event::ErrorBox => {
+                        if let Some(i) = &mut *s.stdin.borrow_mut() {
+                            let _ = i.write_all(b"\r");
+                        }
+                    }
+                    Event::Exit(ok) => {
+                        s.stdin.borrow_mut().take();
+                        if ok {
+                            s.show(Page::Done);
+                        } else if s.page.get() != Page::Failed {
+                            let at = s.report.borrow().0.stage;
+                            s.show_failed(at);
+                        }
+                        return glib::ControlFlow::Break;
+                    }
+                }
+            }
+            s.tick();
+            glib::ControlFlow::Continue
+        });
+    }
+
+    /// Bar and time left from the last report.
+    fn tick(&self) {
+        if self.page.get() != Page::Installing {
+            return;
+        }
+        let (r, since) = self.report.borrow().clone();
+        let f = install::fraction(&r, since.elapsed().as_secs_f64());
+        let now = Instant::now();
+        // Apps are most of the time and report steadily: the estimate starts with them.
+        if r.stage == Stage::Packages && self.sample.get().is_none() {
+            self.sample.set(Some((f, now)));
+        }
+        let left = self.sample.get().and_then(|(f0, t0)| {
+            install::seconds_left((f0, 0.0), (f, now.duration_since(t0).as_secs_f64()))
+        });
+        self.progress.set(
+            f,
+            &format!(
+                "{} {}",
+                install::doing(r.stage),
+                install::remaining_text(left)
+            ),
+        );
+    }
+}
+
+fn erase_warning(d: &Disk) -> String {
+    format!(
+        "Everything on “{}” ({}) will be erased. This can't be undone.",
+        d.title(),
+        install::size_text(d.bytes)
+    )
+}
+
+/// Disks `install-disks` allows, described by `geom disk list`.
+pub fn system_disks() -> Vec<Disk> {
+    let run = |argv: &[&str]| {
+        std::process::Command::new(argv[0])
+            .args(&argv[1..])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    };
+    install::parse_disks(&run(&["geom", "disk", "list"]), &run(&[install::DISKS]))
+}
+
+pub fn run() -> glib::ExitCode {
+    a::run("org.wolos.installer", "installer", |win| {
+        let s = Installer::new(system_disks());
+        // Over the live desktop: shown at once, no fade from black.
+        let shown = reveal::Reveal::new(&s.root, false);
+        win.set_child(Some(&shown.root));
+        // Closing mid-install would cut the installer's output and stop it: not while installing.
+        let s2 = s.clone();
+        win.connect_close_request(move |_| {
+            if s2.installing() {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        a::keys(win, move || s.next(), || {});
+    })
+}
