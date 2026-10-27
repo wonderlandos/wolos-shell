@@ -39,6 +39,9 @@ enum Event {
     Exit(bool),
 }
 
+/// Takes (true) or gives back (false) what keeps the machine awake.
+type KeepAwake = Box<dyn Fn(bool)>;
+
 pub struct Installer {
     pub root: gtk::Widget,
     pager: gtk::Stack,
@@ -58,6 +61,9 @@ pub struct Installer {
     /// The failed page's subtitle says where it stopped.
     failed: Card,
     stdin: RefCell<Option<std::process::ChildStdin>>,
+    /// Idle sleep and screen-off held off while installing (`run` sets how).
+    awake: RefCell<install::Awake>,
+    keep_awake: RefCell<Option<KeepAwake>>,
 }
 
 const ERASE_FIRST: &str = "Choose a disk. Everything on it will be erased.";
@@ -168,6 +174,8 @@ impl Installer {
             sample: Cell::new(None),
             failed,
             stdin: RefCell::new(None),
+            awake: RefCell::new(install::Awake::default()),
+            keep_awake: RefCell::new(None),
         });
         let s2 = Rc::downgrade(&s);
         s.choose.next.connect_clicked(move |_| {
@@ -205,6 +213,15 @@ impl Installer {
     pub fn show(&self, p: Page) {
         self.page.set(p);
         self.pager.set_visible_child_name(p.id());
+        let change = self.awake.borrow_mut().set(p == Page::Installing);
+        if let (Some(on), Some(f)) = (change, &*self.keep_awake.borrow()) {
+            f(on);
+        }
+    }
+
+    /// How to keep the machine awake while installing (the app window's inhibitors).
+    pub fn set_keep_awake(&self, f: impl Fn(bool) + 'static) {
+        *self.keep_awake.borrow_mut() = Some(Box::new(f));
     }
 
     /// Picks disk `i` as a click would (goldens).
@@ -465,7 +482,61 @@ pub fn run() -> glib::ExitCode {
                 glib::Propagation::Proceed
             }
         });
+        // Installing: no idle screen-off, lock or sleep. The compositor's idle inhibitor for the
+        // window, and the session's ScreenSaver inhibit, which hypridle honours whichever
+        // workspace is showing. install-run holds the lid. Released on done or stopped.
+        let (app, w) = (win.application(), win.clone());
+        let held: RefCell<Option<(u32, std::sync::mpsc::Sender<()>)>> = RefCell::new(None);
+        s.set_keep_awake(move |on| {
+            if on {
+                // IDLE only: on Wayland GTK maps it to the compositor's idle inhibitor (no D-Bus
+                // round trip on the UI thread); sleep from idle is hypridle's, held below.
+                let flags = gtk::ApplicationInhibitFlags::IDLE;
+                let cookie = app.as_ref().map_or(0, |a| {
+                    a.inhibit(Some(&w), flags, Some(install::AWAKE_REASON))
+                });
+                *held.borrow_mut() = Some((cookie, screensaver_inhibit()));
+            } else if let Some((cookie, release)) = held.borrow_mut().take() {
+                if let (Some(a), true) = (&app, cookie != 0) {
+                    a.uninhibit(cookie);
+                }
+                let _ = release.send(());
+            }
+        });
         let s3 = s.clone();
         a::keys(win, move || s.next(), move || s3.back());
     })
+}
+
+/// `org.freedesktop.ScreenSaver.Inhibit` on the session bus (hypridle serves it) until the sender
+/// is used or dropped; the connection lives on its own thread, so a slow bus never blocks the UI.
+fn screensaver_inhibit() -> std::sync::mpsc::Sender<()> {
+    const SS: &str = "org.freedesktop.ScreenSaver";
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let Ok(c) = zbus::blocking::Connection::session() else {
+            return;
+        };
+        let cookie = c
+            .call_method(
+                Some(SS),
+                "/org/freedesktop/ScreenSaver",
+                Some(SS),
+                "Inhibit",
+                &("Install WolOS", install::AWAKE_REASON),
+            )
+            .ok()
+            .and_then(|m| m.body().deserialize::<u32>().ok());
+        let _ = rx.recv();
+        if let Some(k) = cookie {
+            let _ = c.call_method(
+                Some(SS),
+                "/org/freedesktop/ScreenSaver",
+                Some(SS),
+                "UnInhibit",
+                &(k,),
+            );
+        }
+    });
+    tx
 }
