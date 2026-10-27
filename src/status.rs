@@ -79,7 +79,7 @@ pub fn network(n: Network) -> &'static str {
 /// Menu bar network glyph: [`network`], except the struck-through Wi-Fi glyph while the radio is
 /// off (`wifi_on`, None = no Wi-Fi) and no wired link is up.
 pub fn menubar_network(n: Network, wifi_on: Option<bool>) -> &'static str {
-    if wifi_on == Some(false) && !(n.online && !n.wifi) {
+    if wifi_on == Some(false) && (!n.online || n.wifi) {
         "network-wireless-offline-symbolic"
     } else {
         network(n)

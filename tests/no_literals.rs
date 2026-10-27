@@ -79,12 +79,22 @@ fn detector_catches_literals() {
 fn surfaces_use_tokens_only() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut bad = Vec::new();
-    for dir in ["ui", "bin"] {
-        for f in std::fs::read_dir(root.join(dir)).unwrap().flatten() {
-            let src = std::fs::read_to_string(f.path()).unwrap();
-            for v in violations(&src) {
-                bad.push(format!("{}: {v}", f.path().display()));
+    // Module directories (ui/settings/, ui/control_center/) included.
+    let mut files = Vec::new();
+    let mut dirs: Vec<std::path::PathBuf> = ["ui", "bin"].iter().map(|d| root.join(d)).collect();
+    while let Some(d) = dirs.pop() {
+        for f in std::fs::read_dir(d).unwrap().flatten() {
+            if f.path().is_dir() {
+                dirs.push(f.path());
+            } else {
+                files.push(f.path());
             }
+        }
+    }
+    for f in files {
+        let src = std::fs::read_to_string(&f).unwrap();
+        for v in violations(&src) {
+            bad.push(format!("{}: {v}", f.display()));
         }
     }
     assert!(

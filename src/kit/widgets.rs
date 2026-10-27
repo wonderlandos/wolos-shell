@@ -386,7 +386,7 @@ pub fn sheet(child: &impl IsA<gtk::Widget>) -> gtk::Revealer {
     let card = vbox(S3);
     card.add_css_class("sheet");
     card.append(child);
-    gtk::Revealer::builder()
+    let r = gtk::Revealer::builder()
         .child(&card)
         .transition_type(gtk::RevealerTransitionType::SlideDown)
         .visible(false)
@@ -937,7 +937,7 @@ impl Palette {
     }
 }
 
-fn rgba(cr: &gtk::cairo::Context, c: shared::theme::Color) {
+pub(crate) fn rgba(cr: &gtk::cairo::Context, c: shared::theme::Color) {
     cr.set_source_rgba(
         c.r as f64 / 255.0,
         c.g as f64 / 255.0,
@@ -946,7 +946,7 @@ fn rgba(cr: &gtk::cairo::Context, c: shared::theme::Color) {
     );
 }
 
-fn rounded(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+pub(crate) fn rounded(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
     use std::f64::consts::{FRAC_PI_2, PI};
     cr.new_sub_path();
     cr.arc(x + w - r, y + r, r, -FRAC_PI_2, 0.0);
@@ -1132,7 +1132,10 @@ pub fn toolbar_place(aw: &AppWindow, r: &gtk::Revealer) {
 /// The overlay over `aw`'s body (sidebar + content), created the first time it is needed.
 pub fn content_overlay(aw: &AppWindow) -> gtk::Overlay {
     let body = aw.content.parent().and_downcast::<gtk::Box>();
-    if let Some(o) = body.as_ref().and_then(|b| b.parent().and_downcast::<gtk::Overlay>()) {
+    if let Some(o) = body
+        .as_ref()
+        .and_then(|b| b.parent().and_downcast::<gtk::Overlay>())
+    {
         return o;
     }
     let o = gtk::Overlay::new();

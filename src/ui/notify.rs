@@ -266,6 +266,11 @@ pub fn banner_ms(n: &Note) -> Option<u32> {
     }
 }
 
+/// Focus (Do Not Disturb) keeps the banner away; the note still lands in Notification Center.
+pub fn quiet(n: &Note, focus: crate::focus::Focus) -> bool {
+    focus.active() && !n.critical
+}
+
 /// Where a new banner goes, given the banners on screen as (app, stacked count), top first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
@@ -584,6 +589,9 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 }
             };
             center_list.prepend(&card(&n));
+            if quiet(&n, crate::focus::read()) {
+                continue;
+            }
             let generation = next_gen.get().wrapping_add(1);
             next_gen.set(generation);
             let shown: Vec<(String, u32)> = groups
@@ -794,5 +802,15 @@ mod tests {
         ] {
             assert_eq!(banner_ms(&n(c, t)), want);
         }
+    }
+
+    /// Focus on: the note goes to Notification Center without a banner; critical ones still show.
+    #[test]
+    fn focus_silences_banners() {
+        use crate::focus::Focus;
+        assert!(quiet(&n(false, -1), Focus::On));
+        assert!(quiet(&n(false, -1), Focus::Until(9)));
+        assert!(!quiet(&n(true, -1), Focus::On));
+        assert!(!quiet(&n(false, -1), Focus::Off));
     }
 }

@@ -337,9 +337,12 @@ fn follow_focus(bar: &Rc<Bar>) {
     std::mem::forget(m);
 }
 
+/// The live bar and its system.
+type Live = (std::rc::Weak<Bar>, Rc<dyn crate::system::System>);
+
 thread_local! {
     /// The session's menu bar and its system (set by [`poll_status`]) for [`refresh_now`].
-    static LIVE: RefCell<Option<(std::rc::Weak<Bar>, Rc<dyn crate::system::System>)>> =
+    static LIVE: RefCell<Option<Live>> =
         const { RefCell::new(None) };
 }
 

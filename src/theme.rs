@@ -40,8 +40,26 @@ pub fn saved() -> Option<String> {
     active::get(&active_path())
 }
 
+/// Saves the active theme, journaled (`wol undo`, Settings > Restore).
 pub fn save(id: &str) -> std::io::Result<()> {
-    active::set(&active_path(), id)
+    journal_theme(Some(&format!("{id}\n")))
+}
+
+/// Back to following the appearance (no theme file), journaled.
+pub fn clear() -> std::io::Result<()> {
+    journal_theme(None)
+}
+
+fn journal_theme(text: Option<&str>) -> std::io::Result<()> {
+    let home = core_theme::config_home();
+    wol_core::journal::Journal::for_config(&home)
+        .save(
+            "theme",
+            "settings",
+            &[(shared::theme::ACTIVE_FILE, text)],
+            wol_core::journal::now(),
+        )
+        .map(drop)
 }
 
 /// Kit stylesheet: the only visual style (HIG). Colours via `var(--token)`.
