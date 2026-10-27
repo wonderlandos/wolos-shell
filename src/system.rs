@@ -4,7 +4,7 @@
 //! `Sysfs` reads files only; `Fake` is deterministic for goldens.
 use crate::status::{Audio, Battery, BatteryStatus, Network};
 use std::fs;
-pub use wol_core::controls::{Monitor, Output};
+pub use wol_core::controls::{BtDevice, Monitor, Output};
 
 /// One change the user asked for. Root ones go through wol-admind and may answer `NeedsAuth`.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +31,15 @@ pub enum Action {
     PkgUpgrade,
     /// App Store: catalog id or package name (`wol_core::store`).
     PkgInstall(String),
+    MediaNext,
+    MediaPrevious,
+    /// Bluetooth device address, connect (true) or disconnect.
+    BtConnect(String, bool),
+    KeyboardBrightness(u8),
+    ReduceMotion(bool),
+    Zoom(bool),
+    /// Kit stylesheet contrast overrides (`kit::style::CONTRAST_FILE`), every shell process.
+    IncreaseContrast(bool),
     /// Settings: save desktop prefs and apply the changed Hyprland keywords live (`wol_core::hyprprefs`).
     Desktop(Box<wol_core::hyprprefs::DesktopPrefs>),
     /// Settings > Keyboard > Shortcuts: save overrides and rebind live.
@@ -84,6 +93,10 @@ pub trait System: Send + Sync {
     fn now_playing(&self) -> Option<NowPlaying> {
         None
     }
+    /// App icon of the player behind [`System::now_playing`] (cover art placeholder).
+    fn now_playing_icon(&self) -> Option<String> {
+        None
+    }
     fn media_toggle(&self) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
@@ -114,10 +127,6 @@ pub trait System: Send + Sync {
     fn authorize(&self, _password: &str) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
-    /// App icon of the player behind [`System::now_playing`] (cover art placeholder).
-    fn now_playing_icon(&self) -> Option<String> {
-        None
-    }
 
     /// Wi-Fi radio state (None = no Wi-Fi hardware/tooling).
     fn wifi_enabled(&self) -> Option<bool> {
@@ -137,17 +146,22 @@ pub trait System: Send + Sync {
     fn monitors(&self) -> Vec<Monitor> {
         Vec::new()
     }
-    /// Always Allow on the approval sheet: `helper` may change `cap` without asking (journaled).
-    fn allow_helper_always(&self, _helper: &str, _cap: &str) -> Result<(), ActionError> {
-        Err(ActionError::Unavailable)
+    /// Minutes to empty (discharging) or full (charging); None when unknown.
+    fn battery_time(&self) -> Option<u32> {
+        None
     }
-    /// A helper's administrator request, run after the user typed `password` on the approval
-    /// sheet (`ui::approval`). Always checks the password, never a cached authorization.
-    fn approve(&self, _req: shared::shell::ApprovalRequest, _password: String) -> Done {
-        let (tx, rx) = async_channel::bounded(1);
-        let _ = tx.try_send(Err(ActionError::Unavailable));
-        rx
+    /// Paired Bluetooth devices.
+    fn bt_devices(&self) -> Vec<BtDevice> {
+        Vec::new()
     }
+    /// 0..=100, None without a keyboard backlight.
+    fn keyboard_brightness(&self) -> Option<u8> {
+        None
+    }
+    fn accessibility(&self) -> Accessibility {
+        Accessibility::default()
+    }
+
     // Settings > Assistants & Automation, Restore (archicture/modules/automation.md).
     /// Helper policy and the helpers seen in the audit log.
     fn helpers(&self) -> wol_core::automation::Status {
@@ -161,6 +175,10 @@ pub trait System: Send + Sync {
     fn set_helper_capability(&self, _id: &str, _allowed: bool) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
+    /// Always Allow on the approval sheet: `helper` may change `cap` without asking (journaled).
+    fn allow_helper_always(&self, _helper: &str, _cap: &str) -> Result<(), ActionError> {
+        Err(ActionError::Unavailable)
+    }
     /// Settings changes, newest first.
     fn history(&self) -> Vec<wol_core::journal::Entry> {
         Vec::new()
@@ -172,6 +190,13 @@ pub trait System: Send + Sync {
     /// Restore points (ZFS boot environments), empty without them.
     fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
         Vec::new()
+    }
+    /// A helper's administrator request, run after the user typed `password` on the approval
+    /// sheet (`ui::approval`). Always checks the password, never a cached authorization.
+    fn approve(&self, _req: shared::shell::ApprovalRequest, _password: String) -> Done {
+        let (tx, rx) = async_channel::bounded(1);
+        let _ = tx.try_send(Err(ActionError::Unavailable));
+        rx
     }
     /// Blocking dispatch of one action (backends call this off the UI thread).
     fn perform(&self, a: &Action) -> Result<(), ActionError> {
@@ -214,11 +239,24 @@ pub struct WifiNetwork {
     pub connected: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NowPlaying {
     pub title: String,
     pub artist: String,
     pub playing: bool,
+    /// Seconds.
+    pub position: u32,
+    pub length: Option<u32>,
+    /// Cover art URL (`file://` loads; other schemes show the placeholder).
+    pub art: Option<String>,
+}
+
+/// Accessibility shortcuts; None = not available here (no Hyprland).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Accessibility {
+    pub reduce_motion: Option<bool>,
+    pub zoom: Option<bool>,
+    pub increase_contrast: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -425,7 +463,13 @@ impl System for Fake {
             title: "White Rabbit".into(),
             artist: "Jefferson Airplane".into(),
             playing: true,
+            position: 61,
+            length: Some(152),
+            art: None,
         })
+    }
+    fn now_playing_icon(&self) -> Option<String> {
+        Some("wolos-music".into())
     }
     fn night_light(&self) -> Option<bool> {
         Some(false)
@@ -446,6 +490,37 @@ impl System for Fake {
                 default: false,
             },
         ]
+    }
+    fn battery_time(&self) -> Option<u32> {
+        Some(191)
+    }
+    fn bt_devices(&self) -> Vec<BtDevice> {
+        [
+            ("AirPods Pro", true),
+            ("MX Keys", true),
+            ("Magic Trackpad", false),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (n, c))| BtDevice {
+            addr: format!("AA:BB:CC:DD:EE:0{i}"),
+            name: n.into(),
+            connected: c,
+        })
+        .collect()
+    }
+    fn keyboard_brightness(&self) -> Option<u8> {
+        Some(40)
+    }
+    fn power_mode(&self) -> Option<PowerMode> {
+        Some(PowerMode::Automatic)
+    }
+    fn accessibility(&self) -> Accessibility {
+        Accessibility {
+            reduce_motion: Some(false),
+            zoom: Some(false),
+            increase_contrast: false,
+        }
     }
     fn monitors(&self) -> Vec<Monitor> {
         vec![Monitor {
@@ -527,10 +602,53 @@ impl System for Fake {
     }
 }
 
+/// [`Fake`] on a desktop: no battery, no backlights, no Low Power Mode.
+pub struct FakeDesktop;
+
+impl System for FakeDesktop {
+    fn battery(&self) -> Option<Battery> {
+        None
+    }
+    fn audio(&self) -> Audio {
+        Fake.audio()
+    }
+    fn network(&self) -> Network {
+        Network {
+            online: true,
+            wifi: false,
+            signal: None,
+        }
+    }
+    fn brightness(&self) -> Option<u8> {
+        None
+    }
+    fn wifi_networks(&self) -> Vec<WifiNetwork> {
+        Fake.wifi_networks()
+    }
+    fn wifi_enabled(&self) -> Option<bool> {
+        Some(true)
+    }
+    fn bluetooth(&self) -> Option<bool> {
+        Some(false)
+    }
+    fn output_devices(&self) -> Vec<Output> {
+        Fake.output_devices()
+    }
+    fn now_playing(&self) -> Option<NowPlaying> {
+        None
+    }
+    fn night_light(&self) -> Option<bool> {
+        Fake.night_light()
+    }
+    fn accessibility(&self) -> Accessibility {
+        Fake.accessibility()
+    }
+}
+
 // ---- Real backend ----
 
 use std::sync::{Arc, Mutex, Weak};
-use wol_core::controls::{Controls, Volume, WifiNet};
+use wol_core::controls::{A11y, BatteryState, Charge, Controls, Media, Volume, WifiNet};
 
 /// Everything the UI reads; refreshed by the worker, cached to `$XDG_RUNTIME_DIR/wol-controls.json`
 /// so a freshly opened Control Center shows real values before the first refresh lands.
@@ -545,6 +663,14 @@ pub struct Snapshot {
     pub bluetooth: Option<bool>,
     pub monitors: Vec<Monitor>,
     pub night: Option<bool>,
+    pub battery: Option<BatteryState>,
+    /// FreeBSD default-route interface (network status without sysfs).
+    pub route: Option<String>,
+    pub media: Option<Media>,
+    pub bt_devices: Vec<BtDevice>,
+    pub keyboard: Option<u8>,
+    pub low_power: Option<bool>,
+    pub a11y: Option<A11y>,
 }
 
 /// Seconds between refreshes per topic (system-api.md TTLs).
@@ -555,10 +681,15 @@ const TTL_SLOW: u64 = 10;
 pub const WATCHED_PERIOD: std::time::Duration = std::time::Duration::from_secs(1);
 /// Cadence with nobody watching: the menu bar polls every 5 s; nothing needs fresher data.
 pub const IDLE_PERIOD: std::time::Duration = std::time::Duration::from_secs(10);
-/// TTLs (s) for audio, wifi, slow topics while watched / unwatched. Unwatched, only the menu
-/// bar reads: volume keys refresh audio on demand (`refresh_audio`), so every helper runs once a minute.
-const TTLS_WATCHED: [u64; 3] = [TTL_AUDIO, TTL_WIFI, TTL_SLOW];
-const TTLS_IDLE: [u64; 3] = [60, 60, 60];
+/// Control Center-only topics: never refreshed while nobody watches.
+const NEVER: u64 = u64::MAX;
+/// Topics: audio, wifi, slow, media (Now Playing progress), panel (Bluetooth devices, keyboard
+/// backlight, Low Power Mode, accessibility, Night Shift).
+const TOPICS: usize = 5;
+/// TTLs (s) per topic while watched / unwatched. Unwatched, only the menu bar reads: volume keys
+/// refresh audio on demand (`refresh_audio`), so every helper runs once a minute.
+const TTLS_WATCHED: [u64; TOPICS] = [TTL_AUDIO, TTL_WIFI, TTL_SLOW, 1, TTL_WIFI];
+const TTLS_IDLE: [u64; TOPICS] = [60, 60, 60, NEVER, NEVER];
 
 struct Inner {
     c: Controls,
@@ -568,8 +699,10 @@ struct Inner {
     password: Mutex<String>,
     watchers: Mutex<Vec<async_channel::Sender<()>>>,
     cache: Option<std::path::PathBuf>,
-    /// Last refresh per topic (audio, wifi, slow); None = never.
-    last: Mutex<[Option<std::time::Instant>; 3]>,
+    /// Last refresh per topic; None = never.
+    last: Mutex<[Option<std::time::Instant>; TOPICS]>,
+    /// One refresh at a time: each writes back a whole snapshot.
+    refreshing: Mutex<()>,
 }
 
 impl Inner {
@@ -577,9 +710,6 @@ impl Inner {
         self.snap.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn now_playing_icon(&self) -> Option<String> {
-        Some("wolos-music".into())
-    }
     /// Next refresh delay: fast only while a live watcher exists.
     fn period(&self) -> std::time::Duration {
         let mut w = self.watchers.lock().unwrap_or_else(|e| e.into_inner());
@@ -596,7 +726,7 @@ impl Inner {
         let now = std::time::Instant::now();
         let due = {
             let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
-            let mut due = [false; 3];
+            let mut due = [false; TOPICS];
             let ttls = if self.period() == WATCHED_PERIOD {
                 TTLS_WATCHED
             } else {
@@ -607,6 +737,9 @@ impl Inner {
                 let ready = |t: std::time::Instant| {
                     now.duration_since(t).as_millis() + 100 >= u128::from(ttl) * 1000
                 };
+                if ttl == NEVER && !force {
+                    continue;
+                }
                 if force || last[i].is_none_or(ready) {
                     last[i] = Some(now);
                     due[i] = true;
@@ -620,10 +753,11 @@ impl Inner {
     /// Audio only, now (volume keys); the other topics keep their schedule.
     fn refresh_audio(&self) {
         self.last.lock().unwrap_or_else(|e| e.into_inner())[0] = Some(std::time::Instant::now());
-        self.refresh_topics([true, false, false]);
+        self.refresh_topics([true, false, false, false, false]);
     }
 
-    fn refresh_topics(&self, due: [bool; 3]) {
+    fn refresh_topics(&self, due: [bool; TOPICS]) {
+        let _one = self.refreshing.lock().unwrap_or_else(|e| e.into_inner());
         let mut s = self.lock().clone();
         let before = s.clone();
         if due[0] {
@@ -638,6 +772,20 @@ impl Inner {
             s.outputs = self.c.outputs();
             s.bluetooth = self.c.bluetooth();
             s.monitors = self.c.monitors();
+            s.battery = self.c.battery();
+            if self.c.host.is_freebsd() {
+                s.route = self.c.default_iface();
+            }
+        }
+        if due[3] {
+            s.media = self.c.now_playing();
+        }
+        if due[4] {
+            s.bt_devices = self.c.bt_devices();
+            s.keyboard = self.c.keyboard_brightness();
+            s.low_power = self.c.low_power();
+            s.a11y = self.c.accessibility();
+            s.night = self.c.night_shift();
         }
         if s != before {
             *self.lock() = s.clone();
@@ -680,6 +828,16 @@ impl Inner {
             } => c.add_user(name, full_name, *admin, password, &pw),
             Action::PkgUpgrade => c.pkg_upgrade(&pw),
             Action::PkgInstall(t) => c.pkg_install(t, &pw),
+            Action::MediaToggle => c.media("play-pause"),
+            Action::MediaNext => c.media("next"),
+            Action::MediaPrevious => c.media("previous"),
+            Action::Power(m) => c.set_low_power(*m == PowerMode::LowPower, &pw),
+            Action::BtConnect(addr, on) => c.bt_connect(addr, *on),
+            Action::KeyboardBrightness(p) => c.set_keyboard_brightness(*p),
+            Action::ReduceMotion(on) => c.set_reduce_motion(*on),
+            Action::Zoom(on) => c.set_zoom(*on),
+            Action::IncreaseContrast(on) => crate::kit::style::set_contrast(*on)
+                .map_err(|_| wol_core::controls::ControlError::Failed),
             Action::Desktop(p) => wol_core::hyprprefs::apply_desktop(&*c.host, &config_home(), p)
                 .map(drop)
                 .map_err(|_| wol_core::controls::ControlError::Failed),
@@ -697,9 +855,6 @@ impl Inner {
             }
             Action::BootEnvironment(name) => c.boot_environment(name, &pw),
             Action::Admin(req) => admin(req, &pw),
-            Action::MediaToggle | Action::Power(_) => {
-                Err(wol_core::controls::ControlError::Unavailable)
-            }
         };
         // Optimistic snapshot so the next read (and other surfaces) agree right away.
         if r.is_ok() {
@@ -716,6 +871,28 @@ impl Inner {
                 Action::Wifi(on) => s.wifi_on = Some(*on),
                 Action::Bluetooth(on) => s.bluetooth = Some(*on),
                 Action::NightLight(on) => s.night = Some(*on),
+                Action::KeyboardBrightness(p) => s.keyboard = Some(*p),
+                Action::Power(m) => s.low_power = Some(*m == PowerMode::LowPower),
+                Action::ReduceMotion(on) => {
+                    if let Some(a) = &mut s.a11y {
+                        a.reduce_motion = *on
+                    }
+                }
+                Action::Zoom(on) => {
+                    if let Some(a) = &mut s.a11y {
+                        a.zoom = *on
+                    }
+                }
+                Action::MediaToggle => {
+                    if let Some(m) = &mut s.media {
+                        m.playing = !m.playing
+                    }
+                }
+                Action::BtConnect(addr, on) => {
+                    for d in s.bt_devices.iter_mut().filter(|d| &d.addr == addr) {
+                        d.connected = *on;
+                    }
+                }
                 Action::Output(id) => {
                     for o in &mut s.outputs {
                         o.default = &o.id == id;
@@ -795,6 +972,7 @@ impl CoreSystem {
             watchers: Default::default(),
             cache,
             last: Default::default(),
+            refreshing: Default::default(),
         });
         let weak: Weak<Inner> = Arc::downgrade(&inner);
         let _ = std::thread::Builder::new()
@@ -897,6 +1075,10 @@ impl System for CoreSystem {
     fn network(&self) -> Network {
         let mut n = self.inner.files.network();
         let s = self.inner.lock();
+        if let Some(iface) = &s.route {
+            n.online = true;
+            n.wifi |= iface.starts_with("wlan");
+        }
         if let Some(w) = s.nets.iter().find(|w| w.connected) {
             n.wifi = true;
             n.online = true;
@@ -935,9 +1117,9 @@ impl System for CoreSystem {
     fn monitors(&self) -> Vec<Monitor> {
         self.inner.lock().monitors.clone()
     }
+    /// Probed from hyprsunset: None (tile hidden) when it is not running.
     fn night_light(&self) -> Option<bool> {
-        let s = self.inner.lock();
-        (!s.monitors.is_empty()).then(|| s.night.unwrap_or(false))
+        self.inner.lock().night
     }
     fn authorize(&self, password: &str) -> Result<(), ActionError> {
         *self
@@ -970,10 +1152,38 @@ impl System for CoreSystem {
             });
         rx
     }
+    fn helpers(&self) -> wol_core::automation::Status {
+        wol_core::automation::user_status()
+    }
+    fn set_helpers_enabled(&self, on: bool) -> Result<(), ActionError> {
+        wol_core::automation::set_enabled(&journal(), BY, on, wol_core::journal::now())
+            .map(drop)
+            .map_err(|_| ActionError::Failed)
+    }
+    fn set_helper_capability(&self, id: &str, allowed: bool) -> Result<(), ActionError> {
+        wol_core::automation::set_capability(&journal(), BY, id, allowed, wol_core::journal::now())
+            .map(drop)
+            .map_err(|_| ActionError::Failed)
+    }
     fn allow_helper_always(&self, helper: &str, cap: &str) -> Result<(), ActionError> {
         wol_core::automation::allow_always(&journal(), BY, helper, cap, wol_core::journal::now())
             .map(drop)
             .map_err(|_| ActionError::Failed)
+    }
+    fn history(&self) -> Vec<wol_core::journal::Entry> {
+        let mut e = journal().entries();
+        e.reverse();
+        e
+    }
+    fn undo(&self, id: Option<u64>) -> Result<wol_core::journal::Entry, String> {
+        let e = journal()
+            .undo(id, BY, wol_core::journal::now())
+            .map_err(|e| crate::copy::undo(&e).to_string())?;
+        after_undo(&self.inner.c, &wol_core::journal::reload_for(&e));
+        Ok(e)
+    }
+    fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
+        wol_core::update::be::read(&*self.inner.c.host).unwrap_or_default()
     }
     fn approve(&self, req: shared::shell::ApprovalRequest, password: String) -> Done {
         let (tx, rx) = async_channel::bounded(1);
@@ -998,6 +1208,8 @@ impl System for CoreSystem {
             });
         rx
     }
+    /// Starts fast refresh and refreshes the due topics now (the tick thread may be asleep for
+    /// the idle period; Control Center-only topics were never read while hidden).
     fn watch(&self) -> Option<async_channel::Receiver<()>> {
         let (tx, rx) = async_channel::bounded(1);
         self.inner
@@ -1005,35 +1217,81 @@ impl System for CoreSystem {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(tx);
+        let i = self.inner.clone();
+        let _ = std::thread::Builder::new()
+            .name("wol-controls-open".into())
+            .spawn(move || i.refresh(false));
         Some(rx)
     }
-    fn helpers(&self) -> wol_core::automation::Status {
-        wol_core::automation::user_status()
+}
+
+/// MPRIS player name -> app icon (dock pin, installed entry, else the name), read once per player.
+fn player_icon(player: &str) -> String {
+    static SEEN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, icon)) = seen.iter().find(|(p, _)| p == player) {
+        return icon.clone();
     }
-    fn set_helpers_enabled(&self, on: bool) -> Result<(), ActionError> {
-        wol_core::automation::set_enabled(&journal(), BY, on, wol_core::journal::now())
-            .map(drop)
-            .map_err(|_| ActionError::Failed)
+    let icon = crate::apps::icon_for(player, crate::apps::PINS, &crate::desktop::load_all());
+    seen.push((player.to_string(), icon.clone()));
+    icon
+}
+
+fn config_home() -> std::path::PathBuf {
+    crate::kit::config_home().into()
+}
+
+/// Journal actor for changes made in Settings, Control Center and the shell.
+const BY: &str = "settings";
+
+fn journal() -> wol_core::journal::Journal {
+    wol_core::journal::Journal::for_config(&config_home())
+}
+
+/// A helper's admin request after the user typed the password on the approval sheet. The session's
+/// cached authorization is forgotten first (the password is always checked) and again after (the
+/// helper is left nothing to reuse).
+pub fn approve(
+    c: &Controls,
+    req: &shared::shell::ApprovalRequest,
+    password: &str,
+) -> Result<(), ActionError> {
+    use shared::shell::ApprovalRequest as R;
+    // User-level changes run in the helper after Allow; never here, and wol-admind never hears of them.
+    if !req.is_admin() {
+        return Err(ActionError::Unavailable);
     }
-    fn set_helper_capability(&self, id: &str, allowed: bool) -> Result<(), ActionError> {
-        wol_core::automation::set_capability(&journal(), BY, id, allowed, wol_core::journal::now())
-            .map(drop)
-            .map_err(|_| ActionError::Failed)
+    c.revoke();
+    let r = match req {
+        R::Wifi { on } => c.set_wifi(*on, password),
+        R::WifiJoin { ssid, password: p } => c.wifi_join(ssid, p.as_deref(), password),
+        R::Bluetooth { on } => c.set_bluetooth(*on, password),
+        R::BootEnvironment { name } => c.boot_environment(name, password),
+        R::Change { .. } => unreachable!("refused above"),
+    };
+    c.revoke();
+    // No password means no approval: the sheet asks again instead of reporting "unavailable".
+    r.map_err(|e| match ActionError::from(e) {
+        ActionError::NeedsAuth => ActionError::Denied,
+        e => e,
+    })
+}
+
+/// What an undo touched follows it: other apps restyle, shell prefs and Hyprland reload.
+fn after_undo(c: &Controls, r: &wol_core::journal::Reload) {
+    use wol_core::theme::{accent, active};
+    if let Some(saved) = &r.theme {
+        let dark = accent::auto_is_dark(crate::kit::now().hour);
+        let id = active::effective(accent::effective(saved.as_deref(), dark).as_deref(), dark);
+        if let Err(e) = wol_core::theme::apps::apply(&id, &config_home()) {
+            eprintln!("wol: app themes: {e}");
+        }
     }
-    fn history(&self) -> Vec<wol_core::journal::Entry> {
-        let mut e = journal().entries();
-        e.reverse();
-        e
+    if r.shell {
+        crate::kit::spawn(&["wol".into(), "shell".into(), "reload".into()]);
     }
-    fn undo(&self, id: Option<u64>) -> Result<wol_core::journal::Entry, String> {
-        let e = journal()
-            .undo(id, BY, wol_core::journal::now())
-            .map_err(|e| crate::copy::undo(&e).to_string())?;
-        after_undo(&self.inner.c, &wol_core::journal::reload_for(&e));
-        Ok(e)
-    }
-    fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
-        wol_core::update::be::read(&*self.inner.c.host).unwrap_or_default()
+    if r.hyprland {
+        let _ = c.host.run(&["hyprctl", "reload"]);
     }
 }
 
@@ -1092,6 +1350,54 @@ mod tests {
         );
         assert_eq!(battery_label(None), None);
         assert_eq!(signal_icon(30), "network-wireless-signal-ok-symbolic");
+    }
+
+    /// Helper approvals always check the password and leave no cached authorization behind.
+    #[test]
+    fn approve_revokes_around_the_admin_request() {
+        use shared::admin::AdminReply;
+        use shared::shell::ApprovalRequest as R;
+        let sent = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = sent.clone();
+        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::new(true)));
+        c.admin = Arc::new(move |req, pw| {
+            log.lock()
+                .unwrap()
+                .push(format!("{} {}", req.action.name(), req.args.join(" ")));
+            Some(match pw {
+                "" => AdminReply::Ok,
+                "good" => AdminReply::Ok,
+                _ => AdminReply::Denied,
+            })
+        });
+        let be = R::BootEnvironment {
+            name: "wol-before-update-1".into(),
+        };
+        assert_eq!(approve(&c, &be, "good"), Ok(()));
+        let change = R::Change {
+            capability: "appearance".into(),
+            what: "switch to Dark appearance".into(),
+        };
+        assert_eq!(
+            approve(&c, &change, "good"),
+            Err(ActionError::Unavailable),
+            "user-level changes never run as an admin request"
+        );
+        assert_eq!(
+            approve(&c, &R::Wifi { on: false }, "bad"),
+            Err(ActionError::Denied)
+        );
+        assert_eq!(
+            *sent.lock().unwrap(),
+            [
+                "revoke ",
+                "boot-environment wol-before-update-1",
+                "revoke ",
+                "revoke ",
+                "wifi-power wlan0 off",
+                "revoke "
+            ]
+        );
     }
 
     #[test]
@@ -1238,6 +1544,96 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    fn bare(h: &Arc<wol_core::system::fake::FakeHost>) -> CoreSystem {
+        let (_tick, ticks) = std::sync::mpsc::channel();
+        let root = std::env::temp_dir().join("wol-no-sysfs");
+        CoreSystem::with_ticks(Controls::new(h.clone()), Sysfs { root }, None, ticks)
+    }
+
+    /// Control Center-only helpers (playerctl, bluetoothctl, hyprctl getoption) never run while
+    /// nobody watches; opening a watcher reads them at once instead of after the idle period.
+    #[test]
+    fn panel_topics_refresh_only_while_watched() {
+        use wol_core::system::fake::FakeHost;
+        let h = Arc::new(FakeHost::new(false));
+        h.command(
+            &format!(
+                "playerctl metadata --format {}",
+                wol_core::controls::PLAYERCTL_FORMAT
+            ),
+            "Playing\t61000000\t152000000\tSong\tBand\t\n",
+        )
+        .command("powerprofilesctl get", "balanced\n");
+        let sys = bare(&h);
+        sys.inner.refresh(false);
+        assert!(
+            !h.ran()
+                .iter()
+                .any(|r| r.starts_with("playerctl") || r.starts_with("powerprofilesctl")),
+            "{:?}",
+            h.ran()
+        );
+        assert_eq!(sys.now_playing(), None);
+        let w = sys.watch().unwrap();
+        w.recv_blocking().unwrap();
+        let np = sys.now_playing().unwrap();
+        assert_eq!(
+            (np.title.as_str(), np.position, np.length),
+            ("Song", 61, Some(152))
+        );
+        assert_eq!(sys.power_mode(), Some(PowerMode::Automatic));
+    }
+
+    /// FreeBSD has no /sys: battery and online state come from sysctls and the default route.
+    #[test]
+    fn freebsd_battery_and_network_without_sysfs() {
+        use wol_core::system::fake::FakeHost;
+        let h = Arc::new(FakeHost::new(true));
+        h.int("hw.acpi.battery.life", 47)
+            .int("hw.acpi.battery.time", 95)
+            .int("hw.acpi.battery.state", 1)
+            .command("route -n get default", "  interface: em0\n");
+        let sys = bare(&h);
+        assert_eq!(sys.battery(), None);
+        sys.inner.refresh(true);
+        assert_eq!(
+            sys.battery(),
+            Some(Battery {
+                percent: 47,
+                status: BatteryStatus::Discharging
+            })
+        );
+        assert_eq!(sys.battery_time(), Some(95));
+        assert_eq!(
+            crate::status::network(sys.network()),
+            "network-wired-symbolic"
+        );
+    }
+
+    #[test]
+    fn panel_actions_update_the_snapshot() {
+        use wol_core::system::fake::FakeHost;
+        let h = Arc::new(FakeHost::new(false));
+        h.command("hyprctl keyword cursor:zoom_factor 2", "ok")
+            .command("hyprctl -j getoption animations:enabled", r#"{"int":1}"#)
+            .command(
+                "hyprctl -j getoption cursor:zoom_factor",
+                r#"{"float":1.0}"#,
+            )
+            .command("playerctl next", "");
+        let sys = bare(&h);
+        sys.inner.refresh(true);
+        assert_eq!(sys.accessibility().zoom, Some(false));
+        assert_eq!(sys.perform(&Action::Zoom(true)), Ok(()));
+        assert_eq!(sys.accessibility().zoom, Some(true));
+        assert_eq!(sys.perform(&Action::MediaNext), Ok(()));
+        assert_eq!(
+            sys.perform(&Action::BtConnect("bad".into(), true)),
+            Err(ActionError::Invalid),
+            "invalid address"
+        );
+    }
+
     /// Manual: `cargo test -p shell --lib live_host -- --ignored --nocapture` prints this machine's snapshot.
     #[test]
     #[ignore]
@@ -1247,122 +1643,5 @@ mod tests {
         let s = sys.snapshot();
         println!("{s:#?}\nnetwork {:?}", sys.network());
         assert!(s.volume.is_some() || s.wifi_on.is_some());
-    }
-}
-/// MPRIS player name -> app icon (dock pin, installed entry, else the name), read once per player.
-fn player_icon(player: &str) -> String {
-    static SEEN: Mutex<Vec<(String, String)>> = Mutex::new(Vec::new());
-    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((_, icon)) = seen.iter().find(|(p, _)| p == player) {
-        return icon.clone();
-    }
-    let icon = crate::apps::icon_for(player, crate::apps::PINS, &crate::desktop::load_all());
-    seen.push((player.to_string(), icon.clone()));
-    icon
-}
-
-fn config_home() -> std::path::PathBuf {
-    crate::kit::config_home().into()
-}
-
-/// Journal actor for changes made in Settings, Control Center and the shell.
-const BY: &str = "settings";
-
-fn journal() -> wol_core::journal::Journal {
-    wol_core::journal::Journal::for_config(&config_home())
-}
-
-/// A helper's admin request after the user typed the password on the approval sheet. The session's
-/// cached authorization is forgotten first (the password is always checked) and again after (the
-/// helper is left nothing to reuse).
-pub fn approve(
-    c: &Controls,
-    req: &shared::shell::ApprovalRequest,
-    password: &str,
-) -> Result<(), ActionError> {
-    use shared::shell::ApprovalRequest as R;
-    // User-level changes run in the helper after Allow; never here, and wol-admind never hears of them.
-    if !req.is_admin() {
-        return Err(ActionError::Unavailable);
-    }
-    c.revoke();
-    let r = match req {
-        R::Wifi { on } => c.set_wifi(*on, password),
-        R::WifiJoin { ssid, password: p } => c.wifi_join(ssid, p.as_deref(), password),
-        R::Bluetooth { on } => c.set_bluetooth(*on, password),
-        R::BootEnvironment { name } => c.boot_environment(name, password),
-        R::Change { .. } => unreachable!("refused above"),
-    };
-    c.revoke();
-    // No password means no approval: the sheet asks again instead of reporting "unavailable".
-    r.map_err(|e| match ActionError::from(e) {
-        ActionError::NeedsAuth => ActionError::Denied,
-        e => e,
-    })
-}
-
-/// What an undo touched follows it: other apps restyle, shell prefs and Hyprland reload.
-fn after_undo(c: &Controls, r: &wol_core::journal::Reload) {
-    use wol_core::theme::{accent, active};
-    if let Some(saved) = &r.theme {
-        let dark = accent::auto_is_dark(crate::kit::now().hour);
-        let id = active::effective(accent::effective(saved.as_deref(), dark).as_deref(), dark);
-        if let Err(e) = wol_core::theme::apps::apply(&id, &config_home()) {
-            eprintln!("wol: app themes: {e}");
-        }
-    }
-    if r.shell {
-        crate::kit::spawn(&["wol".into(), "shell".into(), "reload".into()]);
-    }
-    if r.hyprland {
-        let _ = c.host.run(&["hyprctl", "reload"]);
-    }
-
-    /// Helper approvals always check the password and leave no cached authorization behind.
-    #[test]
-    fn approve_revokes_around_the_admin_request() {
-        use shared::admin::AdminReply;
-        use shared::shell::ApprovalRequest as R;
-        let sent = Arc::new(Mutex::new(Vec::<String>::new()));
-        let log = sent.clone();
-        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::new(true)));
-        c.admin = Arc::new(move |req, pw| {
-            log.lock()
-                .unwrap()
-                .push(format!("{} {}", req.action.name(), req.args.join(" ")));
-            Some(match pw {
-                "" => AdminReply::Ok,
-                "good" => AdminReply::Ok,
-                _ => AdminReply::Denied,
-            })
-        });
-        let be = R::BootEnvironment {
-            name: "wol-before-update-1".into(),
-        };
-        assert_eq!(approve(&c, &be, "good"), Ok(()));
-        let change = R::Change {
-            capability: "appearance".into(),
-            what: "switch to Dark appearance".into(),
-        };
-        assert_eq!(
-            approve(&c, &change, "good"),
-            Err(ActionError::Unavailable),
-            "user-level changes never run as an admin request"
-        );
-        assert_eq!(
-            approve(&c, &R::Wifi { on: false }, "bad"),
-            Err(ActionError::Denied)
-        );
-        assert_eq!(
-            *sent.lock().unwrap(),
-            [
-                "revoke ",
-                "boot-environment wol-before-update-1",
-                "revoke ",
-                "revoke ",
-                "wifi-power wlan0 off",
-                "revoke "
-            ]
-        );
     }
 }

@@ -36,8 +36,17 @@ pub fn install(extra: &'static str) {
                     .unwrap_or(false)
             };
             let t = theme::resolve(id.as_deref(), dark);
-            if last.borrow_mut().set(t.id.clone()) {
-                provider.load_from_string(&theme::stylesheet(&t, extra));
+            let contrast = contrast_on();
+            if last.borrow_mut().set(format!(
+                "{}{}",
+                t.id,
+                if contrast { "+contrast" } else { "" }
+            )) {
+                let mut css = theme::stylesheet(&t, extra);
+                if contrast {
+                    css.push_str(CONTRAST_CSS);
+                }
+                provider.load_from_string(&css);
                 if let Some(s) = gtk::Settings::default() {
                     s.set_gtk_application_prefer_dark_theme(t.variant == theme::Variant::Dark);
                 }
@@ -46,13 +55,15 @@ pub fn install(extra: &'static str) {
     };
     load();
     auto_timer(Rc::new(load.clone()));
-    if let Ok(m) =
-        gio::File::for_path(&path).monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
-    {
-        let load = load.clone();
-        m.connect_changed(move |_, _, _, _| load());
-        // Keep the monitor alive for the process lifetime.
-        std::mem::forget(m);
+    for p in [path.clone(), contrast_path()] {
+        if let Ok(m) = gio::File::for_path(&p)
+            .monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        {
+            let load = load.clone();
+            m.connect_changed(move |_, _, _, _| load());
+            // Keep the monitor alive for the process lifetime.
+            std::mem::forget(m);
+        }
     }
     let _ = glib::MainContext::default();
 }
@@ -79,6 +90,34 @@ pub fn set_active(id: &str) -> std::io::Result<()> {
         }
     });
     Ok(())
+}
+
+/// Increase Contrast flag, relative to `$XDG_CONFIG_HOME`; every shell process reloads on change.
+pub const CONTRAST_FILE: &str = "wol/contrast";
+/// Token overrides appended to the kit stylesheet while the flag exists.
+pub const CONTRAST_CSS: &str = include_str!("contrast.css");
+
+fn contrast_path() -> std::path::PathBuf {
+    std::path::Path::new(&super::config_home()).join(CONTRAST_FILE)
+}
+
+pub fn contrast_on() -> bool {
+    contrast_path().exists()
+}
+
+pub fn set_contrast(on: bool) -> std::io::Result<()> {
+    let p = contrast_path();
+    if on {
+        if let Some(d) = p.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+        std::fs::write(p, "")
+    } else {
+        match std::fs::remove_file(p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    }
 }
 
 pub fn active_id() -> Option<String> {

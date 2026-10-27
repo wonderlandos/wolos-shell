@@ -8,10 +8,10 @@ use shell::ui;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-#[path = "golden_cases/widgets.rs"]
-mod widget_cases;
 #[path = "golden_cases/store_package.rs"]
 mod package_cases;
+#[path = "golden_cases/widgets.rs"]
+mod widget_cases;
 #[path = "golden_cases/wol_file.rs"]
 mod wol_file;
 

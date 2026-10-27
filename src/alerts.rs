@@ -19,6 +19,8 @@ pub enum Notice {
     Show(String, String, bool),
     /// Notify, then lock and sleep now (the battery is about to die).
     Sleep(String, String),
+    /// Notify with a Restart action (a driver was installed in the background).
+    Restart(String, String),
 }
 
 #[derive(Debug, Default)]
@@ -29,6 +31,8 @@ pub struct Alerts {
     polls: u32,
     /// The update check already notified about (its `checked` time).
     updates_shown: u64,
+    /// The online install result already shown (its `at` time).
+    online_shown: Option<u64>,
 }
 
 impl Alerts {
@@ -75,6 +79,20 @@ impl Alerts {
         Some(Notice::Show(s, body, false))
     }
 
+    /// A driver installed (or not) when the network came up: one notice per attempt, with
+    /// Restart when it worked, a pointer to Settings when it did not.
+    pub fn online(&mut self, r: Option<shared::hardware::OnlineInstall>) -> Option<Notice> {
+        let r = r?;
+        let ((s, body), restart) = wol_core::hardware::online::notice(&r, self.online_shown)?;
+        self.online_shown = Some(r.at);
+        let (s, body) = (s.to_string(), body.to_string());
+        Some(if restart {
+            Notice::Restart(s, body)
+        } else {
+            Notice::Show(s, body, false)
+        })
+    }
+
     /// Disk is checked on every [`DISK_EVERY_POLLS`]th poll, starting with the first.
     pub fn disk_due(&mut self) -> bool {
         let due = self.polls.is_multiple_of(DISK_EVERY_POLLS);
@@ -108,6 +126,13 @@ pub fn poll(b: Option<Battery>) {
     let (battery, due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
     let (disk, updates) = if due {
         let u = Updates::read(std::path::Path::new(wol_core::update::check::DIR));
+        let online = std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
+            .ok()
+            .and_then(|t| wol_core::hardware::online::parse(&t));
+        let driver = STATE.with_borrow_mut(|a| a.online(online));
+        if let Some(n) = driver {
+            act(n);
+        }
         let disk = startup_disk();
         STATE.with_borrow_mut(|a| (disk.and_then(|(f, t)| a.disk(f, t)), a.updates(u)))
     } else {
@@ -129,6 +154,14 @@ fn act(n: Notice) {
     };
     match n {
         Notice::Show(s, body, critical) => notify(&s, &body, critical),
+        Notice::Restart(s, body) => {
+            // The action button asks first like every Restart (`wol power restart`).
+            let script = format!(
+                "[ \"$(notify-send -a WolOS -w -A restart={} \"$1\" \"$2\")\" = restart ] && exec wol power restart",
+                wol_core::hardware::online::RESTART
+            );
+            crate::kit::spawn(&["sh".into(), "-c".into(), script, "sh".into(), s, body]);
+        }
         Notice::Sleep(s, body) => {
             notify(&s, &body, true);
             crate::kit::spawn(&["wol".into(), "power".into(), "sleep".into()]);
@@ -164,6 +197,7 @@ mod tests {
             seen.push(match a.battery(bat(p, s)) {
                 Some(Notice::Show(_, body, critical)) => format!("{p}:show:{critical}:{body}"),
                 Some(Notice::Sleep(..)) => format!("{p}:sleep"),
+                Some(Notice::Restart(..)) => unreachable!(),
                 None => format!("{p}:-"),
             });
         }
@@ -202,6 +236,30 @@ mod tests {
         assert_eq!(a.disk(0, 0), None);
         let due: Vec<bool> = (0..=DISK_EVERY_POLLS).map(|_| a.disk_due()).collect();
         assert!(due[0] && due[DISK_EVERY_POLLS as usize] && !due[1]);
+    }
+
+    #[test]
+    fn a_background_driver_install_notifies_once() {
+        use shared::hardware::OnlineInstall;
+        let r = |ok, graphics| OnlineInstall {
+            at: 7,
+            packages: vec!["nvidia-drm-kmod".into()],
+            ok,
+            graphics,
+        };
+        let mut a = Alerts::default();
+        assert_eq!(a.online(None), None);
+        let Some(Notice::Restart(s, body)) = a.online(Some(r(true, true))) else {
+            panic!()
+        };
+        assert_eq!(s, "Graphics driver installed");
+        assert!(body.starts_with("Restart"), "{body}");
+        assert_eq!(a.online(Some(r(true, true))), None, "once");
+        let mut b = Alerts::default();
+        let Some(Notice::Show(_, body, false)) = b.online(Some(r(false, true))) else {
+            panic!()
+        };
+        assert!(body.contains("Settings"), "{body}");
     }
 
     #[test]

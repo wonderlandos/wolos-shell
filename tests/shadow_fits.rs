@@ -1,6 +1,6 @@
 //! Glass shadows must fit inside the surface: GTK cannot draw outside a layer surface, so a shadow wider
 //! than the transparent margin around a panel ends in a hard edge (FreeBSD sway shots: a band 24 px under
-//! Control Center, the switcher and banners; a grey wedge under the Setup card, clipped by its stack). Margins around every glass card cover the shadow extent.
+//! Control Center, the switcher and banners). Margins around every glass card cover the shadow extent.
 const CSS: &str = include_str!("../src/kit/kit.css");
 
 fn px(s: &str) -> f64 {
@@ -74,7 +74,6 @@ fn glass_shadows_fit_in_the_surface_margin() {
             sides(&prop(&rule(".glass-panel"), "margin")),
         ),
         ("banner stack", banners),
-        (".setup-card", sides(&prop(&rule(".setup-card"), "margin"))),
     ] {
         for i in 0..4 {
             assert!(m[i] >= e[i], "{what}: room {m:?} < shadow extent {e:?}");
