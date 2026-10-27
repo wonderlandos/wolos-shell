@@ -1,6 +1,6 @@
 //! Batteries widget: this computer's battery and connected devices that report one.
 //! UPower (system bus) when it runs: event-driven, devices included. Without it: the built-in
-//! battery only (Linux sysfs, FreeBSD `hw.acpi.battery.*`), refreshed on the widget schedule.
+//! battery only (Linux sysfs), refreshed on the widget schedule.
 use std::collections::HashMap;
 use zbus::zvariant::OwnedValue;
 
@@ -108,29 +108,8 @@ pub fn order(mut v: Vec<Device>) -> Vec<Device> {
     v
 }
 
-/// FreeBSD `hw.acpi.battery.life` (percent, -1 none) and `.state` (bit 1 = charging).
-pub fn freebsd_battery(life: Option<i64>, state: Option<i64>) -> Option<Device> {
-    let p = life.filter(|l| (0..=100).contains(l))?;
-    Some(Device {
-        name: DeviceKind::Computer.name().into(),
-        kind: DeviceKind::Computer,
-        percent: p as u8,
-        charging: state.is_some_and(|s| s & 2 != 0),
-    })
-}
-
 /// Built-in battery without UPower.
 pub fn builtin(sys: &dyn crate::system::System) -> Vec<Device> {
-    if cfg!(target_os = "freebsd") {
-        use wol_core::system::Host;
-        let h = wol_core::system::PosixHost;
-        return freebsd_battery(
-            h.sysctl_i64("hw.acpi.battery.life"),
-            h.sysctl_i64("hw.acpi.battery.state"),
-        )
-        .into_iter()
-        .collect();
-    }
     sys.battery()
         .map(|b| Device {
             name: DeviceKind::Computer.name().into(),
@@ -309,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn computer_first_and_freebsd_fallback() {
+    fn computer_first() {
         let d = |name: &str, kind| Device {
             name: name.into(),
             kind,
@@ -323,10 +302,6 @@ mod tests {
         ]);
         let names: Vec<&str> = v.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["This Computer", "AirPods", "Mouse"]);
-        assert_eq!(freebsd_battery(Some(-1), Some(0)), None);
-        assert_eq!(freebsd_battery(None, None), None);
-        let b = freebsd_battery(Some(77), Some(2)).unwrap();
-        assert_eq!((b.percent, b.charging), (77, true));
     }
 
     /// Manual: prints UPower's view of this machine.
