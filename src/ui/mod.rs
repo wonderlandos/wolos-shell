@@ -1,4 +1,5 @@
 //! wol-shell composition: wallpaper, menu bar, dock, notifications, OSD, clipboard, session, switcher.
+pub mod approval;
 pub mod capture;
 pub mod control_center;
 pub mod dock;
@@ -95,7 +96,8 @@ pub fn run_shell() -> glib::ExitCode {
                 Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
                 record,
             ];
-            ipc::shell_socket(panels, handlers, osd, sys);
+            let approver = approval::handler(&app, sys.clone());
+            ipc::shell_socket(panels, handlers, approver, osd, sys);
             apply_setup();
         });
     });

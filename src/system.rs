@@ -116,6 +116,17 @@ pub trait System: Send + Sync {
     fn monitors(&self) -> Vec<Monitor> {
         Vec::new()
     }
+    /// Always Allow on the approval sheet: `helper` may change `cap` without asking (journaled).
+    fn allow_helper_always(&self, _helper: &str, _cap: &str) -> Result<(), ActionError> {
+        Err(ActionError::Unavailable)
+    }
+    /// A helper's administrator request, run after the user typed `password` on the approval
+    /// sheet (`ui::approval`). Always checks the password, never a cached authorization.
+    fn approve(&self, _req: shared::shell::ApprovalRequest, _password: String) -> Done {
+        let (tx, rx) = async_channel::bounded(1);
+        let _ = tx.try_send(Err(ActionError::Unavailable));
+        rx
+    }
     /// Blocking dispatch of one action (backends call this off the UI thread).
     fn perform(&self, a: &Action) -> Result<(), ActionError> {
         match a {
@@ -808,6 +819,23 @@ impl System for CoreSystem {
             });
         rx
     }
+    fn allow_helper_always(&self, helper: &str, cap: &str) -> Result<(), ActionError> {
+        wol_core::automation::allow_always(&journal(), BY, helper, cap, wol_core::journal::now())
+            .map(drop)
+            .map_err(|_| ActionError::Failed)
+    }
+    fn approve(&self, req: shared::shell::ApprovalRequest, password: String) -> Done {
+        let (tx, rx) = async_channel::bounded(1);
+        let i = self.inner.clone();
+        let _ = std::thread::Builder::new()
+            .name("wol-approve".into())
+            .spawn(move || {
+                let r = approve(&i.c, &req, &password);
+                i.refresh(true);
+                let _ = tx.try_send(r);
+            });
+        rx
+    }
     fn refresh_audio(&self) -> Done {
         let (tx, rx) = async_channel::bounded(1);
         let i = self.inner.clone();
@@ -1089,5 +1117,52 @@ fn after_undo(c: &Controls, r: &wol_core::journal::Reload) {
     if r.hyprland {
         let _ = c.host.run(&["hyprctl", "reload"]);
     }
-}
 
+    /// Helper approvals always check the password and leave no cached authorization behind.
+    #[test]
+    fn approve_revokes_around_the_admin_request() {
+        use shared::admin::AdminReply;
+        use shared::shell::ApprovalRequest as R;
+        let sent = Arc::new(Mutex::new(Vec::<String>::new()));
+        let log = sent.clone();
+        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::new(true)));
+        c.admin = Arc::new(move |req, pw| {
+            log.lock()
+                .unwrap()
+                .push(format!("{} {}", req.action.name(), req.args.join(" ")));
+            Some(match pw {
+                "" => AdminReply::Ok,
+                "good" => AdminReply::Ok,
+                _ => AdminReply::Denied,
+            })
+        });
+        let be = R::BootEnvironment {
+            name: "wol-before-update-1".into(),
+        };
+        assert_eq!(approve(&c, &be, "good"), Ok(()));
+        let change = R::Change {
+            capability: "appearance".into(),
+            what: "switch to Dark appearance".into(),
+        };
+        assert_eq!(
+            approve(&c, &change, "good"),
+            Err(ActionError::Unavailable),
+            "user-level changes never run as an admin request"
+        );
+        assert_eq!(
+            approve(&c, &R::Wifi { on: false }, "bad"),
+            Err(ActionError::Denied)
+        );
+        assert_eq!(
+            *sent.lock().unwrap(),
+            [
+                "revoke ",
+                "boot-environment wol-before-update-1",
+                "revoke ",
+                "revoke ",
+                "wifi-power wlan0 off",
+                "revoke "
+            ]
+        );
+    }
+}
