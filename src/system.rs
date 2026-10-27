@@ -1,5 +1,5 @@
 //! System data seam. Topics match IaraOS system-api.md: power, audio, network, brightness.
-//! [`CoreSystem`] is the real backend (`wol_core::controls`, Linux and FreeBSD): a worker thread keeps cached
+//! [`CoreSystem`] is the real backend (`wol_core::controls`, Linux): a worker thread keeps cached
 //! snapshots, reads never fork or block, actions run off the UI thread through [`System::spawn`].
 //! `Sysfs` reads files only; `Fake` is deterministic for goldens.
 use crate::status::{Audio, Battery, BatteryStatus, Network};
@@ -664,7 +664,7 @@ pub struct Snapshot {
     pub monitors: Vec<Monitor>,
     pub night: Option<bool>,
     pub battery: Option<BatteryState>,
-    /// FreeBSD default-route interface (network status without sysfs).
+    /// Default-route interface from /proc/net/route (wired vs Wi-Fi without sysfs).
     pub route: Option<String>,
     pub media: Option<Media>,
     pub bt_devices: Vec<BtDevice>,
@@ -773,9 +773,7 @@ impl Inner {
             s.bluetooth = self.c.bluetooth();
             s.monitors = self.c.monitors();
             s.battery = self.c.battery();
-            if self.c.host.is_freebsd() {
-                s.route = self.c.default_iface();
-            }
+            s.route = self.c.default_iface();
         }
         if due[3] {
             s.media = self.c.now_playing();
@@ -1359,7 +1357,7 @@ mod tests {
         use shared::shell::ApprovalRequest as R;
         let sent = Arc::new(Mutex::new(Vec::<String>::new()));
         let log = sent.clone();
-        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::new(true)));
+        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::linux()));
         c.admin = Arc::new(move |req, pw| {
             log.lock()
                 .unwrap()
@@ -1383,10 +1381,7 @@ mod tests {
             Err(ActionError::Unavailable),
             "user-level changes never run as an admin request"
         );
-        assert_eq!(
-            approve(&c, &R::Wifi { on: false }, "bad"),
-            Err(ActionError::Denied)
-        );
+        assert_eq!(approve(&c, &be, "bad"), Err(ActionError::Denied));
         assert_eq!(
             *sent.lock().unwrap(),
             [
@@ -1394,7 +1389,7 @@ mod tests {
                 "boot-environment wol-before-update-1",
                 "revoke ",
                 "revoke ",
-                "wifi-power wlan0 off",
+                "boot-environment wol-before-update-1",
                 "revoke "
             ]
         );
@@ -1440,9 +1435,12 @@ mod tests {
     #[test]
     fn power_and_security_status_come_from_the_host() {
         use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::new(false));
-        h.command("sysctl -n hw.acpi.acline", "0\n");
-        h.command("sysctl -n hw.acpi.battery.life", "64\n");
+        let h = Arc::new(FakeHost::linux());
+        h.command("ls /sys/class/power_supply", "AC\nBAT0\n")
+            .command("cat /sys/class/power_supply/AC/type", "Mains\n")
+            .command("cat /sys/class/power_supply/AC/online", "0\n")
+            .command("cat /sys/class/power_supply/BAT0/type", "Battery\n")
+            .command("cat /sys/class/power_supply/BAT0/capacity", "64\n");
         h.command("sysrc -n pf_enable", "YES\n");
         let sys = CoreSystem::with_ticks(
             Controls::new(h),
@@ -1584,15 +1582,21 @@ mod tests {
         assert_eq!(sys.power_mode(), Some(PowerMode::Automatic));
     }
 
-    /// FreeBSD has no /sys: battery and online state come from sysctls and the default route.
+    /// Battery and the default route come through the host (fakeable), not the sysfs mirror.
     #[test]
-    fn freebsd_battery_and_network_without_sysfs() {
+    fn battery_and_route_through_the_host() {
         use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::new(true));
-        h.int("hw.acpi.battery.life", 47)
-            .int("hw.acpi.battery.time", 95)
-            .int("hw.acpi.battery.state", 1)
-            .command("route -n get default", "  interface: em0\n");
+        let h = Arc::new(FakeHost::linux());
+        h.file("/sys/class/power_supply/BAT0/type", "Battery\n")
+            .file("/sys/class/power_supply/BAT0/capacity", "47\n")
+            .file("/sys/class/power_supply/BAT0/status", "Discharging\n")
+            .file("/sys/class/power_supply/BAT0/energy_now", "19000\n")
+            .file("/sys/class/power_supply/BAT0/energy_full", "40000\n")
+            .file("/sys/class/power_supply/BAT0/power_now", "12000\n")
+            .file(
+                "/proc/net/route",
+                "Iface\tDestination\tGateway\tFlags\nenp0s31f6\t00000000\t0102A8C0\t0003\n",
+            );
         let sys = bare(&h);
         assert_eq!(sys.battery(), None);
         sys.inner.refresh(true);
