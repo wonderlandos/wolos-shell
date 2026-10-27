@@ -221,6 +221,24 @@ pub fn disk_full(free: &str) -> (String, String) {
     )
 }
 
+/// The daily update check found something (wol_core::update::check).
+pub fn updates_ready(count: usize, security: bool) -> (String, String) {
+    let (n, it) = if count == 1 {
+        ("1 update".to_string(), "it")
+    } else {
+        (format!("{count} updates"), "them")
+    };
+    let fixes = if security {
+        ", including security fixes"
+    } else {
+        ""
+    };
+    (
+        "Updates Available".into(),
+        format!("WolOS has {n} ready{fixes}. Open Software Update to install {it}."),
+    )
+}
+
 /// Restart, Shut Down and Log Out ask first (macOS): question, countdown line, button.
 pub fn session_confirm(action: &str, secs: u32) -> Option<(&'static str, String, &'static str)> {
     let (q, what, button) = match action {
