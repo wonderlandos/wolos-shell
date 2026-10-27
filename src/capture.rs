@@ -61,7 +61,7 @@ pub const DELAYS: [u32; 3] = [0, 5, 10];
 impl Default for Options {
     fn default() -> Self {
         Options {
-            dest: Dest::Pictures,
+            dest: Dest::Desktop,
             delay: 0,
         }
     }
@@ -101,9 +101,18 @@ pub fn action(mode: Mode) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Screenshots land on the Desktop, as on a Mac and as ⇧⌘3 does (wol-screenshot).
+    #[test]
+    fn screenshots_go_to_the_desktop_by_default() {
+        assert_eq!(Options::default().dest, Dest::Desktop);
+    }
+
     #[test]
     fn argv_per_mode() {
-        let pics = Options::default();
+        let pics = Options {
+            dest: Dest::Pictures,
+            delay: 0,
+        };
         let desk = Options {
             dest: Dest::Desktop,
             delay: 5,
