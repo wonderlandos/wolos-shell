@@ -70,12 +70,13 @@ impl Toast {
             old.remove();
         }
         let me = Rc::downgrade(self);
-        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(TOAST_MS), move || {
-            if let Some(t) = me.upgrade() {
-                t.timer.borrow_mut().take();
-                t.hide();
-            }
-        });
+        let id =
+            glib::timeout_add_local_once(std::time::Duration::from_millis(TOAST_MS), move || {
+                if let Some(t) = me.upgrade() {
+                    t.timer.borrow_mut().take();
+                    t.hide();
+                }
+            });
         *self.timer.borrow_mut() = Some(id);
     }
 
