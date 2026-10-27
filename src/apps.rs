@@ -74,6 +74,12 @@ pub const PINS: &[Pin] = &[
         exec: &["foot"],
     },
     Pin {
+        id: "org.wolos.store",
+        name: "App Store",
+        icon: "wolos-software",
+        exec: &["wol-store"],
+    },
+    Pin {
         id: "org.wolos.settings",
         name: "System Settings",
         icon: "wolos-settings",

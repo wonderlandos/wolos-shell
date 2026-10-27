@@ -117,8 +117,36 @@ fn pins_keep_wolos_names_and_icons() {
             "Calendar",
             "Notes",
             "Terminal",
+            "App Store",
             "System Settings"
         ]
     );
     assert!(PINS.iter().all(|p| p.icon.starts_with("wolos-")));
+}
+
+#[test]
+fn app_store_is_pinned_installed_and_opens_wol_packages() {
+    // macOS Dock: App Store sits before System Settings.
+    let p = PINS.iter().find(|p| p.name == "App Store").unwrap();
+    assert_eq!(
+        (p.id, p.icon, p.exec),
+        ("org.wolos.store", "wolos-software", &["wol-store"][..])
+    );
+    assert!(wolos_binary("wol-store"), "wol-store not installed");
+    let desktop = std::fs::read_to_string(repo(
+        "desktop/overlay/usr/local/share/applications/org.wolos.store.desktop",
+    ))
+    .unwrap();
+    for l in [
+        "Name=App Store",
+        "Exec=wol-store %f",
+        "Icon=wolos-software",
+        "MimeType=application/x-wolos-package;",
+    ] {
+        assert!(desktop.lines().any(|x| x == l), "{l}");
+    }
+    assert_eq!(
+        frontmost_name("org.wolos.store", "", PINS, &[]),
+        "App Store"
+    );
 }

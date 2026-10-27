@@ -80,6 +80,18 @@ fn about(name: &str, class: &str) {
     super::panels::about(&app, name, &icon, class).present();
 }
 
+/// WolOS menu (the logo), macOS Apple menu order. Empty title = separator.
+pub const LOGO_MENU: &[(&str, &[&str])] = &[
+    ("About This Computer", &["wol-settings", "About"]),
+    ("", &[]),
+    ("System Settings…", &["wol-settings"]),
+    ("App Store…", &["wol-store"]),
+    ("", &[]),
+    ("Lock Screen", &["wol-lock"]),
+    ("Log Out…", &["wol", "shell", "toggle", "session"]),
+    ("Shut Down…", &["wol", "shell", "toggle", "session"]),
+];
+
 fn run(argv: &'static [&'static str]) -> Box<dyn Fn()> {
     Box::new(move || kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
 }
@@ -90,15 +102,9 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     let logo = gtk::MenuButton::new();
     logo.set_child(Some(&w::icon("wolos-glyph-symbolic", w::ICON)));
     logo.set_valign(gtk::Align::Center);
-    logo.set_popover(Some(&w::menu(vec![
-        ("About This Computer", run(&["wol-settings", "About"])),
-        ("", Box::new(|| {})),
-        ("System Settings…", run(&["wol-settings"])),
-        ("", Box::new(|| {})),
-        ("Lock Screen", run(&["wol-lock"])),
-        ("Log Out…", run(&["wol", "shell", "toggle", "session"])),
-        ("Shut Down…", run(&["wol", "shell", "toggle", "session"])),
-    ])));
+    logo.set_popover(Some(&w::menu(
+        LOGO_MENU.iter().map(|&(t, argv)| (t, run(argv))).collect(),
+    )));
     root.append(&logo);
     // Only menus backed by real actions: the app menu and Window (no placeholder File/Edit/View).
     let appname = w::label(crate::apps::DESKTOP_NAME, "app-name");
@@ -274,4 +280,20 @@ pub fn poll_status(bar: Rc<Bar>, sys: Rc<dyn crate::system::System>) {
         refresh(&bar, &*sys);
         glib::ControlFlow::Continue
     });
+}
+
+#[cfg(test)]
+mod logo_tests {
+    use super::LOGO_MENU;
+
+    #[test]
+    fn logo_menu_opens_the_app_store_after_system_settings() {
+        let titles: Vec<&str> = LOGO_MENU.iter().map(|r| r.0).collect();
+        let at = titles.iter().position(|t| *t == "App Store…").unwrap();
+        assert_eq!(titles[at - 1], "System Settings…");
+        assert_eq!(LOGO_MENU[at].1, ["wol-store"]);
+        assert_eq!(titles[0], "About This Computer");
+        // Separators run nothing; every other row runs a program.
+        assert!(LOGO_MENU.iter().all(|(t, a)| t.is_empty() == a.is_empty()));
+    }
 }
