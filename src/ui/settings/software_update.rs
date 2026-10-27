@@ -1,5 +1,7 @@
-//! Software Update: check and install pkg upgrades into a new boot environment.
+//! Software Update: what the daily check found (FreeBSD's fixes, package updates, the ones that
+//! fix security problems), Check Now, and Update Now into a new boot environment.
 use super::*;
+use wol_core::update::check::Updates;
 
 // ---- Software Update ----
 
@@ -21,6 +23,43 @@ pub fn parse_check(out: Option<&str>) -> UpdateState {
         Some(v) => UpdateState::Available(v),
         None => UpdateState::Failed(crate::copy::UPDATE_CHECK.into()),
     }
+}
+
+/// The daily check's findings -> the state the page opens in: never checked asks for a check.
+pub fn from_snapshot(u: Option<&Updates>) -> UpdateState {
+    match u {
+        None => UpdateState::Idle,
+        Some(u) if u.count() == 0 => UpdateState::UpToDate,
+        Some(u) => UpdateState::Available(
+            u.base
+                .iter()
+                .map(|b| format!("FreeBSD {b}"))
+                .chain(u.packages.iter().cloned())
+                .collect(),
+        ),
+    }
+}
+
+/// "FreeBSD 15.1-RELEASE-p3, firefox and curl", at most `max` names then "and 3 more" (the title
+/// already says how many).
+pub fn names_line(names: &[String], max: usize) -> String {
+    let shown: Vec<&str> = names.iter().take(max).map(String::as_str).collect();
+    match (names.len().saturating_sub(max), shown.as_slice()) {
+        (0, [one]) => (*one).to_string(),
+        (0, [rest @ .., last]) => format!("{} and {last}", rest.join(", ")),
+        (more, _) => format!("{} and {more} more", shown.join(", ")),
+    }
+}
+
+/// "1 update fixes a security problem. Last checked 3 h ago."
+pub fn snapshot_line(u: &Updates, now: u64) -> String {
+    let fixes = match u.security.len() {
+        0 => String::new(),
+        1 => "1 update fixes a security problem. ".into(),
+        n => format!("{n} updates fix security problems. "),
+    };
+    let when = super::restore::ago(now, u.checked).to_lowercase();
+    format!("{fixes}Last checked {when}.")
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -52,6 +91,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     progress_row.append(&bar);
     let names = w::label("", "secondary");
     names.set_wrap(true);
+    names.set_wrap_mode(gtk::pango::WrapMode::Word);
+    names.set_hexpand(true);
     let names_row = w::hbox(0);
     names_row.add_css_class("list-row");
     names_row.append(&names);
@@ -71,6 +112,9 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     buttons.append(&install);
     p.append(&buttons);
 
+    // What the daily check adds under the title (security fixes, when it ran); a fresh Check Now
+    // clears it.
+    let note: Rc<RefCell<Option<String>>> = Default::default();
     let show: Rc<dyn Fn(&UpdateState)> = {
         let (title, detail, spin, progress_row, names_row, names, check, install, bar) = (
             title.clone(),
@@ -84,6 +128,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             bar.clone(),
         );
         let pulse: Rc<RefCell<Option<glib::SourceId>>> = Default::default();
+        let note = note.clone();
         Rc::new(move |s: &UpdateState| {
             let busy = matches!(s, UpdateState::Checking | UpdateState::Installing);
             spin.set_spinning(busy);
@@ -113,17 +158,23 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 UpdateState::Checking => ("Checking for updates…".into(), String::new()),
                 UpdateState::UpToDate => (
                     "WolOS is up to date".into(),
-                    "All packages are current.".into(),
+                    match note.borrow().as_deref() {
+                        Some(n) => format!("All packages are current. {n}"),
+                        None => "All packages are current.".into(),
+                    },
                 ),
                 UpdateState::Available(v) => {
-                    names.set_label(&wol_core::update::summary(v, 6));
+                    names.set_label(&names_line(v, 6));
                     (
                         format!(
                             "{} update{} available",
                             v.len(),
                             if v.len() == 1 { "" } else { "s" }
                         ),
-                        "WolOS saves a restore point before updating.".into(),
+                        match note.borrow().as_deref() {
+                            Some(n) => format!("{n} WolOS saves a restore point first."),
+                            None => "WolOS saves a restore point before updating.".into(),
+                        },
                     )
                 }
                 UpdateState::Installing => (
@@ -143,8 +194,21 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     };
     show(&UpdateState::Idle);
     {
-        let show = show.clone();
+        let (show, note, m) = (show.clone(), note.clone(), e.machine());
+        off_thread(
+            move || m.updates(),
+            move |u| {
+                *note.borrow_mut() = u
+                    .as_ref()
+                    .map(|u| snapshot_line(u, wol_core::journal::now()));
+                show(&from_snapshot(u.as_ref()));
+            },
+        );
+    }
+    {
+        let (show, note) = (show.clone(), note.clone());
         check.connect_clicked(move |_| {
+            *note.borrow_mut() = None;
             show(&UpdateState::Checking);
             let (tx, rx) = async_channel::bounded(1);
             std::thread::spawn(move || {
@@ -193,5 +257,42 @@ mod tests {
             UpdateState::Available(vec!["curl".into(), "git".into()])
         );
         assert!(matches!(parse_check(None), UpdateState::Failed(_)));
+    }
+
+    #[test]
+    fn update_names_read_as_a_list() {
+        let n = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(names_line(&n(&["curl"]), 6), "curl");
+        assert_eq!(names_line(&n(&["a", "b", "c"]), 6), "a, b and c");
+        assert_eq!(names_line(&n(&["a", "b", "c", "d"]), 2), "a, b and 2 more");
+    }
+
+    #[test]
+    fn the_daily_check_opens_the_page() {
+        assert_eq!(from_snapshot(None), UpdateState::Idle);
+        let mut u = Updates {
+            checked: 10_000,
+            ..Default::default()
+        };
+        assert_eq!(from_snapshot(Some(&u)), UpdateState::UpToDate);
+        assert_eq!(
+            snapshot_line(&u, 10_000 + 3 * 3600),
+            "Last checked 3 h ago."
+        );
+        u.packages = vec!["curl".into(), "git".into()];
+        u.security = vec!["curl".into()];
+        u.base = Some("15.1-RELEASE-p3".into());
+        assert_eq!(
+            from_snapshot(Some(&u)),
+            UpdateState::Available(vec![
+                "FreeBSD 15.1-RELEASE-p3".into(),
+                "curl".into(),
+                "git".into()
+            ])
+        );
+        assert_eq!(
+            snapshot_line(&u, 10_300),
+            "1 update fixes a security problem. Last checked 5 min ago."
+        );
     }
 }
