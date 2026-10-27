@@ -64,7 +64,7 @@ fn cases() -> Vec<Case> {
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
-                let running = ["foot".to_string(), "wol-files".into()]
+                let running = ["foot".to_string(), "org.gnome.nautilus".into()]
                     .into_iter()
                     .collect();
                 ui::dock::content(&running).root.clone().upcast()
@@ -147,11 +147,11 @@ fn cases() -> Vec<Case> {
                 let apps = shell::switcher::apps(
                     &[
                         c("0x1", "foot", 0),
-                        c("0x2", "wol-files", 1),
+                        c("0x2", "org.gnome.Nautilus", 1),
                         c("0x3", "firefox", 2),
                         c("0x4", "foot", 3),
                         c("0x5", "org.wolos.settings", 4),
-                        c("0x6", "wol-mail", 5),
+                        c("0x6", "org.gnome.Geary", 5),
                     ],
                     &[],
                 );
