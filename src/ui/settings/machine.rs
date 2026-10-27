@@ -61,6 +61,12 @@ pub trait Machine: Send + Sync {
     /// Compositor consent grants: (app path, capability) (`wol_core::consent`).
     fn consent(&self) -> Vec<(String, String)>;
     fn kernel(&self) -> Kernel;
+    /// Energy mode, CPU steering and what the power plan does now (`wol_core::power::policy`).
+    fn power(&self) -> Option<wol_core::power::policy::Status>;
+    /// Firewall, remote login and kernel protections (`wol_core::security`).
+    fn security(&self) -> Option<wol_core::security::Status>;
+    /// The daily update check's findings; None before the first check.
+    fn updates(&self) -> Option<wol_core::update::check::Updates>;
     /// /etc/passwd text (accounts and their login shells).
     fn passwd(&self) -> String;
 }
@@ -151,6 +157,25 @@ impl Machine for Live {
                 .sysctl_string("kern.osrelease")
                 .unwrap_or_default(),
         }
+    }
+    fn power(&self) -> Option<wol_core::power::policy::Status> {
+        use wol_core::power::policy;
+        let os = self.os();
+        let facts = policy::facts(&|argv: &[&str]| os.run(argv));
+        let state = policy::State::parse(os.read_text(policy::STATE_FILE).as_deref());
+        Some(policy::status(&facts, &state))
+    }
+    fn security(&self) -> Option<wol_core::security::Status> {
+        let os = self.os();
+        Some(wol_core::security::status(&|argv: &[&str]| os.run(argv)))
+    }
+    fn updates(&self) -> Option<wol_core::update::check::Updates> {
+        use wol_core::update::check::{DIR, USERLAND_ARGV, Updates};
+        let os = self.os();
+        let f = |n: &str| os.read_text(&format!("{DIR}/{n}")).unwrap_or_default();
+        let u = Updates::parse(&f("checked"), &f("pkg"), &f("audit"), &f("base"))?;
+        let userland = u.base.as_ref().and_then(|_| os.run(&USERLAND_ARGV));
+        Some(u.installed(userland.as_deref()))
     }
     fn passwd(&self) -> String {
         self.os().read_text("/etc/passwd").unwrap_or_default()
@@ -380,6 +405,45 @@ impl Machine for Demo {
             ident: "WolKernel".into(),
             release: "15.1-RELEASE".into(),
         }
+    }
+    fn power(&self) -> Option<wol_core::power::policy::Status> {
+        use wol_core::power::policy::{Cpu, Mode, Source, Status};
+        Some(Status {
+            source: Source::Battery,
+            mode: Mode::Auto,
+            lid: Some(Lid::Sleep),
+            battery: Some(82),
+            cpu: Cpu::Epp,
+            epp: Some(128),
+            cx_lowest: Some("Cmax".into()),
+            sleep: true,
+            wifi_power_save: vec!["wlan0".into()],
+            charge_limit: None,
+        })
+    }
+    fn security(&self) -> Option<wol_core::security::Status> {
+        Some(wol_core::security::Status {
+            firewall: Some(true),
+            firewall_running: Some(true),
+            remote_login: Some(false),
+            system_log_private: true,
+            hardening: wol_core::security::HARDENING
+                .iter()
+                .map(|(k, v, _)| wol_core::security::Check {
+                    key: (*k).into(),
+                    want: (*v).into(),
+                    now: Some((*v).into()),
+                })
+                .collect(),
+        })
+    }
+    fn updates(&self) -> Option<wol_core::update::check::Updates> {
+        Some(wol_core::update::check::Updates {
+            checked: wol_core::journal::now().saturating_sub(3 * 3600),
+            packages: vec!["firefox".into(), "curl".into(), "mesa-dri".into()],
+            security: vec!["curl".into()],
+            base: Some("15.1-RELEASE-p3".into()),
+        })
     }
     fn passwd(&self) -> String {
         "root:*:0:0:Charlie &:/root:/bin/sh\n\

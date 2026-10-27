@@ -1,7 +1,25 @@
-//! Battery (Energy on desktops): charge and health, Low Power Mode (hwpstate EPP through wol-admind)
-//! and what closing the lid does. Rows whose hardware or verb is missing are not shown.
+//! Battery (Energy on desktops): charge and health, the energy mode (Automatic, Low Power, High
+//! Power: wol-admind `power-mode`, no password for the person at the computer) and what closing the
+//! lid does. Rows whose hardware or verb is missing are not shown.
 use super::*;
+use wol_core::power::policy::{self, Cpu, Mode};
 use wol_core::power::{BatteryInfo, Charge, Lid};
+
+/// Energy modes in menu order.
+pub(crate) const MODES: [(Mode, &str); 3] = [
+    (Mode::Auto, "Automatic"),
+    (Mode::Low, "Low Power"),
+    (Mode::High, "High Power"),
+];
+
+/// What the current mode does, in one line.
+pub(crate) fn mode_line(m: Mode) -> &'static str {
+    match m {
+        Mode::Auto => "Saves energy on battery, full speed when plugged in.",
+        Mode::Low => "Uses less energy so the battery lasts longer.",
+        Mode::High => "Full speed all the time; uses more energy.",
+    }
+}
 
 /// "82% · Charging", "82% · 3 h 25 min left".
 pub(crate) fn level_line(b: &BatteryInfo) -> String {
@@ -27,6 +45,7 @@ pub(crate) fn condition(health: u8) -> &'static str {
 struct Facts {
     battery: Option<BatteryInfo>,
     lid: Option<Lid>,
+    power: Option<policy::Status>,
 }
 
 fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
@@ -44,24 +63,25 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
         into.append(&w::section("Battery", &rows));
     }
     let mut energy = Vec::new();
-    if let Some(mode) = e.sys().power_mode() {
+    // Nothing to steer (virtual machine, firmware owns the clock): no mode to pick.
+    if let (Some(p), Some(_)) = (&f.power, admin("power-mode", &[]))
+        && p.cpu != Cpu::Fixed
+    {
         let (ctx, st) = (e.ctx.clone(), status.clone());
-        energy.push(form::toggle_row(
-            "Low Power Mode",
-            "Uses less energy so the battery lasts longer.",
-            mode == crate::system::PowerMode::LowPower,
-            move |on| {
-                use crate::system::PowerMode;
-                ctx.act_say(
-                    Action::Power(if on {
-                        PowerMode::LowPower
-                    } else {
-                        PowerMode::Automatic
-                    }),
-                    &st,
-                )
-            },
-        ));
+        let at = MODES.iter().position(|m| m.0 == p.mode).unwrap_or(0);
+        let names: Vec<&str> = MODES.iter().map(|m| m.1).collect();
+        let picker = w::dropdown(&names, at as u32);
+        let (row, line) = form::status_row("", "Energy Mode", mode_line(p.mode), &picker);
+        picker.connect_selected_notify(move |d| {
+            let Some((mode, _)) = MODES.get(d.selected() as usize) else {
+                return;
+            };
+            line.set_label(mode_line(*mode));
+            if let Some(a) = admin("power-mode", &[mode.name()]) {
+                ctx.act_say(a, &st)
+            }
+        });
+        energy.push(row);
     }
     if let (Some(lid), Some(_)) = (f.lid, admin("lid", &[])) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
@@ -103,6 +123,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         move || Facts {
             battery: m.battery(),
             lid: m.lid(),
+            power: m.power(),
         },
         move |into, f| render(&e2, into, f, &status),
     );
@@ -133,5 +154,13 @@ mod tests {
         assert_eq!(level_line(&b(Charge::Full, None)), "82% · Fully charged");
         assert_eq!(condition(94), "Normal");
         assert_eq!(condition(71), "Service recommended");
+    }
+
+    #[test]
+    fn every_energy_mode_is_offered_and_explained() {
+        for m in [Mode::Auto, Mode::Low, Mode::High] {
+            assert!(MODES.iter().any(|x| x.0 == m), "{}", m.name());
+            assert!(mode_line(m).ends_with('.'));
+        }
     }
 }
