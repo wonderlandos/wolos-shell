@@ -442,24 +442,38 @@ fn cases() -> Vec<Case> {
         });
     }
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
-        for page in ["choose", "installing", "done", "failed"] {
+        for page in [
+            "choose",
+            "choose-windows",
+            "secure-boot",
+            "installing",
+            "done",
+            "failed",
+        ] {
             v.push(Case {
                 name: format!("installer-{page}-{tag}"),
                 size: (sw, sh),
                 class: "lock-window",
                 wallpaper: false,
                 build: Box::new(move || {
-                    use shell::install::{Disk, Report, Stage};
+                    use shell::install::{Check, Disk, Report, Stage};
                     use ui::installer::{Installer, Page};
                     let disk = |name: &str, model: &str, gb: u64| Disk {
                         name: name.into(),
                         model: model.into(),
                         bytes: gb * 1_000_000_000,
                     };
-                    let i = Installer::new(vec![
-                        disk("nda0", "Samsung SSD 980 PRO", 1000),
-                        disk("ada0", "WD Blue SA510", 500),
-                    ]);
+                    let windows = Check {
+                        others: vec!["Windows".into()],
+                        ..Check::default()
+                    };
+                    let i = Installer::new(
+                        vec![
+                            disk("nda0", "Samsung SSD 980 PRO", 1000),
+                            disk("ada0", "WD Blue SA510", 500),
+                        ],
+                        vec![Check::default(), windows],
+                    );
                     match page {
                         "choose" => i.pick(0),
                         "installing" => {
@@ -488,6 +502,8 @@ fn cases() -> Vec<Case> {
                             pkg_search: false,
                         },
                     );
+                        "choose-windows" => i.pick(1),
+                        "secure-boot" => i.show(Page::SecureBoot),
                     if p == "Search" {
                         s.search_now("photo");
                     } else {

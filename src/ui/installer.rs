@@ -1,7 +1,7 @@
 //! Install WolOS (`wol-installer`, ADR 0013): choose the disk, watch it install, restart. The same
 //! cards as the Setup Assistant. The work is `install-run` as root; this app reads its progress
 //! lines and answers bsdinstall's error box so a failed run ends.
-use crate::install::{self, Disk, Report, Stage};
+use crate::install::{self, Check, Disk, Report, Stage};
 use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList};
 use crate::kit::{self, reveal, widgets as w};
 use gtk::{glib, prelude::*};
@@ -13,6 +13,8 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Choose,
+    /// Secure Boot is on: the installed WolOS wouldn't start; say so before erasing.
+    SecureBoot,
     Installing,
     Done,
     Failed,
@@ -22,6 +24,7 @@ impl Page {
     fn id(self) -> &'static str {
         match self {
             Page::Choose => "choose",
+            Page::SecureBoot => "secure-boot",
             Page::Installing => "installing",
             Page::Done => "done",
             Page::Failed => "failed",
@@ -40,6 +43,8 @@ pub struct Installer {
     pub root: gtk::Widget,
     pager: gtk::Stack,
     disks: Vec<Disk>,
+    /// What `install-check` found on each disk (other systems, Secure Boot, refusals).
+    checks: RefCell<Vec<Check>>,
     /// The picked disk; the list writes it, Return and Erase and Install read it.
     chosen: Rc<Cell<Option<usize>>>,
     list: Option<ChoiceList>,
@@ -58,7 +63,7 @@ pub struct Installer {
 const ERASE_FIRST: &str = "Choose a disk. Everything on it will be erased.";
 
 impl Installer {
-    pub fn new(disks: Vec<Disk>) -> Rc<Installer> {
+    pub fn new(disks: Vec<Disk>, checks: Vec<Check>) -> Rc<Installer> {
         let pager = a::pager();
         let body = w::vbox(w::S4);
         let (warn_box, warning) = a::warning(ERASE_FIRST);
@@ -82,15 +87,16 @@ impl Installer {
                     trail: None,
                 })
                 .collect();
-            let (chosen, warn, ds) = (me.clone(), warning.clone(), disks.clone());
+            let (chosen, warn, ds, cs) =
+                (me.clone(), warning.clone(), disks.clone(), checks.clone());
             let l = ChoiceList::new(rows, one, move |i| {
                 chosen.set(Some(i));
-                warn.set_label(&erase_warning(&ds[i]));
+                warn.set_label(&erase_warning(&ds[i], cs.get(i)));
             });
             body.append(&l.root);
             list = Some(l);
             if let Some(i) = one {
-                warning.set_label(&erase_warning(&disks[i]));
+                warning.set_label(&erase_warning(&disks[i], checks.get(i)));
             }
         }
         body.append(&warn_box);
@@ -102,6 +108,15 @@ impl Installer {
         );
         choose.next.set_label("Erase and Install");
         choose.back.set_label("Cancel");
+        let secure = Card::moment(
+            "keyhole",
+            install::SECURE_BOOT_TITLE,
+            install::SECURE_BOOT_TEXT,
+            &a::blank(),
+        );
+        secure.next.set_label("Restart");
+        let anyway = w::button("Install Anyway", w::Kind::Default, || {});
+        secure.add_action(&anyway);
         let progress = a::Progress::new();
         let installing = Card::moment(
             "pocket-watch",
@@ -131,6 +146,7 @@ impl Installer {
         }));
         for (p, c) in [
             (Page::Choose, &choose),
+            (Page::SecureBoot, &secure),
             (Page::Installing, &installing),
             (Page::Done, &done),
             (Page::Failed, &failed),
@@ -141,6 +157,7 @@ impl Installer {
             root: super::lock::screen(&pager),
             pager,
             disks,
+            checks: RefCell::new(checks),
             chosen: me,
             list,
             choose,
@@ -159,6 +176,21 @@ impl Installer {
             }
         });
         s.choose.back.connect_clicked(|_| std::process::exit(0));
+        let s4 = Rc::downgrade(&s);
+        secure.back.connect_clicked(move |_| {
+            if let Some(s) = s4.upgrade() {
+                s.show(Page::Choose);
+            }
+        });
+        secure
+            .next
+            .connect_clicked(|_| kit::spawn(&install::restart_command()));
+        let s5 = Rc::downgrade(&s);
+        anyway.connect_clicked(move |_| {
+            if let Some(s) = s5.upgrade() {
+                s.erase_chosen();
+            }
+        });
         done.next
             .connect_clicked(|_| kit::spawn(&install::restart_command()));
         let s3 = Rc::downgrade(&s);
@@ -179,7 +211,8 @@ impl Installer {
     pub fn pick(&self, i: usize) {
         if let Some(d) = self.disks.get(i) {
             self.chosen.set(Some(i));
-            self.warning.set_label(&erase_warning(d));
+            self.warning
+                .set_label(&erase_warning(d, self.checks.borrow().get(i)));
             if let Some(l) = &self.list {
                 l.select(i);
             }
@@ -213,31 +246,62 @@ impl Installer {
     pub fn next(self: &Rc<Self>) {
         match self.page.get() {
             Page::Choose => {
-                let Some(d) = self.chosen.get().and_then(|i| self.disks.get(i)) else {
+                let Some(i) = self.chosen.get().filter(|i| *i < self.disks.len()) else {
                     self.choose.say("Choose a disk to install on.", true);
                     return;
                 };
+                let d = &self.disks[i];
                 if !d.big_enough() {
-                    self.choose.say(
-                        &format!("“{}” is too small. WolOS needs at least 16 GB.", d.title()),
-                        true,
-                    );
+                    let t = install::refusal_text("too-small", &d.title()).unwrap_or_default();
+                    self.choose.say(&t, true);
                     return;
                 }
+                // Fresh facts just before erasing (a stick plugged in, a disk mounted since).
+                let c = check_disk(&d.name);
+                if let Some(t) = c
+                    .refused
+                    .as_deref()
+                    .and_then(|w| install::refusal_text(w, &d.title()))
+                {
+                    self.choose.say(&t, true);
+                    return;
+                }
+                let secure_boot = c.secure_boot;
+                if let Some(slot) = self.checks.borrow_mut().get_mut(i) {
+                    *slot = c;
+                }
                 self.choose.say("", false);
-                let disk = d.name.clone();
-                self.start(&disk);
+                if secure_boot {
+                    self.show(Page::SecureBoot);
+                } else {
+                    self.erase_chosen();
+                }
             }
+            Page::SecureBoot => kit::spawn(&install::restart_command()),
             Page::Installing => {}
             Page::Done => kit::spawn(&install::restart_command()),
             Page::Failed => self.show(Page::Choose),
         }
     }
 
+    /// Escape: from the Secure Boot page back to the disks.
+    pub fn back(&self) {
+        if self.page.get() == Page::SecureBoot {
+            self.show(Page::Choose);
+        }
+    }
+
+    /// Erase and Install on the picked disk (checked already).
+    fn erase_chosen(self: &Rc<Self>) {
+        if let Some(d) = self.chosen.get().and_then(|i| self.disks.get(i)) {
+            let disk = d.name.clone();
+            self.start(&disk);
+        }
+    }
+
     /// Runs `install-run <disk>`; progress lines come back through a channel polled on the UI thread.
     fn start(self: &Rc<Self>, disk: &str) {
-        let sudo = std::path::Path::new("/usr/local/bin/sudo").exists();
-        let argv = install::install_command(disk, sudo);
+        let argv = install::install_command(disk, has_sudo());
         eprintln!("wol-installer: {}", argv.join(" "));
         let child = std::process::Command::new(&argv[0])
             .args(&argv[1..])
@@ -345,29 +409,50 @@ impl Installer {
     }
 }
 
-fn erase_warning(d: &Disk) -> String {
-    format!(
-        "Everything on “{}” ({}) will be erased. This can't be undone.",
-        d.title(),
-        install::size_text(d.bytes)
-    )
+/// The warning under the list: what is lost, other systems by name (`install-check`).
+fn erase_warning(d: &Disk, c: Option<&Check>) -> String {
+    match c.map(|c| c.others.as_slice()).unwrap_or_default() {
+        [] => format!(
+            "Everything on “{}” ({}) will be erased. This can't be undone.",
+            d.title(),
+            install::size_text(d.bytes)
+        ),
+        others => format!("{} This can't be undone.", install::erase_warning(others)),
+    }
 }
 
-/// Disks `install-disks` allows, described by `geom disk list`.
-pub fn system_disks() -> Vec<Disk> {
-    let run = |argv: &[&str]| {
-        std::process::Command::new(argv[0])
-            .args(&argv[1..])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
-    };
-    install::parse_disks(&run(&["geom", "disk", "list"]), &run(&[install::DISKS]))
+fn output(argv: &[String]) -> String {
+    std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+fn has_sudo() -> bool {
+    std::path::Path::new("/usr/local/bin/sudo").exists()
+}
+
+/// `install-check <disk>` (read-only, a few milliseconds).
+fn check_disk(disk: &str) -> Check {
+    install::parse_check(&output(&install::check_command(disk, has_sudo())))
+}
+
+/// Disks `install-disks` allows, described by `geom disk list`, with what `install-check` found.
+pub fn system_disks() -> (Vec<Disk>, Vec<Check>) {
+    let s = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let disks = install::parse_disks(
+        &output(&s(&["geom", "disk", "list"])),
+        &output(&s(&[install::DISKS])),
+    );
+    let checks = disks.iter().map(|d| check_disk(&d.name)).collect();
+    (disks, checks)
 }
 
 pub fn run() -> glib::ExitCode {
     a::run("org.wolos.installer", "installer", |win| {
-        let s = Installer::new(system_disks());
+        let (disks, checks) = system_disks();
+        let s = Installer::new(disks, checks);
         // Over the live desktop: shown at once, no fade from black.
         let shown = reveal::Reveal::new(&s.root, false);
         win.set_child(Some(&shown.root));
@@ -380,6 +465,7 @@ pub fn run() -> glib::ExitCode {
                 glib::Propagation::Proceed
             }
         });
-        a::keys(win, move || s.next(), || {});
+        let s3 = s.clone();
+        a::keys(win, move || s.next(), move || s3.back());
     })
 }

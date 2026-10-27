@@ -87,12 +87,11 @@ fn surface(name: &str) -> Option<gtk::cairo::ImageSurface> {
     gtk::cairo::ImageSurface::create_for_data(data, gtk::cairo::Format::ARgb32, wd, ht, stride).ok()
 }
 
-/// Paints `img` at `place(img size, area size)` = (scale, x, y).
-fn paint_with(
-    area: &gtk::DrawingArea,
-    img: gtk::cairo::ImageSurface,
-    place: fn((f64, f64), (f64, f64)) -> (f64, f64, f64),
-) {
+/// Where an image of size `.0` goes in an area of size `.1`: (scale, x, y).
+type Place = fn((f64, f64), (f64, f64)) -> (f64, f64, f64);
+
+/// Paints `img` at `place(img size, area size)`.
+fn paint_with(area: &gtk::DrawingArea, img: gtk::cairo::ImageSurface, place: Place) {
     area.set_draw_func(move |_, cr, wd, ht| {
         let (iw, ih) = (img.width() as f64, img.height() as f64);
         let (s, x, y) = place((iw, ih), (wd as f64, ht as f64));

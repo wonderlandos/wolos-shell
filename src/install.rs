@@ -43,6 +43,30 @@ pub fn erase_warning(others: &[String]) -> String {
     }
 }
 
+/// `install-check <disk>` as the app runs it: through sudo where the live image allows it (the
+/// Secure Boot variable is root's to read), else directly (disks are readable by operator).
+pub fn check_command(disk: &str, sudo: bool) -> Vec<String> {
+    if sudo {
+        ["sudo", "-n", CHECK, disk].map(String::from).to_vec()
+    } else {
+        [CHECK, disk].map(String::from).to_vec()
+    }
+}
+
+/// Why the app won't erase `title` (`refuse` reason from `install-check`); None: it may.
+/// `in-use` is not a refusal here: install-run lets go of the disk's mounts first.
+pub fn refusal_text(why: &str, title: &str) -> Option<String> {
+    match why {
+        "in-use" => None,
+        "too-small" => Some(format!(
+            "“{title}” is too small. WolOS needs at least 16 GB."
+        )),
+        _ => Some(format!(
+            "“{title}” can't be erased: it's the disk WolOS started from, or it's gone. Choose another disk."
+        )),
+    }
+}
+
 /// Sheet shown when Secure Boot is on: honest, no jargon beyond the setting's own name.
 pub const SECURE_BOOT_TITLE: &str = "Turn Off Secure Boot to Start WolOS";
 pub const SECURE_BOOT_TEXT: &str = "This beta of WolOS can’t start while Secure Boot is on. \
@@ -441,6 +465,21 @@ Providers:
         let bar: Vec<f64> = order.iter().map(|(r, t)| fraction(r, *t)).collect();
         assert!(bar.windows(2).all(|w| w[0] <= w[1]), "{bar:?}");
         assert_eq!(*bar.last().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn the_app_checks_a_disk_and_says_why_not() {
+        assert_eq!(check_command("ada0", true), ["sudo", "-n", CHECK, "ada0"]);
+        assert_eq!(check_command("ada0", false), [CHECK, "ada0"]);
+        assert_eq!(refusal_text("in-use", "SanDisk"), None);
+        for why in ["too-small", "not-listed"] {
+            let t = refusal_text(why, "SanDisk").unwrap();
+            assert!(
+                crate::copy::lint(&t).is_empty(),
+                "{t}: {:?}",
+                crate::copy::lint(&t)
+            );
+        }
     }
 
     #[test]
