@@ -423,6 +423,7 @@ impl Machine for Demo {
             name: "GIMP".into(),
             icon: "org.gimp.GIMP".into(),
             perms: vec![
+                perm("sockets=x11", true),
                 perm("filesystems=home", true),
                 perm("shared=network", false),
                 perm("devices=dri", true),

@@ -228,6 +228,16 @@ fn flatpak_section(e: &Rc<Env>, app: &wol_core::flatpak::App, status: &gtk::Labe
         .perms
         .iter()
         .map(|(p, on)| {
+            // The app can't show windows without it: no switch.
+            if p.is_display() {
+                return w::list_row(
+                    crate::ui::flatpak_consent::perm_icon(p),
+                    "Display",
+                    &p.plain(),
+                    None,
+                )
+                .upcast();
+            }
             let (ctx, st, scope, id, spelled) = (
                 e.ctx.clone(),
                 status.clone(),
