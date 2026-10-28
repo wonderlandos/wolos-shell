@@ -1,13 +1,131 @@
-//! Dock: pinned apps, running dots from Hyprland clients, separator, Trash.
+//! Dock: pinned apps, running dots from Hyprland clients, separator, the Downloads stack, Trash.
 use crate::apps::{self, PINS};
 use crate::kit::{self, surface::Spec, widgets as w};
-use gtk::prelude::*;
+use gtk::{gio, glib, prelude::*};
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
+use wol_core::downloads::{self, Item};
+
+/// Newest files the Downloads stack shows.
+pub const STACK_ITEMS: usize = 12;
+
+/// Downloads, as xdg-user-dirs names it.
+pub fn downloads_dir() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
+    let text = std::fs::read_to_string(format!("{config}/user-dirs.dirs")).ok();
+    downloads::dir(text.as_deref(), &home)
+}
+
+fn file_icon(i: &Item) -> gtk::Image {
+    if i.dir {
+        return w::app_icon("folder", w::ICON_L);
+    }
+    let (ctype, _) = gio::content_type_guess(Some(i.name.as_str()), None::<&[u8]>);
+    let img = gtk::Image::from_gicon(&gio::content_type_get_icon(&ctype));
+    img.set_pixel_size(w::ICON_L);
+    img
+}
+
+/// The stack's popover body (macOS grid): newest files, a click opens one; Open in Files last.
+pub fn stack_grid(items: &[Item], dir: &str, done: Rc<dyn Fn()>) -> gtk::Box {
+    let b = w::vbox(w::S2);
+    b.add_css_class("downloads-stack");
+    b.append(&w::label("Downloads", "title"));
+    if items.is_empty() {
+        b.append(&w::label("Nothing downloaded yet.", "secondary"));
+    }
+    let grid = w::wrap_row(w::S2, 4);
+    for i in items {
+        let col = w::vbox(w::S1);
+        col.append(&file_icon(i));
+        let name = w::label(&i.name, "secondary");
+        name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        name.set_max_width_chars(w::STACK_NAME_CHARS);
+        name.add_css_class("may-ellipsize");
+        col.append(&name);
+        let btn = gtk::Button::builder()
+            .child(&col)
+            .tooltip_text(&i.name)
+            .build();
+        btn.add_css_class("stack-item");
+        let (path, done) = (i.path.clone(), done.clone());
+        btn.connect_clicked(move |_| {
+            kit::spawn(&["gio".into(), "open".into(), path.clone()]);
+            done();
+        });
+        grid.append(&btn);
+    }
+    b.append(&grid);
+    let dir = dir.to_owned();
+    let open = w::button("Open in Files", w::Kind::Default, move || {
+        kit::spawn(&["nautilus".into(), dir.clone()]);
+        done();
+    });
+    open.set_halign(gtk::Align::End);
+    b.append(&open);
+    b
+}
+
+/// Downloads tile: the popover lists the newest files, kept current by a directory monitor.
+fn downloads_tile(dir: String, items: Rc<RefCell<Vec<Item>>>) -> gtk::Button {
+    let pop = gtk::Popover::new();
+    pop.add_css_class("dock-stack");
+    let fill: Rc<dyn Fn()> = {
+        let (pop, items, dir) = (pop.clone(), items.clone(), dir.clone());
+        Rc::new(move || {
+            let p2 = pop.clone();
+            pop.set_child(Some(&stack_grid(
+                &items.borrow(),
+                &dir,
+                Rc::new(move || p2.popdown()),
+            )));
+        })
+    };
+    let f = fill.clone();
+    let p = pop.clone();
+    let tile = w::DockTile::new("folder-download", "Downloads", move || {
+        f();
+        p.popup();
+    });
+    pop.set_parent(&tile.button);
+    tile.button.connect_destroy(move |_| pop.unparent());
+    tile.button
+}
+
+/// Reads Downloads off the UI thread now and whenever it changes.
+fn watch_downloads(dir: &str, items: Rc<RefCell<Vec<Item>>>) -> Option<gio::FileMonitor> {
+    let refresh: Rc<dyn Fn()> = {
+        let dir = dir.to_owned();
+        Rc::new(move || {
+            let (tx, rx) = async_channel::bounded(1);
+            let d = dir.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send_blocking(downloads::read(&d, STACK_ITEMS));
+            });
+            let items = items.clone();
+            glib::spawn_future_local(async move {
+                if let Ok(v) = rx.recv().await {
+                    *items.borrow_mut() = v;
+                }
+            });
+        })
+    };
+    refresh();
+    let m = gio::File::for_path(dir)
+        .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+        .ok()?;
+    m.connect_changed(move |_, _, _, _| refresh());
+    Some(m)
+}
 
 pub struct Dock {
     pub root: gtk::Box,
     tiles: Vec<w::DockTile>,
+    /// Newest files in Downloads (the stack).
+    pub downloads: Rc<RefCell<Vec<Item>>>,
+    monitor: RefCell<Option<gio::FileMonitor>>,
 }
 
 pub fn content(running: &HashSet<String>) -> Rc<Dock> {
@@ -27,6 +145,8 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
         root.append(&t.button);
     }
     root.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+    let downloads: Rc<RefCell<Vec<Item>>> = Default::default();
+    root.append(&downloads_tile(downloads_dir(), downloads.clone()));
     root.append(
         &w::DockTile::new("wolos-trash", "Trash", || {
             kit::spawn(
@@ -38,7 +158,12 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
         })
         .button,
     );
-    let d = Rc::new(Dock { root, tiles });
+    let d = Rc::new(Dock {
+        root,
+        tiles,
+        downloads,
+        monitor: RefCell::new(None),
+    });
     d.set_running(running);
     d
 }
@@ -49,6 +174,7 @@ pub type Built = (gtk::ApplicationWindow, Rc<Dock>, Rc<dyn Fn(bool)>);
 pub fn build(app: &gtk::Application) -> Built {
     let win = super::window(app, "dock", Spec::dock());
     let d = content(&crate::hypr::running_classes(&crate::hypr::clients()));
+    *d.monitor.borrow_mut() = watch_downloads(&downloads_dir(), d.downloads.clone());
     // Autohide: the shelf slides away and a thin hot zone at the bottom edge brings it back.
     let reveal = gtk::Revealer::builder()
         .child(&d.root)

@@ -840,7 +840,9 @@ impl Inner {
             Action::PkgUpgrade => c.pkg_upgrade(&pw),
             Action::PkgInstall(t) => c.pkg_install(t, &pw),
             Action::PkgRemove(t) => c.pkg_remove(t, &pw),
-            Action::FlatpakInstall(id) => c.flatpak_install(id),
+            Action::FlatpakInstall(id) => {
+                flatpak_install_tracked(id).unwrap_or_else(|| c.flatpak_install(id))
+            }
             Action::FlatpakRemove(id) => c.flatpak_remove(id),
             Action::FlatpakOverride {
                 scope,
@@ -926,6 +928,29 @@ impl Inner {
 }
 
 /// One wol-admind request (validated here first: a malformed one never leaves the process).
+/// This account's Flatpak install with its percentage published for the App Store; None when
+/// there is no runtime dir to publish in (then it runs untracked).
+fn flatpak_install_tracked(id: &str) -> Option<Result<(), wol_core::controls::ControlError>> {
+    use wol_core::{controls::ControlError, flatpak, progress};
+    if !flatpak::is_app_id(id) {
+        return Some(Err(ControlError::Invalid));
+    }
+    let path = progress::file_for(&progress::user_dir()?, id)?;
+    let argv = flatpak::install_argv(id);
+    let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+    let ok = progress::run_tracked(
+        &a,
+        progress::Kind::Flatpak,
+        &path,
+        std::time::Duration::from_secs(1800),
+    );
+    Some(if ok {
+        Ok(())
+    } else {
+        Err(ControlError::Failed)
+    })
+}
+
 fn admin(
     req: &shared::admin::AdminRequest,
     pw: &str,

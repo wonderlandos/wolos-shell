@@ -67,7 +67,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "dock".into(),
-            size: (900, 120),
+            size: (960, 120),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
@@ -619,6 +619,72 @@ fn cases() -> Vec<Case> {
                 s.aw.root.clone().upcast()
             }),
         });
+        for kind in ["flathub", "native"] {
+            v.push(Case {
+                // Details page: icon, name, Get, screenshots, description, information, permissions.
+                name: format!("store-details-{kind}-{tag}"),
+                size: (sw, sh),
+                class: "preview-app",
+                wallpaper: false,
+                build: Box::new(move || {
+                    let s = ui::store::content(
+                        Rc::new(shell::system::Fake),
+                        ui::store::Env {
+                            data_dirs: vec![],
+                            pkg_search: false,
+                            flatpaks: vec![],
+                        },
+                    );
+                    let shot = |n: &str| {
+                        format!("{}/tests/golden/{n}", env!("CARGO_MANIFEST_DIR"))
+                    };
+                    let perm = |p: &str| wol_core::flatpak::Perm::parse(p).unwrap();
+                    let (subject, loaded) = if kind == "flathub" {
+                        (
+                            ui::store::Subject::flathub(&wol_core::flatpak::Hit {
+                                id: "com.github.PintaProject.Pinta".into(),
+                                name: "Pinta".into(),
+                                summary: "Edit images and paint digitally".into(),
+                            }),
+                            ui::store::Loaded {
+                                details: Some(wol_core::appstream::Details {
+                                    name: "Pinta".into(),
+                                    summary: "Edit images and paint digitally".into(),
+                                    developer: Some("Pinta Contributors".into()),
+                                    description: vec![
+                                        "Pinta is a free, open source program for drawing and image editing.".into(),
+                                        "• Unlimited undo history".into(),
+                                        "• Layers and adjustments".into(),
+                                    ],
+                                    screenshots: vec![
+                                        shot("store-discover-wide-light.png"),
+                                        shot("store-work-wide-dark.png"),
+                                    ],
+                                    ..Default::default()
+                                }),
+                                size: Some("41.2 MB".into()),
+                                perms: vec![
+                                    perm("sockets=x11"),
+                                    perm("filesystems=xdg-pictures"),
+                                    perm("devices=dri"),
+                                ],
+                                ..Default::default()
+                            },
+                        )
+                    } else {
+                        (
+                            ui::store::Subject::catalog(wol_core::store::get("gimp").unwrap()),
+                            ui::store::Loaded {
+                                size: Some("154.93 MiB".into()),
+                                ..Default::default()
+                            },
+                        )
+                    };
+                    s.show_details(subject, loaded);
+                    s.aw.root.clone().upcast()
+                }),
+            });
+        }
         for p in ui::settings::PAGES
             .into_iter()
             .chain(ui::settings::SUBPAGES)
@@ -663,6 +729,56 @@ fn cases() -> Vec<Case> {
             }),
         });
     }
+    v.push(Case {
+        // Dock Downloads stack: newest files first, then Open in Files.
+        name: "dock-downloads-stack".into(),
+        size: (420, 1),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(|| {
+            let i = |n: &str, dir: bool| wol_core::downloads::Item {
+                name: n.into(),
+                path: format!("/home/alice/Downloads/{n}"),
+                modified: 0,
+                dir,
+            };
+            let items = [
+                i("Quarterly report.pdf", false),
+                i("holiday-photos.zip", false),
+                i("wallpaper.png", false),
+                i("Album", true),
+                i("setup-notes.txt", false),
+                i("song.mp3", false),
+            ];
+            let p = w::glass_panel(w::S4);
+            p.append(&ui::dock::stack_grid(
+                &items,
+                "/home/alice/Downloads",
+                Rc::new(|| {}),
+            ));
+            p.upcast()
+        }),
+    });
+    v.push(Case {
+        // Store tiles while installing: the ring fills with the install's percentage.
+        name: "store-tile-progress".into(),
+        size: (440, 1),
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let b = w::vbox(w::S2);
+            for p in [0u8, 42, 90] {
+                let t = w::AppTile::new(
+                    &w::store_icon("gimp", w::ICON_L),
+                    "GIMP",
+                    "Edit photos and make artwork",
+                );
+                t.set_state(w::TileState::Progress(p));
+                b.append(&t.root);
+            }
+            b.upcast()
+        }),
+    });
     v.extend(control_center_cases());
     v.extend(form_kit_cases());
     v.extend(widget_cases::cases());

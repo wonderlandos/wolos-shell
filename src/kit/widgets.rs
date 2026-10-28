@@ -1,6 +1,7 @@
 //! IaraKit component set (HIG, archicture/modules/hig.md). The ONLY place widget metrics live:
 //! surfaces pass tokens from this module, never numbers.
 use gtk::{glib, prelude::*};
+use std::cell::Cell;
 use std::rc::Rc;
 
 /// Spacing scale (HIG §2).
@@ -1195,6 +1196,11 @@ pub const RING: i32 = 24;
 
 /// Hero banner icon size.
 pub const HERO_ICON: i32 = 128;
+/// App Store details: one screenshot (16:9).
+pub const SCREENSHOT_W: i32 = 400;
+pub const SCREENSHOT_H: i32 = 225;
+/// Dock Downloads stack: file name width under each icon.
+pub const STACK_NAME_CHARS: i32 = 12;
 /// Icon for packages outside the catalog (`pkg search` hits).
 pub const PACKAGE_ICON: &str = "wolos-software";
 
@@ -1208,18 +1214,20 @@ pub fn store_icon(id: &str, size: i32) -> gtk::Widget {
 
 /// Indeterminate ring in the accent colour (install in place, HIG §3).
 pub fn progress_ring() -> gtk::DrawingArea {
+    ring_with(Rc::new(Cell::new(None)))
+}
+
+/// Install progress: `None` spins, `Some(0..=100)` fills clockwise from the top.
+pub fn ring_with(value: Rc<Cell<Option<u8>>>) -> gtk::DrawingArea {
     let a = gtk::DrawingArea::builder()
         .content_width(RING)
         .content_height(RING)
         .valign(gtk::Align::Center)
         .build();
     a.add_css_class("progress-ring");
-    a.set_draw_func(|a, cr, w, h| {
+    a.set_draw_func(move |a, cr, w, h| {
         let (w, h) = (w as f64, h as f64);
         let c = a.color();
-        let t = a
-            .frame_clock()
-            .map_or(0.0, |f| f.frame_time() as f64 / 1_000_000.0);
         let r = w.min(h) / 2.0 - 2.0;
         cr.set_line_width(3.0);
         cr.set_source_rgba(c.red() as f64, c.green() as f64, c.blue() as f64, 0.2);
@@ -1227,9 +1235,22 @@ pub fn progress_ring() -> gtk::DrawingArea {
         cr.stroke().ok();
         cr.set_source_rgba(c.red() as f64, c.green() as f64, c.blue() as f64, 1.0);
         cr.set_line_cap(gtk::cairo::LineCap::Round);
-        let s = (t * 4.0) % std::f64::consts::TAU;
-        cr.arc(w / 2.0, h / 2.0, r, s, s + 1.6);
-        cr.stroke().ok();
+        let (s, len) = match value.get() {
+            Some(p) => (
+                -std::f64::consts::FRAC_PI_2,
+                std::f64::consts::TAU * f64::from(p.min(100)) / 100.0,
+            ),
+            None => {
+                let t = a
+                    .frame_clock()
+                    .map_or(0.0, |f| f.frame_time() as f64 / 1_000_000.0);
+                ((t * 4.0) % std::f64::consts::TAU, 1.6)
+            }
+        };
+        if len > 0.0 {
+            cr.arc(w / 2.0, h / 2.0, r, s, s + len);
+            cr.stroke().ok();
+        }
     });
     a.add_tick_callback(|a, _| {
         a.queue_draw();
@@ -1242,7 +1263,15 @@ pub fn progress_ring() -> gtk::DrawingArea {
 pub enum TileState {
     Get,
     Installing,
+    /// Installing, this far (percent).
+    Progress(u8),
     Open,
+}
+
+impl TileState {
+    pub fn busy(self) -> bool {
+        matches!(self, TileState::Installing | TileState::Progress(_))
+    }
 }
 
 /// Store tile: icon, name, one-line summary, Get/Open pill (or progress ring while installing).
@@ -1251,6 +1280,7 @@ pub struct AppTile {
     pub root: gtk::Box,
     pub action: gtk::Button,
     ring: gtk::DrawingArea,
+    value: Rc<Cell<Option<u8>>>,
     text: gtk::Box,
 }
 
@@ -1281,13 +1311,15 @@ impl AppTile {
         action.add_css_class("get-button");
         action.set_valign(gtk::Align::Center);
         root.append(&action);
-        let ring = progress_ring();
+        let value = Rc::new(Cell::new(None));
+        let ring = ring_with(value.clone());
         ring.set_visible(false);
         root.append(&ring);
         AppTile {
             root,
             action,
             ring,
+            value,
             text: t,
         }
     }
@@ -1302,8 +1334,12 @@ impl AppTile {
     }
 
     pub fn set_state(&self, s: TileState) {
-        self.action.set_visible(s != TileState::Installing);
-        self.ring.set_visible(s == TileState::Installing);
+        self.action.set_visible(!s.busy());
+        self.ring.set_visible(s.busy());
+        self.value.set(match s {
+            TileState::Progress(p) => Some(p),
+            _ => None,
+        });
         self.action
             .set_label(if s == TileState::Open { "Open" } else { "Get" });
     }
