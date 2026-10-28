@@ -124,6 +124,21 @@ pub fn content(i: &Info) -> (gtk::Widget, gtk::Button, gtk::Button) {
     (root.upcast(), allow, deny)
 }
 
+/// An X11-only app renders 1:1 through XWayland: on a HiDPI screen it gets its own scale
+/// (this account's override, which also covers a system install). Best effort.
+fn scale_x11(req: &Request) {
+    if !flatpak::x11_only(&req.perms) {
+        return;
+    }
+    let t = std::time::Duration::from_secs(3);
+    let scale = wol_core::system::run_with_timeout(&["hyprctl", "monitors", "-j"], t)
+        .map_or(1.0, |j| flatpak::max_monitor_scale(&j));
+    if let Some(argv) = flatpak::x11_scale_argv(&req.app_id, scale) {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let _ = wol_core::system::run_with_timeout(&a, t);
+    }
+}
+
 /// Exit 0 when allowed. Nothing to ask (no permission it can name) allows without a sheet.
 pub fn run() -> glib::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -131,7 +146,10 @@ pub fn run() -> glib::ExitCode {
         eprintln!("wol-flatpak-consent: unexpected arguments: {args:?}");
         return glib::ExitCode::FAILURE;
     };
-    if req.perms.is_empty() {
+    // X11 is a display need, not access: granted without asking (Settings shows it as Display).
+    let ask = flatpak::to_ask(&req.perms);
+    if ask.is_empty() {
+        scale_x11(&req);
         return glib::ExitCode::SUCCESS;
     }
     let home = std::env::var("HOME").unwrap_or_default();
@@ -140,7 +158,7 @@ pub fn run() -> glib::ExitCode {
         name,
         icon,
         update: req.update,
-        perms: req.perms,
+        perms: ask,
     });
     let allowed = Rc::new(Cell::new(false));
     let app = gtk::Application::builder()
@@ -181,6 +199,7 @@ pub fn run() -> glib::ExitCode {
     }
     app.run_with_args::<&str>(&[]);
     if allowed.get() {
+        scale_x11(&req);
         glib::ExitCode::SUCCESS
     } else {
         glib::ExitCode::FAILURE
