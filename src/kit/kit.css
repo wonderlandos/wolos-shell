@@ -489,3 +489,8 @@ label.status-line { margin: 0 12px; }
 .toast button.btn { min-height: 0; padding: 4px 12px; border-radius: 999px; color: var(--accent); font-weight: 600; }
 /* Rows that can't be used right now (Assistants & Automation while off) read as paused. */
 .app-window .card-list:disabled, .app-window .list-row:disabled { opacity: 0.5; }
+
+/* Dock Downloads stack: newest files as a grid of flat icon buttons. */
+.downloads-stack { padding: 12px; }
+button.stack-item { background: none; border: none; box-shadow: none; padding: 6px; border-radius: 10px; }
+button.stack-item:hover { background: alpha(currentColor, 0.08); }
