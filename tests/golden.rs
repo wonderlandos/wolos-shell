@@ -172,6 +172,17 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // Arithmetic answers itself; Return copies the answer.
+            name: "spotlight-calc".into(),
+            size: (728, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let items = Rc::new(std::cell::RefCell::new(ui::spotlight::index(vec![])));
+                ui::spotlight::content(items, Default::default(), "(1200 * 12) / 7").0
+            }),
+        },
+        Case {
             name: "spotlight-empty".into(),
             size: (728, 1),
             class: "preview",
