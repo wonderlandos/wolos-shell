@@ -228,3 +228,22 @@ fn j8_force_quit_ends_a_frozen_app() {
         "[[BATCH]]dispatch killwindow address:0xa;dispatch killwindow address:0xb"
     );
 }
+
+/// J3b: Remove asks wol-admind for pkg-remove of that app only, and failures say what to do.
+#[test]
+fn j3_remove_goes_through_admind() {
+    let (_, sys) = machine(Some(AdminReply::Ok));
+    assert_eq!(sys.perform(&Action::PkgRemove("gimp".into())), Ok(()));
+    assert_eq!(
+        sys.perform(&Action::PkgRemove("-dd".into())),
+        Err(ActionError::Invalid)
+    );
+    let (_, sys) = machine(Some(AdminReply::Failed));
+    let e = sys.perform(&Action::PkgRemove("gimp".into())).unwrap_err();
+    let said = copy::remove(e, "GIMP");
+    assert!(
+        said.contains("GIMP") && said.contains("try again"),
+        "{said}"
+    );
+    friendly("remove", &said);
+}
