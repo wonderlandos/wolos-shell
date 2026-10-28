@@ -1,5 +1,5 @@
 //! App Store (`wol-store`): macOS App Store layout on the kit AppWindow. Curated catalog from
-//! `wol_core::store`, `pkg search` for the rest, installs through wol-admind `pkg-install` with the
+//! `wol_core::store`, `pacman -Ss` for the rest, installs through wol-admind `pkg-install` with the
 //! Authenticate sheet, updates from `wol update check`. `wol-store <file.wol>` (double-click) opens
 //! the install page: wol-admind `wol-install` (ADR 0011). Slow work never runs on the UI thread.
 use super::settings::{Ctx, UpdateState, parse_check};
@@ -19,7 +19,7 @@ pub const PAGES: [&str; 6] = ["Discover", "Create", "Work", "Play", "Develop", "
 pub struct Env {
     /// XDG data dirs searched for `applications/<id>.desktop`.
     pub data_dirs: Vec<PathBuf>,
-    /// Run `pkg search` for non-catalog results.
+    /// Run `pacman -Ss` for non-catalog results.
     pub pkg_search: bool,
 }
 
@@ -284,6 +284,7 @@ fn wire(
     desktop: Option<&'static str>,
     set: Rc<dyn Fn(w::TileState)>,
     button: &gtk::Button,
+    menu_on: Option<&gtk::Box>,
 ) {
     let installed = Rc::new(std::cell::Cell::new(false));
     if let Some(a) = store::get(&target)
@@ -291,6 +292,9 @@ fn wire(
     {
         installed.set(true);
         set(w::TileState::Open);
+    }
+    if let Some(root) = menu_on {
+        remove_menu(sh, &target, &name, &set, &installed, root);
     }
     let sh = sh.clone();
     button.connect_clicked(move |_| {
@@ -324,6 +328,61 @@ fn wire(
     });
 }
 
+/// Right-click on an installed tile: Remove (wol-admind `pkg-remove`, Authenticate sheet).
+fn remove_menu(
+    sh: &Rc<Shared>,
+    target: &str,
+    name: &str,
+    set: &Rc<dyn Fn(w::TileState)>,
+    installed: &Rc<std::cell::Cell<bool>>,
+    root: &gtk::Box,
+) {
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let (sh, target, name, set, installed) = (
+        sh.clone(),
+        target.to_string(),
+        name.to_string(),
+        set.clone(),
+        installed.clone(),
+    );
+    let r = root.clone();
+    click.connect_pressed(move |_, _, x, y| {
+        if !installed.get() {
+            return;
+        }
+        let label = format!("Remove {name}");
+        let (sh, target, name, set, inst) = (
+            sh.clone(),
+            target.clone(),
+            name.clone(),
+            set.clone(),
+            installed.clone(),
+        );
+        let remove = Box::new(move || {
+            set(w::TileState::Installing);
+            say(&sh.status, "");
+            let (set, st, inst, name) =
+                (set.clone(), sh.status.clone(), inst.clone(), name.clone());
+            sh.ctx.act(
+                Action::PkgRemove(target.clone()),
+                Rc::new(move |r: Result<(), ActionError>| match r {
+                    Ok(()) => {
+                        inst.set(false);
+                        set(w::TileState::Get);
+                    }
+                    Err(e) => {
+                        set(w::TileState::Open);
+                        say(&st, &crate::copy::remove(e, &name));
+                    }
+                }),
+            );
+        });
+        kit::data::popup_menu(&r, x, y, vec![(label, None, remove)]);
+    });
+    root.add_controller(click);
+}
+
 fn tile(sh: &Rc<Shared>, a: &'static App) -> gtk::Widget {
     let t = w::AppTile::new(&icon(a, w::ICON_L), a.name, a.summary);
     let t2 = t.clone();
@@ -334,6 +393,7 @@ fn tile(sh: &Rc<Shared>, a: &'static App) -> gtk::Widget {
         Some(a.desktop),
         Rc::new(move |s| t2.set_state(s)),
         &t.action,
+        Some(&t.root),
     );
     t.root.upcast()
 }
@@ -348,6 +408,7 @@ fn pkg_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
         None,
         Rc::new(move |s| t2.set_state(s)),
         &t.action,
+        Some(&t.root),
     );
     t.root.upcast()
 }
@@ -397,6 +458,7 @@ fn hero(sh: &Rc<Shared>, page: Option<Category>) -> Option<gtk::Widget> {
             });
         }),
         &get,
+        None,
     );
     Some(card.upcast())
 }
@@ -551,7 +613,7 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
     p
 }
 
-/// Search results: catalog hits now, `pkg search` hits when they arrive.
+/// Search results: catalog hits now, `pacman -Ss` hits when they arrive.
 fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     while let Some(c) = page.first_child() {
         page.remove(&c);
@@ -571,16 +633,13 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     );
     empty.set_visible(store::search(term).is_empty());
     page.append(&empty);
-    if !sh.env.pkg_search {
+    let Some(argv) = store::search_argv(term).filter(|_| sh.env.pkg_search) else {
         return;
-    }
+    };
     let (tx, rx) = async_channel::bounded(1);
-    let t = term.to_string();
     std::thread::spawn(move || {
-        let out = wol_core::system::run_with_timeout(
-            &["pkg", "search", "--", &t],
-            std::time::Duration::from_secs(15),
-        );
+        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let out = wol_core::system::run_with_timeout(&argv, std::time::Duration::from_secs(15));
         let _ = tx.send_blocking(out.map(|o| store::parse_pkg_search(&o)).unwrap_or_default());
     });
     let sh = sh.clone();

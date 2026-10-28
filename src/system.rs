@@ -31,6 +31,8 @@ pub enum Action {
     PkgUpgrade,
     /// App Store: catalog id or package name (`wol_core::store`).
     PkgInstall(String),
+    /// App Store: remove a catalog id or package name.
+    PkgRemove(String),
     MediaNext,
     MediaPrevious,
     /// Bluetooth device address, connect (true) or disconnect.
@@ -826,6 +828,7 @@ impl Inner {
             } => c.add_user(name, full_name, *admin, password, &pw),
             Action::PkgUpgrade => c.pkg_upgrade(&pw),
             Action::PkgInstall(t) => c.pkg_install(t, &pw),
+            Action::PkgRemove(t) => c.pkg_remove(t, &pw),
             Action::MediaToggle => c.media("play-pause"),
             Action::MediaNext => c.media("next"),
             Action::MediaPrevious => c.media("previous"),

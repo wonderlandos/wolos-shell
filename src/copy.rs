@@ -144,6 +144,22 @@ pub fn wifi_joining(name: &str) -> String {
 }
 
 /// Installing the app `name` from the App Store.
+/// Why `name` is still installed after Remove.
+pub fn remove(e: ActionError, name: &str) -> String {
+    match e {
+        ActionError::Denied | ActionError::NeedsAuth => {
+            format!("{name} wasn't removed. Removing apps needs an administrator's password.")
+        }
+        ActionError::NotAdmin => format!("Only an administrator can remove {name}."),
+        ActionError::Unavailable => {
+            format!("{name} can't be removed right now. Restart the computer and try again.")
+        }
+        ActionError::Invalid | ActionError::Failed | ActionError::WrongPassword => {
+            format!("{name} couldn't be removed. Quit it, then try again.")
+        }
+    }
+}
+
 pub fn install(e: ActionError, name: &str) -> String {
     match e {
         ActionError::Denied | ActionError::NeedsAuth => {
