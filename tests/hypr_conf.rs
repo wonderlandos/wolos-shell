@@ -1,8 +1,7 @@
 //! The desktop hyprland.conf must blur every glass surface the shell creates.
 //! Live Hyprland 0.56: `match:namespace wol-shell` matched nothing (namespaces are wol-menubar, ...),
 //! so the dock and menu bar had no blur; `ignore_alpha 0` then blurred their transparent margins.
-const CONF: &str =
-    include_str!("../../../desktop/overlay/usr/local/share/wolos/hypr/hyprland.conf");
+const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 
 const GLASS: [&str; 6] = [
     "wol-menubar",
@@ -129,7 +128,7 @@ fn menu_shortcuts_are_bound_to_the_same_action() {
 /// Volume keys show the OSD right away (it waited for the 10 s status poll).
 #[test]
 fn volume_keys_ask_the_shell_for_the_osd() {
-    let script = include_str!("../../../desktop/overlay/usr/local/bin/wol-volume");
+    let script = include_str!("../../../desktop/overlay/usr/bin/wol-volume");
     assert!(
         script
             .lines()

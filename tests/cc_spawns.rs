@@ -8,7 +8,7 @@ const SHELL_UI: &str = include_str!("../src/ui/mod.rs");
 
 fn installed(prog: &str) -> bool {
     Path::new(ROOT)
-        .join("desktop/overlay/usr/local/bin")
+        .join("desktop/overlay/usr/bin")
         .join(prog)
         .is_file()
         || Path::new(ROOT)

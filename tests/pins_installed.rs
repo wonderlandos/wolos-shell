@@ -38,7 +38,7 @@ fn packages() -> Vec<String> {
         .collect()
 }
 
-/// WolOS binaries: installed by image/build-rust.sh or shipped in desktop/overlay/usr/local/bin.
+/// WolOS binaries: installed by image/build-rust.sh or shipped in desktop/overlay/usr/bin.
 fn wolos_binary(program: &str) -> bool {
     let build = std::fs::read_to_string(repo("image/build-rust.sh")).unwrap();
     let listed = build
@@ -48,10 +48,7 @@ fn wolos_binary(program: &str) -> bool {
             l.split_whitespace()
                 .any(|w| w.trim_end_matches(';') == program)
         });
-    listed
-        || repo("desktop/overlay/usr/local/bin")
-            .join(program)
-            .is_file()
+    listed || repo("desktop/overlay/usr/bin").join(program).is_file()
 }
 
 fn provided(program: &str, pkgs: &[String]) -> Result<(), String> {
@@ -134,7 +131,7 @@ fn app_store_is_pinned_installed_and_opens_wol_packages() {
     );
     assert!(wolos_binary("wol-store"), "wol-store not installed");
     let desktop = std::fs::read_to_string(repo(
-        "desktop/overlay/usr/local/share/applications/org.wolos.store.desktop",
+        "desktop/overlay/usr/share/applications/org.wolos.store.desktop",
     ))
     .unwrap();
     for l in [
