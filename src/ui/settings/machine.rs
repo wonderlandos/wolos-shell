@@ -66,6 +66,8 @@ pub trait Machine: Send + Sync {
     fn updates(&self) -> Option<wol_core::update::check::Updates>;
     /// /etc/passwd text (accounts and their login shells).
     fn passwd(&self) -> String;
+    /// Automatic updates: (download system updates, install app updates) (`wol_core::update::auto`).
+    fn auto_updates(&self) -> (bool, bool);
 }
 
 /// The running system.
@@ -94,6 +96,15 @@ impl Default for Live {
 }
 
 impl Machine for Live {
+    fn auto_updates(&self) -> (bool, bool) {
+        use wol_core::update::auto;
+        let os = self.os();
+        let apps = os.run(&["systemctl", "--user", "is-enabled", auto::APPS_TIMER]);
+        (
+            auto::downloads(os.read_text(auto::FILE).as_deref()),
+            auto::apps_enabled(apps.as_deref()),
+        )
+    }
     fn storage(&self) -> Option<Storage> {
         wol_core::storage::read(self.os())
     }
@@ -189,6 +200,9 @@ pub struct Demo;
 const GB: u64 = 1_000_000_000;
 
 impl Machine for Demo {
+    fn auto_updates(&self) -> (bool, bool) {
+        (true, true)
+    }
     fn storage(&self) -> Option<Storage> {
         let c = |n: &str, gb: u64| Category {
             name: n.into(),

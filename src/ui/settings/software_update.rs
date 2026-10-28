@@ -75,6 +75,78 @@ pub fn snapshot_line(u: &Updates, now: u64) -> String {
     format!("{fixes}Last checked {when}.")
 }
 
+/// "Automatic updates" is on while either half is; turning it on or off sets both.
+pub fn auto_main(download: bool, apps: bool) -> bool {
+    download || apps
+}
+
+/// Automatic updates: the main switch and its two options (shown while it is on).
+fn automatic(e: &Rc<Env>, into: &gtk::Box) {
+    let ctx = e.ctx.clone();
+    let set_download: Rc<dyn Fn(bool)> = Rc::new(move |on| {
+        if let Some(a) = admin("auto-update", &[if on { "on" } else { "off" }]) {
+            ctx.act(a, Rc::new(|_| {}));
+        }
+    });
+    let set_apps: Rc<dyn Fn(bool)> = Rc::new(|on| {
+        std::thread::spawn(move || {
+            wol_core::system::run_with_timeout(
+                &wol_core::update::auto::apps_argv(on),
+                std::time::Duration::from_secs(20),
+            )
+        });
+    });
+    let (download, apps) = e.machine().auto_updates();
+    let main = w::toggle(auto_main(download, apps), |_| {});
+    let dl = w::toggle(download, {
+        let f = set_download.clone();
+        move |on| f(on)
+    });
+    let ap = w::toggle(apps, {
+        let f = set_apps.clone();
+        move |on| f(on)
+    });
+    let dl_row = form::row(
+        "Download new updates",
+        "In the background. You choose when to install.",
+        &dl,
+    );
+    let ap_row = form::row("Install app updates", "Flathub apps, once a day.", &ap);
+    dl_row.set_visible(main.is_active());
+    ap_row.set_visible(main.is_active());
+    {
+        let (dl, ap, dl_row, ap_row) = (dl.clone(), ap.clone(), dl_row.clone(), ap_row.clone());
+        main.connect_active_notify(move |m| {
+            let on = m.is_active();
+            dl_row.set_visible(on);
+            ap_row.set_visible(on);
+            // Each switch's own handler applies the change.
+            dl.set_active(on);
+            ap.set_active(on);
+        });
+    }
+    for s in [&dl, &ap] {
+        let (main, dl, ap) = (main.clone(), dl.clone(), ap.clone());
+        s.connect_active_notify(move |_| {
+            if !auto_main(dl.is_active(), ap.is_active()) && main.is_active() {
+                main.set_active(false);
+            }
+        });
+    }
+    into.append(&w::section(
+        "",
+        &[
+            form::row(
+                "Automatic updates",
+                "Keep WolOS and your apps current.",
+                &main,
+            ),
+            dl_row,
+            ap_row,
+        ],
+    ));
+}
+
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let ctx = &e.ctx;
     let p = general::subpage(e, "Software Update");
@@ -124,6 +196,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     buttons.append(&check);
     buttons.append(&install);
     p.append(&buttons);
+    automatic(e, &p);
 
     // What the daily check adds under the title (security fixes, when it ran); a fresh Check Now
     // clears it.
@@ -281,6 +354,13 @@ mod tests {
             with_flatpaks(UpdateState::Failed("x".into()), &ids),
             UpdateState::Failed(_)
         ));
+    }
+
+    #[test]
+    fn automatic_updates_is_on_while_either_half_is() {
+        assert!(auto_main(true, false));
+        assert!(auto_main(false, true));
+        assert!(!auto_main(false, false));
     }
 
     #[test]
