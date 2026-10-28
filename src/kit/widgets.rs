@@ -1251,6 +1251,7 @@ pub struct AppTile {
     pub root: gtk::Box,
     pub action: gtk::Button,
     ring: gtk::DrawingArea,
+    text: gtk::Box,
 }
 
 impl AppTile {
@@ -1283,7 +1284,21 @@ impl AppTile {
         let ring = progress_ring();
         ring.set_visible(false);
         root.append(&ring);
-        AppTile { root, action, ring }
+        AppTile {
+            root,
+            action,
+            ring,
+            text: t,
+        }
+    }
+
+    /// Where the app comes from when it is not WolOS's own packages ("Flathub"): a badge under
+    /// the summary.
+    pub fn set_source(&self, source: &str) {
+        let b = label(source, "badge");
+        b.set_halign(gtk::Align::Start);
+        b.set_margin_top(S1);
+        self.text.append(&b);
     }
 
     pub fn set_state(&self, s: TileState) {

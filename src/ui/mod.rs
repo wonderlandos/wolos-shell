@@ -3,6 +3,7 @@ pub mod approval;
 pub mod capture;
 pub mod control_center;
 pub mod dock;
+pub mod flatpak_consent;
 pub mod force_quit;
 pub mod installer;
 pub mod ipc;

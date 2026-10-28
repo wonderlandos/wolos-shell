@@ -35,6 +35,7 @@ pub fn cases() -> Vec<Case> {
                         store::Env {
                             data_dirs: vec![],
                             pkg_search: false,
+                            flatpaks: vec![],
                         },
                     );
                     s.show_package(PackageFile::read_with(

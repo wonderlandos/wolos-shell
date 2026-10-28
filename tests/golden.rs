@@ -98,6 +98,28 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // A Flatpak app asks for its permissions while it installs (wol-flatpak-consent).
+            name: "flatpak-consent".into(),
+            size: (400, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let perm = |s| wol_core::flatpak::Perm::parse(s).unwrap();
+                ui::flatpak_consent::content(&ui::flatpak_consent::Info {
+                    name: "GIMP".into(),
+                    icon: "org.gimp.GIMP".into(),
+                    update: false,
+                    perms: vec![
+                        perm("filesystems=home"),
+                        perm("shared=network"),
+                        perm("devices=dri"),
+                        perm("sockets=x11"),
+                    ],
+                })
+                .0
+            }),
+        },
+        Case {
             // An administrator change from a helper: the password, every time.
             name: "approval-admin".into(),
             size: (400, 1),
@@ -532,6 +554,7 @@ fn cases() -> Vec<Case> {
                         ui::store::Env {
                             data_dirs: vec![],
                             pkg_search: false,
+                            flatpaks: vec![],
                         },
                     );
                     if p == "Search" {
@@ -543,6 +566,48 @@ fn cases() -> Vec<Case> {
                 }),
             });
         }
+        v.push(Case {
+            // Search with repo and Flathub hits: Flathub apps carry a badge, one tile per app.
+            name: format!("store-search-flathub-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                let s = ui::store::content(
+                    Rc::new(shell::system::Fake),
+                    ui::store::Env {
+                        data_dirs: vec![],
+                        pkg_search: false,
+                        flatpaks: vec!["com.github.maoschanz.drawing".into()],
+                    },
+                );
+                let hit = |id: &str, name: &str, summary: &str| wol_core::flatpak::Hit {
+                    id: id.into(),
+                    name: name.into(),
+                    summary: summary.into(),
+                };
+                s.search_with(
+                    "paint",
+                    vec![wol_core::store::PkgHit {
+                        name: "mtpaint".into(),
+                        summary: "Painting program for pixel art".into(),
+                    }],
+                    vec![
+                        hit(
+                            "com.github.maoschanz.drawing",
+                            "Drawing",
+                            "A simple drawing app",
+                        ),
+                        hit(
+                            "com.github.PintaProject.Pinta",
+                            "Pinta",
+                            "Edit images and paint digitally",
+                        ),
+                    ],
+                );
+                s.aw.root.clone().upcast()
+            }),
+        });
         for p in ui::settings::PAGES
             .into_iter()
             .chain(ui::settings::SUBPAGES)

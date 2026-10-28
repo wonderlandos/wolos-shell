@@ -25,6 +25,19 @@ pub fn parse_check(out: Option<&str>) -> UpdateState {
     }
 }
 
+/// Adds Flathub apps with an update waiting (`flatpak remote-ls --updates`) to a check result.
+pub fn with_flatpaks(s: UpdateState, ids: &[String]) -> UpdateState {
+    let names = ids.iter().map(|id| format!("{id} (Flathub)"));
+    match s {
+        UpdateState::UpToDate if !ids.is_empty() => UpdateState::Available(names.collect()),
+        UpdateState::Available(mut v) => {
+            v.extend(names);
+            UpdateState::Available(v)
+        }
+        other => other,
+    }
+}
+
 /// The daily check's findings -> the state the page opens in: never checked asks for a check.
 pub fn from_snapshot(u: Option<&Updates>) -> UpdateState {
     match u {
@@ -248,6 +261,27 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flathub_updates_join_the_list() {
+        let ids = vec!["org.kde.krita".to_string()];
+        assert_eq!(
+            with_flatpaks(UpdateState::UpToDate, &ids),
+            UpdateState::Available(vec!["org.kde.krita (Flathub)".into()])
+        );
+        assert_eq!(
+            with_flatpaks(UpdateState::Available(vec!["firefox".into()]), &ids),
+            UpdateState::Available(vec!["firefox".into(), "org.kde.krita (Flathub)".into()])
+        );
+        assert_eq!(
+            with_flatpaks(UpdateState::UpToDate, &[]),
+            UpdateState::UpToDate
+        );
+        assert!(matches!(
+            with_flatpaks(UpdateState::Failed("x".into()), &ids),
+            UpdateState::Failed(_)
+        ));
+    }
 
     #[test]
     fn update_check_states() {
