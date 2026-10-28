@@ -63,7 +63,18 @@ pub fn keep_file_index() {
 }
 
 /// Apps and Settings first, then file names, [`ROWS`] at most.
+/// The calculator's answer, if any, comes first; Return copies it.
 pub fn results(items: &[Item], files: &files::Index, query: &str) -> Vec<Item> {
+    if let Some(answer) = search::calc(query) {
+        let mut v = vec![Item::new(
+            &format!("= {answer}"),
+            "Calculator",
+            "edit-paste-symbolic",
+            vec!["wl-copy".into(), answer],
+        )];
+        v.extend(search::search(items, query, ROWS - 1).into_iter().cloned());
+        return v;
+    }
     let mut top: Vec<Item> = search::search(items, query, ROWS)
         .into_iter()
         .cloned()

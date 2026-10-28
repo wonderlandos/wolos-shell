@@ -80,9 +80,143 @@ pub fn search<'a>(items: &'a [Item], query: &str, max: usize) -> Vec<&'a Item> {
     hits.into_iter().take(max).map(|h| h.1).collect()
 }
 
+/// Spotlight's calculator: `2+2`, `(3.5 * 4) / 2`, `2^10`, `15%`. None unless the query is
+/// arithmetic with at least one operator. The answer is shown rounded to 10 significant places.
+pub fn calc(query: &str) -> Option<String> {
+    let q: Vec<char> = query.chars().filter(|c| !c.is_whitespace()).collect();
+    if q.is_empty()
+        || q.len() > 200
+        || !q.iter().any(|c| "+-*/^%x×÷".contains(*c))
+        || !q
+            .iter()
+            .all(|c| c.is_ascii_digit() || "+-*/^%().,x×÷".contains(*c))
+    {
+        return None;
+    }
+    let mut p = Calc { s: &q, i: 0 };
+    let v = p.sum()?;
+    if p.i != q.len() || !v.is_finite() {
+        return None;
+    }
+    let r = (v * 1e10).round() / 1e10;
+    let text = if r.fract() == 0.0 && r.abs() < 1e15 {
+        format!("{}", r as i64)
+    } else {
+        format!("{r}")
+    };
+    // "5" for "5": a bare number is not a calculation.
+    (text != q.iter().collect::<String>()).then_some(text)
+}
+
+struct Calc<'a> {
+    s: &'a [char],
+    i: usize,
+}
+
+impl Calc<'_> {
+    fn peek(&self) -> Option<char> {
+        self.s.get(self.i).copied()
+    }
+    fn sum(&mut self) -> Option<f64> {
+        let mut v = self.product()?;
+        while let Some(c @ ('+' | '-')) = self.peek() {
+            self.i += 1;
+            let r = self.product()?;
+            v = if c == '+' { v + r } else { v - r };
+        }
+        Some(v)
+    }
+    fn product(&mut self) -> Option<f64> {
+        let mut v = self.power()?;
+        while let Some(c @ ('*' | '/' | 'x' | '×' | '÷')) = self.peek() {
+            self.i += 1;
+            let r = self.power()?;
+            v = if matches!(c, '/' | '÷') {
+                if r == 0.0 {
+                    return None;
+                }
+                v / r
+            } else {
+                v * r
+            };
+        }
+        Some(v)
+    }
+    fn power(&mut self) -> Option<f64> {
+        let b = self.unary()?;
+        if self.peek() == Some('^') {
+            self.i += 1;
+            return Some(b.powf(self.power()?));
+        }
+        Some(b)
+    }
+    fn unary(&mut self) -> Option<f64> {
+        match self.peek()? {
+            '-' => {
+                self.i += 1;
+                Some(-self.unary()?)
+            }
+            '+' => {
+                self.i += 1;
+                self.unary()
+            }
+            _ => self.atom(),
+        }
+    }
+    fn atom(&mut self) -> Option<f64> {
+        let mut v = if self.peek()? == '(' {
+            self.i += 1;
+            let v = self.sum()?;
+            (self.peek()? == ')').then_some(())?;
+            self.i += 1;
+            v
+        } else {
+            let start = self.i;
+            while self
+                .peek()
+                .is_some_and(|c| c.is_ascii_digit() || c == '.' || c == ',')
+            {
+                self.i += 1;
+            }
+            let n: String = self.s[start..self.i]
+                .iter()
+                .map(|c| if *c == ',' { '.' } else { *c })
+                .collect();
+            n.parse().ok()?
+        };
+        if self.peek() == Some('%') {
+            self.i += 1;
+            v /= 100.0;
+        }
+        Some(v)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calculator_answers_arithmetic_only() {
+        for (q, want) in [
+            ("2+2", Some("4")),
+            ("(3.5 * 4) / 2", Some("7")),
+            ("2^10", Some("1024")),
+            ("1/3", Some("0.3333333333")),
+            ("15% * 200", Some("30")),
+            ("-3 + 1", Some("-2")),
+            ("1,5*2", Some("3")),
+            ("10 x 3", Some("30")),
+            ("1/0", None),
+            ("42", None),
+            ("terminal", None),
+            ("2+", None),
+            ("(2+3", None),
+            ("", None),
+        ] {
+            assert_eq!(calc(q).as_deref(), want, "{q}");
+        }
+    }
 
     #[test]
     fn ranks() {
