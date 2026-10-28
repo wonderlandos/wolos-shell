@@ -14,7 +14,7 @@ use std::path::PathBuf;
 pub fn example_dir() -> PathBuf {
     PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../desktop/overlay/usr/local/share/wolos/widgets/game-friends"
+        "/../../desktop/overlay/usr/share/wolos/widgets/game-friends"
     ))
 }
 

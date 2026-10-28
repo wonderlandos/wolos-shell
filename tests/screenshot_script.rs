@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 const SCRIPT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../desktop/overlay/usr/local/bin/wol-screenshot"
+    "/../../desktop/overlay/usr/bin/wol-screenshot"
 );
 
 fn stub(dir: &std::path::Path, name: &str, body: &str) {

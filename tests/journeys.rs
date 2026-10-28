@@ -14,12 +14,16 @@ fn friendly(what: &str, s: &str) {
     assert!(p.is_empty(), "{what}: “{s}”: {p:?}");
 }
 
-/// FreeBSD machine whose administrator service answers `reply` (None = not running).
+/// Machine whose administrator service answers `reply` (None = not running). NetworkManager
+/// accepts only the Wi-Fi password [`RIGHT_WIFI`].
 fn machine(reply: Option<AdminReply>) -> (Arc<FakeHost>, CoreSystem) {
-    let h = Arc::new(FakeHost::new(true));
+    let h = Arc::new(FakeHost::linux());
     let c = Controls {
         host: h.clone(),
-        stdin: Arc::new(|_, _| Some(String::new())),
+        stdin: Arc::new(|argv, input| {
+            (argv[0] != "nmcli" || input.trim_end().ends_with(&format!(":{RIGHT_WIFI}")))
+                .then(String::new)
+        }),
         admin: Arc::new(move |_, _| reply),
         wlan: "wlan0".into(),
     };
@@ -29,6 +33,8 @@ fn machine(reply: Option<AdminReply>) -> (Arc<FakeHost>, CoreSystem) {
     };
     (h, CoreSystem::with_ticks(c, files, None, ticks))
 }
+
+const RIGHT_WIFI: &str = "curiouser1";
 
 fn temp(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("wol-journey-{tag}-{}", std::process::id()));
@@ -78,12 +84,7 @@ fn j1_setup_asks_at_most_five_questions() {
 /// (NeedsAuth/Denied) and never reports success.
 #[test]
 fn j2_wrong_wifi_password_says_so() {
-    let (h, sys) = machine(Some(AdminReply::Ok));
-    h.command("wpa_cli -i wlan0 status", "wpa_state=SCANNING\n")
-        .command(
-            "wpa_cli -i wlan0 list_networks",
-            "network id / ssid / bssid / flags\n0\tHome\tany\t[TEMP-DISABLED]\n",
-        );
+    let (_h, sys) = machine(Some(AdminReply::Ok));
     let join = |p: &str| sys.perform(&Action::WifiJoin("Home".into(), Some(p.into())));
     let e = join("password1").unwrap_err();
     assert_eq!(e, ActionError::WrongPassword);
@@ -99,11 +100,7 @@ fn j2_wrong_wifi_password_says_so() {
     assert_eq!(e, ActionError::Invalid, "too short: refused before it runs");
     assert!(copy::wifi_join(e, "Home").contains("8 to 63"));
 
-    h.command(
-        "wpa_cli -i wlan0 status",
-        "wpa_state=COMPLETED\nssid=Home\n",
-    );
-    assert_eq!(join("password1"), Ok(()));
+    assert_eq!(join(RIGHT_WIFI), Ok(()));
 }
 
 /// J3: an app that does not install says what to do; nothing raw reaches the tile.
