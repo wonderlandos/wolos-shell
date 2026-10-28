@@ -55,6 +55,8 @@ pub trait Machine: Send + Sync {
     fn sharing(&self) -> Sharing;
     /// Compositor consent grants: (app path, capability) (`wol_core::consent`).
     fn consent(&self) -> Vec<(String, String)>;
+    /// Flatpak apps with the permissions they were granted (`wol_core::flatpak`).
+    fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App>;
     fn kernel(&self) -> Kernel;
     /// Energy mode, CPU steering and what the power plan does now (`wol_core::power::policy`).
     fn power(&self) -> Option<wol_core::power::policy::Status>;
@@ -143,6 +145,10 @@ impl Machine for Live {
     }
     fn consent(&self) -> Vec<(String, String)> {
         wol_core::consent::read(self.os())
+    }
+    fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App> {
+        let home = std::env::var("HOME").unwrap_or_default();
+        wol_core::flatpak::apps(self.os(), &home)
     }
     fn kernel(&self) -> Kernel {
         Kernel {
@@ -394,6 +400,20 @@ impl Machine for Demo {
             ("/usr/bin/obs".into(), "screen-capture".into()),
             ("/usr/bin/ydotoold".into(), "input-injection".into()),
         ]
+    }
+    fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App> {
+        let perm = |s, on| (wol_core::flatpak::Perm::parse(s).expect("valid"), on);
+        vec![wol_core::flatpak::App {
+            id: "org.gimp.GIMP".into(),
+            scope: wol_core::flatpak::Scope::User,
+            name: "GIMP".into(),
+            icon: "org.gimp.GIMP".into(),
+            perms: vec![
+                perm("filesystems=home", true),
+                perm("shared=network", false),
+                perm("devices=dri", true),
+            ],
+        }]
     }
     fn kernel(&self) -> Kernel {
         Kernel {

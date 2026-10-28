@@ -33,6 +33,9 @@ pub enum Action {
     PkgInstall(String),
     /// App Store: remove a catalog id or package name.
     PkgRemove(String),
+    /// App Store: a Flathub app for this account (Flatpak's consent sheet asks for permissions).
+    FlatpakInstall(String),
+    FlatpakRemove(String),
     MediaNext,
     MediaPrevious,
     /// Bluetooth device address, connect (true) or disconnect.
@@ -52,6 +55,14 @@ pub enum Action {
     BootEnvironment(String),
     /// Settings: one allow-listed administrator request (wol-admind validates it again).
     Admin(shared::admin::AdminRequest),
+    /// Settings > Privacy: one Flatpak permission on or off, or `perm: None` = back to what the
+    /// app asked for. System installs go through wol-admind.
+    FlatpakOverride {
+        scope: wol_core::flatpak::Scope,
+        app: String,
+        perm: Option<String>,
+        allow: bool,
+    },
 }
 
 pub type Done = async_channel::Receiver<Result<(), ActionError>>;
@@ -829,6 +840,14 @@ impl Inner {
             Action::PkgUpgrade => c.pkg_upgrade(&pw),
             Action::PkgInstall(t) => c.pkg_install(t, &pw),
             Action::PkgRemove(t) => c.pkg_remove(t, &pw),
+            Action::FlatpakInstall(id) => c.flatpak_install(id),
+            Action::FlatpakRemove(id) => c.flatpak_remove(id),
+            Action::FlatpakOverride {
+                scope,
+                app,
+                perm,
+                allow,
+            } => c.flatpak_override(*scope, app, perm.as_deref(), *allow, &pw),
             Action::MediaToggle => c.media("play-pause"),
             Action::MediaNext => c.media("next"),
             Action::MediaPrevious => c.media("previous"),

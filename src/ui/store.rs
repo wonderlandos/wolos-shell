@@ -2,7 +2,7 @@
 //! `wol_core::store`, `pacman -Ss` for the rest, installs through wol-admind `pkg-install` with the
 //! Authenticate sheet, updates from `wol update check`. `wol-store <file.wol>` (double-click) opens
 //! the install page: wol-admind `wol-install` (ADR 0011). Slow work never runs on the UI thread.
-use super::settings::{Ctx, UpdateState, parse_check};
+use super::settings::{Ctx, UpdateState, parse_check, with_flatpaks};
 use crate::kit::{self, widgets as w};
 use crate::system::{Action, ActionError, System};
 use gtk::{glib, prelude::*};
@@ -19,8 +19,10 @@ pub const PAGES: [&str; 6] = ["Discover", "Create", "Work", "Play", "Develop", "
 pub struct Env {
     /// XDG data dirs searched for `applications/<id>.desktop`.
     pub data_dirs: Vec<PathBuf>,
-    /// Run `pacman -Ss` for non-catalog results.
+    /// Run `pacman -Ss` and `flatpak search` for non-catalog results.
     pub pkg_search: bool,
+    /// Flathub apps installed (any scope).
+    pub flatpaks: Vec<String>,
 }
 
 impl Env {
@@ -36,9 +38,14 @@ impl Env {
                 .split(':')
                 .map(PathBuf::from),
         );
+        let list = wol_core::flatpak::installed_argv();
+        let l: Vec<&str> = list.iter().map(String::as_str).collect();
         Env {
             data_dirs: dirs,
             pkg_search: true,
+            flatpaks: wol_core::system::run_with_timeout(&l, std::time::Duration::from_secs(5))
+                .map(|t| wol_core::flatpak::parse_ids(&t))
+                .unwrap_or_default(),
         }
     }
 }
@@ -84,11 +91,23 @@ pub struct Store {
     pub aw: w::AppWindow,
     pub search: gtk::SearchEntry,
     show_results: Rc<dyn Fn(&str)>,
+    shared: Rc<Shared>,
     /// The install page: `None` while the file is checked.
     show_package: Rc<dyn Fn(Option<PackageFile>)>,
 }
 
 impl Store {
+    /// Results for `term` with these repo and Flathub hits, without searching (goldens).
+    pub fn search_with(
+        &self,
+        term: &str,
+        pkgs: Vec<store::PkgHit>,
+        flat: Vec<wol_core::flatpak::Hit>,
+    ) {
+        *self.shared.preset.borrow_mut() = Some((pkgs, flat));
+        self.search_now(term);
+    }
+
     /// Shows results for `term` now (no typing delay): goldens and `wol-store search:<term>`.
     pub fn search_now(&self, term: &str) {
         self.search.set_text(term);
@@ -260,9 +279,13 @@ pub fn package_sheet(f: &PackageFile) -> PackageSheet {
     }
 }
 
+/// Search hits handed in instead of searched for (goldens).
+type Found = (Vec<store::PkgHit>, Vec<wol_core::flatpak::Hit>);
+
 struct Shared {
     ctx: Rc<Ctx>,
     env: Env,
+    preset: RefCell<Option<Found>>,
     /// One inline error line per window (HIG §3).
     status: gtk::Label,
 }
@@ -277,29 +300,36 @@ fn icon(a: &App, size: i32) -> gtk::Widget {
 }
 
 /// Get -> install (Authenticate sheet when needed) -> Open; Open launches the .desktop file.
+#[allow(clippy::too_many_arguments)]
 fn wire(
     sh: &Rc<Shared>,
     target: String,
     name: String,
+    flathub: bool,
     desktop: Option<&'static str>,
     set: Rc<dyn Fn(w::TileState)>,
     button: &gtk::Button,
     menu_on: Option<&gtk::Box>,
 ) {
     let installed = Rc::new(std::cell::Cell::new(false));
-    if let Some(a) = store::get(&target)
-        && store::is_installed(a, &sh.env.data_dirs)
-    {
+    let present = if flathub {
+        sh.env.flatpaks.contains(&target)
+    } else {
+        store::get(&target).is_some_and(|a| store::is_installed(a, &sh.env.data_dirs))
+    };
+    if present {
         installed.set(true);
         set(w::TileState::Open);
     }
     if let Some(root) = menu_on {
-        remove_menu(sh, &target, &name, &set, &installed, root);
+        remove_menu(sh, &target, &name, flathub, &set, &installed, root);
     }
     let sh = sh.clone();
     button.connect_clicked(move |_| {
         if installed.get() {
-            if let Some(d) = desktop {
+            if flathub {
+                kit::spawn(&["flatpak".into(), "run".into(), target.clone()]);
+            } else if let Some(d) = desktop {
                 kit::spawn(&["gtk4-launch".into(), d.into()]);
             }
             return;
@@ -312,8 +342,13 @@ fn wire(
             installed.clone(),
             name.clone(),
         );
+        let action = if flathub {
+            Action::FlatpakInstall(target.clone())
+        } else {
+            Action::PkgInstall(target.clone())
+        };
         sh.ctx.act(
-            Action::PkgInstall(target.clone()),
+            action,
             Rc::new(move |r: Result<(), ActionError>| match r {
                 Ok(()) => {
                     inst.set(true);
@@ -333,6 +368,7 @@ fn remove_menu(
     sh: &Rc<Shared>,
     target: &str,
     name: &str,
+    flathub: bool,
     set: &Rc<dyn Fn(w::TileState)>,
     installed: &Rc<std::cell::Cell<bool>>,
     root: &gtk::Box,
@@ -364,8 +400,13 @@ fn remove_menu(
             say(&sh.status, "");
             let (set, st, inst, name) =
                 (set.clone(), sh.status.clone(), inst.clone(), name.clone());
+            let action = if flathub {
+                Action::FlatpakRemove(target.clone())
+            } else {
+                Action::PkgRemove(target.clone())
+            };
             sh.ctx.act(
-                Action::PkgRemove(target.clone()),
+                action,
                 Rc::new(move |r: Result<(), ActionError>| match r {
                     Ok(()) => {
                         inst.set(false);
@@ -390,6 +431,7 @@ fn tile(sh: &Rc<Shared>, a: &'static App) -> gtk::Widget {
         sh,
         a.id.into(),
         a.name.into(),
+        false,
         Some(a.desktop),
         Rc::new(move |s| t2.set_state(s)),
         &t.action,
@@ -405,12 +447,62 @@ fn pkg_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
         sh,
         h.name.clone(),
         h.name.clone(),
+        false,
         None,
         Rc::new(move |s| t2.set_state(s)),
         &t.action,
         Some(&t.root),
     );
     t.root.upcast()
+}
+
+/// A Flathub app: same tile, a Flathub badge under the name, installed for this account.
+fn flathub_tile(sh: &Rc<Shared>, h: &wol_core::flatpak::Hit) -> gtk::Widget {
+    let t = w::AppTile::new(&w::store_icon(&h.id, w::ICON_L), &h.name, &h.summary);
+    t.set_source("Flathub");
+    let t2 = t.clone();
+    wire(
+        sh,
+        h.id.clone(),
+        h.name.clone(),
+        true,
+        None,
+        Rc::new(move |s| t2.set_state(s)),
+        &t.action,
+        Some(&t.root),
+    );
+    t.root.upcast()
+}
+
+/// Whether a native package (catalog first, then a repo hit) already covers a Flathub app.
+pub fn covered_natively(h: &wol_core::flatpak::Hit, pkgs: &[store::PkgHit]) -> bool {
+    let guess = wol_core::flatpak::native_guess(h);
+    let name = h.name.to_lowercase();
+    store::search(&h.name)
+        .iter()
+        .any(|a| a.name.to_lowercase() == name || a.packages.contains(&guess.as_str()))
+        || pkgs.iter().any(|p| p.name == guess)
+}
+
+/// Repo and Flathub hits under the catalog's, one tile per app.
+fn show_more(
+    sh: &Rc<Shared>,
+    more: &gtk::Box,
+    empty: &gtk::Widget,
+    pkgs: &[store::PkgHit],
+    flat: &[wol_core::flatpak::Hit],
+) {
+    if !pkgs.is_empty() || !flat.is_empty() {
+        empty.set_visible(false);
+    }
+    if !pkgs.is_empty() {
+        more.append(&w::label("More packages", "title"));
+        more.append(&grid(pkgs.iter().take(30).map(|h| pkg_tile(sh, h))));
+    }
+    if !flat.is_empty() {
+        more.append(&w::label("From Flathub", "title"));
+        more.append(&grid(flat.iter().take(30).map(|h| flathub_tile(sh, h))));
+    }
 }
 
 fn grid(tiles: impl IntoIterator<Item = gtk::Widget>) -> gtk::FlowBox {
@@ -448,6 +540,7 @@ fn hero(sh: &Rc<Shared>, page: Option<Category>) -> Option<gtk::Widget> {
         sh,
         a.id.into(),
         a.name.into(),
+        false,
         Some(a.desktop),
         Rc::new(move |s| {
             g2.set_sensitive(s != w::TileState::Installing);
@@ -600,12 +693,18 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
                     &["wol", "update", "check", "--json"],
                     std::time::Duration::from_secs(120),
                 );
-                let _ = tx.send_blocking(out);
+                let ua = wol_core::flatpak::updates_argv();
+                let a: Vec<&str> = ua.iter().map(String::as_str).collect();
+                let flat =
+                    wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(60))
+                        .map(|t| wol_core::flatpak::parse_ids(&t))
+                        .unwrap_or_default();
+                let _ = tx.send_blocking((out, flat));
             });
             let show = show.clone();
             glib::spawn_future_local(async move {
-                if let Ok(out) = rx.recv().await {
-                    show(parse_check(out.as_deref()));
+                if let Ok((out, flat)) = rx.recv().await {
+                    show(with_flatpaks(parse_check(out.as_deref()), &flat));
                 }
             });
         });
@@ -633,24 +732,36 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     );
     empty.set_visible(store::search(term).is_empty());
     page.append(&empty);
+    if let Some(found) = sh.preset.borrow().clone() {
+        return show_more(sh, &more, empty.upcast_ref(), &found.0, &found.1);
+    }
     let Some(argv) = store::search_argv(term).filter(|_| sh.env.pkg_search) else {
         return;
     };
+    let flat_argv = wol_core::flatpak::search_argv(term);
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
-        let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let out = wol_core::system::run_with_timeout(&argv, std::time::Duration::from_secs(15));
-        let _ = tx.send_blocking(out.map(|o| store::parse_pkg_search(&o)).unwrap_or_default());
+        let run = |argv: &[String]| {
+            let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+            wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(15))
+        };
+        let pkgs = run(&argv)
+            .map(|o| store::parse_pkg_search(&o))
+            .unwrap_or_default();
+        let flat = flat_argv
+            .and_then(|a| run(&a))
+            .map(|o| wol_core::flatpak::parse_search(&o, |h| covered_natively(h, &pkgs)))
+            .unwrap_or_default();
+        let _ = tx.send_blocking((pkgs, flat));
     });
     let sh = sh.clone();
     glib::spawn_future_local(async move {
-        let Ok(found) = rx.recv().await else { return };
-        if found.is_empty() || more.parent().is_none() {
+        let Ok((pkgs, flat)) = rx.recv().await else {
             return;
+        };
+        if more.parent().is_some() {
+            show_more(&sh, &more, empty.upcast_ref(), &pkgs, &flat);
         }
-        empty.set_visible(false);
-        more.append(&w::label("More packages", "title"));
-        more.append(&grid(found.iter().take(30).map(|h| pkg_tile(&sh, h))));
     });
 }
 
@@ -798,6 +909,7 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
     let sh = Rc::new(Shared {
         ctx,
         env,
+        preset: RefCell::new(None),
         status: status.clone(),
     });
     let search = aw.sidebar_search("Search");
@@ -893,6 +1005,42 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
         aw,
         search,
         show_results,
+        shared: sh.clone(),
         show_package,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_packages_win_over_flathub() {
+        let hit = |id: &str, name: &str| wol_core::flatpak::Hit {
+            id: id.into(),
+            name: name.into(),
+            summary: String::new(),
+        };
+        let repo = [store::PkgHit {
+            name: "drawing".into(),
+            summary: String::new(),
+        }];
+        assert!(covered_natively(
+            &hit("com.github.maoschanz.drawing", "Drawing"),
+            &repo
+        ));
+        assert!(!covered_natively(
+            &hit("com.github.maoschanz.drawing", "Drawing"),
+            &[]
+        ));
+        let catalog = &store::CATALOG[0];
+        assert!(covered_natively(
+            &hit("org.example.Whatever", catalog.name),
+            &[]
+        ));
+        assert!(!covered_natively(
+            &hit("com.example.NoSuchApp", "No Such App Here"),
+            &[]
+        ));
     }
 }

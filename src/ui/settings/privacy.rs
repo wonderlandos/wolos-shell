@@ -96,6 +96,7 @@ fn app_of(entries: &[crate::desktop::Entry], path: &str) -> (String, String) {
 
 struct Facts {
     grants: Vec<(String, String)>,
+    flatpaks: Vec<wol_core::flatpak::App>,
     security: Option<security::Status>,
     encrypted: Option<bool>,
 }
@@ -130,7 +131,10 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
             .collect();
         into.append(&w::section(title, &rows));
     }
-    if f.grants.is_empty() {
+    for app in &f.flatpaks {
+        into.append(&flatpak_section(e, app, status));
+    }
+    if f.grants.is_empty() && f.flatpaks.is_empty() {
         into.append(&w::section(
             "Privacy",
             &[w::list_row(
@@ -196,6 +200,74 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     into.append(&w::section("", &[helpers.upcast()]));
 }
 
+/// Section title for a Flatpak app: its name, and who it is installed for.
+pub(crate) fn flatpak_title(app: &wol_core::flatpak::App) -> String {
+    match app.scope {
+        wol_core::flatpak::Scope::User => app.name.clone(),
+        wol_core::flatpak::Scope::System => format!("{} (all accounts)", app.name),
+    }
+}
+
+/// One Flatpak app: each permission it was granted with a switch, then Reset.
+fn flatpak_section(e: &Rc<Env>, app: &wol_core::flatpak::App, status: &gtk::Label) -> gtk::Box {
+    let act = |perm: Option<String>, allow: bool| {
+        let (ctx, st, scope, id) = (e.ctx.clone(), status.clone(), app.scope, app.id.clone());
+        move || {
+            ctx.act_say(
+                Action::FlatpakOverride {
+                    scope,
+                    app: id.clone(),
+                    perm: perm.clone(),
+                    allow,
+                },
+                &st,
+            )
+        }
+    };
+    let mut rows: Vec<gtk::Widget> = app
+        .perms
+        .iter()
+        .map(|(p, on)| {
+            let (ctx, st, scope, id, spelled) = (
+                e.ctx.clone(),
+                status.clone(),
+                app.scope,
+                app.id.clone(),
+                p.spelling(),
+            );
+            let t = w::toggle(*on, move |v| {
+                ctx.act_say(
+                    Action::FlatpakOverride {
+                        scope,
+                        app: id.clone(),
+                        perm: Some(spelled.clone()),
+                        allow: v,
+                    },
+                    &st,
+                )
+            });
+            w::list_row(
+                crate::ui::flatpak_consent::perm_icon(p),
+                &p.plain(),
+                "",
+                Some(t.upcast_ref()),
+            )
+            .upcast()
+        })
+        .collect();
+    let reset = act(None, true);
+    let b = w::button("Reset", w::Kind::Default, reset);
+    let head = w::list_row(
+        "",
+        "Flatpak app",
+        "Reset gives it back what it asked for when installed.",
+        Some(b.upcast_ref()),
+    );
+    head.prepend(&w::app_icon(&app.icon, form::ICON_ROW));
+    rows.insert(0, head.upcast());
+    w::section(&flatpak_title(app), &rows)
+}
+
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let p = w::page("Privacy & Security");
     let body = w::vbox(w::S6);
@@ -207,6 +279,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         &body,
         move || Facts {
             grants: m.consent(),
+            flatpaks: m.flatpak_apps(),
             security: m.security(),
             encrypted: m.storage().and_then(|s| s.encrypted),
         },
@@ -218,6 +291,20 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flatpak_sections_say_who_the_app_is_for() {
+        let mut a = wol_core::flatpak::App {
+            id: "org.gimp.GIMP".into(),
+            scope: wol_core::flatpak::Scope::User,
+            name: "GIMP".into(),
+            icon: String::new(),
+            perms: Vec::new(),
+        };
+        assert_eq!(flatpak_title(&a), "GIMP");
+        a.scope = wol_core::flatpak::Scope::System;
+        assert_eq!(flatpak_title(&a), "GIMP (all accounts)");
+    }
 
     #[test]
     fn every_grantable_capability_is_described() {

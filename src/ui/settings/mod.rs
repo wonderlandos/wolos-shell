@@ -53,7 +53,7 @@ mod wifi;
 pub use accounts::{account_name, password_problem};
 pub use machine::{Demo, Kernel, Live, Machine, Sharing};
 pub use shortcuts::KEY_LEGEND;
-pub use software_update::{UpdateState, parse_check};
+pub use software_update::{UpdateState, parse_check, with_flatpaks};
 
 /// One sidebar pane: its title (also the `wol-settings <title>` name), icon and search words.
 pub struct Pane {
