@@ -1391,7 +1391,7 @@ mod tests {
             })
         });
         let be = R::BootEnvironment {
-            name: "wolos-b".into(),
+            name: wol_core::update::SLOTS[1].into(),
         };
         assert_eq!(approve(&c, &be, "good"), Ok(()));
         let change = R::Change {
@@ -1404,14 +1404,15 @@ mod tests {
             "user-level changes never run as an admin request"
         );
         assert_eq!(approve(&c, &be, "bad"), Err(ActionError::Denied));
+        let be_line = format!("boot-environment {}", wol_core::update::SLOTS[1]);
         assert_eq!(
             *sent.lock().unwrap(),
             [
                 "revoke ",
-                "boot-environment wolos-b",
+                be_line.as_str(),
                 "revoke ",
                 "revoke ",
-                "boot-environment wolos-b",
+                be_line.as_str(),
                 "revoke "
             ]
         );
