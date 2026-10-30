@@ -1145,6 +1145,37 @@ fn a_toggle_waits_for_its_change_and_reverts_when_it_fails() {
     assert!(s.is_active() && s.state());
 }
 
+/// Setup's cross-fade froze half way when the compositor stopped answering frame callbacks, and
+/// the old page stayed drawn until the window closed. No tick is delivered here (the loop does
+/// not run between the page change and the check), which is the same state: `settle` must leave
+/// only the new page, fully shown.
+fn a_stalled_page_fade_settles() {
+    use shell::kit::assistant as a;
+    let pager = a::pager();
+    for n in ["a", "b", "c"] {
+        pager.add_named(&gtk::Label::new(Some(n)), Some(n));
+    }
+    let win = gtk::Window::builder()
+        .default_width(300)
+        .default_height(200)
+        .build();
+    win.set_child(Some(&pager));
+    win.present();
+    pump(300);
+    pager.set_visible_child_name("b");
+    assert!(pager.is_transition_running(), "the fade has started");
+    a::settle(&pager);
+    assert!(!pager.is_transition_running(), "a stalled fade must end");
+    let shown: Vec<bool> = ["a", "b", "c"]
+        .iter()
+        .map(|n| pager.child_by_name(n).unwrap().is_child_visible())
+        .collect();
+    assert_eq!(shown, [false, true, false], "only the new page stays drawn");
+    assert_eq!(pager.visible_child_name().as_deref(), Some("b"));
+    assert_eq!(pager.transition_type(), gtk::StackTransitionType::Crossfade);
+    win.destroy();
+}
+
 fn find_type<T: IsA<gtk::Widget>>(w: &gtk::Widget, out: &mut Vec<T>) {
     if let Some(t) = w.downcast_ref::<T>() {
         out.push(t.clone());
@@ -1549,6 +1580,7 @@ fn main() {
         "/../../design/icons/symbolic"
     ));
     effects_page_answers_after_it_is_built();
+    a_stalled_page_fade_settles();
     a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
