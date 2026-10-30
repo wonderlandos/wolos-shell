@@ -499,9 +499,7 @@ impl Setup {
                     }
                     d.name.clone()
                 };
-                if let Some((_, w)) = s.editors.borrow().iter().find(|(g, _)| *g == f) {
-                    w.remove_css_class("problem");
-                }
+                s.show_typing_problem();
                 if f == Field::FullName {
                     if let Some(av) = &*s.avatar.borrow() {
                         av.set_label(&initials_or_placeholder(&t));
@@ -514,12 +512,34 @@ impl Setup {
                 }
             });
         }
-        Card::new(
+        let card = Card::new(
             Art::Widget(picker.root.upcast()),
             Step::Account.title(),
             Step::Account.subtitle(),
             &form,
-        )
+        );
+        card.next.set_sensitive(false);
+        card
+    }
+
+    /// Account card while typing: the field that is already wrong is outlined and its sentence
+    /// shows; Continue works only once the whole form is valid.
+    fn show_typing_problem(&self) {
+        let (live, ready) = {
+            let d = &self.flow.borrow().draft;
+            (d.typing_problem(), d.account_problem().is_none())
+        };
+        for (g, e) in self.editors.borrow().iter() {
+            if live.is_some_and(|(f, _)| f == *g) {
+                e.add_css_class("problem");
+            } else {
+                e.remove_css_class("problem");
+            }
+        }
+        self.with_card(Step::Account, |c| {
+            c.say(live.map_or("", |p| p.1), live.is_some());
+            c.next.set_sensitive(ready);
+        });
     }
 
     fn appearance(self: &Rc<Self>) -> Card {

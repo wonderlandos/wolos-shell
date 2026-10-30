@@ -368,6 +368,22 @@ impl Draft {
         }
     }
 
+    /// What is already wrong while the user types (empty fields are not problems yet).
+    pub fn typing_problem(&self) -> Option<(Field, &'static str)> {
+        if !self.name.is_empty()
+            && let Some(p @ (Field::Name, _)) = self.account_problem()
+        {
+            return Some(p);
+        }
+        if !self.verify.is_empty() && !self.password.starts_with(self.verify.as_str()) {
+            return Some((Field::Verify, "Passwords don't match."));
+        }
+        if !self.hint.is_empty() && self.hint == self.password {
+            return Some((Field::Hint, "The hint can't be the password."));
+        }
+        None
+    }
+
     pub fn tone(&self) -> &'static str {
         AVATAR_TONES[self.avatar.min(AVATAR_TONES.len() - 1)]
     }
@@ -747,6 +763,29 @@ mod tests {
                 .iter()
                 .all(|t| wol_core::theme::accent::ACCENTS.iter().any(|a| a.0 == t.0))
         );
+    }
+
+    /// While typing, only what is already wrong shows: a half-typed verify is not a mismatch yet.
+    #[test]
+    fn typing_shows_problems_early() {
+        use Field::*;
+        let mut d = Draft::default();
+        assert_eq!(d.typing_problem(), None, "an empty form says nothing");
+        d.set_full_name("Alice");
+        d.password = "curiouser".into();
+        d.verify = "curi".into();
+        assert_eq!(d.typing_problem(), None, "verify is still a prefix");
+        d.verify = "curx".into();
+        assert_eq!(d.typing_problem(), Some((Verify, "Passwords don't match.")));
+        d.verify = "curiouserr".into();
+        assert_eq!(d.typing_problem().map(|p| p.0), Some(Verify));
+        d.verify = "curiouser".into();
+        assert_eq!(d.typing_problem(), None);
+        d.set_name("Alice!");
+        assert_eq!(d.typing_problem().map(|p| p.0), Some(Name));
+        d.set_name("alice");
+        d.hint = "curiouser".into();
+        assert_eq!(d.typing_problem().map(|p| p.0), Some(Hint));
     }
 
     /// wol-login as the assistant sees it: records every job, answers from a script.
