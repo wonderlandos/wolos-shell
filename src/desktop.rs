@@ -9,8 +9,30 @@ pub struct Entry {
     pub icon: String,
 }
 
-/// None for hidden, non-application or Exec-less entries.
+/// Installed entries that are not apps for people: a terminal server and its client, the bare
+/// player behind Videos, webcam test tools, the CUPS web page (Printers is in Settings) and the
+/// Qt theme tools WolOS themes drive.
+pub const HIDDEN: [&str; 8] = [
+    "foot-server.desktop",
+    "footclient.desktop",
+    "mpv.desktop",
+    "qv4l2.desktop",
+    "qvidcap.desktop",
+    "cups.desktop",
+    "kvantummanager.desktop",
+    "qt6ct.desktop",
+];
+
+/// The desktop name entries' OnlyShowIn/NotShowIn are matched against (`XDG_CURRENT_DESKTOP`).
+const DESKTOP: &str = "Hyprland";
+
+/// None for hidden, non-application or Exec-less entries, entries for another desktop, a
+/// missing TryExec program, and [`HIDDEN`].
 pub fn parse(id: &str, text: &str) -> Option<Entry> {
+    if HIDDEN.contains(&id) {
+        return None;
+    }
+    let has = |list: &str| list.split(';').any(|d| d.trim() == DESKTOP);
     let (mut name, mut exec, mut icon, mut in_main, mut app) =
         (None, None, String::new(), false, false);
     for line in text.lines() {
@@ -31,6 +53,9 @@ pub fn parse(id: &str, text: &str) -> Option<Entry> {
             "Icon" => icon = v.trim().to_string(),
             "Type" => app = v.trim() == "Application",
             "NoDisplay" | "Hidden" if v.trim() == "true" => return None,
+            "OnlyShowIn" if !has(v) => return None,
+            "NotShowIn" if has(v) => return None,
+            "TryExec" if !on_path(v.trim()) => return None,
             _ => {}
         }
     }
@@ -41,6 +66,20 @@ pub fn parse(id: &str, text: &str) -> Option<Entry> {
         exec: argv,
         icon,
     })
+}
+
+/// An absolute executable, or a name found in `PATH`.
+fn on_path(prog: &str) -> bool {
+    let exe = |p: &Path| {
+        use std::os::unix::fs::PermissionsExt;
+        p.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    };
+    if prog.contains('/') {
+        return exe(Path::new(prog));
+    }
+    std::env::var_os("PATH")
+        .is_some_and(|p| std::env::split_paths(&p).any(|d| exe(&d.join(prog))))
 }
 
 /// Splits Exec, drops field codes (%f %U ...), honours double quotes.
@@ -133,6 +172,21 @@ mod tests {
         );
         assert!(parse("b", "[Desktop Entry]\nType=Link\nName=B\nExec=b").is_none());
         assert!(parse("c", "[Desktop Entry]\nType=Application\nName=C").is_none());
+    }
+
+    /// Spotlight lists only what opens a window here: no daemons, setup tools or entries meant
+    /// for another desktop (each of these opened nothing, or a broken window, when picked).
+    #[test]
+    fn lists_only_apps_that_open_here() {
+        let app = |extra: &str| format!("[Desktop Entry]\nType=Application\nName=A\nExec=a\n{extra}");
+        for id in HIDDEN {
+            assert!(parse(id, &app("")).is_none(), "{id}");
+        }
+        assert!(parse("a.desktop", &app("OnlyShowIn=GNOME;KDE;")).is_none());
+        assert!(parse("a.desktop", &app("NotShowIn=Hyprland;")).is_none());
+        assert!(parse("a.desktop", &app("OnlyShowIn=Hyprland;")).is_some());
+        assert!(parse("a.desktop", &app("TryExec=no-such-program-wolos")).is_none());
+        assert!(parse("a.desktop", &app("TryExec=sh")).is_some());
     }
 
     #[test]
