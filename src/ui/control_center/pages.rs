@@ -33,6 +33,9 @@ struct Join {
     title: gtk::Label,
     name: gtk::Entry,
     password: gtk::PasswordEntry,
+    /// Why the last try failed (wrong password), shown inside the sheet.
+    note: gtk::Label,
+    join: gtk::Button,
     /// The network being joined; None = Other Network (the name field).
     ssid: Rc<RefCell<Option<String>>>,
 }
@@ -47,12 +50,46 @@ impl Join {
         self.name.set_text("");
         self.name.set_visible(ssid.is_none());
         self.password.set_text("");
+        self.note.set_label("");
+        self.note.set_visible(false);
+        self.sync();
         self.sheet.set_reveal_child(true);
         if ssid.is_none() {
             self.name.grab_focus();
         } else {
             self.password.grab_focus();
         }
+    }
+}
+
+impl Join {
+    /// Reopened after a refusal: the reason shows next to the password.
+    fn retry(&self, ssid: &str, why: &str) {
+        self.open(Some(ssid));
+        self.note.set_label(why);
+        self.note.set_visible(true);
+    }
+
+    /// Join works only once what was typed can be sent.
+    fn sync(&self) {
+        let other = self.ssid.borrow().is_none();
+        self.join.set_sensitive(join_ready(
+            other,
+            &self.name.text(),
+            &self.password.text(),
+        ));
+    }
+}
+
+/// A hidden network needs its name; a password, when given (always for a secured network), has
+/// the 8 to 63 characters WPA accepts.
+fn join_ready(other: bool, name: &str, password: &str) -> bool {
+    let len = password.chars().count();
+    let fits = (8..=63).contains(&len);
+    if other {
+        !name.trim().is_empty() && (len == 0 || fits)
+    } else {
+        fits
     }
 }
 
@@ -78,7 +115,7 @@ fn join(ui: &Rc<Ui>, page: &DetailPage, j: &Join, ssid: String, password: Option
         Err(e) => {
             p.set_status(&copy::wifi_join(e, &ssid), false);
             if e == ActionError::WrongPassword && secured {
-                j.open(Some(&ssid));
+                j.retry(&ssid, &copy::wifi_join(e, &ssid));
             }
         }
     });
@@ -93,13 +130,21 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
     col.append(&title);
     col.append(&name);
     col.append(&password);
+    let note = w::label("", "assistant-status");
+    note.add_css_class("problem");
+    note.set_wrap(true);
+    note.set_visible(false);
+    col.append(&note);
     let row = w::hbox(w::S2);
+    let join_button = w::button("Join", w::Kind::Primary, || {});
     row.append(&w::spacer());
     let j = Join {
         sheet: w::sheet(&col),
         title,
         name,
         password,
+        note,
+        join: join_button.clone(),
         ssid: Default::default(),
     };
     {
@@ -116,8 +161,7 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
                 .borrow()
                 .clone()
                 .unwrap_or_else(|| j.name.text().trim().to_string());
-            if ssid.is_empty() {
-                j.name.grab_focus();
+            if !j.join.is_sensitive() {
                 return;
             }
             let pw = j.password.text().to_string();
@@ -131,8 +175,13 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
         j.name.connect_activate(move |_| g());
         let g = go.clone();
         j.password.connect_activate(move |_| g());
+        let j2 = j.clone();
+        j.name.connect_changed(move |_| j2.sync());
+        let j2 = j.clone();
+        j.password.connect_changed(move |_| j2.sync());
     }
-    row.append(&w::button("Join", w::Kind::Primary, move || go()));
+    join_button.connect_clicked(move |_| go());
+    row.append(&join_button);
     col.append(&row);
     page.set_sheet(&j.sheet);
     j
@@ -335,5 +384,27 @@ impl Pages {
             }
         });
         r.button.upcast()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::join_ready;
+
+    #[test]
+    fn join_waits_for_what_can_be_sent() {
+        for (other, name, pw, ready) in [
+            (false, "", "", false),
+            (false, "", "short", false),
+            (false, "", "curiouser", true),
+            (false, "", &"x".repeat(64), false),
+            (true, "", "", false),
+            (true, "  ", "curiouser", false),
+            (true, "Cafe", "", true),
+            (true, "Cafe", "short", false),
+            (true, "Cafe", "curiouser", true),
+        ] {
+            assert_eq!(join_ready(other, name, pw), ready, "{other} {name:?} {pw:?}");
+        }
     }
 }
