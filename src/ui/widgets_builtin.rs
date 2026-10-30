@@ -5,7 +5,7 @@
 use crate::kit::controls as k;
 use crate::kit::data::{self as d, IconSize, Role, Tone};
 use crate::kit::widgets as w;
-use crate::widgets::{Now, calendar, media, power, weather, worldclock};
+use crate::widgets::{Now, calendar, media, power, timer, weather, worldclock};
 use gtk::prelude::*;
 use shared::widgets::{Builtin, Face, Place, Size};
 use std::rc::Rc;
@@ -56,6 +56,7 @@ pub enum Data {
     System(SystemView),
     /// One row per city, in the order chosen.
     WorldClock(Vec<worldclock::CityTime>),
+    Timer(timer::View),
 }
 
 /// What a built-in may ask the desktop to do.
@@ -63,12 +64,15 @@ pub enum Data {
 pub struct Hooks {
     /// Weather without a city: open the gallery's city picker.
     pub choose_city: Rc<dyn Fn()>,
+    /// Timer buttons.
+    pub timer: Rc<dyn Fn(timer::Press)>,
 }
 
 impl Default for Hooks {
     fn default() -> Self {
         Hooks {
             choose_city: Rc::new(|| {}),
+            timer: Rc::new(|_| {}),
         }
     }
 }
@@ -83,6 +87,7 @@ pub fn card(data: &Data, size: Size, hooks: &Hooks) -> gtk::Box {
         Data::Batteries { devices, minutes } => batteries(devices, *minutes, size),
         Data::System(s) => system(s, size),
         Data::WorldClock(c) => world_clock(c, size),
+        Data::Timer(v) => timer_view(v, size, hooks),
     };
     body.set_vexpand(true);
     d::card(size, &body)
@@ -251,6 +256,87 @@ fn world_clock(cities: &[worldclock::CityTime], size: Size) -> gtk::Box {
         time.set_valign(gtk::Align::Center);
         r.append(&time);
         b.append(&r);
+    }
+    b
+}
+
+// ---- Timer ----
+
+fn timer_buttons(v: &timer::View, size: Size, hooks: &Hooks) -> gtk::Box {
+    let r = w::hbox(if size == Size::Large { w::S4 } else { 0 });
+    r.set_halign(gtk::Align::Center);
+    let mk = |icon: &str, tip: &str, p: timer::Press| {
+        let h = hooks.timer.clone();
+        let b = w::icon_button(icon, tip, move || h(p));
+        b.add_css_class("media-button");
+        b
+    };
+    r.append(&mk("view-refresh-symbolic", "Reset", timer::Press::Reset));
+    r.append(&if v.running {
+        mk(
+            "media-playback-pause-symbolic",
+            "Pause",
+            timer::Press::Toggle,
+        )
+    } else {
+        mk(
+            "media-playback-start-symbolic",
+            "Start",
+            timer::Press::Toggle,
+        )
+    });
+    if v.mode == timer::Mode::Focus && size != Size::Small {
+        r.append(&mk(
+            "media-skip-forward-symbolic",
+            "Skip",
+            timer::Press::Skip,
+        ));
+    }
+    r
+}
+
+fn timer_view(v: &timer::View, size: Size, hooks: &Hooks) -> gtk::Box {
+    let b = w::vbox(w::S1);
+    b.set_valign(gtk::Align::Center);
+    let title = d::text(&v.title, Role::Caption, Tone::Accent);
+    let meter = (v.mode != timer::Mode::Stopwatch).then(|| d::meter(v.progress, Tone::Accent));
+    match size {
+        Size::Medium => {
+            let r = w::hbox(w::S4);
+            let left = w::vbox(0);
+            left.set_hexpand(true);
+            title.set_xalign(0.0);
+            left.append(&title);
+            let time = t(&v.time, Role::Display);
+            time.set_xalign(0.0);
+            left.append(&time);
+            if let Some(dt) = &v.detail {
+                let l = dim(dt);
+                l.set_xalign(0.0);
+                left.append(&l);
+            }
+            r.append(&left);
+            let right = timer_buttons(v, size, hooks);
+            right.set_valign(gtk::Align::Center);
+            r.append(&right);
+            b.append(&r);
+            if let Some(m) = meter {
+                m.set_margin_top(w::S2);
+                b.append(&m);
+            }
+        }
+        _ => {
+            b.set_spacing(if size == Size::Large { w::S3 } else { w::S1 });
+            b.append(&centered(title));
+            b.append(&centered(t(&v.time, Role::Display)));
+            if let Some(m) = meter {
+                b.append(&m);
+            }
+            if let (Size::Large, Some(dt)) = (size, &v.detail) {
+                b.append(&centered(dim(dt)));
+            }
+            b.append(&timer_buttons(v, size, hooks));
+        }
     }
     b
 }
@@ -856,6 +942,13 @@ pub fn sample_cities() -> Vec<worldclock::CityTime> {
     .collect()
 }
 
+/// A focus session 7 min 25 s in, running (gallery and goldens).
+pub fn sample_timer() -> timer::View {
+    let mut c = timer::Counter::new(timer::Mode::Focus);
+    c.press(timer::Press::Toggle, 0);
+    c.view(445_000)
+}
+
 pub fn sample_place() -> Place {
     Place {
         name: "Lisbon".into(),
@@ -980,5 +1073,6 @@ pub fn sample(b: Builtin) -> Data {
         },
         Builtin::System => Data::System(sample_system()),
         Builtin::WorldClock => Data::WorldClock(sample_cities()),
+        Builtin::Timer => Data::Timer(sample_timer()),
     }
 }
