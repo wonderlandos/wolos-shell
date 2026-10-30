@@ -21,6 +21,7 @@ pub mod phones;
 pub mod protocol;
 pub mod search;
 pub mod setup;
+pub mod drop_shelf;
 pub mod shortcut_sheet;
 pub mod status;
 pub mod switcher;

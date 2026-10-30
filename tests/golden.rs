@@ -355,6 +355,28 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // Files dropped on the desktop, newest first; dragged out to any app.
+            name: "drop-shelf".into(),
+            size: (ui::drop_shelf::WIDTH + 2 * kit::widgets::S6, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let items: Vec<std::path::PathBuf> = [
+                    "/home/ana/Documents/Quarterly Report.pdf",
+                    "/home/ana/Pictures/Beach at sunset.jpg",
+                    "/home/ana/Downloads/project-assets.zip",
+                    "/home/ana/notes.txt",
+                ]
+                .iter()
+                .map(Into::into)
+                .collect();
+                let c = ui::drop_shelf::content(&items, false);
+                c.set_halign(gtk::Align::Center);
+                c.set_valign(gtk::Align::Center);
+                c.upcast()
+            }),
+        },
+        Case {
             // ⌥⌘Esc: open apps, most recent first, the frontmost chosen.
             name: "force-quit".into(),
             size: (420, 1),
