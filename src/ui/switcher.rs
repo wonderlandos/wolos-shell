@@ -76,6 +76,14 @@ impl Switcher {
                 crate::kit::surface::Keyboard::Exclusive,
             ),
         );
+        crate::kit::surface::survive_output_loss(
+            &window,
+            Spec::panel(
+                "wol-panel-switcher",
+                [false; 4],
+                crate::kit::surface::Keyboard::Exclusive,
+            ),
+        );
         window.add_css_class("switcher");
         let s = Rc::new(Switcher {
             window: window.upcast(),
