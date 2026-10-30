@@ -194,6 +194,48 @@ pub fn install_command(disk: &str, sudo: bool) -> Vec<String> {
     }
 }
 
+/// "Encrypt disk" choice from the Install app: `None` = leave it to install-run (on when a TPM2
+/// exists); the passphrase travels as a file (never an argument) and is needed without a TPM.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Encryption {
+    pub on: Option<bool>,
+    pub passphrase_file: Option<String>,
+}
+
+/// [`install_command`] with the encryption choice, as environment for install-run.
+pub fn install_command_with(disk: &str, sudo: bool, enc: &Encryption) -> Vec<String> {
+    let mode = match enc.on {
+        None => "auto",
+        Some(true) => "yes",
+        Some(false) => "no",
+    };
+    let mut env = vec![format!("WOLOS_ENCRYPT={mode}")];
+    if let Some(f) = enc
+        .passphrase_file
+        .as_deref()
+        .filter(|_| enc.on != Some(false))
+    {
+        env.push(format!("WOLOS_PASSPHRASE_FILE={f}"));
+    }
+    if sudo {
+        let mut v: Vec<String> = ["sudo", "-n", "env"].map(String::from).to_vec();
+        v.extend(env);
+        v.extend([RUN.to_owned(), disk.to_owned()]);
+        v
+    } else {
+        vec![
+            "su".into(),
+            "-m".into(),
+            "root".into(),
+            "-c".into(),
+            format!("env {} {RUN} {disk}", env.join(" ")),
+        ]
+    }
+}
+
+/// Recovery key file install-run leaves (mode 600): shown once, then deleted.
+pub const RECOVERY_KEY: &str = "/run/wolos/recovery-key";
+
 /// The live user is in `operator`, which may run shutdown.
 pub fn restart_command() -> Vec<String> {
     ["/sbin/shutdown", "-r", "now"].map(String::from).to_vec()
@@ -362,6 +404,36 @@ Providers:
    Mediasize: 1000204886016 (932G)
    descr: (null)
 ";
+
+    #[test]
+    fn encryption_choice_reaches_install_run_without_a_secret_argument() {
+        let e = Encryption {
+            on: Some(true),
+            passphrase_file: Some("/run/p".into()),
+        };
+        assert_eq!(
+            install_command_with("/dev/sda", true, &e).join(" "),
+            format!("sudo -n env WOLOS_ENCRYPT=yes WOLOS_PASSPHRASE_FILE=/run/p {RUN} /dev/sda")
+        );
+        let auto = Encryption {
+            on: None,
+            passphrase_file: None,
+        };
+        assert_eq!(
+            install_command_with("/dev/sda", true, &auto).join(" "),
+            format!("sudo -n env WOLOS_ENCRYPT=auto {RUN} /dev/sda")
+        );
+        let off = Encryption {
+            on: Some(false),
+            passphrase_file: Some("/run/p".into()),
+        };
+        assert!(
+            !install_command_with("/dev/sda", false, &off)
+                .join(" ")
+                .contains("PASSPHRASE")
+        );
+        assert!(install_command_with("/dev/sda", false, &auto)[4].contains("WOLOS_ENCRYPT=auto"));
+    }
 
     #[test]
     fn disks_are_listed_by_model_and_size() {
