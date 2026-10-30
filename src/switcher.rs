@@ -128,7 +128,7 @@ mod tests {
         let got = apps(
             &[
                 c("0x1", "foot", 2),
-                c("0x2", "firefox", 0),
+                c("0x2", "helium", 0),
                 c("0x3", "Foot", 1),
                 c("0x4", "org.gnome.Nautilus", 3),
             ],
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(
             v,
             [
-                ("firefox", "0x2"),
+                ("helium", "0x2"),
                 ("foot", "0x3"),
                 ("org.gnome.nautilus", "0x4")
             ]

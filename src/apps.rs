@@ -32,10 +32,10 @@ pub const PINS: &[Pin] = &[
         exec: &["wol-spotlight"],
     },
     Pin {
-        id: "firefox",
+        id: "helium",
         name: "Browser",
         icon: "wolos-browser",
-        exec: &["firefox"],
+        exec: &["helium"],
     },
     Pin {
         id: "org.gnome.Geary",
@@ -203,7 +203,7 @@ mod tests {
         }];
         for (c, w) in [
             ("foot", "wolos-terminal"),
-            ("Firefox", "wolos-browser"),
+            ("Helium", "wolos-browser"),
             ("gnome-calculator", "accessories-calculator"),
             ("weird", "weird"),
             ("Mail", "wolos-mail"),
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn running_by_class() {
         let classes: std::collections::HashSet<String> =
-            ["foot".to_string(), "firefox".into()].into();
+            ["foot".to_string(), "helium".into()].into();
         let running: Vec<&str> = PINS
             .iter()
             .filter(|p| is_running(p, &classes))

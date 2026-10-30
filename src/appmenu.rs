@@ -465,7 +465,7 @@ mod tests {
         let all = [
             front.clone(),
             c("0xb", "foot", "2"),
-            c("0xc", "firefox", "1"),
+            c("0xc", "helium", "1"),
             c("0xd", "gimp", "special:hidden"),
         ];
         let b = |a| batch(a, &front, &all, ZONE).unwrap();
@@ -523,8 +523,8 @@ mod tests {
             (Cmd::NewTab, "foot", Nothing),
             (Cmd::Undo, "foot", Nothing),
             (Cmd::Save, "foot", Nothing),
-            (Cmd::Copy, "Firefox", Keys("CTRL", "C")),
-            (Cmd::Close, "firefox", Keys("CTRL", "W")),
+            (Cmd::Copy, "Helium", Keys("CTRL", "C")),
+            (Cmd::Close, "helium", Keys("CTRL", "W")),
             (Cmd::Redo, "org.gnome.TextEditor", Keys("CTRL SHIFT", "Z")),
             (Cmd::Emoji, "org.gnome.TextEditor", Keys("CTRL", "period")),
             // Empty desktop or a shell panel in front: the keyboard focus gets the Ctrl key.

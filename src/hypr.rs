@@ -226,10 +226,10 @@ mod tests {
             })
         );
         assert_eq!(
-            parse_event("openwindow>>55a1,1,firefox,Mozilla"),
+            parse_event("openwindow>>55a1,1,helium,Helium"),
             Some(Event::OpenWindow {
                 address: "55a1".into(),
-                class: "firefox".into()
+                class: "helium".into()
             })
         );
         assert_eq!(

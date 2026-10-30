@@ -89,15 +89,29 @@ pub fn no_results(query: &str) -> String {
     format!("No results for \u{201c}{query}\u{201d}")
 }
 
+/// The web search for `query` (Chromium has no search flag: the browser opens the results page).
+fn search_url(query: &str) -> String {
+    let mut out = String::from("https://duckduckgo.com/?q=");
+    for b in query.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 /// The row under [`no_results`]: the browser searches for the query.
 pub fn web_search(query: &str) -> Item {
     let browser = crate::apps::PINS.iter().find(|p| p.name == "Browser");
-    let (icon, exec) = browser.map_or(("wolos-browser", "firefox"), |p| (p.icon, p.exec[0]));
+    let (icon, exec) = browser.map_or(("wolos-browser", "helium"), |p| (p.icon, p.exec[0]));
     Item::new(
         &format!("Search the web for \u{201c}{query}\u{201d}"),
         "Browser",
         icon,
-        vec![exec.into(), "--search".into(), query.into()],
+        vec![exec.into(), search_url(query)],
     )
 }
 
@@ -405,7 +419,14 @@ mod tests {
     fn no_results_offers_the_web() {
         assert_eq!(no_results("qwzx"), "No results for \u{201c}qwzx\u{201d}");
         let web = web_search("tax forms");
-        assert_eq!(web.exec, ["firefox", "--search", "tax forms"]);
+        assert_eq!(
+            web.exec,
+            ["helium", "https://duckduckgo.com/?q=tax%20forms"]
+        );
+        assert_eq!(
+            search_url("a&b=c/ü"),
+            "https://duckduckgo.com/?q=a%26b%3Dc%2F%C3%BC"
+        );
         assert_eq!(web.title, "Search the web for \u{201c}tax forms\u{201d}");
     }
 
@@ -420,7 +441,7 @@ mod tests {
         };
         let idx = index(vec![
             e("org.gnome.Geary.desktop", "Geary", "geary"),
-            e("firefox.desktop", "Firefox", "/usr/bin/firefox"),
+            e("helium.desktop", "Helium", "/usr/bin/helium"),
             e(
                 "org.gnome.Calculator.desktop",
                 "Calculator",
@@ -432,7 +453,7 @@ mod tests {
             ("Mail", 1),
             ("Geary", 0),
             ("Browser", 1),
-            ("Firefox", 0),
+            ("Helium", 0),
             ("Calculator", 1),
         ] {
             assert_eq!(titles.iter().filter(|t| **t == name).count(), n, "{name}");
@@ -443,6 +464,6 @@ mod tests {
             ("wolos-mail", &["geary".to_string()][..])
         );
         let web = idx.iter().find(|i| i.title == "Browser").unwrap();
-        assert_eq!(web.exec, ["firefox"]);
+        assert_eq!(web.exec, ["helium"]);
     }
 }
