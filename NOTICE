@@ -3,10 +3,14 @@ Copyright (c) Julia Klee. Licensed under GPL-3.0-or-later (see LICENSE).
 
 Credits
 
-Some desktop features (World Clock and Timer widgets, and others listed in the changelog) take their ideas
+Some desktop features (the World Clock and Timer widgets, the keyboard shortcut sheet, and others
+listed in the changelog) take their ideas
 from these GPL-3.0 Hyprland shells:
 
 - end-4/dots-hyprland, https://github.com/end-4/dots-hyprland, GPL-3.0
 - pctrade/end4-pC, https://github.com/pctrade/end4-pC, GPL-3.0
 
 The WolOS versions are rewritten in Rust and GTK4 with the WolOS Kit look.
+
+protocols/hyprland-focus-grab-v1.xml: Copyright (c) 2024 outfoxxed, BSD-3-Clause (notice kept in
+the file), from hyprwm/hyprland-protocols.

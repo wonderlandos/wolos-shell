@@ -179,8 +179,22 @@ pub fn close_on_menus(root: &impl IsA<gtk::Widget>, panels: &super::Panels) {
     }
 }
 
-/// Keeps the transient panels in `panels` exclusive and puts a click-catcher under them while one
-/// is open. Layer surfaces get no reliable focus-out, so a click outside lands on the catcher.
+/// Whether the one-display click-catcher goes under the open panel: only without a focus grab.
+pub fn catcher_shown(open: bool, layered: bool, grab: bool) -> bool {
+    open && layered && !grab
+}
+
+/// Windows a click may land on without closing the open panel: menu bars and the Dock.
+fn kept(app: &gtk::Application) -> Vec<gtk::Window> {
+    app.windows()
+        .into_iter()
+        .filter(|w| w.is_visible() && (w.has_css_class("menubar") || w.has_css_class("dock")))
+        .collect()
+}
+
+/// Keeps the transient panels in `panels` exclusive and closes them on a click outside. Layer
+/// surfaces get no reliable focus-out: Hyprland's focus grab (`crate::focus_grab`) covers every
+/// display; without it a click-catcher goes under the open panel on its display.
 pub fn manage(app: &gtk::Application, panels: &super::Panels) {
     let catcher = super::window(app, "catcher", crate::kit::surface::Spec::catcher());
     crate::kit::surface::survive_output_loss(&catcher, crate::kit::surface::Spec::catcher());
@@ -191,19 +205,32 @@ pub fn manage(app: &gtk::Application, panels: &super::Panels) {
         click.connect_pressed(move |_, _, _, _| close_all(&panels));
     }
     catcher.add_controller(click);
+    let grab = gtk::gdk::Display::default().and_then(|d| {
+        let panels = panels.clone();
+        crate::focus_grab::FocusGrab::new(&d, Rc::new(move || close_all(&panels)))
+    });
     let sync = {
-        let (panels, catcher) = (panels.clone(), catcher.clone());
+        let (panels, catcher, app) = (panels.clone(), catcher.clone(), app.clone());
         Rc::new(move || {
-            let open = PANELS
+            let open: Vec<gtk::Window> = PANELS
                 .iter()
-                .any(|p| panels.borrow().get(p).is_some_and(|w| w.is_visible()));
-            catcher.set_visible(open && crate::kit::surface::layered());
+                .filter_map(|p| panels.borrow().get(p).cloned())
+                .filter(|w| w.is_visible())
+                .collect();
+            let layered = crate::kit::surface::layered();
+            catcher.set_visible(catcher_shown(!open.is_empty(), layered, grab.is_some()));
+            if let Some(g) = &grab {
+                g.set(&crate::focus_grab::whitelist(&open, &kept(&app)));
+            }
         })
     };
     for name in PANELS {
         let Some(w) = panels.borrow().get(name).cloned() else {
             continue;
         };
+        // The grab names mapped surfaces only: sync again once the panel is on screen.
+        let s = sync.clone();
+        w.connect_map(move |_| s());
         let (panels, sync) = (panels.clone(), sync.clone());
         w.connect_visible_notify(move |w| {
             if w.is_visible() {
@@ -240,6 +267,19 @@ mod tests {
     fn panel_apps_are_closed_by_their_action_path() {
         assert_eq!(PANEL_APPS, ["org.wolos.spotlight"]);
         assert_eq!(object_path("org.wolos.spotlight"), "/org/wolos/spotlight");
+    }
+
+    /// Hyprland's focus grab closes panels on a click on any display; the click-catcher (one
+    /// display) only stands in where the grab is missing, and never in dev windows.
+    #[test]
+    fn the_catcher_only_stands_in_for_a_missing_focus_grab() {
+        assert!(catcher_shown(true, true, false));
+        assert!(
+            !catcher_shown(true, true, true),
+            "the grab covers every display"
+        );
+        assert!(!catcher_shown(false, true, false), "nothing open");
+        assert!(!catcher_shown(true, false, false), "dev windows");
     }
 
     #[test]

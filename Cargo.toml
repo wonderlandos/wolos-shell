@@ -27,7 +27,8 @@ async-channel = "2"
 # wol-window-shot: hyprland_toplevel_export_v1 client (Mission Control thumbnails).
 wayland-client = "0.31"
 wayland-scanner = "0.31"
-wayland-backend = "0.3"
+# client_system: the focus grab shares GTK's own Wayland connection (focus_grab.rs).
+wayland-backend = { version = "0.3", features = ["client_system"] }
 bitflags = "2"
 
 [[test]]
