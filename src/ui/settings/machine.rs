@@ -416,6 +416,7 @@ impl Machine for Demo {
         vec![
             ("/usr/bin/obs".into(), "screen-capture".into()),
             ("/usr/bin/ydotoold".into(), "input-injection".into()),
+            ("/usr/bin/hello".into(), "notifications".into()),
         ]
     }
     fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App> {
