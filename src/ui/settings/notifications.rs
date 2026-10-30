@@ -43,15 +43,18 @@ pub(super) fn page(_: &Rc<Env>) -> gtk::Box {
     let sub: Rc<RefCell<Option<gtk::Label>>> = Default::default();
     let toggle = {
         let (st, until, sub) = (status.clone(), until.clone(), sub.clone());
-        w::toggle(cur.active(), move |on| {
+        w::pending_toggle(cur.active(), move |on, done| {
             let f = if on { Focus::On } else { Focus::Off };
             let r = focus::write(f);
-            until.set_visible(on);
-            let t = kit::now();
-            if let Some(l) = &*sub.borrow() {
-                l.set_label(&state_line(f, focus::unix_now(), t.hour, t.minute));
-            }
             say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
+            if r.is_ok() {
+                until.set_visible(on);
+                let t = kit::now();
+                if let Some(l) = &*sub.borrow() {
+                    l.set_label(&state_line(f, focus::unix_now(), t.hour, t.minute));
+                }
+            }
+            done(r.is_ok());
         })
     };
     let (dnd, line) = form::status_row(

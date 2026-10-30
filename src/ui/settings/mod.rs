@@ -933,6 +933,31 @@ impl Desk {
             }),
         );
     }
+    /// [`Desk::set`] for a switch: `done(ok)` after the save; a failure also reads the saved
+    /// prefs back, so the switch and the file agree again.
+    pub(crate) fn set_switch(
+        self: &Rc<Self>,
+        status: &gtk::Label,
+        f: impl FnOnce(&mut wol_core::hyprprefs::DesktopPrefs),
+        done: Box<dyn FnOnce(bool)>,
+    ) {
+        f(&mut self.cur.borrow_mut());
+        let (st, me, done) = (status.clone(), self.clone(), RefCell::new(Some(done)));
+        self.ctx.act(
+            Action::Desktop(Box::new(self.get())),
+            Rc::new(move |r| {
+                say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
+                if r.is_ok() {
+                    changed("desktop");
+                } else {
+                    me.reload();
+                }
+                if let Some(d) = done.borrow_mut().take() {
+                    d(r.is_ok())
+                }
+            }),
+        );
+    }
     /// Reads the saved prefs again (after an undo).
     fn reload(&self) {
         *self.cur.borrow_mut() = wol_core::hyprprefs::load_desktop(&config(""));
@@ -1027,9 +1052,12 @@ fn dropdown(options: &[&str], selected: usize, changed: impl Fn(usize) + 'static
 }
 
 /// Shell prefs file (shell.json), written then announced to the running shell (`reload`).
-fn save_shell(p: ShellPrefs) {
-    let _ = save_journaled("shell", prefs::SHELL_FILE, Some(&p.to_json()));
-    reload_shell();
+fn save_shell(p: ShellPrefs) -> bool {
+    let ok = save_journaled("shell", prefs::SHELL_FILE, Some(&p.to_json())).is_ok();
+    if ok {
+        reload_shell();
+    }
+    ok
 }
 
 /// Tells the running shell to re-read its files (`reload` on wol-shell.sock).

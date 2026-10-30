@@ -45,6 +45,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         .collect();
     p.append(&w::section("Always Shown", &always));
     let cur = Rc::new(Cell::new(load_shell()));
+    let status = status_label();
     let sys = e.sys();
     let rows: Vec<gtk::Widget> =
         offered(sys.battery().is_some(), sys.keyboard_brightness().is_some())
@@ -52,11 +53,16 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             .map(|(key, label)| {
                 let c = cur.clone();
                 let on = cur.get().control_center.get(key).unwrap_or(false);
-                let t = w::toggle(on, move |on| {
+                let st = status.clone();
+                let t = w::pending_toggle(on, move |on, done| {
                     let mut v = c.get();
                     v.control_center.set(key, on);
-                    c.set(v);
-                    save_shell(v);
+                    let ok = save_shell(v);
+                    if ok {
+                        c.set(v);
+                    }
+                    say(&st, if ok { "" } else { SAVE_FAILED });
+                    done(ok);
                 });
                 w::list_row(icon(key), label, "", Some(t.upcast_ref())).upcast()
             })
@@ -65,6 +71,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&w::footnote(
         "Open Control Center from the menu bar. Changes show the next time it opens.",
     ));
+    p.append(&status);
     p
 }
 

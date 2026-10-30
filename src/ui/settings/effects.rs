@@ -99,6 +99,25 @@ impl Fx {
         self.after();
     }
 
+    /// [`Self::change`] for a switch: `done(ok)` after the save (a failure reads the file back).
+    fn change_switch(self: &Rc<Self>, f: impl FnOnce(&mut Looks), done: Box<dyn FnOnce(bool)>) {
+        let me = Rc::downgrade(self);
+        self.env.desk.set_switch(
+            &self.status,
+            |p| {
+                f(&mut p.looks);
+                p.looks = p.looks.normalized();
+            },
+            Box::new(move |ok| {
+                if let Some(me) = me.upgrade() {
+                    me.after();
+                }
+                done(ok);
+            }),
+        );
+        self.after();
+    }
+
     /// A whole look at once (preset, import, Restore Defaults): controls are rebuilt to match.
     fn apply(self: &Rc<Self>, l: &Looks) {
         let l = l.normalized();
@@ -203,13 +222,20 @@ impl Fx {
                 x.set_visible(on);
             }
             let f = Rc::downgrade(fx);
-            form::toggle_row(title, sub, on, move |v| {
-                for x in &shows {
-                    x.set_visible(v);
-                }
-                if let Some(f) = f.upgrade() {
-                    f.change(|l| set(l, v))
-                }
+            form::pending_toggle_row(title, sub, on, move |v, done| {
+                let Some(f) = f.upgrade() else {
+                    return done(false);
+                };
+                let shows = shows.clone();
+                f.change_switch(
+                    |l| set(l, v),
+                    Box::new(move |ok| {
+                        for x in &shows {
+                            x.set_visible(v == ok);
+                        }
+                        done(ok);
+                    }),
+                );
             })
         };
         let u = |r: (u8, u8)| (f64::from(r.0), f64::from(r.1));
