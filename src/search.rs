@@ -192,9 +192,64 @@ impl Calc<'_> {
     }
 }
 
+/// Slower providers (the file index) answer after the local ones; rows from an answer that
+/// came in after `timeout_ms` are left out so the list does not shift under the pointer.
+/// `slow` holds (milliseconds after the keystroke it arrived, rows). Local rows stay first;
+/// a slow row duplicating one already listed (same title and kind) is dropped.
+pub fn merge_slow(
+    local: Vec<Item>,
+    slow: Vec<(u32, Vec<Item>)>,
+    timeout_ms: u32,
+    rows: usize,
+) -> Vec<Item> {
+    let mut out = local;
+    out.truncate(rows);
+    let mut late: Vec<_> = slow.into_iter().filter(|(t, _)| *t <= timeout_ms).collect();
+    late.sort_by_key(|(t, _)| *t);
+    for (_, items) in late {
+        for it in items {
+            if out.len() >= rows {
+                return out;
+            }
+            if !out.iter().any(|o| o.title == it.title && o.kind == it.kind) {
+                out.push(it);
+            }
+        }
+    }
+    out
+}
+
+/// May a slow answer that arrived `elapsed_ms` after the keystroke still be shown?
+pub fn slow_in_time(elapsed_ms: u32, timeout_ms: u32) -> bool {
+    elapsed_ms <= timeout_ms
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn it(t: &str) -> Item {
+        Item::new(t, "File", "x", vec![])
+    }
+
+    #[test]
+    fn slow_providers_merge_only_before_the_timeout() {
+        let local = vec![it("a"), it("b")];
+        let slow = vec![(500, vec![it("late")]), (100, vec![it("c"), it("a")])];
+        let got: Vec<_> = merge_slow(local.clone(), slow, 400, 4)
+            .into_iter()
+            .map(|i| i.title)
+            .collect();
+        assert_eq!(
+            got,
+            ["a", "b", "c"],
+            "local first, duplicates and late rows out"
+        );
+        let capped = merge_slow(local, vec![(1, vec![it("c"), it("d")])], 400, 3);
+        assert_eq!(capped.len(), 3);
+        assert!(slow_in_time(400, 400) && !slow_in_time(401, 400));
+        assert!(merge_slow(vec![], vec![], 400, 4).is_empty());
+    }
 
     #[test]
     fn calculator_answers_arithmetic_only() {

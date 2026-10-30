@@ -254,10 +254,41 @@ pub fn content(
             }
         })
     };
+    // Local rows show at once on every keystroke. A slower provider's arrival (the file index
+    // loading) re-renders only within the timeout of the keystroke, after the priority delay.
+    let started = Rc::new(Cell::new(std::time::Instant::now()));
     {
-        let r = render.clone();
-        entry.connect_changed(move |_| r());
+        let (r, st) = (render.clone(), started.clone());
+        entry.connect_changed(move |_| {
+            st.set(std::time::Instant::now());
+            r()
+        });
     }
+    let late: Rc<dyn Fn()> = {
+        let (r, st, e) = (render.clone(), started, entry.clone());
+        Rc::new(move || {
+            let p = crate::ui::ipc::shell_prefs();
+            let waited = u32::try_from(st.get().elapsed().as_millis()).unwrap_or(u32::MAX);
+            let delay = p.priority_index_delay_ms;
+            if e.text().is_empty() {
+                return r();
+            }
+            if !crate::search::slow_in_time(
+                waited.saturating_add(delay),
+                p.spotlight_slow_timeout_ms,
+            ) {
+                return;
+            }
+            if delay == 0 {
+                return r();
+            }
+            let r = r.clone();
+            glib::timeout_add_local_once(
+                std::time::Duration::from_millis(u64::from(delay)),
+                move || r(),
+            );
+        })
+    };
     {
         let (shown, sel) = (shown.clone(), sel.clone());
         entry.connect_activate(move |e| {
@@ -290,7 +321,7 @@ pub fn content(
     }
     entry.add_controller(keys);
     entry.set_text(query);
-    (panel.upcast(), render)
+    (panel.upcast(), late)
 }
 
 #[cfg(test)]
