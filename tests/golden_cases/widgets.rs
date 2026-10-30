@@ -60,6 +60,7 @@ fn placed(id: &str, kind: Kind, size: Size, col: u16, row: u16) -> Placed {
         col,
         row,
         options: Default::default(),
+        display: None,
     }
 }
 
