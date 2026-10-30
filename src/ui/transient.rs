@@ -6,7 +6,13 @@ use std::rc::Rc;
 
 /// Shell panels that close like macOS menus. Not the OSD, Mission Control, the screenshot bar or
 /// Force Quit (a window that stays until dismissed).
-pub const PANELS: &[&str] = &["control-center", "notifications", "clipboard", "session"];
+pub const PANELS: &[&str] = &[
+    "control-center",
+    "notifications",
+    "clipboard",
+    "session",
+    "shortcuts",
+];
 
 pub fn is_transient(name: &str) -> bool {
     PANELS.contains(&name)
@@ -240,8 +246,9 @@ mod tests {
     fn showing_one_panel_closes_the_others() {
         assert_eq!(
             others("control-center"),
-            ["notifications", "clipboard", "session"]
+            ["notifications", "clipboard", "session", "shortcuts"]
         );
+        assert!(others("shortcuts").contains(&"control-center"));
         assert!(others("osd").is_empty());
         assert!(others("overview").is_empty());
     }
