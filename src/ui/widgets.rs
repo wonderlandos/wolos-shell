@@ -432,6 +432,7 @@ impl Board {
                             b.notify(Change::Timer(id2.clone(), press));
                         }
                     }),
+                    note: (!st.edit).then(|| self.note_hooks(&p.id)),
                 };
                 builtin::card(data, p.size, &hooks)
             }
@@ -618,6 +619,44 @@ impl Board {
 
     pub fn set_place(self: &Rc<Self>, id: &str, place: Place) {
         self.update(id, |p, _, _| p.options.place = Some(place));
+    }
+
+    /// A note on the desktop: its text saved without rebuilding the card (the caret stays), and
+    /// the desktop surface taking the keyboard while it is written in.
+    fn note_hooks(self: &Rc<Self>, id: &str) -> builtin::NoteHooks {
+        let (me, id) = (Rc::downgrade(self), id.to_string());
+        let me2 = me.clone();
+        builtin::NoteHooks {
+            text: Rc::new(move |t| {
+                let Some(b) = me.upgrade() else { return };
+                let changed = {
+                    let mut st = b.st.borrow_mut();
+                    match st.desk.get_mut(&id) {
+                        Some(p) if p.options.text.as_deref().unwrap_or("") != t => {
+                            p.options.text = (!t.is_empty()).then_some(t);
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                if changed {
+                    b.save();
+                }
+            }),
+            keyboard: Rc::new(move |on| {
+                let Some(b) = me2.upgrade() else { return };
+                if let Some(win) = b.win.borrow().as_ref() {
+                    surface::set_keyboard(
+                        win,
+                        if on {
+                            surface::INVOKED
+                        } else {
+                            surface::Keyboard::None
+                        },
+                    );
+                }
+            }),
+        }
     }
 
     fn set_options(self: &Rc<Self>, id: &str, f: impl FnOnce(&mut Options)) {
@@ -1174,6 +1213,7 @@ impl Live {
                 Builtin::System => Data::System(self.system.borrow().clone()?),
                 Builtin::WorldClock => Data::WorldClock(city_times(p.options.cities.as_deref())),
                 Builtin::Timer => Data::Timer(self.counter(p, |c| c.view(mono_ms()))),
+                Builtin::Note => Data::Note(p.options.text.clone().unwrap_or_default()),
             }),
             Kind::Custom(id) => {
                 let pkg = self.board.packages().into_iter().find(|k| &k.id == id);
