@@ -15,6 +15,7 @@ const DYNAMIC_TICK: u32 = 60;
 /// live through the shell reload and the choice file; Dynamic follows the clock.
 pub fn wallpaper(app: &gtk::Application) -> gtk::ApplicationWindow {
     let win = super::window(app, "wallpaper", Spec::wallpaper());
+    crate::kit::surface::survive_output_loss(&win, Spec::wallpaper());
     let pic = gtk::Picture::new();
     pic.set_content_fit(gtk::ContentFit::Cover);
     win.set_child(Some(&pic));
@@ -70,6 +71,7 @@ pub(super) fn panel(
     child: &impl IsA<gtk::Widget>,
 ) -> gtk::Window {
     let win = super::window(app, "panel", Spec::panel(ns, anchor, Keyboard::OnDemand));
+    crate::kit::surface::survive_output_loss(&win, Spec::panel(ns, anchor, Keyboard::OnDemand));
     win.add_css_class(class);
     win.set_child(Some(child));
     let keys = gtk::EventControllerKey::new();

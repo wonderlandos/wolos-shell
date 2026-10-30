@@ -209,6 +209,7 @@ pub type Built = (gtk::ApplicationWindow, Rc<Dock>, Rc<dyn Fn(bool)>);
 
 pub fn build(app: &gtk::Application) -> Built {
     let win = super::window(app, "dock", Spec::dock());
+    crate::kit::surface::survive_output_loss(&win, Spec::dock());
     let d = content(&crate::hypr::running_classes(&crate::hypr::clients()));
     *d.monitor.borrow_mut() = watch_downloads(&downloads_dir(), d.downloads.clone());
     // Autohide: the shelf slides away and a thin hot zone at the bottom edge brings it back.

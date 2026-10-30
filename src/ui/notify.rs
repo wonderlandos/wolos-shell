@@ -470,6 +470,14 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
         ),
     );
     let stack = w::vbox(0);
+    crate::kit::surface::survive_output_loss(
+        &banners,
+        Spec::panel(
+            "wol-panel-banners",
+            [true, false, false, true],
+            Keyboard::None,
+        ),
+    );
     stack.add_css_class("banner-stack");
     // Width first: a Fill-height stack would ask the 2-line bodies for width-for-height and widen.
     stack.set_valign(gtk::Align::Start);
@@ -488,6 +496,14 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
     let center = super::window(
         app,
         "panel",
+        Spec::panel(
+            "wol-panel-notifications",
+            [true, true, false, true],
+            Keyboard::OnDemand,
+        ),
+    );
+    crate::kit::surface::survive_output_loss(
+        &center,
         Spec::panel(
             "wol-panel-notifications",
             [true, true, false, true],

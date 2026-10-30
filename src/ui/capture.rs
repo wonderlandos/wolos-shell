@@ -197,8 +197,10 @@ pub type Handler = Rc<dyn Fn(&crate::protocol::Command) -> bool>;
 /// [`RECORD`] handler (Control Center Record tile).
 pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
     let win = super::window(app, "panel", Spec::capture_bar());
+    crate::kit::surface::survive_output_loss(&win, Spec::capture_bar());
     win.add_css_class("capture");
     let thumb_win = super::window(app, "panel", Spec::capture_thumb());
+    crate::kit::surface::survive_output_loss(&thumb_win, Spec::capture_thumb());
     thumb_win.add_css_class("capture");
     let bar = Rc::new(Toolbar::new(Mode::Selection, Options::default()));
     win.set_child(Some(&bar.root));

@@ -132,6 +132,10 @@ pub fn build(app: &gtk::Application) -> gtk::Window {
         "panel",
         Spec::panel("wol-panel-overview", [true; 4], Keyboard::Exclusive),
     );
+    crate::kit::surface::survive_output_loss(
+        &win,
+        Spec::panel("wol-panel-overview", [true; 4], Keyboard::Exclusive),
+    );
     win.add_css_class("overview-window-surface");
     let keys = gtk::EventControllerKey::new();
     let w2 = win.clone();

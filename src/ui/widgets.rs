@@ -1743,6 +1743,7 @@ pub fn build(
     let (desk, file, packages) = read_disk();
     let board = Board::new(desk, Some(file), packages);
     let win = super::window(app, "desktop", surface::Spec::desktop());
+    crate::kit::surface::survive_output_loss(&win, surface::Spec::desktop());
     win.set_child(Some(&board.root));
     board.set_window(win.upcast_ref());
     let keys = gtk::EventControllerKey::new();

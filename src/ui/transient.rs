@@ -177,6 +177,7 @@ pub fn close_on_menus(root: &impl IsA<gtk::Widget>, panels: &super::Panels) {
 /// is open. Layer surfaces get no reliable focus-out, so a click outside lands on the catcher.
 pub fn manage(app: &gtk::Application, panels: &super::Panels) {
     let catcher = super::window(app, "catcher", crate::kit::surface::Spec::catcher());
+    crate::kit::surface::survive_output_loss(&catcher, crate::kit::surface::Spec::catcher());
     let click = gtk::GestureClick::new();
     click.set_button(0);
     {

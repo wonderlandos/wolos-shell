@@ -125,6 +125,63 @@ impl Spec {
     }
 }
 
+/// What a shell surface does when the compositor closes it because its display went away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutputLost {
+    /// Shown again on a display that remains (menu bar, Dock, wallpaper, desktop).
+    Reopen,
+    /// Hidden, not destroyed: the next open shows it again (panels, the click-catcher).
+    Hide,
+}
+
+impl Spec {
+    pub fn on_output_lost(&self) -> OutputLost {
+        match (self.layer, self.exclusive) {
+            (Layer::Background | Layer::Bottom, _) | (_, true) => OutputLost::Reopen,
+            _ => OutputLost::Hide,
+        }
+    }
+}
+
+/// Keeps `w` alive when its display is unplugged: gtk4-layer-shell reports the layer surface's
+/// `closed` as a window close, which would destroy it. A [`OutputLost::Reopen`] surface maps
+/// again once a display is there (the compositor picks it).
+pub fn survive_output_loss(w: &impl IsA<gtk::Window>, s: Spec) {
+    if !layered() {
+        return;
+    }
+    w.as_ref().connect_close_request(move |w| {
+        w.set_visible(false);
+        if s.on_output_lost() == OutputLost::Reopen {
+            reopen_when_output(w);
+        }
+        gtk::glib::Propagation::Stop
+    });
+}
+
+fn reopen_when_output(w: &gtk::Window) {
+    let w = w.clone();
+    // The display list may still hold the display that went away: give it a moment.
+    gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+        let monitors = WidgetExt::display(&w).monitors();
+        if monitors.n_items() > 0 {
+            w.present();
+            return;
+        }
+        let id = std::rc::Rc::new(std::cell::Cell::new(None));
+        let id2 = id.clone();
+        let h = monitors.connect_items_changed(move |m, _, _, added| {
+            if added > 0 {
+                w.present();
+                if let Some(h) = id2.take() {
+                    m.disconnect(h);
+                }
+            }
+        });
+        id.set(Some(h));
+    });
+}
+
 #[cfg(feature = "layer-shell")]
 pub fn place(w: &impl IsA<gtk::Window>, s: Spec) {
     use gtk4_layer_shell::{Edge, KeyboardMode, Layer as L, LayerShell};
@@ -368,6 +425,33 @@ mod tests {
         // [top, bottom, left, right]
         assert_eq!(Spec::capture_bar().anchor, [false, true, false, false]);
         assert_eq!(Spec::capture_thumb().anchor, [false, true, false, true]);
+    }
+
+    /// Unplugging the display a layer surface sits on makes the compositor close it, and
+    /// gtk4-layer-shell turns that into a window close: GTK destroyed the menu bar, Dock,
+    /// wallpaper and desktop for good. The always-there surfaces come back on the remaining
+    /// display; panels only hide, so the next open works.
+    #[test]
+    fn surfaces_survive_their_display_going_away() {
+        for s in [
+            Spec::menubar(),
+            Spec::dock(),
+            Spec::wallpaper(),
+            Spec::desktop(),
+        ] {
+            assert_eq!(s.on_output_lost(), OutputLost::Reopen, "{}", s.namespace);
+        }
+        for s in [
+            Spec::catcher(),
+            Spec::capture_thumb(),
+            Spec::panel(
+                "wol-panel-cc",
+                [true, false, false, true],
+                Keyboard::OnDemand,
+            ),
+        ] {
+            assert_eq!(s.on_output_lost(), OutputLost::Hide, "{}", s.namespace);
+        }
     }
 
     /// Live Hyprland: the wallpaper stopped at the menu bar and dock zones (black strips).

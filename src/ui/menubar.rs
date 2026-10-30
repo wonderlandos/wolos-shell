@@ -248,6 +248,7 @@ pub fn build(
     sys: &dyn crate::system::System,
 ) -> (gtk::ApplicationWindow, Rc<Bar>) {
     let win = super::window(app, "menubar", kit::surface::Spec::menubar());
+    crate::kit::surface::survive_output_loss(&win, kit::surface::Spec::menubar());
     let bar = content(sys);
     win.set_child(Some(&bar.root));
     hover_menus(&bar.root);
