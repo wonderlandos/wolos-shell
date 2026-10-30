@@ -151,6 +151,9 @@ fn join_sheet(e: &Rc<Env>, status: &gtk::Label) -> Rc<dyn Fn(String, bool)> {
     let body = w::vbox(w::S3);
     body.append(&title);
     body.append(&pw);
+    let caps = w::caps_lock_note();
+    caps.set_halign(gtk::Align::Start);
+    body.append(&caps);
     let buttons = w::hbox(w::S2);
     buttons.append(&w::spacer());
     let ssid: Rc<RefCell<String>> = Default::default();

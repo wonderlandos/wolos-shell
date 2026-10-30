@@ -140,6 +140,42 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // Caps Lock on while the admin password is typed: the note under the field.
+            name: "approval-admin-caps-lock".into(),
+            size: (400, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let root = ui::approval::content(
+                    Rc::new(shell::system::Fake),
+                    shared::shell::Approval {
+                        helper: "Claude Desktop".into(),
+                        tool: "wifi join".into(),
+                        request: shared::shell::ApprovalRequest::WifiJoin {
+                            ssid: "Wonderland".into(),
+                            password: Some("hunter22".into()),
+                        },
+                    },
+                );
+                // Hidden notes are not drawable, so walk every widget.
+                fn caps(w: &gtk::Widget, n: &mut usize) {
+                    if w.has_css_class("caps-lock") {
+                        w.set_visible(true);
+                        *n += 1;
+                    }
+                    let mut c = w.first_child();
+                    while let Some(ch) = c {
+                        caps(&ch, n);
+                        c = ch.next_sibling();
+                    }
+                }
+                let mut n = 0;
+                caps(&root, &mut n);
+                assert_eq!(n, 1, "one Caps Lock note");
+                root
+            }),
+        },
+        Case {
             name: "controlcenter".into(),
             size: (368, 1),
             class: "preview",

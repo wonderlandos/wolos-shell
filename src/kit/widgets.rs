@@ -498,6 +498,9 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
     b.append(&head);
     let field = password_field("Password");
     b.append(&field);
+    let caps = caps_lock_note();
+    caps.set_halign(gtk::Align::Start);
+    b.append(&caps);
     let message = label("", "secondary");
     b.append(&message);
     let row = hbox(S2);

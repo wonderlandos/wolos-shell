@@ -127,6 +127,9 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
     col.append(&title);
     col.append(&name);
     col.append(&password);
+    let caps = w::caps_lock_note();
+    caps.set_halign(gtk::Align::Start);
+    col.append(&caps);
     let note = w::label("", "assistant-status");
     note.add_css_class("problem");
     note.set_wrap(true);
