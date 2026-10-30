@@ -7,13 +7,18 @@ use wol_core::shortcuts::Group;
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let p = w::page("Desktop & Dock");
     let cur = Rc::new(Cell::new(load_shell()));
+    let status = status_label();
     let t = |title: &str, get: fn(&ShellPrefs) -> bool, set: fn(&mut ShellPrefs, bool)| {
-        let c = cur.clone();
-        form::toggle_row(title, "", get(&cur.get()), move |on| {
+        let (c, st) = (cur.clone(), status.clone());
+        form::pending_toggle_row(title, "", get(&cur.get()), move |on, done| {
             let mut v = c.get();
             set(&mut v, on);
-            c.set(v);
-            save_shell(v);
+            let ok = save_shell(v);
+            if ok {
+                c.set(v);
+            }
+            say(&st, if ok { "" } else { SAVE_FAILED });
+            done(ok);
         })
     };
     p.append(&w::section(
@@ -42,6 +47,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             t("Show date", |p| p.show_date, |p, v| p.show_date = v),
         ],
     ));
+    p.append(&status);
     p.append(&windows(e));
     p
 }
@@ -104,15 +110,23 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
     b.append(&w::section(
         "Windows",
         &[
-            form::toggle_row(
+            form::pending_toggle_row(
                 "Tile windows",
                 "New windows fill the screen side by side instead of floating.",
                 d.tiling,
-                move |on| {
-                    for x in [m.upcast_ref::<gtk::Widget>(), &a, &g, pic.upcast_ref()] {
-                        x.set_visible(on);
-                    }
-                    dk.set(&st, |p| p.tiling = on);
+                move |on, done| {
+                    let (m, a, g, pic) = (m.clone(), a.clone(), g.clone(), pic.clone());
+                    dk.set_switch(
+                        &st,
+                        |p| p.tiling = on,
+                        Box::new(move |ok| {
+                            let now = on == ok;
+                            for x in [m.upcast_ref::<gtk::Widget>(), &a, &g, pic.upcast_ref()] {
+                                x.set_visible(now);
+                            }
+                            done(ok);
+                        }),
+                    );
                 },
             ),
             picture.upcast(),

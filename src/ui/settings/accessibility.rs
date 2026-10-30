@@ -15,7 +15,9 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                   on: bool,
                   set: fn(&mut wol_core::hyprprefs::DesktopPrefs, bool)| {
         let (dk, st) = (e.desk.clone(), status.clone());
-        form::toggle_row(title, sub, on, move |v| dk.set(&st, |p| set(p, v)))
+        form::pending_toggle_row(title, sub, on, move |v, done| {
+            dk.set_switch(&st, |p| set(p, v), done)
+        })
     };
     let contrast = {
         let (ctx, st) = (e.ctx.clone(), status.clone());
