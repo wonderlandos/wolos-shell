@@ -722,6 +722,7 @@ pub fn menubar_item(child: &impl IsA<gtk::Widget>) -> gtk::Button {
 pub struct DockTile {
     pub button: gtk::Button,
     dot: gtk::Box,
+    img: gtk::Image,
 }
 
 impl DockTile {
@@ -740,7 +741,11 @@ impl DockTile {
             .build();
         button.add_css_class("dock-tile");
         button.connect_clicked(move |_| clicked());
-        DockTile { button, dot }
+        DockTile { button, dot, img }
+    }
+    /// Settings > Dock > Size: the icon's pixel size.
+    pub fn set_icon_size(&self, px: i32) {
+        self.img.set_pixel_size(px);
     }
     pub fn set_running(&self, on: bool) {
         if !on && self.is_launching() {
@@ -762,11 +767,16 @@ impl DockTile {
     }
     /// A handle that does not keep the tile alive.
     pub fn downgrade(&self) -> impl Fn() -> Option<DockTile> + 'static {
-        let (b, d) = (self.button.downgrade(), self.dot.downgrade());
+        let (b, d, i) = (
+            self.button.downgrade(),
+            self.dot.downgrade(),
+            self.img.downgrade(),
+        );
         move || {
             Some(DockTile {
                 button: b.upgrade()?,
                 dot: d.upgrade()?,
+                img: i.upgrade()?,
             })
         }
     }
