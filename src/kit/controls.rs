@@ -301,11 +301,20 @@ impl SliderModule {
         detail: Option<&str>,
     ) -> Self {
         let b = w::vbox(S2);
-        b.append(&w::label(title, "title"));
+        let head = w::hbox(S2);
+        let t = w::label(title, "title");
+        t.set_hexpand(true);
+        head.append(&t);
+        // The level, while the slider moves (and after).
+        let level = w::label(&percent(value), "secondary");
+        level.add_css_class("numeric");
+        head.append(&level);
+        b.append(&head);
         let row = w::hbox(S2);
         let o = gtk::Overlay::new();
         o.set_hexpand(true);
         let scale = w::slider(value, changed);
+        scale.connect_value_changed(move |s| level.set_label(&percent(s.value())));
         scale.add_css_class("fat");
         o.set_child(Some(&scale));
         let icon = w::icon(icon_name, ICON);
@@ -338,6 +347,11 @@ impl SliderModule {
             self.icon.set_icon_name(Some(name));
         }
     }
+}
+
+/// "40%" from a 0–100 slider value.
+pub fn percent(v: f64) -> String {
+    format!("{}%", v.round() as i64)
 }
 
 /// "1:01" from seconds.
@@ -748,5 +762,18 @@ mod tests {
         ] {
             assert_eq!(battery_detail(p, m), want);
         }
+    }
+}
+
+#[cfg(test)]
+mod slider_tests {
+    use super::*;
+
+    /// Control Center sliders say their level while they move.
+    #[test]
+    fn slider_level_reads_as_a_percentage() {
+        assert_eq!(percent(0.0), "0%");
+        assert_eq!(percent(39.6), "40%");
+        assert_eq!(percent(100.0), "100%");
     }
 }
