@@ -166,7 +166,48 @@ pub fn pager() -> gtk::Stack {
         .vexpand(true)
         .build();
     s.add_css_class("assistant-pager");
+    // The cross-fade runs on the window's frame clock. If the compositor stops answering frame
+    // callbacks mid-fade, the fade freezes half way and the old page stays drawn at partial
+    // opacity until the window closes. Whatever the clock does, the page settles.
+    s.connect_visible_child_notify(|s| {
+        let weak = s.downgrade();
+        gtk::glib::timeout_add_local_once(
+            std::time::Duration::from_millis(u64::from(PAGE_MS + SETTLE_SLACK_MS)),
+            move || {
+                if let Some(s) = weak.upgrade() {
+                    settle(&s)
+                }
+            },
+        );
+    });
     s
+}
+
+/// Grace after [`PAGE_MS`] before a cross-fade that is still running is ended by force.
+pub const SETTLE_SLACK_MS: u32 = 250;
+
+/// Ends a running page transition at once: the visible page is shown alone, fully opaque.
+/// GTK finishes a transition when the page changes with no transition type, so the stack
+/// steps to a sibling and back; nothing is drawn in between.
+pub fn settle(s: &gtk::Stack) {
+    if !s.is_transition_running() {
+        return;
+    }
+    let Some(cur) = s.visible_child() else { return };
+    let mut other = s.first_child();
+    while let Some(c) = &other {
+        if *c != cur {
+            break;
+        }
+        other = c.next_sibling();
+    }
+    let Some(other) = other else { return };
+    let kind = s.transition_type();
+    s.set_transition_type(gtk::StackTransitionType::None);
+    s.set_visible_child(&other);
+    s.set_visible_child(&cur);
+    s.set_transition_type(kind);
+    s.queue_draw();
 }
 
 /// Top of a card.
