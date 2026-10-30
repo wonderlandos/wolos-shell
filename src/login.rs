@@ -185,13 +185,33 @@ pub fn power(socket: &str, p: Power) -> Verdict {
     exchange(socket, &shared::login::encode_power(p))
 }
 
-/// Wrong passwords before the login window shows the account's hint.
+/// Wrong passwords before the lock screen and login window show the account's hint.
 pub const HINT_AFTER: u32 = 3;
 
 /// "Hint: …" once `failures` reaches [`HINT_AFTER`] and a non-blank hint exists.
 pub fn hint_message(failures: u32, hint: Option<&str>) -> Option<String> {
     let h = hint?.trim();
     (failures >= HINT_AFTER && !h.is_empty()).then(|| format!("Hint: {h}"))
+}
+
+/// Setup's hint field placeholder: what both screens do ([`wrong_password`]).
+pub const HINT_PLACEHOLDER: &str = "Optional, shown after three wrong passwords";
+
+/// One failed attempt on the lock screen or login window: counts a wrong password (not a
+/// broken helper) and returns the hint line once there were [`HINT_AFTER`].
+pub fn wrong_password(
+    failures: &std::cell::Cell<u32>,
+    v: Verdict,
+    hint: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    if v != Verdict::Denied {
+        return None;
+    }
+    failures.set(failures.get() + 1);
+    if failures.get() < HINT_AFTER {
+        return None;
+    }
+    hint_message(failures.get(), hint().as_deref())
 }
 
 /// The hint file for `user` (written by wol-login at setup, ADR 0004).
@@ -338,6 +358,33 @@ mod tests {
         assert!(login_request("", "pw").is_none());
         assert!(login_request("a\nb", "pw").is_none());
         assert!(login_request("a", &"x".repeat(513)).is_none());
+    }
+
+    /// Lock screen and login window count the same way: only a wrong password counts (a
+    /// broken helper does not), and the hint shows from the third one on, as Setup promises.
+    #[test]
+    fn both_screens_show_the_hint_after_three_wrong_passwords() {
+        let n = std::cell::Cell::new(0);
+        let hint = || Some("white rabbit".to_string());
+        let mut got = vec![];
+        for v in [
+            Verdict::Denied,
+            Verdict::Error,
+            Verdict::Denied,
+            Verdict::Denied,
+        ] {
+            got.push(wrong_password(&n, v, hint));
+        }
+        let h = Some("Hint: white rabbit".to_string());
+        assert_eq!(got, [None, None, None, h]);
+        assert!(HINT_PLACEHOLDER.contains("three") && HINT_AFTER == 3);
+        let lock = include_str!("ui/lock.rs");
+        let screen =
+            &lock[lock.find("fn run_lock_screen").unwrap()..lock.find("fn lock_surface").unwrap()];
+        assert!(
+            screen.contains("wrong_password"),
+            "the lock screen must show the hint too"
+        );
     }
 
     #[test]
