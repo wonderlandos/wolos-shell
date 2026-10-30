@@ -7,6 +7,7 @@ pub mod media;
 pub mod power;
 pub mod schedule;
 pub mod weather;
+pub mod worldclock;
 
 /// The cell grid is shared with `wol widgets` (placement without a screen).
 pub use shared::widgets::grid;

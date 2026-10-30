@@ -5,7 +5,7 @@
 use crate::kit::controls as k;
 use crate::kit::data::{self as d, IconSize, Role, Tone};
 use crate::kit::widgets as w;
-use crate::widgets::{Now, calendar, media, power, weather};
+use crate::widgets::{Now, calendar, media, power, weather, worldclock};
 use gtk::prelude::*;
 use shared::widgets::{Builtin, Face, Place, Size};
 use std::rc::Rc;
@@ -54,6 +54,8 @@ pub enum Data {
         minutes: Option<u32>,
     },
     System(SystemView),
+    /// One row per city, in the order chosen.
+    WorldClock(Vec<worldclock::CityTime>),
 }
 
 /// What a built-in may ask the desktop to do.
@@ -80,6 +82,7 @@ pub fn card(data: &Data, size: Size, hooks: &Hooks) -> gtk::Box {
         Data::Music(p) => music(p.as_ref(), size),
         Data::Batteries { devices, minutes } => batteries(devices, *minutes, size),
         Data::System(s) => system(s, size),
+        Data::WorldClock(c) => world_clock(c, size),
     };
     body.set_vexpand(true);
     d::card(size, &body)
@@ -197,6 +200,57 @@ fn clock(n: &Now, face: Face, size: Size) -> gtk::Box {
             b.append(&centered(t(&hhmm(n), Role::Display)));
             b.append(&centered(dim(&format!("{} {}", date_line(n), n.y))));
         }
+    }
+    b
+}
+
+// ---- World Clock ----
+
+fn world_clock(cities: &[worldclock::CityTime], size: Size) -> gtk::Box {
+    let b = w::vbox(w::S2);
+    b.set_valign(gtk::Align::Center);
+    let shown = &cities[..cities.len().min(worldclock::fits(size))];
+    if size == Size::Medium {
+        // Side by side: city, time, how far ahead.
+        let r = w::hbox(w::S3);
+        r.set_homogeneous(true);
+        for c in shown {
+            let col = w::vbox(0);
+            let name = d::text(&c.name, Role::Caption, Tone::Accent);
+            name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            name.set_xalign(0.0);
+            col.append(&name);
+            let time = t(&c.hhmm(), Role::Large);
+            time.set_xalign(0.0);
+            col.append(&time);
+            for line in [c.day_word().to_string(), c.offset()] {
+                let l = dim(&line);
+                l.set_xalign(0.0);
+                l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+                col.append(&l);
+            }
+            r.append(&col);
+        }
+        b.append(&r);
+        return b;
+    }
+    for c in shown {
+        let r = w::hbox(w::S2);
+        let left = w::vbox(0);
+        left.set_hexpand(true);
+        let name = t(&c.name, Role::Title);
+        name.set_xalign(0.0);
+        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        left.append(&name);
+        let rel = dim(&c.relative());
+        rel.set_xalign(0.0);
+        rel.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        left.append(&rel);
+        r.append(&left);
+        let time = t(&c.hhmm(), Role::Large);
+        time.set_valign(gtk::Align::Center);
+        r.append(&time);
+        b.append(&r);
     }
     b
 }
@@ -785,6 +839,23 @@ pub fn sample_now() -> Now {
     }
 }
 
+/// Six cities seen from São Paulo on 2026-10-30 at 19:15 (gallery and goldens).
+pub fn sample_cities() -> Vec<worldclock::CityTime> {
+    const UTC: i64 = 1_793_398_500;
+    const HERE: i32 = -3 * 3600;
+    [
+        ("New York", -4 * 3600),
+        ("London", 0),
+        ("Tokyo", 9 * 3600),
+        ("Sydney", 11 * 3600),
+        ("Mumbai", 19_800),
+        ("Honolulu", -10 * 3600),
+    ]
+    .iter()
+    .map(|(n, off)| worldclock::CityTime::at(n, UTC, HERE, *off))
+    .collect()
+}
+
 pub fn sample_place() -> Place {
     Place {
         name: "Lisbon".into(),
@@ -908,5 +979,6 @@ pub fn sample(b: Builtin) -> Data {
             minutes: Some(191),
         },
         Builtin::System => Data::System(sample_system()),
+        Builtin::WorldClock => Data::WorldClock(sample_cities()),
     }
 }

@@ -11,7 +11,7 @@ use crate::kit::data as d;
 use crate::kit::surface;
 use crate::kit::widgets as w;
 use crate::widgets::{
-    self as wd, Now, calendar, grid::Grid, media, power, schedule::Schedule, weather,
+    self as wd, Now, calendar, grid::Grid, media, power, schedule::Schedule, weather, worldclock,
 };
 use gtk::{gio, glib, prelude::*};
 use serde_json::Value;
@@ -714,6 +714,22 @@ impl Board {
                     ));
                 }
             }
+            Kind::Builtin(Builtin::WorldClock) => {
+                rows.push((String::new(), None, Box::new(|| {})));
+                let chosen = worldclock::zones(p.options.cities.as_deref());
+                for (name, zone) in worldclock::CITIES {
+                    let id = p.id.clone();
+                    rows.push((
+                        name.into(),
+                        tick(chosen.iter().any(|z| z == zone)),
+                        act(Box::new(move |b| {
+                            b.set_options(&id, |o| {
+                                o.cities = Some(worldclock::toggle(o.cities.as_deref(), zone))
+                            })
+                        })),
+                    ));
+                }
+            }
             Kind::Builtin(Builtin::Weather) => {
                 rows.push((String::new(), None, Box::new(|| {})));
                 let id = p.id.clone();
@@ -936,6 +952,35 @@ pub fn local_now() -> Now {
     }
 }
 
+/// The World Clock rows for `zones` now (`WOL_FAKE_NOW`: the golden cities).
+fn city_times(zones: Option<&[String]>) -> Vec<worldclock::CityTime> {
+    if std::env::var_os("WOL_FAKE_NOW").is_some() {
+        return builtin::sample_cities();
+    }
+    let (Ok(utc), Ok(here)) = (glib::DateTime::now_utc(), glib::DateTime::now_local()) else {
+        return Vec::new();
+    };
+    let secs = |t: &glib::DateTime| (t.utc_offset().as_microseconds() / 1_000_000) as i32;
+    worldclock::zones(zones)
+        .iter()
+        .filter_map(|z| {
+            // An unknown zone falls back to UTC: skip it rather than show a wrong time.
+            #[allow(deprecated)]
+            let tz = glib::TimeZone::new(Some(z));
+            if tz.identifier() != z.as_str() {
+                return None;
+            }
+            let there = utc.to_timezone(&tz).ok()?;
+            Some(worldclock::CityTime::at(
+                &worldclock::city(z),
+                utc.to_unix(),
+                secs(&here),
+                secs(&there),
+            ))
+        })
+        .collect()
+}
+
 /// An event time as local wall-clock time.
 fn to_local(wh: &calendar::When) -> Option<calendar::DateTime> {
     use calendar::When;
@@ -1069,6 +1114,7 @@ impl Live {
                     minutes: self.sys.battery_time(),
                 },
                 Builtin::System => Data::System(self.system.borrow().clone()?),
+                Builtin::WorldClock => Data::WorldClock(city_times(p.options.cities.as_deref())),
             }),
             Kind::Custom(id) => {
                 let pkg = self.board.packages().into_iter().find(|k| &k.id == id);
@@ -1156,7 +1202,7 @@ impl Live {
     fn sync(self: &Rc<Self>) {
         let ws = self.board.widgets();
         let has = |b: Builtin| ws.iter().any(|p| p.kind == Kind::Builtin(b));
-        if has(Builtin::Clock) || has(Builtin::Calendar) {
+        if has(Builtin::Clock) || has(Builtin::Calendar) || has(Builtin::WorldClock) {
             self.schedule("minute", MINUTE);
         } else {
             self.unschedule("minute");
@@ -1264,7 +1310,12 @@ impl Live {
                 if self.events_day.get() != now.day && self.has(Builtin::Calendar) {
                     self.read_events();
                 }
-                self.show(|p| matches!(p.kind, Kind::Builtin(Builtin::Clock | Builtin::Calendar)));
+                self.show(|p| {
+                    matches!(
+                        p.kind,
+                        Kind::Builtin(Builtin::Clock | Builtin::Calendar | Builtin::WorldClock)
+                    )
+                });
             }
             "system" => self.read_system(),
             "events" => self.read_events(),
