@@ -249,7 +249,40 @@ pub fn build(
     let win = super::window(app, "menubar", kit::surface::Spec::menubar());
     let bar = content(sys);
     win.set_child(Some(&bar.root));
+    hover_menus(&bar.root);
     (win, bar)
+}
+
+/// The menu to open when the pointer enters title `hovered` while menu `open` is open (macOS).
+pub fn hover_switch(open: Option<usize>, hovered: usize) -> Option<usize> {
+    open.filter(|o| *o != hovered).map(|_| hovered)
+}
+
+/// Once a menu-bar menu is open, moving the pointer onto another title opens that one.
+fn hover_menus(root: &gtk::Box) {
+    let mut menus = vec![];
+    let mut c = root.first_child();
+    while let Some(w) = c {
+        c = w.next_sibling();
+        if let Ok(m) = w.downcast::<gtk::MenuButton>() {
+            menus.push(m);
+        }
+    }
+    let menus = Rc::new(menus);
+    for (i, m) in menus.iter().enumerate() {
+        let motion = gtk::EventControllerMotion::new();
+        let all = menus.clone();
+        motion.connect_enter(move |_, _, _| {
+            let open = all.iter().position(|m| m.is_active());
+            if let Some(n) = hover_switch(open, i) {
+                if let Some(o) = open {
+                    all[o].set_active(false);
+                }
+                all[n].set_active(true);
+            }
+        });
+        m.add_controller(motion);
+    }
 }
 
 /// ⌃F2 (`wol shell show menubar`): the keyboard moves into the bar, the WolOS menu focused;
@@ -366,6 +399,19 @@ pub fn poll_status(bar: Rc<Bar>, sys: Rc<dyn crate::system::System>) {
         crate::alerts::poll(sys.battery());
         glib::ControlFlow::Continue
     });
+}
+
+#[cfg(test)]
+mod hover_tests {
+    use super::hover_switch;
+
+    /// macOS: with a menu open, the pointer over another title opens that one instead.
+    #[test]
+    fn hovering_a_title_switches_only_while_a_menu_is_open() {
+        assert_eq!(hover_switch(Some(0), 2), Some(2));
+        assert_eq!(hover_switch(Some(2), 2), None);
+        assert_eq!(hover_switch(None, 1), None);
+    }
 }
 
 #[cfg(test)]
