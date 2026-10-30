@@ -31,13 +31,77 @@ pub fn dismisses(e: &hypr::Event) -> bool {
     }
 }
 
-/// Hides every visible transient panel.
-pub fn close_all(panels: &super::Panels) {
+/// `wol shell hide transient`: the whole set at once (Esc, bound pass-through in hyprland.conf,
+/// so it works while an app has the keyboard).
+pub const GROUP: &str = "transient";
+
+pub fn closes_all(c: &crate::protocol::Command) -> bool {
+    c.target == GROUP && c.verb == crate::protocol::Verb::Hide
+}
+
+/// Panel apps in their own process (GApplication ids) that a shell panel opening closes.
+pub const PANEL_APPS: &[&str] = &["org.wolos.spotlight"];
+
+/// A GApplication's D-Bus object path.
+pub fn object_path(id: &str) -> String {
+    format!("/{}", id.replace('.', "/"))
+}
+
+thread_local! {
+    /// Members that are not panel windows (the Edit Widgets gallery): their closers.
+    static EXTRA: std::cell::RefCell<Vec<Rc<dyn Fn()>>> = Default::default();
+}
+
+/// Adds a non-window member to the set (closed with the others).
+pub fn also_close(f: Rc<dyn Fn()>) {
+    EXTRA.with(|e| e.borrow_mut().push(f));
+}
+
+/// Closes the members outside the panel map: extras and [`PANEL_APPS`].
+pub fn close_outside_members() {
+    EXTRA.with(|e| e.borrow().clone()).iter().for_each(|f| f());
+    close_apps();
+}
+
+/// [`PANEL_APPS`]: their `hide` action over D-Bus; nothing happens when the app is not running
+/// (no activation file, `NO_AUTO_START`).
+pub fn close_apps() {
+    use gtk::gio;
+    gio::bus_get(gio::BusType::Session, gio::Cancellable::NONE, |bus| {
+        let Ok(bus) = bus else { return };
+        for id in PANEL_APPS {
+            use gtk::glib::prelude::ToVariant;
+            let empty: Vec<gtk::glib::Variant> = vec![];
+            let params = ("hide", empty, gtk::glib::VariantDict::new(None).end()).to_variant();
+            bus.call(
+                Some(id),
+                &object_path(id),
+                "org.gtk.Actions",
+                "Activate",
+                Some(&params),
+                None,
+                gio::DBusCallFlags::NO_AUTO_START,
+                500,
+                gio::Cancellable::NONE,
+                |_| {},
+            );
+        }
+    });
+}
+
+/// Hides every visible transient panel window.
+pub fn close_panels(panels: &super::Panels) {
     for p in PANELS {
         if let Some(w) = panels.borrow().get(p) {
             w.set_visible(false);
         }
     }
+}
+
+/// Hides every visible transient panel and the other members of the set.
+pub fn close_all(panels: &super::Panels) {
+    close_panels(panels);
+    EXTRA.with(|e| e.borrow().clone()).iter().for_each(|f| f());
 }
 
 /// Panel apps (Spotlight): `close` on a click outside `win` or on a [`dismisses`] event.
@@ -136,6 +200,7 @@ pub fn manage(app: &gtk::Application, panels: &super::Panels) {
         let (panels, sync) = (panels.clone(), sync.clone());
         w.connect_visible_notify(move |w| {
             if w.is_visible() {
+                close_outside_members();
                 for o in others(name) {
                     if let Some(o) = panels.borrow().get(o) {
                         o.set_visible(false);
@@ -151,6 +216,24 @@ pub fn manage(app: &gtk::Application, panels: &super::Panels) {
 mod tests {
     use super::*;
     use hypr::Event;
+
+    /// `wol shell hide transient` (Esc, bound pass-through) closes the whole set.
+    #[test]
+    fn hide_transient_targets_the_set() {
+        use crate::protocol::{Verb, parse};
+        assert!(closes_all(&parse("hide transient").unwrap()));
+        assert!(!closes_all(&parse("show transient").unwrap()));
+        assert!(!closes_all(&parse("hide notifications").unwrap()));
+        assert!(shared::shell::PANELS.contains(&GROUP));
+        assert_eq!(parse("hide transient").unwrap().verb, Verb::Hide);
+    }
+
+    /// Spotlight (its own process) is closed over D-Bus: its GApplication's `hide` action.
+    #[test]
+    fn panel_apps_are_closed_by_their_action_path() {
+        assert_eq!(PANEL_APPS, ["org.wolos.spotlight"]);
+        assert_eq!(object_path("org.wolos.spotlight"), "/org/wolos/spotlight");
+    }
 
     #[test]
     fn showing_one_panel_closes_the_others() {

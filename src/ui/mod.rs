@@ -109,6 +109,15 @@ pub fn run_shell() -> glib::ExitCode {
             let (shot, record) = capture::build(&app);
             p.insert("screenshot", shot);
             drop(p);
+            {
+                let b = board.clone();
+                transient::also_close(Rc::new(move || b.set_edit(false)));
+                let p = panels.clone();
+                board.on_edit(Rc::new(move || {
+                    transient::close_panels(&p);
+                    transient::close_apps();
+                }));
+            }
             transient::manage(&app, &panels);
             transient::close_on_press(&dock_win, &panels);
             transient::close_on_menus(&bar_win, &panels);
@@ -190,6 +199,17 @@ pub fn run_panel_app(
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder().application_id(id).build();
     app.connect_startup(move |_| mark(t0, "startup"));
+    // `hide` over D-Bus: a shell panel opened (`transient::close_outside_members`).
+    let hide = gtk::gio::SimpleAction::new("hide", None);
+    {
+        let app = app.downgrade();
+        hide.connect_activate(move |_, _| {
+            if let Some(app) = app.upgrade() {
+                app.windows().iter().for_each(|w| w.close());
+            }
+        });
+    }
+    app.add_action(&hide);
     app.connect_activate(move |app| {
         mark(t0, "activate");
         // Second launch toggles: the running instance closes.

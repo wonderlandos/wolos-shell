@@ -92,6 +92,9 @@ fn run(
         let p = shell_prefs();
         return RELOAD.with(|r| r.borrow().iter().for_each(|f| f(&p)));
     }
+    if super::transient::closes_all(cmd) {
+        return super::transient::close_all(panels);
+    }
     if cmd.target == "osd" && cmd.verb == protocol::Verb::Show {
         // Sent by wol-volume after a change: read the sink now, then show the new level.
         let (done, osd, sys) = (sys.refresh_audio(), osd.clone(), sys.clone());
