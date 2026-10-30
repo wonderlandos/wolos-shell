@@ -64,10 +64,12 @@ pub fn shell_socket(
 }
 
 thread_local! {
-    static RELOAD: std::cell::RefCell<Vec<OnReload>> = Default::default();
+    /// Hooks with the lifetime they end with (None: the session).
+    static RELOAD: std::cell::RefCell<Vec<(Option<crate::kit::lifetime::Lifetime>, OnReload)>> =
+        Default::default();
 }
 use wol_core::prefs::ShellPrefs;
-type OnReload = Box<dyn Fn(&ShellPrefs)>;
+type OnReload = Rc<dyn Fn(&ShellPrefs)>;
 
 /// `$XDG_CONFIG_HOME/wolos/shell.json` (written by Settings > Menu Bar & Dock).
 pub fn shell_prefs() -> ShellPrefs {
@@ -78,7 +80,27 @@ pub fn shell_prefs() -> ShellPrefs {
 /// Calls `f` with the current prefs now and after every `reload`.
 pub fn on_reload(f: impl Fn(&ShellPrefs) + 'static) {
     f(&shell_prefs());
-    RELOAD.with(|r| r.borrow_mut().push(Box::new(f)));
+    RELOAD.with(|r| r.borrow_mut().push((None, Rc::new(f))));
+}
+
+/// [`on_reload`] until `life` ends (a surface that goes with its display).
+pub fn on_reload_while(life: &crate::kit::lifetime::Lifetime, f: impl Fn(&ShellPrefs) + 'static) {
+    if !life.alive() {
+        return;
+    }
+    f(&shell_prefs());
+    RELOAD.with(|r| r.borrow_mut().push((Some(life.clone()), Rc::new(f))));
+    life.on_end(|| {
+        RELOAD.with(|r| {
+            r.borrow_mut()
+                .retain(|h| h.0.as_ref().is_none_or(|l| l.alive()))
+        });
+    });
+}
+
+/// Reload hooks registered now (the leak test counts them).
+pub fn reload_hooks() -> usize {
+    RELOAD.with(|r| r.borrow().len())
 }
 
 fn run(
@@ -90,7 +112,10 @@ fn run(
     if cmd.verb == protocol::Verb::Reload {
         // Theme reloads through its file monitor; shell prefs here.
         let p = shell_prefs();
-        return RELOAD.with(|r| r.borrow().iter().for_each(|f| f(&p)));
+        // A hook may add or end others while it runs: call a snapshot.
+        let hooks: Vec<OnReload> =
+            RELOAD.with(|r| r.borrow().iter().map(|h| h.1.clone()).collect());
+        return hooks.iter().for_each(|f| f(&p));
     }
     if super::transient::closes_all(cmd) {
         return super::transient::close_all(panels);

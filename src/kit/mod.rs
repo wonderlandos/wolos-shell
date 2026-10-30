@@ -4,6 +4,7 @@ pub mod check;
 pub mod controls;
 pub mod data;
 pub mod form;
+pub mod lifetime;
 pub mod motion;
 pub mod pickers;
 pub mod reveal;
@@ -69,18 +70,10 @@ pub fn now() -> crate::clock::Stamp {
     }
 }
 
-/// Calls `tick` now and then on every minute boundary (one wakeup a minute).
+/// Calls `tick` now and then on every minute boundary (one wakeup a minute), for the session.
+/// Work tied to a window uses [`lifetime::every_minute_while`].
 pub fn every_minute(tick: impl Fn() + 'static) {
-    let tick = std::rc::Rc::new(tick);
-    fn arm(tick: std::rc::Rc<dyn Fn()>) {
-        let secs = crate::clock::secs_to_next_minute(now().second);
-        glib::timeout_add_seconds_local_once(secs, move || {
-            tick();
-            arm(tick);
-        });
-    }
-    tick();
-    arm(tick);
+    lifetime::every_minute_while(&lifetime::Lifetime::new(), tick);
 }
 
 /// `wol shell <verb> <panel>` as the socket line the CLI would send; None for anything else.
