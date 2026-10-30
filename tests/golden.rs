@@ -1347,6 +1347,50 @@ fn contrast_classes(case: &str) -> &'static [&'static str] {
     }
 }
 
+/// An icon-only button says what it does on hover: a visible Button or MenuButton showing an
+/// image and no text needs a tooltip.
+fn untitled_icon_buttons(w: &gtk::Widget) -> Vec<String> {
+    fn has<T: IsA<gtk::Widget>>(w: &gtk::Widget) -> bool {
+        let mut c = w.first_child();
+        while let Some(ch) = c {
+            if ch.is_drawable() && (ch.is::<T>() || has::<T>(&ch)) {
+                return true;
+            }
+            c = ch.next_sibling();
+        }
+        false
+    }
+    let mut out = vec![];
+    let button = w.is::<gtk::Button>() || w.is::<gtk::MenuButton>();
+    if button
+        && w.is_drawable()
+        && w.tooltip_text().is_none()
+        && has::<gtk::Image>(w)
+        && !has::<gtk::Label>(w)
+        // A MenuButton's inner button carries the tooltip on the MenuButton.
+        && !w.parent().is_some_and(|p| p.is::<gtk::MenuButton>())
+    {
+        let icon = {
+            let mut v = vec![];
+            find_type::<gtk::Image>(w, &mut v);
+            v.first()
+                .and_then(|i| i.icon_name())
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+        };
+        out.push(format!(
+            "icon-only button without a tooltip ({icon}, .{})",
+            w.css_classes().join(".")
+        ));
+    }
+    let mut c = w.first_child();
+    while let Some(ch) = c {
+        out.extend(untitled_icon_buttons(&ch));
+        c = ch.next_sibling();
+    }
+    out
+}
+
 fn find_class(w: &gtk::Widget, class: &str, out: &mut Vec<gtk::Widget>) {
     if w.is_drawable() && w.has_css_class(class) {
         out.push(w.clone());
@@ -1591,6 +1635,7 @@ fn main() {
             }
             issues.extend(WARNINGS.with_borrow_mut(std::mem::take));
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
+            issues.extend(untitled_icon_buttons(win.upcast_ref()));
             let png = out.join(format!("{name}.png"));
             tex.save_to_png(&png).unwrap();
             let gold = golden.join(format!("{name}.png"));

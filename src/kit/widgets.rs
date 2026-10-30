@@ -798,6 +798,7 @@ impl ControlTile {
         root.add_css_class("control");
         let circle = gtk::Button::builder()
             .child(&icon(icon_name, ICON))
+            .tooltip_text(title)
             .valign(gtk::Align::Center)
             .build();
         circle.add_css_class("control-circle");

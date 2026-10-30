@@ -97,7 +97,14 @@ pub fn content(
         icon.set_halign(gtk::Align::Center);
         icon.set_valign(gtk::Align::Center);
         frame.add_overlay(&icon);
-        let b = gtk::Button::builder().child(&frame).build();
+        let b = gtk::Button::builder()
+            .child(&frame)
+            .tooltip_text(if win.client.title.is_empty() {
+                &win.client.class
+            } else {
+                &win.client.title
+            })
+            .build();
         b.add_css_class("overview-window-button");
         let (pick, addr) = (on_pick.clone(), win.client.address.clone());
         b.connect_clicked(move |_| pick(format!("focuswindow address:{addr}")));
