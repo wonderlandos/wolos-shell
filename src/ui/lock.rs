@@ -311,14 +311,8 @@ impl Login {
 
     /// Wrong password: after three, the account's hint replaces the message.
     pub fn failed(&self, v: Verdict) {
-        if v != Verdict::Denied {
-            return;
-        }
-        self.failures.set(self.failures.get() + 1);
         let user = self.selected();
-        if let Some(h) =
-            login::hint_message(self.failures.get(), login::read_hint(&user).as_deref())
-        {
+        if let Some(h) = login::wrong_password(&self.failures, v, || login::read_hint(&user)) {
             self.panel.message.set_label(&h);
         }
     }
@@ -481,7 +475,17 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
                     app3.quit();
                 });
             },
-            move |v| restart.set_visible(v == Verdict::Error),
+            {
+                let (failures, p) = (std::cell::Cell::new(0), panel.clone());
+                move |v| {
+                    restart.set_visible(v == Verdict::Error);
+                    if let Some(h) =
+                        login::wrong_password(&failures, v, || login::read_hint(&user_name()))
+                    {
+                        p.message.set_label(&h);
+                    }
+                }
+            },
         );
         panel.field.grab_focus();
     });

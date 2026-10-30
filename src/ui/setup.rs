@@ -464,10 +464,7 @@ impl Setup {
                 w::text_field("").upcast()
             };
             if f == Field::Hint {
-                e.set_property(
-                    "placeholder-text",
-                    "Optional, shown after three wrong passwords",
-                );
+                e.set_property("placeholder-text", crate::login::HINT_PLACEHOLDER);
             }
             e.add_css_class("assistant-field");
             form.append(&a::form_row(title, &e));
