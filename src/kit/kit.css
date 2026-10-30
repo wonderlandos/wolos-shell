@@ -28,7 +28,7 @@ label.secondary, .secondary label { font-size: 11px; color: var(--dim); }
 label.large-title { font-size: 22px; font-weight: 600; }
 
 /* Layer windows are see-through; only content draws. */
-window.wallpaper, window.menubar, window.dock, window.panel, window.banners, window.controlcenter, window.spotlight, window.preview { background: none; box-shadow: none; border: none; }
+window.wallpaper, window.menubar, window.dock, window.panel, window.banners, window.controlcenter, window.spotlight, window.preview, window.catcher { background: none; box-shadow: none; border: none; }
 window.wallpaper { background: linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04354a); }
 
 /* ---- Menu bar: 28px translucent strip ---- */

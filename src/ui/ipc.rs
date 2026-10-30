@@ -108,8 +108,9 @@ fn run(
     }
 }
 
-/// Hyprland `.socket2.sock`: active window -> menu bar name; open/close -> dock running dots.
-pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>) {
+/// Hyprland `.socket2.sock`: active window -> menu bar name; open/close -> dock running dots;
+/// another app in front or a workspace switch closes the transient panels.
+pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>, panels: Panels) {
     let Some(path) = hypr::socket(".socket2.sock") else {
         return;
     };
@@ -142,7 +143,11 @@ pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>) {
             .read_line_utf8_future(glib::Priority::DEFAULT_IDLE)
             .await
         {
-            match hypr::parse_event(&line) {
+            let ev = hypr::parse_event(&line);
+            if ev.as_ref().is_some_and(super::transient::dismisses) {
+                super::transient::close_all(&panels);
+            }
+            match ev {
                 Some(hypr::Event::ActiveWindow { class, title }) => show(&class, &title),
                 Some(hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. }) => {
                     dock.set_running(&hypr::running_classes(&hypr::clients()));

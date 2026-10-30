@@ -17,6 +17,7 @@ pub mod setup;
 pub mod spotlight;
 pub mod store;
 pub mod switcher;
+pub mod transient;
 pub mod widgets;
 pub mod widgets_builtin;
 pub mod widgets_gallery;
@@ -95,7 +96,7 @@ pub fn run_shell() -> glib::ExitCode {
             desk.present();
             let osd = panels::Osd::build(&app);
             menubar::poll_status(bar.clone(), sys.clone());
-            ipc::hypr_events(bar, dock);
+            ipc::hypr_events(bar, dock, panels.clone());
             let mut p = panels.borrow_mut();
             p.insert("osd", osd.window.clone());
             p.insert("clipboard", panels::clipboard(&app));
@@ -108,6 +109,8 @@ pub fn run_shell() -> glib::ExitCode {
             let (shot, record) = capture::build(&app);
             p.insert("screenshot", shot);
             drop(p);
+            transient::manage(&app, &panels);
+            transient::close_on_press(&dock_win, &panels);
             let sw = switcher::Switcher::build(&app);
             let handlers: ipc::Handlers = vec![
                 Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
@@ -175,7 +178,8 @@ fn apply_setup() {
     let _ = std::fs::rename(file, done);
 }
 
-/// One-window panel app (Control Center, Spotlight): Esc or focus loss quits.
+/// One-window panel app (Control Center, Spotlight): Esc, a click outside, another app in front
+/// or a workspace switch quits.
 pub fn run_panel_app(
     id: &str,
     class: &'static str,
@@ -188,8 +192,8 @@ pub fn run_panel_app(
     app.connect_activate(move |app| {
         mark(t0, "activate");
         // Second launch toggles: the running instance closes.
-        if let Some(w) = app.active_window() {
-            w.close();
+        if !app.windows().is_empty() {
+            app.windows().iter().for_each(|w| w.close());
             return;
         }
         kit::style::install("");
@@ -215,6 +219,8 @@ pub fn run_panel_app(
         });
         w.add_controller(keys);
         kit::snapshot_on_map(&w, class);
+        let w3 = w.clone();
+        transient::close_outside(app, &w, Rc::new(move || w3.close()));
         w.present();
     });
     app.run_with_args::<&str>(&[])
