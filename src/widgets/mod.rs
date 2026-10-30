@@ -6,6 +6,7 @@ pub mod eds;
 pub mod media;
 pub mod power;
 pub mod schedule;
+pub mod timer;
 pub mod weather;
 pub mod worldclock;
 

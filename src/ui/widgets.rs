@@ -11,7 +11,8 @@ use crate::kit::data as d;
 use crate::kit::surface;
 use crate::kit::widgets as w;
 use crate::widgets::{
-    self as wd, Now, calendar, grid::Grid, media, power, schedule::Schedule, weather, worldclock,
+    self as wd, Now, calendar, grid::Grid, media, power, schedule::Schedule, timer, weather,
+    worldclock,
 };
 use gtk::{gio, glib, prelude::*};
 use serde_json::Value;
@@ -58,6 +59,8 @@ pub enum Change {
     /// The user allowed a widget's network host.
     Granted(String),
     Edit(bool),
+    /// A Timer card's button.
+    Timer(String, timer::Press),
 }
 
 struct Drag {
@@ -391,10 +394,16 @@ impl Board {
             (Some(Content::Builtin(data)), _) => {
                 let me = Rc::downgrade(self);
                 let id = p.id.clone();
+                let (me2, id2) = (me.clone(), id.clone());
                 let hooks = builtin::Hooks {
                     choose_city: Rc::new(move || {
                         if let Some(b) = me.upgrade() {
                             b.choose_city(&id);
+                        }
+                    }),
+                    timer: Rc::new(move |press| {
+                        if let Some(b) = me2.upgrade() {
+                            b.notify(Change::Timer(id2.clone(), press));
                         }
                     }),
                 };
@@ -711,6 +720,20 @@ impl Board {
                         label.into(),
                         tick(face == f),
                         act(Box::new(move |b| b.set_options(&id, |o| o.face = Some(f)))),
+                    ));
+                }
+            }
+            Kind::Builtin(Builtin::Timer) => {
+                rows.push((String::new(), None, Box::new(|| {})));
+                let mode = timer::Mode::parse(p.options.timer.as_deref());
+                for m in timer::MODES {
+                    let id = p.id.clone();
+                    rows.push((
+                        m.label(),
+                        tick(m == mode),
+                        act(Box::new(move |b| {
+                            b.set_options(&id, |o| o.timer = Some(m.id()))
+                        })),
                     ));
                 }
             }
@@ -1068,6 +1091,13 @@ struct Live {
     batteries: RefCell<Vec<power::Device>>,
     weather: RefCell<HashMap<String, WeatherView>>,
     custom: RefCell<HashMap<String, Value>>,
+    /// Timer widgets' counters by widget id (this session only).
+    timers: RefCell<HashMap<String, timer::Counter>>,
+}
+
+/// Milliseconds on the monotonic clock (Timer widgets).
+fn mono_ms() -> u64 {
+    (glib::monotonic_time() / 1000) as u64
 }
 
 fn timing() -> bool {
@@ -1115,6 +1145,7 @@ impl Live {
                 },
                 Builtin::System => Data::System(self.system.borrow().clone()?),
                 Builtin::WorldClock => Data::WorldClock(city_times(p.options.cities.as_deref())),
+                Builtin::Timer => Data::Timer(self.counter(p, |c| c.view(mono_ms()))),
             }),
             Kind::Custom(id) => {
                 let pkg = self.board.packages().into_iter().find(|k| &k.id == id);
@@ -1163,6 +1194,41 @@ impl Live {
                 details: vec![format!("Widget kind: {k}")],
             },
         })
+    }
+
+    /// `f` on the counter of Timer widget `p`; a new mode starts a new counter.
+    fn counter<T>(&self, p: &Placed, f: impl FnOnce(&mut timer::Counter) -> T) -> T {
+        let mode = timer::Mode::parse(p.options.timer.as_deref());
+        let mut all = self.timers.borrow_mut();
+        let c = all
+            .entry(p.id.clone())
+            .or_insert_with(|| timer::Counter::new(mode));
+        if c.mode != mode {
+            *c = timer::Counter::new(mode);
+        }
+        f(c)
+    }
+
+    /// Settles Timer widgets that ran out (with a notification) and redraws them.
+    fn tick_timers(self: &Rc<Self>) {
+        let now = mono_ms();
+        let mut ended = Vec::new();
+        for c in self.timers.borrow_mut().values_mut() {
+            if let Some(ph) = c.tick(now) {
+                ended.push(timer::finished(c.mode, ph));
+            }
+        }
+        for (summary, body) in ended {
+            crate::kit::spawn(&[
+                "notify-send".into(),
+                "-a".into(),
+                "Timer".into(),
+                summary,
+                body,
+            ]);
+        }
+        self.show(|p| p.kind == Kind::Builtin(Builtin::Timer));
+        self.sync();
     }
 
     /// Refreshes the cards of widgets matching `which`.
@@ -1223,6 +1289,12 @@ impl Live {
         } else {
             self.unschedule("system");
             *self.stats.borrow_mut() = None;
+        }
+        // Every second, only while a timer runs.
+        if self.timers.borrow().values().any(|c| c.running()) {
+            self.schedule("timer", 1);
+        } else {
+            self.unschedule("timer");
         }
         if has(Builtin::Weather) {
             self.schedule("weather", weather::REFRESH_SECS);
@@ -1318,6 +1390,7 @@ impl Live {
                 });
             }
             "system" => self.read_system(),
+            "timer" => self.tick_timers(),
             "events" => self.read_events(),
             "weather" => self.refresh_weather(None, false),
             "battery" => {
@@ -1601,7 +1674,15 @@ impl Live {
                     _ => {}
                 }
             }
+            Change::Timer(id, press) => {
+                if let Some(p) = self.board.widgets().into_iter().find(|p| p.id == id) {
+                    self.counter(&p, |c| c.press(press, mono_ms()));
+                    self.show(|q| q.id == id);
+                    self.sync();
+                }
+            }
             Change::Removed(p) => {
+                self.timers.borrow_mut().remove(&p.id);
                 self.custom.borrow_mut().remove(&p.id);
                 self.unschedule(&format!("custom:{}", p.id));
                 self.sync();
@@ -1694,6 +1775,7 @@ pub fn build(
         batteries: Default::default(),
         weather: Default::default(),
         custom: Default::default(),
+        timers: Default::default(),
     });
     let l2 = Rc::downgrade(&live);
     board.set_listener(Rc::new(move |c| {
