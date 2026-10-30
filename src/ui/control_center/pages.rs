@@ -73,11 +73,8 @@ impl Join {
     /// Join works only once what was typed can be sent.
     fn sync(&self) {
         let other = self.ssid.borrow().is_none();
-        self.join.set_sensitive(join_ready(
-            other,
-            &self.name.text(),
-            &self.password.text(),
-        ));
+        self.join
+            .set_sensitive(join_ready(other, &self.name.text(), &self.password.text()));
     }
 }
 
@@ -404,7 +401,11 @@ mod tests {
             (true, "Cafe", "short", false),
             (true, "Cafe", "curiouser", true),
         ] {
-            assert_eq!(join_ready(other, name, pw), ready, "{other} {name:?} {pw:?}");
+            assert_eq!(
+                join_ready(other, name, pw),
+                ready,
+                "{other} {name:?} {pw:?}"
+            );
         }
     }
 }
