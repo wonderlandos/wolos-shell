@@ -43,7 +43,8 @@ impl Spec {
         match (self.exclusive, self.anchor, self.layer) {
             (true, _, _) => Zone::Reserve,
             // Desktop widgets fill the area between the menu bar and the Dock.
-            (false, [true, true, true, true], Layer::Bottom) => Zone::Respect,
+            // and so does the click-catcher (menu bar and Dock clicks reach them).
+            (false, [true, true, true, true], Layer::Bottom | Layer::Top) => Zone::Respect,
             (false, [true, true, true, true], _) => Zone::Ignore,
             _ => Zone::Respect,
         }
@@ -102,6 +103,17 @@ impl Spec {
             keyboard: Keyboard::None,
         }
     }
+    /// Click-catcher under open transient panels: covers the screen between the menu bar and
+    /// the Dock above windows, never takes the keyboard; a click on it closes the panels.
+    pub const fn catcher() -> Self {
+        Spec {
+            namespace: "wol-catcher",
+            layer: Layer::Top,
+            anchor: [true; 4],
+            exclusive: false,
+            keyboard: Keyboard::None,
+        }
+    }
     pub const fn panel(namespace: &'static str, anchor: [bool; 4], keyboard: Keyboard) -> Self {
         Spec {
             namespace,
@@ -143,6 +155,14 @@ pub fn place(w: &impl IsA<gtk::Window>, s: Spec) {
         Keyboard::OnDemand => KeyboardMode::OnDemand,
         Keyboard::Exclusive => KeyboardMode::Exclusive,
     });
+}
+
+/// True when surfaces really are layers (not dev toplevels).
+pub fn layered() -> bool {
+    #[cfg(feature = "layer-shell")]
+    return gtk4_layer_shell::is_supported();
+    #[cfg(not(feature = "layer-shell"))]
+    false
 }
 
 #[cfg(not(feature = "layer-shell"))]
@@ -358,6 +378,7 @@ mod tests {
             (Spec::dock(), Zone::Reserve),
             (Spec::wallpaper(), Zone::Ignore),
             (Spec::desktop(), Zone::Respect),
+            (Spec::catcher(), Zone::Respect),
             (
                 Spec::panel("wol-panel-overview", [true; 4], Keyboard::Exclusive),
                 Zone::Ignore,
