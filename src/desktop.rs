@@ -78,8 +78,7 @@ fn on_path(prog: &str) -> bool {
     if prog.contains('/') {
         return exe(Path::new(prog));
     }
-    std::env::var_os("PATH")
-        .is_some_and(|p| std::env::split_paths(&p).any(|d| exe(&d.join(prog))))
+    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| exe(&d.join(prog))))
 }
 
 /// Splits Exec, drops field codes (%f %U ...), honours double quotes.
@@ -178,7 +177,8 @@ mod tests {
     /// for another desktop (each of these opened nothing, or a broken window, when picked).
     #[test]
     fn lists_only_apps_that_open_here() {
-        let app = |extra: &str| format!("[Desktop Entry]\nType=Application\nName=A\nExec=a\n{extra}");
+        let app =
+            |extra: &str| format!("[Desktop Entry]\nType=Application\nName=A\nExec=a\n{extra}");
         for id in HIDDEN {
             assert!(parse(id, &app("")).is_none(), "{id}");
         }
