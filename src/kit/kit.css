@@ -242,6 +242,8 @@ button.lock-submit:disabled { background: rgba(255,255,255,0.12); color: rgba(25
 button.lock-submit:hover:not(:disabled) { background: rgba(255,255,255,0.45); }
 label.lock-message { color: white; font-size: 13px; font-weight: 500; min-height: 18px; text-shadow: 0 1px 6px rgba(0,0,0,0.40); }
 @keyframes shake { 0%, 100% { margin-left: 0; margin-right: 0; } 15%, 55% { margin-left: 20px; margin-right: 0; } 35%, 75% { margin-left: 0; margin-right: 20px; } 90% { margin-left: 6px; margin-right: 0; } }
+spinner.lock-checking { min-width: 16px; min-height: 16px; margin: 0 4px; color: white; }
+.lock-screen.light spinner.lock-checking { color: #1c1838; }
 .lock-pill.shake { animation: shake 420ms ease-out 1; }
 button.login-tile { background: none; border: none; box-shadow: none; padding: 12px 16px; border-radius: 16px; }
 button.login-tile:hover { background: rgba(255,255,255,0.12); }

@@ -224,7 +224,6 @@ pub fn segmented(options: &[&str], selected: usize, picked: impl Fn(usize) + 'st
 pub fn search_field(placeholder: &str) -> gtk::SearchEntry {
     let s = gtk::SearchEntry::builder()
         .placeholder_text(placeholder)
-        .show_peek_icon(true)
         .build();
     s.add_css_class("search-field");
     s
@@ -233,6 +232,7 @@ pub fn search_field(placeholder: &str) -> gtk::SearchEntry {
 pub fn password_field(placeholder: &str) -> gtk::PasswordEntry {
     let p = gtk::PasswordEntry::builder()
         .placeholder_text(placeholder)
+        .show_peek_icon(true)
         .build();
     p.add_css_class("text-field");
     p
@@ -833,6 +833,8 @@ pub struct UserPanel {
     pub pill: gtk::Box,
     pub field: gtk::PasswordEntry,
     pub submit: gtk::Button,
+    /// Shown in place of the arrow while the password is being checked.
+    pub checking: gtk::Spinner,
     pub message: gtk::Label,
 }
 
@@ -864,6 +866,13 @@ impl UserPanel {
             .build();
         submit.add_css_class("lock-submit");
         pill.append(&submit);
+        let checking = gtk::Spinner::builder()
+            .valign(gtk::Align::Center)
+            .visible(false)
+            .tooltip_text("Checking…")
+            .build();
+        checking.add_css_class("lock-checking");
+        pill.append(&checking);
         let s2 = submit.clone();
         field.connect_changed(move |f| s2.set_sensitive(!f.text().is_empty()));
         let f2 = field.clone();
@@ -879,7 +888,19 @@ impl UserPanel {
             pill,
             field,
             submit,
+            checking,
             message,
+        }
+    }
+
+    /// Checking the password: the field waits, a spinner replaces the arrow.
+    pub fn set_busy(&self, on: bool) {
+        self.field.set_sensitive(!on);
+        self.submit.set_visible(!on);
+        self.checking.set_visible(on);
+        self.checking.set_spinning(on);
+        if on {
+            self.message.set_label("");
         }
     }
 
@@ -894,8 +915,10 @@ impl UserPanel {
 
     /// Wrong password: shake once, clear, say why.
     pub fn reject(&self, why: &str) {
+        self.set_busy(false);
         self.message.set_label(why);
         self.field.set_text("");
+        self.field.grab_focus();
         self.pill.remove_css_class("shake");
         let p = self.pill.clone();
         glib::idle_add_local_once(move || p.add_css_class("shake"));

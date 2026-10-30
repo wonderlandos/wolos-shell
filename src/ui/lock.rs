@@ -359,19 +359,17 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
     panel.field.connect_activate(move |f| {
         let pw = f.text().to_string();
         let typed = pw.clone();
-        f.set_sensitive(false);
-        p2.message.set_label("");
+        p2.set_busy(true);
         let (p, check, ok, failed) = (p2.clone(), check(), ok.clone(), failed.clone());
         glib::spawn_future_local(async move {
             let v = gtk::gio::spawn_blocking(move || check(pw))
                 .await
                 .unwrap_or(Verdict::Error);
-            p.field.set_sensitive(true);
+            p.set_busy(false);
             if v == Verdict::Ok {
                 ok(typed)
             } else {
                 p.reject(v.message());
-                p.field.grab_focus();
                 failed(v);
             }
         });
