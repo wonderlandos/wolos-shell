@@ -14,6 +14,7 @@ pub mod overview;
 pub mod panels;
 pub mod settings;
 pub mod setup;
+pub mod shortcut_sheet;
 pub mod spotlight;
 pub mod store;
 pub mod switcher;
@@ -106,6 +107,7 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("overview", overview::build(&app));
             p.insert("control-center", control_center::panel(&app, sys.clone()));
             p.insert("force-quit", force_quit::build(&app));
+            p.insert("shortcuts", shortcut_sheet::build(&app));
             let (shot, record) = capture::build(&app);
             p.insert("screenshot", shot);
             drop(p);

@@ -328,6 +328,20 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // ⇧⌘/: every shortcut shipped by default, in columns.
+            name: "shortcut-sheet".into(),
+            size: (ui::shortcut_sheet::WIDTH + 2 * kit::widgets::S6, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let list = wol_core::shortcuts::load_defaults(|_| None);
+                let c = ui::shortcut_sheet::content(&shell::shortcut_sheet::sections(&list, false));
+                c.set_halign(gtk::Align::Center);
+                c.set_valign(gtk::Align::Center);
+                c.upcast()
+            }),
+        },
+        Case {
             // ⌥⌘Esc: open apps, most recent first, the frontmost chosen.
             name: "force-quit".into(),
             size: (420, 1),
