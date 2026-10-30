@@ -120,6 +120,29 @@ fn watch_downloads(dir: &str, items: Rc<RefCell<Vec<Item>>>) -> Option<gio::File
     Some(m)
 }
 
+/// Seconds a launched icon bounces at most when no window shows up.
+pub const LAUNCH_TIMEOUT_SECS: u32 = 15;
+
+/// Clicking a pinned app that is not running bounces its icon.
+pub fn bounces_on_click(running: bool) -> bool {
+    !running
+}
+
+fn launched(t: &w::DockTile) {
+    if !bounces_on_click(t.is_running()) {
+        return;
+    }
+    t.set_launching(true);
+    let weak = t.downgrade();
+    glib::timeout_add_seconds_local_once(LAUNCH_TIMEOUT_SECS, move || {
+        // Still bouncing: no window came up; the bounce and the dot go.
+        if let Some(t) = weak().filter(w::DockTile::is_launching) {
+            t.set_launching(false);
+            t.set_running(false);
+        }
+    });
+}
+
 pub struct Dock {
     pub root: gtk::Box,
     tiles: Vec<w::DockTile>,
@@ -143,6 +166,8 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
         .collect();
     for t in &tiles {
         root.append(&t.button);
+        let tile = t.clone();
+        t.button.connect_clicked(move |_| launched(&tile));
     }
     root.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     let downloads: Rc<RefCell<Vec<Item>>> = Default::default();
@@ -252,5 +277,28 @@ impl Dock {
         for (p, t) in PINS.iter().zip(&self.tiles) {
             t.set_running(apps::is_running(p, classes));
         }
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    /// A launched app bounces until its first window maps (it shows as running), or the timeout.
+    #[test]
+    fn the_icon_bounces_until_the_app_runs() {
+        assert!(bounces_on_click(false));
+        assert!(!bounces_on_click(true), "a running app just comes forward");
+        const { assert!(LAUNCH_TIMEOUT_SECS >= 5 && LAUNCH_TIMEOUT_SECS <= 30) };
+        let css = include_str!("../kit/kit.css");
+        let rule = css
+            .lines()
+            .find(|l| l.starts_with("button.dock-tile.launching"))
+            .expect("a .launching rule");
+        assert!(
+            rule.contains("animation:") && rule.contains("infinite"),
+            "{rule}"
+        );
+        assert!(css.contains("@keyframes dock-bounce"));
     }
 }

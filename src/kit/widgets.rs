@@ -716,6 +716,9 @@ pub fn menubar_item(child: &impl IsA<gtk::Widget>) -> gtk::Button {
 }
 
 /// Dock tile: 56px app icon + running dot underneath.
+/// A Dock icon. It bounces while its app starts (`launching`, a CSS animation, so reduce motion
+/// stills it).
+#[derive(Clone)]
 pub struct DockTile {
     pub button: gtk::Button,
     dot: gtk::Box,
@@ -740,9 +743,43 @@ impl DockTile {
         DockTile { button, dot }
     }
     pub fn set_running(&self, on: bool) {
+        if !on && self.is_launching() {
+            return; // the starting app keeps its dot
+        }
         let o = if on { 1.0 } else { 0.0 };
         if self.dot.opacity() != o {
             self.dot.set_opacity(o);
+        }
+        if on {
+            self.set_launching(false);
+        }
+    }
+    pub fn is_running(&self) -> bool {
+        self.dot.opacity() > 0.0 && !self.is_launching()
+    }
+    pub fn is_launching(&self) -> bool {
+        self.button.has_css_class("launching")
+    }
+    /// A handle that does not keep the tile alive.
+    pub fn downgrade(&self) -> impl Fn() -> Option<DockTile> + 'static {
+        let (b, d) = (self.button.downgrade(), self.dot.downgrade());
+        move || {
+            Some(DockTile {
+                button: b.upgrade()?,
+                dot: d.upgrade()?,
+            })
+        }
+    }
+    /// Bounce on (the dot shows at once, like a started app) or off.
+    pub fn set_launching(&self, on: bool) {
+        if on == self.is_launching() {
+            return;
+        }
+        if on {
+            self.button.add_css_class("launching");
+            self.dot.set_opacity(1.0);
+        } else {
+            self.button.remove_css_class("launching");
         }
     }
 }
