@@ -18,9 +18,20 @@ pub fn install(extra: &'static str) {
     icons(&display);
     let path = theme::active_path();
     let last = Rc::new(RefCell::new(Changed::<String>::new()));
+    let motion = Rc::new(std::cell::Cell::new(None::<bool>));
     let load = {
         let (provider, path, last) = (provider.clone(), path.clone(), last.clone());
         move || {
+            // Reduce motion (desktop prefs, same file as the looks): GTK animations follow.
+            let reduce =
+                wol_core::hyprprefs::load_desktop(std::path::Path::new(&super::config_home()))
+                    .reduce_motion;
+            if let (Some(on), Some(s)) = (
+                super::motion::animations_after(motion.replace(Some(reduce)), reduce),
+                gtk::Settings::default(),
+            ) {
+                s.set_gtk_enable_animations(on);
+            }
             let id = std::fs::read_to_string(&path).ok();
             let id = id
                 .as_deref()
