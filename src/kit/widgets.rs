@@ -224,6 +224,7 @@ pub fn segmented(options: &[&str], selected: usize, picked: impl Fn(usize) + 'st
 pub fn search_field(placeholder: &str) -> gtk::SearchEntry {
     let s = gtk::SearchEntry::builder()
         .placeholder_text(placeholder)
+        .show_peek_icon(true)
         .build();
     s.add_css_class("search-field");
     s
@@ -848,6 +849,7 @@ impl UserPanel {
         pill.set_size_request(LOCK_FIELD_WIDTH, LOCK_FIELD_HEIGHT);
         let field = gtk::PasswordEntry::builder()
             .placeholder_text("Enter Password")
+            .show_peek_icon(true)
             .hexpand(true)
             .valign(gtk::Align::Center)
             .build();
