@@ -1089,7 +1089,8 @@ fn effects_page_answers_after_it_is_built() {
 
 /// A switch whose change takes time: insensitive while it runs, flipped back when it fails.
 fn a_toggle_waits_for_its_change_and_reverts_when_it_fails() {
-    let pending: Rc<std::cell::RefCell<Option<Box<dyn FnOnce(bool)>>>> = Default::default();
+    type Done = Box<dyn FnOnce(bool)>;
+    let pending: Rc<std::cell::RefCell<Option<Done>>> = Default::default();
     let p = pending.clone();
     let s = w::pending_toggle(false, move |_on, done| *p.borrow_mut() = Some(done));
     s.set_active(true);
