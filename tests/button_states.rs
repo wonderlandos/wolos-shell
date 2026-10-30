@@ -31,7 +31,11 @@ fn hovered_buttons_also_look_pressed() {
 
 #[test]
 fn push_buttons_hover_press_and_disable() {
-    for s in ["button.btn:hover", "button.btn:active", "button.btn:disabled"] {
+    for s in [
+        "button.btn:hover",
+        "button.btn:active",
+        "button.btn:disabled",
+    ] {
         assert!(CSS.contains(s), "{s}");
     }
 }
