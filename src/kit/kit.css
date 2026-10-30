@@ -194,6 +194,7 @@ label.status-bar { min-height: 24px; padding: 0 16px; border-top: 1px solid var(
 .spotlight-hits { padding: 0 8px 8px 8px; border-top: 1px solid var(--line); padding-top: 8px; }
 .spotlight-none { padding: 16px 8px 12px 8px; }
 button.hit { background: none; border: none; box-shadow: none; border-radius: 6px; padding: 4px 8px; min-height: 0; }
+button.hit:hover { background: var(--control); }
 button.hit.selected { background: var(--accent); }
 button.hit.selected label { color: var(--accent-text); }
 /* Force Quit Applications (⌥⌘Esc): a list card of open apps, the chosen one in accent. */

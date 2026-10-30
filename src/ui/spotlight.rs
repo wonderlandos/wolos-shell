@@ -157,6 +157,11 @@ pub fn run() -> glib::ExitCode {
 /// A shown result: its row and what it launches.
 type Hit = (gtk::Button, Vec<String>);
 
+/// The row to select when the pointer enters row `hovered` (of `len`) while `sel` is selected.
+pub fn hover_select(sel: usize, hovered: usize, len: usize) -> Option<usize> {
+    (hovered < len && hovered != sel).then_some(hovered)
+}
+
 pub fn content(
     items: Rc<RefCell<Vec<Item>>>,
     names: Rc<RefCell<files::Index>>,
@@ -223,6 +228,22 @@ pub fn content(
                         w.close();
                     }
                 });
+                {
+                    // The pointer moves the selection (macOS): Return opens what is lit.
+                    let (shown, sel) = (shown.clone(), sel.clone());
+                    let motion = gtk::EventControllerMotion::new();
+                    motion.connect_enter(move |_, _, _| {
+                        let Ok(s) = shown.try_borrow() else { return };
+                        if let Some(n) = hover_select(sel.get(), i, s.len()) {
+                            if let Some((o, _)) = s.get(sel.get()) {
+                                o.remove_css_class("selected");
+                            }
+                            s[n].0.add_css_class("selected");
+                            sel.set(n);
+                        }
+                    });
+                    b.add_controller(motion);
+                }
                 hits.append(&b);
                 s.push((b, it.exec));
             }
@@ -275,6 +296,20 @@ pub fn content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A row under the pointer lights up like the keyboard selection (and becomes it, so Return
+    /// opens what is highlighted).
+    #[test]
+    fn rows_light_up_under_the_pointer() {
+        let css = include_str!("../kit/kit.css");
+        assert!(
+            css.contains("button.hit:hover"),
+            "hover style for result rows"
+        );
+        assert_eq!(hover_select(0, 3, 5), Some(3));
+        assert_eq!(hover_select(3, 3, 5), None);
+        assert_eq!(hover_select(0, 7, 5), None);
+    }
 
     #[test]
     fn index_has_settings_pages_and_pins() {
