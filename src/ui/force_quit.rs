@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn force_quit_ends_every_window_of_the_chosen_app() {
         let c = |a: &str, class: &str| Client::new(a, class, "");
-        let clients = [c("0x1", "foot"), c("0x2", "firefox"), c("0x3", "foot")];
+        let clients = [c("0x1", "foot"), c("0x2", "helium"), c("0x3", "foot")];
         let app = |class: &str| App {
             class: class.into(),
             name: class.into(),

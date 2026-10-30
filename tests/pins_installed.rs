@@ -15,7 +15,7 @@ const PROVIDERS: &[(&str, &str, &str)] = &[
     ("gnome-calendar", "gnome-calendar", "org.gnome.Calendar"),
     ("gnote", "gnote", "org.gnome.Gnote"),
     ("foot", "foot", "foot"),
-    ("firefox", "firefox", "firefox"),
+    ("helium", "helium-browser", "helium"),
 ];
 
 fn repo(p: &str) -> PathBuf {
@@ -93,10 +93,10 @@ fn packaged_pins_are_named_by_their_window_class() {
 }
 
 #[test]
-fn browser_pin_is_firefox() {
-    // Firefox is the WolOS browser: its Wayland app-id (Hyprland class) is `firefox`.
+fn browser_pin_is_helium() {
+    // Helium is the WolOS browser: /usr/bin/helium sets its Wayland app-id (Hyprland class) to `helium`.
     let b = PINS.iter().find(|p| p.name == "Browser").unwrap();
-    assert_eq!((b.id, b.exec), ("firefox", &["firefox"][..]));
+    assert_eq!((b.id, b.exec), ("helium", &["helium"][..]));
 }
 
 #[test]

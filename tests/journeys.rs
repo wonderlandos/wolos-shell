@@ -204,20 +204,20 @@ fn j11_revoked_helpers_stay_revoked() {
 fn j8_force_quit_ends_a_frozen_app() {
     use shell::appmenu::{Act, app_menu, batch, parse_verb, verb};
     use shell::hypr::Client;
-    let menu = app_menu("Firefox", "firefox");
+    let menu = app_menu("Helium", "helium");
     let row = menu
         .iter()
         .find(|r| r.2 == Some(Act::ForceQuit))
         .expect("Force Quit in the app menu");
-    assert_eq!(row.0, "Force Quit Firefox");
+    assert_eq!(row.0, "Force Quit Helium");
     assert_eq!(
         parse_verb(&verb(Act::ForceQuit).unwrap()),
         Some(Act::ForceQuit)
     );
-    let front = Client::new("0xa", "firefox", "Mail");
+    let front = Client::new("0xa", "helium", "Mail");
     let all = [
         front.clone(),
-        Client::new("0xb", "firefox", "Docs"),
+        Client::new("0xb", "helium", "Docs"),
         Client::new("0xc", "foot", "Terminal"),
     ];
     assert_eq!(
