@@ -37,12 +37,19 @@ pub fn install(extra: &'static str) {
             };
             let t = theme::resolve(id.as_deref(), dark);
             let contrast = contrast_on();
+            let glass = t
+                .tokens
+                .get("glass")
+                .and_then(|g| wol_core::looks::glass_css(g, looks_glass()))
+                .unwrap_or_default();
             if last.borrow_mut().set(format!(
-                "{}{}",
+                "{}{}{glass}",
                 t.id,
                 if contrast { "+contrast" } else { "" }
             )) {
                 let mut css = theme::stylesheet(&t, extra);
+                // After the tokens and kit: the look's glass wins over the theme's.
+                css.push_str(&glass);
                 if contrast {
                     css.push_str(CONTRAST_CSS);
                 }
@@ -55,7 +62,7 @@ pub fn install(extra: &'static str) {
     };
     load();
     auto_timer(Rc::new(load.clone()));
-    for p in [path.clone(), contrast_path()] {
+    for p in [path.clone(), contrast_path(), looks_path()] {
         if let Ok(m) = gio::File::for_path(&p)
             .monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
         {
@@ -96,6 +103,17 @@ pub fn set_active(id: &str) -> std::io::Result<()> {
 pub const CONTRAST_FILE: &str = "wol/contrast";
 /// Token overrides appended to the kit stylesheet while the flag exists.
 pub const CONTRAST_CSS: &str = include_str!("contrast.css");
+
+/// Settings > Effects & Looks prefs (`glass` multiplies the theme's glass alpha).
+fn looks_path() -> std::path::PathBuf {
+    std::path::Path::new(&super::config_home()).join(wol_core::hyprprefs::PREFS_FILE)
+}
+
+fn looks_glass() -> f32 {
+    wol_core::hyprprefs::load_desktop(std::path::Path::new(&super::config_home()))
+        .looks
+        .glass
+}
 
 fn contrast_path() -> std::path::PathBuf {
     std::path::Path::new(&super::config_home()).join(CONTRAST_FILE)
