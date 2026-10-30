@@ -15,6 +15,7 @@ pub mod layout;
 pub mod login;
 pub mod overview;
 pub mod perf;
+pub mod phones;
 pub mod protocol;
 pub mod search;
 pub mod setup;
