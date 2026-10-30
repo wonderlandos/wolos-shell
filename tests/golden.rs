@@ -516,6 +516,21 @@ fn cases() -> Vec<Case> {
             }),
         });
     }
+    v.push(Case {
+        name: "setup-account-mismatch-1024".into(),
+        size: (1024, 640),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| {
+            use shell::setup::Field;
+            let s = ui::setup::Setup::new(&shell::system::Fake);
+            s.show(shell::setup::Step::Account);
+            s.type_into(Field::FullName, "Alice Liddell");
+            s.type_into(Field::Password, "curiouser");
+            s.type_into(Field::Verify, "curix"); // shows while typing, before Continue
+            s.root.clone()
+        }),
+    });
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
         for page in [
             "choose",
