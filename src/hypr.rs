@@ -21,6 +21,8 @@ pub enum Event {
     Urgent {
         address: String,
     },
+    /// The focus moved to another display (its connector name).
+    FocusedMonitor(String),
     Other,
 }
 
@@ -48,6 +50,7 @@ pub fn parse_event(line: &str) -> Option<Event> {
             address: data.into(),
         },
         "workspace" => Event::Workspace(data.into()),
+        "focusedmon" => Event::FocusedMonitor(data.split(',').next().unwrap_or(data).into()),
         "urgent" => Event::Urgent {
             address: format!("0x{data}"),
         },
@@ -241,6 +244,10 @@ mod tests {
                 class: "".into(),
                 title: "".into()
             })
+        );
+        assert_eq!(
+            parse_event("focusedmon>>HDMI-A-1,2"),
+            Some(Event::FocusedMonitor("HDMI-A-1".into()))
         );
         assert_eq!(parse_event("garbage"), None);
     }

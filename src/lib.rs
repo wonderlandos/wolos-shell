@@ -7,6 +7,7 @@ pub mod clipboard;
 pub mod clock;
 pub mod copy;
 pub mod desktop;
+pub mod displays;
 pub mod files;
 pub mod focus;
 pub mod hypr;

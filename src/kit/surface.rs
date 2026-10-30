@@ -214,6 +214,18 @@ pub fn place(w: &impl IsA<gtk::Window>, s: Spec) {
     });
 }
 
+/// Puts `w` on `display` (None: the compositor picks). A mapped surface moves at once.
+#[cfg(feature = "layer-shell")]
+pub fn set_monitor(w: &impl IsA<gtk::Window>, display: Option<&gtk::gdk::Monitor>) {
+    use gtk4_layer_shell::LayerShell;
+    if gtk4_layer_shell::is_supported() {
+        w.set_monitor(display);
+    }
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn set_monitor(_w: &impl IsA<gtk::Window>, _display: Option<&gtk::gdk::Monitor>) {}
+
 /// True when surfaces really are layers (not dev toplevels).
 pub fn layered() -> bool {
     #[cfg(feature = "layer-shell")]

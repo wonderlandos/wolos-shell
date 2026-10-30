@@ -35,6 +35,8 @@ window.wallpaper { background: linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04
 .menubar-strip { min-height: 28px; background: var(--bar-fill); padding: 0 8px; }
 .menubar-strip label, .menubar-strip image { color: var(--bar-text); }
 .menubar-strip image { -gtk-icon-size: 16px; }
+/* A display without the focus: its menu bar steps back (macOS). */
+.menubar-strip.inactive > * { opacity: 0.5; }
 .menubar-strip .app-name { font-weight: 700; }
 button.menubar-item, .menubar-strip menubutton > button {
   background: none; border: none; box-shadow: none; outline: none; min-height: 24px; min-width: 0;

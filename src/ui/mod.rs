@@ -2,6 +2,7 @@
 pub mod approval;
 pub mod capture;
 pub mod control_center;
+pub mod displays;
 pub mod dock;
 pub mod flatpak_consent;
 pub mod force_quit;
@@ -66,9 +67,12 @@ pub fn run_shell() -> glib::ExitCode {
         mark(t0, "icontheme");
         let sys = crate::system::default_system();
         let panels: Panels = Default::default();
-        let (bar_win, bar) = menubar::build(app, &*sys);
+        // The main display's surfaces go there from the first frame (no remap later).
+        let main = displays::monitors().into_iter().next().map(|m| m.1);
+        let (bar_win, bar) = menubar::build(app, &*sys, main.as_ref(), true);
         mark(t0, "menubar");
         let (dock_win, dock, dock_keys) = dock::build(app);
+        kit::surface::set_monitor(&dock_win, main.as_ref());
         let bar_keys = menubar::keyboard(&bar_win, &bar.root);
         mark(t0, "dock");
         kit::snapshot_on_map(&bar_win, "menubar");
@@ -86,18 +90,30 @@ pub fn run_shell() -> glib::ExitCode {
         // Everything below is off the first-frame path.
         let app = app.clone();
         glib::idle_add_local_once(move || {
-            let wall = panels::wallpaper(&app);
-            wall.connect_map(move |_| {
-                mark(t0, "wallpaper map");
-                kit::reveal::boot_mark("desktop shown");
-            });
-            wall.present();
-            // Desktop widgets (ADR 0010): above the wallpaper, below windows.
+            // Desktop widgets (ADR 0010): above the wallpaper, below windows, main display.
             let (desk, board) = widgets::build(&app, sys.clone());
+            kit::surface::set_monitor(&desk, main.as_ref());
+            // A wallpaper on every display, a menu bar on the others; follows hotplug.
+            let shown = std::cell::Cell::new(false);
+            let screens = displays::Displays::start(
+                &app,
+                sys.clone(),
+                bar_win.clone(),
+                bar.clone(),
+                vec![dock_win.clone().upcast(), desk.clone().upcast()],
+                Box::new(move || {
+                    if !shown.replace(true) {
+                        mark(t0, "wallpaper map");
+                        kit::reveal::boot_mark("desktop shown");
+                    }
+                }),
+            );
+            // Lives for the session.
+            std::mem::forget(screens);
             desk.present();
             let osd = panels::Osd::build(&app);
-            menubar::poll_status(bar.clone(), sys.clone());
-            ipc::hypr_events(bar, dock, panels.clone());
+            menubar::poll_status(sys.clone());
+            ipc::hypr_events(dock, panels.clone());
             let mut p = panels.borrow_mut();
             p.insert("osd", osd.window.clone());
             p.insert("clipboard", panels::clipboard(&app));
