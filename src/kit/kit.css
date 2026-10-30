@@ -499,3 +499,10 @@ label.status-line { margin: 0 12px; }
 .downloads-stack { padding: 12px; }
 button.stack-item { background: none; border: none; box-shadow: none; padding: 6px; border-radius: 10px; }
 button.stack-item:hover { background: alpha(currentColor, 0.08); }
+
+/* ---- Button states (every Kit button): pressed darkens, keyboard focus rings, disabled fades ---- */
+button.btn:hover { background-image: image(alpha(currentColor, 0.08)); }
+button.btn:active, button.capture-close:active, button.capture-mode:active, button.control-detail:active, button.corner-button:active, button.detail-link:active, button.device-button:active, button.get-button:active, button.icon-button:active, button.lock-round:active, button.lock-submit:active, button.menubar-item:active, button.menu-item:active, button.nav-row:active, button.overview-window-button:active, button.row-button:active, button.session-item:active, button.shortcut-recorder:active, button.square-tile:active, button.stack-item:active, button.toggle-tile:active { background-image: image(alpha(black, 0.16)); }
+button.btn:disabled { opacity: 0.45; }
+button.dock-tile:active image { -gtk-icon-filter: brightness(0.65); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
