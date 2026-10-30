@@ -53,7 +53,7 @@ type BoardFn = Box<dyn Fn(&Rc<Board>)>;
 /// Board -> provider notifications.
 pub enum Change {
     Added(String),
-    Removed(Placed),
+    Removed(Box<Placed>),
     /// Size or options changed.
     Updated(String),
     /// The user allowed a widget's network host.
@@ -61,6 +61,8 @@ pub enum Change {
     Edit(bool),
     /// A Timer card's button.
     Timer(String, timer::Press),
+    /// The whole layout was swapped (reload, a display came or went).
+    Replaced,
 }
 
 struct Drag {
@@ -69,6 +71,9 @@ struct Drag {
     y0: f64,
     target: (u16, u16),
 }
+
+/// Saves one display's part of the layout (`Desks`).
+type Saver = Rc<dyn Fn(&Desktop)>;
 
 struct St {
     file: Option<PathBuf>,
@@ -93,6 +98,10 @@ pub struct Board {
     win: RefCell<Option<gtk::Window>>,
     /// Edit Widgets turned on: the other transient panels close (`transient`).
     opened: RefCell<Option<Rc<dyn Fn()>>>,
+    /// Saves through the per-display store (`Desks`) instead of writing `file` itself.
+    saver: RefCell<Option<Saver>>,
+    /// The display new widgets go on (its `shared::widgets::displays::Display::key`).
+    stamp: RefCell<Option<String>>,
 }
 
 fn entries(packages: &[Rc<Package>]) -> Vec<Entry> {
@@ -176,6 +185,8 @@ impl Board {
                 }),
                 listener: RefCell::new(None),
                 win: RefCell::new(None),
+                saver: RefCell::new(None),
+                stamp: RefCell::new(None),
             }
         })
         .wired()
@@ -277,7 +288,22 @@ impl Board {
         self.st.borrow().edit
     }
 
+    /// Saves go through `f` (one display's part of the layout).
+    pub fn set_saver(&self, f: Rc<dyn Fn(&Desktop)>) {
+        self.saver.replace(Some(f));
+    }
+
+    /// New widgets are placed on display `key`.
+    pub fn set_stamp(&self, key: Option<String>) {
+        self.stamp.replace(key);
+    }
+
     fn save(&self) {
+        let saver = self.saver.borrow().clone();
+        if let Some(f) = saver {
+            let desk = self.st.borrow().desk.clone();
+            return f(&desk);
+        }
         let st = self.st.borrow();
         if let Some(f) = &st.file
             && let Err(e) = wd::save(f, &st.desk)
@@ -535,6 +561,7 @@ impl Board {
                 col,
                 row,
                 options,
+                display: self.stamp.borrow().clone(),
             });
             id
         };
@@ -553,7 +580,7 @@ impl Board {
         self.drop_card(id);
         self.save();
         if let Some(p) = removed {
-            self.notify(Change::Removed(p));
+            self.notify(Change::Removed(Box::new(p)));
         }
     }
 
@@ -684,6 +711,7 @@ impl Board {
         }
         self.gallery.set_entries(entries(&packages));
         self.layout();
+        self.notify(Change::Replaced);
     }
 
     fn card_menu(self: &Rc<Self>, id: &str, x: f64, y: f64) {
@@ -1437,6 +1465,7 @@ impl Live {
             }
         };
         check();
+        let alive = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let Ok(conn) = gio::SocketClient::new()
                 .connect_future(&gio::UnixSocketAddress::new(&path))
@@ -1449,6 +1478,10 @@ impl Live {
                 .read_line_utf8_future(glib::Priority::DEFAULT_IDLE)
                 .await
             {
+                // A display's desktop unplugged: its watch ends with it.
+                if alive.strong_count() == 0 {
+                    break;
+                }
                 if wd::fullscreen_may_change(&line) {
                     check();
                 }
@@ -1688,6 +1721,7 @@ impl Live {
                 self.sync();
             }
             Change::Edit(_) => {}
+            Change::Replaced => self.start_all(),
         }
     }
 
@@ -1735,15 +1769,15 @@ fn read_disk() -> (Desktop, PathBuf, Vec<Package>) {
     (desk, file, packages)
 }
 
-/// The desktop widget surface with its live data.
-pub fn build(
+/// A desktop widget surface for `desk`, with its live data, ended with `life` (its window).
+fn surface_for(
     app: &gtk::Application,
     sys: Rc<dyn crate::system::System>,
+    desk: Desktop,
+    packages: Vec<Package>,
 ) -> (gtk::ApplicationWindow, Rc<Board>) {
-    let (desk, file, packages) = read_disk();
-    let board = Board::new(desk, Some(file), packages);
+    let board = Board::new(desk, None, packages);
     let win = super::window(app, "desktop", surface::Spec::desktop());
-    crate::kit::surface::survive_output_loss(&win, surface::Spec::desktop());
     win.set_child(Some(&board.root));
     board.set_window(win.upcast_ref());
     let keys = gtk::EventControllerKey::new();
@@ -1786,22 +1820,167 @@ pub fn build(
     }));
     live.start_all();
     live.watch_fullscreen();
+    // The providers live as long as the surface; its timer goes with it.
+    win.connect_destroy(move |_| {
+        if let Some(t) = live.timer.borrow_mut().take() {
+            t.remove();
+        }
+    });
+    (win, board)
+}
+
+/// One display's board and the widget ids it holds in the saved layout.
+struct Part {
+    win: Option<gtk::ApplicationWindow>,
+    board: Rc<Board>,
+    owned: std::collections::BTreeSet<String>,
+}
+
+/// The desktop widgets of every display, kept in one `widgets.json` (`shared::widgets::displays`):
+/// the main display's board lives for the session (its window moves with the main display), the
+/// others come and go with their display. Each board saves its part; the parts fold into the file.
+pub struct Desks {
+    app: gtk::Application,
+    sys: Rc<dyn crate::system::System>,
+    file: PathBuf,
+    master: RefCell<Desktop>,
+    /// By connector; "" is the main display's board until the display list is known.
+    parts: RefCell<HashMap<String, Part>>,
+    main: Rc<Board>,
+}
+
+fn display_list() -> Vec<(shared::widgets::displays::Display, gtk::gdk::Monitor)> {
+    super::displays::monitors()
+        .into_iter()
+        .map(|(c, m)| {
+            let description = m.description().map(|d| d.to_string()).unwrap_or_default();
+            (
+                shared::widgets::displays::Display {
+                    connector: c,
+                    description,
+                },
+                m,
+            )
+        })
+        .collect()
+}
+
+impl Desks {
+    fn save_part(&self, connector: &str, part: &Desktop) {
+        let mut master = self.master.borrow_mut();
+        let mut parts = self.parts.borrow_mut();
+        let Some(p) = parts.get_mut(connector) else {
+            return;
+        };
+        p.owned = shared::widgets::displays::merge(&mut master, &p.owned, part);
+        if let Err(e) = wd::save(&self.file, &master) {
+            eprintln!("wol-shell: {}: {e}", self.file.display());
+        }
+    }
+
+    fn saver(self: &Rc<Self>, connector: &str) -> Rc<dyn Fn(&Desktop)> {
+        let (me, c) = (Rc::downgrade(self), connector.to_string());
+        Rc::new(move |d: &Desktop| {
+            if let Some(me) = me.upgrade() {
+                me.save_part(&c, d);
+            }
+        })
+    }
+
+    /// The display list changed (or the file was reloaded): every board gets its part again.
+    fn split(self: &Rc<Self>) {
+        use shared::widgets::displays as dp;
+        let list = display_list();
+        let ds: Vec<dp::Display> = list.iter().map(|x| x.0.clone()).collect();
+        let master = self.master.borrow().clone();
+        let (_, _, packages) = read_disk();
+        let mut parts = self.parts.borrow_mut();
+        // Gone displays take their board with them (their widgets wait in the file).
+        let keep: HashSet<String> = ds.iter().skip(1).map(|d| d.connector.clone()).collect();
+        parts.retain(|c, p| {
+            let stay = c.is_empty() || keep.contains(c);
+            if !stay && let Some(w) = &p.win {
+                w.destroy();
+            }
+            stay
+        });
+        // The main board is filed under "" whichever display is main.
+        let main_part = dp::subset(&master, &ds, 0);
+        let main = parts.entry(String::new()).or_insert_with(|| Part {
+            win: None,
+            board: self.main.clone(),
+            owned: Default::default(),
+        });
+        main.owned = main_part.widgets.iter().map(|p| p.id.clone()).collect();
+        self.main.set_stamp(ds.first().map(dp::Display::key));
+        self.main.replace(main_part, packages.clone());
+        for (i, (d, mon)) in list.iter().enumerate().skip(1) {
+            let part = dp::subset(&master, &ds, i);
+            let owned = part.widgets.iter().map(|p| p.id.clone()).collect();
+            if let Some(p) = parts.get_mut(&d.connector) {
+                p.board.replace(part, packages.clone());
+                p.board.set_stamp(Some(d.key()));
+                p.owned = owned;
+                continue;
+            }
+            let (win, board) = surface_for(&self.app, self.sys.clone(), part, packages.clone());
+            surface::set_monitor(&win, Some(mon));
+            board.set_stamp(Some(d.key()));
+            board.set_saver(self.saver(&d.connector));
+            win.present();
+            parts.insert(
+                d.connector.clone(),
+                Part {
+                    win: Some(win),
+                    board,
+                    owned,
+                },
+            );
+        }
+    }
+}
+
+/// The main display's desktop widget surface, and the per-display boards beside it.
+pub fn build(
+    app: &gtk::Application,
+    sys: Rc<dyn crate::system::System>,
+) -> (gtk::ApplicationWindow, Rc<Board>) {
+    let (desk, file, packages) = read_disk();
+    let (win, board) = surface_for(app, sys.clone(), Desktop::default(), packages);
+    crate::kit::surface::survive_output_loss(&win, surface::Spec::desktop());
+    let desks = Rc::new(Desks {
+        app: app.clone(),
+        sys,
+        file,
+        master: RefCell::new(desk),
+        parts: Default::default(),
+        main: board.clone(),
+    });
+    board.set_saver(desks.saver(""));
+    desks.split();
+    if let Some(d) = gtk::gdk::Display::default() {
+        let weak = Rc::downgrade(&desks);
+        d.monitors().connect_items_changed(move |_, _, _, _| {
+            if let Some(me) = weak.upgrade() {
+                me.split();
+            }
+        });
+    }
     // `wol shell reload`: widgets.json and the package folders again.
-    let l3 = Rc::downgrade(&live);
     let first = Cell::new(true);
+    let weak = Rc::downgrade(&desks);
     super::ipc::on_reload(move |_| {
         if first.replace(false) {
             return;
         }
-        if let Some(l) = l3.upgrade() {
-            let (desk, _, packages) = read_disk();
-            l.board.replace(desk, packages);
-            l.start_all();
+        if let Some(me) = weak.upgrade() {
+            me.master.replace(read_disk().0);
+            me.split();
         }
     });
-    // The providers live as long as the surface.
+    // The store lives as long as the main surface.
     win.connect_destroy(move |_| {
-        let _ = &live;
+        let _ = &desks;
     });
     (win, board)
 }

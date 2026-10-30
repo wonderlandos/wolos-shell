@@ -28,6 +28,8 @@ pub(crate) fn place(d: &mut Desktop, b: Builtin) -> Option<String> {
         col,
         row,
         options: Options::default(),
+        // The main display (Settings has no display of its own).
+        display: None,
     });
     Some(id)
 }
