@@ -1,16 +1,22 @@
-//! Privacy & Security: which apps may record the screen, control input, read the clipboard history
-//! or see the window list (compositor consent through wol-admind `consent`) and how each choice is
+//! Privacy & Security: which apps may record the screen, post notifications (libwol, ADR 0020),
+//! control input, read the clipboard history or see the window list (consent through wol-admind
+//! `consent`) and how each choice is
 //! enforced, the firewall (pf, `firewall`), the kernel protections WolOS ships, disk encryption,
 //! and the way to Assistants & Automation (`wol_core::security`).
 use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 4] = [
+pub(crate) const KINDS: [(&str, &str, &str); 5] = [
     (
         "screen-capture",
         "Screen Recording",
         "Can see and record everything on your screen.",
+    ),
+    (
+        "notifications",
+        "Notifications",
+        "Can show you notifications.",
     ),
     (
         "input-injection",
@@ -38,24 +44,25 @@ fn listed(items: &[&str]) -> String {
     }
 }
 
-/// What WolOS can promise for these permissions (`security::PERMISSIONS`): the compositor refuses
-/// some outright; for the rest it passes the choice on and cannot stop an app that ignores it.
+/// What WolOS can promise for these permissions (`security::PERMISSIONS`): the compositor or wold
+/// refuses some outright; for the rest it passes the choice on and cannot stop an app that ignores it.
 pub(crate) fn enforcement_note(caps: &[&str]) -> String {
-    let titles = |want: Enforcement| -> Vec<&str> {
+    let titles = |want: &[Enforcement]| -> Vec<&str> {
         KINDS
             .iter()
-            .filter(|k| caps.contains(&k.0) && security::enforcement(k.0) == Some(want))
+            .filter(|k| {
+                caps.contains(&k.0) && security::enforcement(k.0).is_some_and(|e| want.contains(&e))
+            })
             .map(|k| k.1)
             .collect()
     };
     let (hard, soft) = (
-        titles(Enforcement::Compositor),
-        titles(Enforcement::Advisory),
+        titles(&[Enforcement::Compositor, Enforcement::System]),
+        titles(&[Enforcement::Advisory]),
     );
     let mut note = Vec::new();
     if !hard.is_empty() {
-        let verb = if hard.len() == 1 { "is" } else { "are" };
-        note.push(format!("{} {verb} enforced by WolOS.", listed(&hard)));
+        note.push(format!("WolOS enforces {}.", listed(&hard)));
     }
     if !soft.is_empty() {
         note.push(format!(
@@ -140,7 +147,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
             &[w::list_row(
                 "security-high-symbolic",
                 "No app has extra access",
-                "Apps you allow to record the screen or control input are listed here.",
+                "Apps you allow to record the screen, send notifications or control input are listed here.",
                 None,
             )
             .upcast()],
@@ -331,14 +338,19 @@ mod tests {
         let all: Vec<&str> = KINDS.iter().map(|k| k.0).collect();
         assert_eq!(
             enforcement_note(&all),
-            "Screen Recording is enforced by WolOS. For Remote Control, Clipboard History and \
-             Window List, WolOS passes on your choice but cannot stop an app that ignores it."
+            "WolOS enforces Screen Recording and Notifications. For Remote Control, \
+             Clipboard History and Window List, WolOS passes on your choice but cannot stop an \
+             app that ignores it."
         );
         assert_eq!(
             enforcement_note(&["screen-capture"]),
-            "Screen Recording is enforced by WolOS."
+            "WolOS enforces Screen Recording."
         );
-        assert!(!enforcement_note(&["window-list"]).contains("enforced"));
+        assert!(!enforcement_note(&["window-list"]).contains("enforces"));
+        assert_eq!(
+            enforcement_note(&["notifications"]),
+            "WolOS enforces Notifications."
+        );
     }
 
     #[test]
