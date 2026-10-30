@@ -514,3 +514,8 @@ button.btn:active, button.capture-close:active, button.capture-mode:active, butt
 button.btn:disabled { opacity: 0.45; }
 button.dock-tile:active image { -gtk-icon-filter: brightness(0.65); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* A note on the desktop: text straight on the card, no field box. */
+.note-widget { padding: 4px; }
+.note-text, .note-text > text { background: transparent; color: inherit; }
+.note-text { font-size: 1.05em; }

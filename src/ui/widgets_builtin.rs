@@ -57,6 +57,8 @@ pub enum Data {
     /// One row per city, in the order chosen.
     WorldClock(Vec<worldclock::CityTime>),
     Timer(timer::View),
+    /// What the note says.
+    Note(String),
 }
 
 /// What a built-in may ask the desktop to do.
@@ -66,6 +68,17 @@ pub struct Hooks {
     pub choose_city: Rc<dyn Fn()>,
     /// Timer buttons.
     pub timer: Rc<dyn Fn(timer::Press)>,
+    /// None: a preview (gallery, goldens): the note cannot be edited.
+    pub note: Option<NoteHooks>,
+}
+
+/// What a note on the desktop asks for.
+#[derive(Clone)]
+pub struct NoteHooks {
+    /// The text changed (after a pause in typing, and when the note lets go of the keyboard).
+    pub text: Rc<dyn Fn(String)>,
+    /// true: the desktop takes the keyboard (the note was clicked); false: it gives it back.
+    pub keyboard: Rc<dyn Fn(bool)>,
 }
 
 impl Default for Hooks {
@@ -73,6 +86,7 @@ impl Default for Hooks {
         Hooks {
             choose_city: Rc::new(|| {}),
             timer: Rc::new(|_| {}),
+            note: None,
         }
     }
 }
@@ -88,6 +102,7 @@ pub fn card(data: &Data, size: Size, hooks: &Hooks) -> gtk::Box {
         Data::System(s) => system(s, size),
         Data::WorldClock(c) => world_clock(c, size),
         Data::Timer(v) => timer_view(v, size, hooks),
+        Data::Note(text) => note_view(text, hooks.note.clone()),
     };
     body.set_vexpand(true);
     d::card(size, &body)
@@ -257,6 +272,99 @@ fn world_clock(cities: &[worldclock::CityTime], size: Size) -> gtk::Box {
         r.append(&time);
         b.append(&r);
     }
+    b
+}
+
+// ---- Note ----
+
+/// Saved this long after the last key (and at once when the note lets go of the keyboard).
+const NOTE_SAVE_MS: u64 = 700;
+
+fn note_view(text: &str, hooks: Option<NoteHooks>) -> gtk::Box {
+    let b = w::vbox(0);
+    b.add_css_class("note-widget");
+    let view = gtk::TextView::new();
+    view.add_css_class("note-text");
+    view.set_wrap_mode(gtk::WrapMode::WordChar);
+    view.set_vexpand(true);
+    view.buffer().set_text(text);
+    let hint = centered(dim("Click to write a note."));
+    hint.set_can_target(false);
+    hint.set_visible(text.is_empty());
+    let over = gtk::Overlay::new();
+    over.set_child(Some(&view));
+    over.add_overlay(&hint);
+    b.append(&over);
+    let Some(h) = hooks else {
+        view.set_editable(false);
+        view.set_cursor_visible(false);
+        view.set_can_target(false);
+        return b;
+    };
+    // Typing: the hint goes, the text is saved after a pause.
+    let pending: Rc<std::cell::RefCell<Option<gtk::glib::SourceId>>> = Default::default();
+    let flush = {
+        let (pending, text) = (pending.clone(), h.text.clone());
+        Rc::new(move |buf: &gtk::TextBuffer| {
+            if let Some(id) = pending.take() {
+                id.remove();
+            }
+            text(
+                buf.text(&buf.start_iter(), &buf.end_iter(), false)
+                    .to_string(),
+            );
+        })
+    };
+    {
+        let (pending, flush, hint) = (pending.clone(), flush.clone(), hint.clone());
+        view.buffer().connect_changed(move |buf| {
+            hint.set_visible(buf.char_count() == 0);
+            if let Some(id) = pending.take() {
+                id.remove();
+            }
+            let (buf, flush, p2) = (buf.clone(), flush.clone(), pending.clone());
+            let id = gtk::glib::timeout_add_local_once(
+                std::time::Duration::from_millis(NOTE_SAVE_MS),
+                move || {
+                    p2.take();
+                    flush(&buf);
+                },
+            );
+            pending.replace(Some(id));
+        });
+    }
+    // A click takes the keyboard; Esc or another window in front gives it back.
+    let click = gtk::GestureClick::new();
+    {
+        let (keyboard, v) = (h.keyboard.clone(), view.clone());
+        click.connect_pressed(move |_, _, _, _| {
+            keyboard(true);
+            v.grab_focus();
+        });
+    }
+    view.add_controller(click);
+    let focus = gtk::EventControllerFocus::new();
+    {
+        let (keyboard, flush, v) = (h.keyboard.clone(), flush.clone(), view.clone());
+        focus.connect_leave(move |_| {
+            flush(&v.buffer());
+            keyboard(false);
+        });
+    }
+    view.add_controller(focus);
+    let keys = gtk::EventControllerKey::new();
+    {
+        let (keyboard, flush, v) = (h.keyboard.clone(), flush, view.clone());
+        keys.connect_key_pressed(move |_, k, _, _| {
+            if k == gtk::gdk::Key::Escape {
+                flush(&v.buffer());
+                keyboard(false);
+                return gtk::glib::Propagation::Stop;
+            }
+            gtk::glib::Propagation::Proceed
+        });
+    }
+    view.add_controller(keys);
     b
 }
 
@@ -949,6 +1057,10 @@ pub fn sample_timer() -> timer::View {
     c.view(445_000)
 }
 
+pub fn sample_note() -> String {
+    "Pick up the cake at 5\nCall Ana about Sunday\nRenew the library books".into()
+}
+
 pub fn sample_place() -> Place {
     Place {
         name: "Lisbon".into(),
@@ -1074,5 +1186,6 @@ pub fn sample(b: Builtin) -> Data {
         Builtin::System => Data::System(sample_system()),
         Builtin::WorldClock => Data::WorldClock(sample_cities()),
         Builtin::Timer => Data::Timer(sample_timer()),
+        Builtin::Note => Data::Note(sample_note()),
     }
 }
