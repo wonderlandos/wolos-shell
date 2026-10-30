@@ -4,6 +4,7 @@ pub mod capture;
 pub mod control_center;
 pub mod displays;
 pub mod dock;
+pub mod drop_shelf;
 pub mod flatpak_consent;
 pub mod force_quit;
 pub mod installer;
@@ -124,6 +125,7 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("control-center", control_center::panel(&app, sys.clone()));
             p.insert("force-quit", force_quit::build(&app));
             p.insert("shortcuts", shortcut_sheet::build(&app));
+            p.insert("shelf", drop_shelf::build(&app));
             let (shot, record) = capture::build(&app);
             p.insert("screenshot", shot);
             drop(p);

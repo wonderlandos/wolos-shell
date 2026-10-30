@@ -1820,6 +1820,7 @@ fn surface_for(
     let win = super::window(app, "desktop", surface::Spec::desktop());
     win.set_child(Some(&board.root));
     board.set_window(win.upcast_ref());
+    super::drop_shelf::accept_drops(&win);
     let keys = gtk::EventControllerKey::new();
     let b2 = Rc::downgrade(&board);
     keys.connect_key_pressed(move |_, k, _, _| match b2.upgrade() {
