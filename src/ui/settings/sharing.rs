@@ -42,14 +42,13 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: Sharing, status: &gtk::Label) {
             .unwrap_or_else(|| "you".into());
         into.append(&w::section(
             "",
-            &[form::toggle_row(
+            &[form::pending_toggle_row(
                 "Remote Login",
                 &format!("Log in from another computer: ssh {user}@{host}.local"),
                 on,
-                move |v| {
-                    if let Some(a) = admin("remote-login", &[if v { "on" } else { "off" }]) {
-                        ctx.act_say(a, &st)
-                    }
+                move |v, done| match admin("remote-login", &[if v { "on" } else { "off" }]) {
+                    Some(a) => ctx.act_switch(a, &st, done),
+                    None => done(false),
                 },
             )],
         ));

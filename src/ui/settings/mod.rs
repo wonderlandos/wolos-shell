@@ -516,6 +516,24 @@ impl Ctx {
             Rc::new(move |r| say(&st, r.err().map_or("", |e| e.message()))),
         );
     }
+    /// [`Self::act_say`] for a switch: `done(ok)` lets it settle or flip back.
+    pub(crate) fn act_switch(
+        self: &Rc<Self>,
+        a: Action,
+        status: &gtk::Label,
+        done: Box<dyn FnOnce(bool)>,
+    ) {
+        let (st, done) = (status.clone(), std::cell::RefCell::new(Some(done)));
+        self.act(
+            a,
+            Rc::new(move |r| {
+                say(&st, r.as_ref().err().map_or("", |e| e.message()));
+                if let Some(d) = done.borrow_mut().take() {
+                    d(r.is_ok())
+                }
+            }),
+        );
+    }
     fn allow(self: &Rc<Self>) {
         let pw = self.auth.field.text();
         self.auth.field.set_text("");
