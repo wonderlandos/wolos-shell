@@ -111,6 +111,7 @@ pub fn run_shell() -> glib::ExitCode {
             drop(p);
             transient::manage(&app, &panels);
             transient::close_on_press(&dock_win, &panels);
+            transient::close_on_menus(&bar_win, &panels);
             let sw = switcher::Switcher::build(&app);
             let handlers: ipc::Handlers = vec![
                 Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
