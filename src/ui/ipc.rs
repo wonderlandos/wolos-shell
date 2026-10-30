@@ -1,5 +1,5 @@
 //! Event sources on the GTK main loop (no threads, no polling): the shell socket and Hyprland's event socket.
-use super::{Panels, dock::Dock, menubar::Bar, panels::Osd};
+use super::{Panels, dock::Dock, panels::Osd};
 use crate::{hypr, protocol};
 use gtk::{gio, glib, prelude::*};
 use std::rc::Rc;
@@ -113,19 +113,17 @@ fn run(
 
 /// Hyprland `.socket2.sock`: active window -> menu bar name; open/close -> dock running dots;
 /// another app in front or a workspace switch closes the transient panels.
-pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>, panels: Panels) {
+pub fn hypr_events(dock: Rc<Dock>, panels: Panels) {
     let Some(path) = hypr::socket(".socket2.sock") else {
         return;
     };
     let installed = Rc::new(std::cell::OnceCell::<Vec<crate::desktop::Entry>>::new());
     let show = {
-        let (bar, installed) = (bar.clone(), installed.clone());
+        let installed = installed.clone();
         move |class: &str, title: &str| {
             let inst = installed.get_or_init(crate::desktop::load_all);
-            bar.set_app(
-                crate::apps::frontmost_name(class, title, crate::apps::PINS, inst),
-                class.to_string(),
-            );
+            let name = crate::apps::frontmost_name(class, title, crate::apps::PINS, inst);
+            super::menubar::set_app_all(name, class.to_string());
         }
     };
     // Events only report changes: start from the window focused now.
@@ -164,6 +162,7 @@ pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>, panels: Panels) {
                         dock.attention(&c.class);
                     }
                 }
+                Some(hypr::Event::FocusedMonitor(m)) => super::menubar::set_focused(&m),
                 Some(hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. }) => {
                     dock.set_running(&hypr::running_classes(&hypr::clients()));
                 }

@@ -13,9 +13,10 @@ const DYNAMIC_TICK: u32 = 60;
 
 /// The desktop picture: the saved choice (`wol wallpaper set`, Settings > Wallpaper), followed
 /// live through the shell reload and the choice file; Dynamic follows the clock.
-pub fn wallpaper(app: &gtk::Application) -> gtk::ApplicationWindow {
+/// One per display (`ui::displays`); it goes with its display.
+pub fn wallpaper(app: &gtk::Application, display: &gdk::Monitor) -> gtk::ApplicationWindow {
     let win = super::window(app, "wallpaper", Spec::wallpaper());
-    crate::kit::surface::survive_output_loss(&win, Spec::wallpaper());
+    crate::kit::surface::set_monitor(&win, Some(display));
     let pic = gtk::Picture::new();
     pic.set_content_fit(gtk::ContentFit::Cover);
     win.set_child(Some(&pic));
@@ -55,7 +56,12 @@ pub fn wallpaper(app: &gtk::Application) -> gtk::ApplicationWindow {
             m.cancel();
         });
     }
+    // Stops with the window (a display unplugged takes its wallpaper with it).
+    let alive = win.downgrade();
     glib::timeout_add_seconds_local(DYNAMIC_TICK, move || {
+        if alive.upgrade().is_none() {
+            return glib::ControlFlow::Break;
+        }
         show();
         glib::ControlFlow::Continue
     });

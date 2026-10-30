@@ -44,6 +44,19 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // A display without the focus: its menu bar dimmed (macOS).
+            name: "menubar-inactive".into(),
+            size: (900, 28),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let b = ui::menubar::content(&shell::system::Fake);
+                b.set_app("Files".into(), "wol-files".into());
+                b.set_active(false);
+                b.root.clone().upcast()
+            }),
+        },
+        Case {
             // No focused window: no app name and no app/Window menus (no resident Finder).
             name: "menubar-desktop".into(),
             size: (900, 28),

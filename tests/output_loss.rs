@@ -1,6 +1,8 @@
 //! Every layer surface the shell builds survives its display being unplugged: either
-//! `survive_output_loss` (menu bar, Dock, wallpaper, desktop come back; panels hide) or
-//! `set_hide_on_close`. Otherwise gtk4-layer-shell's close on output loss destroys it for good.
+//! `survive_output_loss` (the primary menu bar, Dock and desktop come back; panels hide),
+//! `set_hide_on_close`, or it belongs to one display (`set_monitor`: `ui::displays` builds it
+//! when the display comes and drops it when the display goes). Otherwise gtk4-layer-shell's
+//! close on output loss destroys it for good.
 use std::path::Path;
 
 /// Windows that are meant to go away when closed: a panel app's own window and its
@@ -37,7 +39,9 @@ fn shell_surfaces_survive_their_display_going_away() {
             .iter()
             .find(|e| e.0 == name)
             .map_or(0, |e| e.1);
-        let kept = count(&src, "survive_output_loss(") + count(&src, "set_hide_on_close(true)");
+        let kept = count(&src, "survive_output_loss(")
+            + count(&src, "set_hide_on_close(true)")
+            + count(&src, "surface::set_monitor(");
         if built > kept + exempt {
             bad.push(format!("{name}: {built} surfaces, {kept} kept"));
         }

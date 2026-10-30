@@ -29,9 +29,20 @@ pub struct Bar {
     /// Last values pushed to widgets: no relabel/redraw when unchanged.
     seen: RefCell<Seen>,
     name_seen: RefCell<Changed<String>>,
+    /// The display this bar is on (connector name; "" until placed).
+    pub display: RefCell<String>,
 }
 
 impl Bar {
+    /// Full strength on the focused display, dimmed on the others (macOS).
+    pub fn set_active(&self, on: bool) {
+        if on {
+            self.root.remove_css_class("inactive");
+        } else {
+            self.root.add_css_class("inactive");
+        }
+    }
+
     /// Frontmost app: bold name with its real menu; the Window menu only when a window is focused.
     pub fn set_app(&self, name: String, class: String) {
         if !self.name_seen.borrow_mut().set(format!("{name}\n{class}")) {
@@ -221,6 +232,11 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         show_percent: Default::default(),
         seen: Default::default(),
         name_seen: Default::default(),
+        display: Default::default(),
+    });
+    BARS.with_borrow_mut(|b| {
+        b.retain(|x| x.strong_count() > 0);
+        b.push(Rc::downgrade(&bar));
     });
     refresh(&bar, sys);
     follow_focus(&bar);
@@ -243,13 +259,33 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     bar
 }
 
+/// A menu bar window on `display` (None: the compositor picks). The `primary` bar takes the
+/// keyboard on ⌃F2 and survives its display going away (it moves to the next main display);
+/// the others belong to their display and go with it.
 pub fn build(
     app: &gtk::Application,
     sys: &dyn crate::system::System,
+    display: Option<&gtk::gdk::Monitor>,
+    primary: bool,
 ) -> (gtk::ApplicationWindow, Rc<Bar>) {
     let win = super::window(app, "menubar", kit::surface::Spec::menubar());
-    crate::kit::surface::survive_output_loss(&win, kit::surface::Spec::menubar());
+    if primary {
+        crate::kit::surface::survive_output_loss(&win, kit::surface::Spec::menubar());
+    }
+    kit::surface::set_monitor(&win, display);
     let bar = content(sys);
+    if let Some(m) = display {
+        bar.display
+            .replace(m.connector().map(|c| c.to_string()).unwrap_or_default());
+    }
+    if let Some((name, class)) = LAST_APP.with_borrow(|a| a.clone()) {
+        bar.set_app(name, class);
+    }
+    let focused = FOCUSED.with_borrow(|f| f.clone());
+    bar.set_active(crate::displays::bar_active(
+        &bar.display.borrow(),
+        focused.as_deref(),
+    ));
     win.set_child(Some(&bar.root));
     hover_menus(&bar.root);
     (win, bar)
@@ -372,32 +408,59 @@ fn follow_focus(bar: &Rc<Bar>) {
     std::mem::forget(m);
 }
 
-/// The live bar and its system.
-type Live = (std::rc::Weak<Bar>, Rc<dyn crate::system::System>);
-
 thread_local! {
-    /// The session's menu bar and its system (set by [`poll_status`]) for [`refresh_now`].
-    static LIVE: RefCell<Option<Live>> =
-        const { RefCell::new(None) };
+    /// Every menu bar on screen (one per display).
+    static BARS: RefCell<Vec<std::rc::Weak<Bar>>> = const { RefCell::new(Vec::new()) };
+    /// The app in front and the focused display, for bars made later (a display plugged in).
+    static LAST_APP: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
+    static FOCUSED: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The session's system (set by [`poll_status`]) for [`refresh_now`].
+    static SYS: RefCell<Option<Rc<dyn crate::system::System>>> = const { RefCell::new(None) };
+}
+
+/// Every live menu bar.
+pub fn bars() -> Vec<Rc<Bar>> {
+    BARS.with_borrow(|b| b.iter().filter_map(|x| x.upgrade()).collect())
+}
+
+/// The app in front changed: every bar shows it.
+pub fn set_app_all(name: String, class: String) {
+    LAST_APP.set(Some((name.clone(), class.clone())));
+    for b in bars() {
+        b.set_app(name.clone(), class.clone());
+    }
+}
+
+/// The focus moved to display `connector`: its bar at full strength, the others dimmed.
+pub fn set_focused(connector: &str) {
+    FOCUSED.set(Some(connector.to_string()));
+    for b in bars() {
+        b.set_active(crate::displays::bar_active(
+            &b.display.borrow(),
+            Some(connector),
+        ));
+    }
 }
 
 /// Re-reads the status icons now: Control Center calls this whenever its snapshot or one of its
 /// actions settles, so Wi-Fi, volume and battery in the bar never lag the 5 s poll.
 pub fn refresh_now() {
-    LIVE.with_borrow(|live| {
-        if let Some((bar, sys)) = live
-            && let Some(bar) = bar.upgrade()
-        {
-            refresh(&bar, &**sys);
+    SYS.with_borrow(|sys| {
+        if let Some(sys) = sys {
+            for bar in bars() {
+                refresh(&bar, &**sys);
+            }
         }
     });
 }
 
 /// 5 s timer on whole seconds (GLib coalesces wakeups).
-pub fn poll_status(bar: Rc<Bar>, sys: Rc<dyn crate::system::System>) {
-    LIVE.set(Some((Rc::downgrade(&bar), sys.clone())));
+pub fn poll_status(sys: Rc<dyn crate::system::System>) {
+    SYS.set(Some(sys.clone()));
     glib::timeout_add_seconds_local(5, move || {
-        refresh(&bar, &*sys);
+        for bar in bars() {
+            refresh(&bar, &*sys);
+        }
         crate::alerts::poll(sys.battery());
         glib::ControlFlow::Continue
     });
