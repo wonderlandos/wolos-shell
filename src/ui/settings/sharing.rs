@@ -53,6 +53,21 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: Sharing, status: &gtk::Label) {
             )],
         ));
     }
+    if let (Some(on), Some(_)) = (s.airplay_receiver, admin("airplay-receiver", &[])) {
+        let (ctx, st) = (e.ctx.clone(), status.clone());
+        into.append(&w::section(
+            "",
+            &[form::pending_toggle_row(
+                "AirPlay Receiver",
+                "Play audio from iPhones, iPads and Macs on this computer.",
+                on,
+                move |v, done| match admin("airplay-receiver", &[if v { "on" } else { "off" }]) {
+                    Some(a) => ctx.act_switch(a, &st, done),
+                    None => done(false),
+                },
+            )],
+        ));
+    }
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
