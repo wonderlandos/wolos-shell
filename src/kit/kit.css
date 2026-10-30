@@ -66,6 +66,8 @@ button.dock-tile:hover { margin-top: -8px; margin-bottom: 8px; }
 /* Launch: bounces until the app's first window maps (ui::dock). gtk-enable-animations off stills it. */
 @keyframes dock-bounce { 0%, 100% { margin-top: 0; margin-bottom: 0; } 50% { margin-top: -16px; margin-bottom: 16px; } }
 button.dock-tile.launching { animation: dock-bounce 640ms ease-in-out infinite; }
+/* Attention: bounces until the app is focused or the Dock stops it after 60 s (ui::dock). */
+button.dock-tile.attention { animation: dock-bounce 640ms ease-in-out infinite; }
 /* ⌃F3: the tile with the keyboard gets an accent ring. */
 button.dock-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .running-dot { min-width: 4px; min-height: 4px; margin: 2px 0 2px 0; border-radius: 999px; background: rgba(255,255,255,0.92); }
