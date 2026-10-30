@@ -15,6 +15,7 @@ pub use shared::hardware::{Device, HardwareSnapshot, Kind, State};
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sharing {
     pub remote_login: Option<bool>,
+    pub airplay_receiver: Option<bool>,
     pub firewall: Option<bool>,
 }
 
@@ -151,6 +152,7 @@ impl Machine for Live {
     fn sharing(&self) -> Sharing {
         Sharing {
             remote_login: wol_core::sharing::remote_login(self.os()),
+            airplay_receiver: wol_core::sharing::airplay_receiver(self.os()),
             firewall: wol_core::sharing::firewall(self.os()),
         }
     }
@@ -406,6 +408,7 @@ impl Machine for Demo {
     fn sharing(&self) -> Sharing {
         Sharing {
             remote_login: Some(false),
+            airplay_receiver: Some(false),
             firewall: Some(true),
         }
     }
@@ -511,6 +514,7 @@ mod tests {
             live.sharing(),
             Sharing {
                 remote_login: Some(true),
+                airplay_receiver: None,
                 firewall: Some(false)
             }
         );
