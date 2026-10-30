@@ -44,6 +44,7 @@ pub struct Setup {
     flow: RefCell<Flow>,
     cards: RefCell<Vec<(Step, Card)>>,
     editors: RefCell<Vec<(Field, gtk::Widget)>>,
+    caps: RefCell<Option<gtk::Label>>,
     avatar: RefCell<Option<gtk::Label>>,
     keyboard: RefCell<Option<gtk::DropDown>>,
     wifi_ui: RefCell<Option<WifiUi>>,
@@ -71,6 +72,7 @@ impl Setup {
             flow: RefCell::new(Flow::new(Draft::detected(hints), net.online && !net.wifi)),
             cards: Default::default(),
             editors: Default::default(),
+            caps: Default::default(),
             avatar: Default::default(),
             keyboard: Default::default(),
             wifi_ui: Default::default(),
@@ -101,6 +103,13 @@ impl Setup {
         self.pager.set_visible_child_name(step.id());
         self.pager
             .set_transition_type(gtk::StackTransitionType::Crossfade);
+    }
+
+    /// The Caps Lock warning, as the keyboard would set it (goldens).
+    pub fn set_caps_lock(&self, on: bool) {
+        if let Some(c) = &*self.caps.borrow() {
+            c.set_visible(on);
+        }
     }
 
     /// Types into an account field as the user would (goldens, tests).
@@ -470,6 +479,21 @@ impl Setup {
             form.append(&a::form_row(title, &e));
             self.editors.borrow_mut().push((f, e));
         }
+        // Under Verify, the last password field.
+        let caps = w::caps_lock_note();
+        caps.set_halign(gtk::Align::Start);
+        let caps_row = a::form_row("", &caps);
+        // The row follows the label: hidden with it, so no empty gap.
+        caps.bind_property("visible", &caps_row, "visible")
+            .sync_create()
+            .build();
+        form.insert_child_after(
+            &caps_row,
+            form.observe_children()
+                .item(3)
+                .and_downcast_ref::<gtk::Widget>(),
+        );
+        *self.caps.borrow_mut() = Some(caps);
         let note = a::caption(
             "This account is the administrator: it can install apps and change any setting.",
         );

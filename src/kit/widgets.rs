@@ -238,6 +238,28 @@ pub fn password_field(placeholder: &str) -> gtk::PasswordEntry {
     p
 }
 
+/// Under every password field: shows while Caps Lock is on. GTK's own indicator is a small icon
+/// inside the entry, only while focused; this one says it in words.
+pub const CAPS_LOCK: &str = "⇪ Caps Lock is on";
+
+pub fn caps_lock_note() -> gtk::Label {
+    let l = label(CAPS_LOCK, "caps-lock");
+    l.set_visible(false);
+    let kb = gtk::gdk::Display::default()
+        .and_then(|d| d.default_seat())
+        .and_then(|s| s.keyboard());
+    if let Some(kb) = kb {
+        l.set_visible(kb.is_caps_locked());
+        let weak = l.downgrade();
+        kb.connect_caps_lock_state_notify(move |kb| {
+            if let Some(l) = weak.upgrade() {
+                l.set_visible(kb.is_caps_locked());
+            }
+        });
+    }
+    l
+}
+
 pub fn spinner() -> gtk::Spinner {
     let s = gtk::Spinner::builder()
         .spinning(true)
@@ -836,6 +858,8 @@ pub struct UserPanel {
     /// Shown in place of the arrow while the password is being checked.
     pub checking: gtk::Spinner,
     pub message: gtk::Label,
+    /// [`CAPS_LOCK`], between the pill and the message.
+    pub caps: gtk::Label,
 }
 
 impl UserPanel {
@@ -880,6 +904,10 @@ impl UserPanel {
             f2.emit_by_name::<()>("activate", &[]);
         });
         root.append(&pill);
+        let caps = caps_lock_note();
+        caps.add_css_class("lock-message");
+        caps.set_halign(gtk::Align::Center);
+        root.append(&caps);
         let message = centered("", "lock-message");
         root.append(&message);
         UserPanel {
@@ -890,7 +918,13 @@ impl UserPanel {
             submit,
             checking,
             message,
+            caps,
         }
+    }
+
+    /// Shown by the keyboard's state; tests set it.
+    pub fn set_caps_lock(&self, on: bool) {
+        self.caps.set_visible(on);
     }
 
     /// Checking the password: the field waits, a spinner replaces the arrow.

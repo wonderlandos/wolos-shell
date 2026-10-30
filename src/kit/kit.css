@@ -221,6 +221,8 @@ label.lock-name { font-size: 15px; font-weight: 600; color: white; text-shadow: 
 entry.lock-field, entry.lock-field:focus, entry.lock-field:focus-within { background: none; border: none; outline: none; box-shadow: none; min-height: 0; padding: 0; margin: 0; color: white; caret-color: white; font-size: 13px; }
 entry.lock-field text placeholder { color: rgba(255,255,255,0.86); opacity: 1; }
 entry.lock-field image { color: rgba(255,255,255,0.70); }
+entry.lock-field text selection { background: rgba(255,255,255,0.30); color: white; }
+label.caps-lock { font-size: 12px; font-weight: 600; }
 button.lock-submit { min-width: 20px; min-height: 20px; padding: 0; margin: 0; border-radius: 999px; border: none; box-shadow: none; background: rgba(255,255,255,0.30); color: white; }
 button.lock-submit label { font-size: 13px; font-weight: 600; margin-top: -1px; }
 /* Light: pale wallpaper, dark ink (WCAG AA measured in the goldens). */
@@ -234,6 +236,7 @@ button.lock-submit label { font-size: 13px; font-weight: 600; margin-top: -1px; 
 .lock-screen.light entry.lock-field { color: #1c1838; caret-color: #1c1838; }
 .lock-screen.light entry.lock-field text placeholder { color: rgba(28,24,56,0.72); }
 .lock-screen.light entry.lock-field image { color: rgba(28,24,56,0.60); }
+.lock-screen.light entry.lock-field text selection { background: rgba(28,24,56,0.18); color: #1c1838; }
 .lock-screen.light button.lock-submit { background: rgba(28,24,56,0.80); color: white; }
 .lock-screen.light button.lock-submit:disabled { background: rgba(28,24,56,0.18); color: rgba(255,255,255,0.85); }
 .lock-screen.light button.lock-round { background: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.85); color: #1c1838; }

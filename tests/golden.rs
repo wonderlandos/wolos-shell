@@ -223,6 +223,19 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            name: "lock-caps-lock".into(),
+            size: (900, 600),
+            class: "lock-window",
+            wallpaper: false,
+            build: Box::new(|| {
+                let p = w::UserPanel::new("Alice Liddell");
+                p.field.set_text("CURIOUSER");
+                p.field.set_position(-1); // typed, not selected
+                p.set_caps_lock(true);
+                ui::lock::lock_screen(&p)
+            }),
+        },
+        Case {
             name: "login".into(),
             size: (900, 600),
             class: "lock-window",
@@ -528,6 +541,22 @@ fn cases() -> Vec<Case> {
             s.type_into(Field::FullName, "Alice Liddell");
             s.type_into(Field::Password, "curiouser");
             s.type_into(Field::Verify, "curix"); // shows while typing, before Continue
+            s.root.clone()
+        }),
+    });
+    // Caps Lock on while typing a password: the warning shows under the field.
+    v.push(Case {
+        name: "setup-account-caps-lock-1024".into(),
+        size: (1024, 640),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| {
+            use shell::setup::Field;
+            let s = ui::setup::Setup::new(&shell::system::Fake);
+            s.show(shell::setup::Step::Account);
+            s.type_into(Field::FullName, "Alice Liddell");
+            s.type_into(Field::Password, "CURIOUSER");
+            s.set_caps_lock(true);
             s.root.clone()
         }),
     });
