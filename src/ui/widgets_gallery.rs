@@ -63,7 +63,7 @@ impl Entry {
 
 pub fn builtin_icon(b: Builtin) -> &'static str {
     match b {
-        Builtin::Clock => "preferences-system-time-symbolic",
+        Builtin::Clock | Builtin::WorldClock => "preferences-system-time-symbolic",
         Builtin::Calendar => "x-office-calendar-symbolic",
         Builtin::Weather => "weather-few-clouds-symbolic",
         Builtin::Music => "audio-x-generic-symbolic",
