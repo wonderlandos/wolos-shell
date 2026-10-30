@@ -221,12 +221,15 @@ pub fn build(app: &gtk::Application) -> Built {
     zone.add_css_class("dock-hotzone");
     zone.append(&reveal);
     let hide = Rc::new(std::cell::Cell::new(false));
+    let delay = Rc::new(std::cell::Cell::new(0u32));
+    let epoch = Rc::new(std::cell::Cell::new(0u32));
     let motion = gtk::EventControllerMotion::new();
     {
         let (r, h) = (reveal.clone(), hide.clone());
-        let r2 = r.clone();
-        motion.connect_enter(move |_, _, _| r2.set_reveal_child(true));
+        let (r2, dl, ep, ep2) = (r.clone(), delay.clone(), epoch.clone(), epoch.clone());
+        motion.connect_enter(move |_, _, _| show_after(&r2, dl.get(), &ep));
         motion.connect_leave(move |_| {
+            ep2.set(ep2.get().wrapping_add(1));
             if h.get() {
                 r.set_reveal_child(false)
             }
@@ -236,9 +239,11 @@ pub fn build(app: &gtk::Application) -> Built {
     win.set_child(Some(&zone));
     let keys = keyboard(&win, &d, &reveal, &hide);
     {
-        let (root, win) = (d.root.clone(), win.clone());
+        let (root, win, d) = (d.root.clone(), win.clone(), d.clone());
         super::ipc::on_reload(move |p| {
             hide.set(p.dock_autohide);
+            delay.set(p.autohide_delay_ms());
+            d.set_tile_size(p.tile_size());
             reveal.set_reveal_child(!p.dock_autohide);
             kit::surface::set_exclusive(&win, !p.dock_autohide);
             set_magnify(&root, p.dock_magnify);
@@ -274,6 +279,25 @@ fn keyboard(
     keys
 }
 
+/// The Dock shows once the pointer has rested at the edge for `delay_ms` (0: at once). Leaving
+/// bumps `epoch`, which cancels a show still waiting.
+fn show_after(reveal: &gtk::Revealer, delay_ms: u32, epoch: &Rc<std::cell::Cell<u32>>) {
+    let mine = epoch.get().wrapping_add(1);
+    epoch.set(mine);
+    if delay_ms == 0 {
+        return reveal.set_reveal_child(true);
+    }
+    let (r, e) = (reveal.downgrade(), epoch.clone());
+    glib::timeout_add_local_once(
+        std::time::Duration::from_millis(u64::from(delay_ms)),
+        move || {
+            if let (Some(r), true) = (r.upgrade(), e.get() == mine) {
+                r.set_reveal_child(true)
+            }
+        },
+    );
+}
+
 /// Settings > Dock > Magnification: tiles lift on hover only when on.
 pub fn set_magnify(root: &gtk::Box, on: bool) {
     if on {
@@ -284,6 +308,13 @@ pub fn set_magnify(root: &gtk::Box, on: bool) {
 }
 
 impl Dock {
+    /// Settings > Dock > Size.
+    pub fn set_tile_size(&self, px: u32) {
+        for t in &self.tiles {
+            t.set_icon_size(px as i32);
+        }
+    }
+
     fn tile_for(&self, class: &str) -> Option<(usize, &w::DockTile)> {
         let classes = HashSet::from([class.to_lowercase()]);
         PINS.iter()

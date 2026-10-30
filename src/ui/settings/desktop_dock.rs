@@ -2,6 +2,7 @@
 //! Windows (tiling through the managed Hyprland include, applied live by `Action::Desktop`).
 use super::*;
 use wol_core::hyprprefs::Layout;
+use wol_core::prefs::{AUTOHIDE_DELAY_MAX_MS, TILE_SIZE};
 use wol_core::shortcuts::Group;
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -37,6 +38,43 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         ],
     ));
     p.append(&w::section(
+        "",
+        &[
+            t(
+                "Show recent applications in Dock",
+                |p| p.dock_show_recents,
+                |p, v| p.dock_show_recents = v,
+            ),
+            dock_slider(
+                "Size",
+                (f64::from(TILE_SIZE.0), f64::from(TILE_SIZE.1), 4.0),
+                ("Small", "Large"),
+                &cur,
+                &status,
+                |p| f64::from(p.tile_size()),
+                |p, v| p.dock_tile_size = v as u32,
+            ),
+            dock_slider(
+                "Delay before the Dock shows",
+                (0.0, f64::from(AUTOHIDE_DELAY_MAX_MS), 100.0),
+                ("None", "Long"),
+                &cur,
+                &status,
+                |p| f64::from(p.autohide_delay_ms()),
+                |p, v| p.dock_autohide_delay_ms = v as u32,
+            ),
+            dock_slider(
+                "Minimize effect speed",
+                (10.0, 200.0, 5.0),
+                ("Slow", "Fast"),
+                &cur,
+                &status,
+                |p| f64::from(p.dock_minimize_speed_pct),
+                |p, v| p.dock_minimize_speed_pct = v as u8,
+            ),
+        ],
+    ));
+    p.append(&w::section(
         "Menu Bar",
         &[
             t(
@@ -50,6 +88,35 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&status);
     p.append(&windows(e));
     p
+}
+
+/// A Dock slider row: reads and writes one number of the shell prefs.
+#[allow(clippy::too_many_arguments)]
+fn dock_slider(
+    title: &str,
+    range: (f64, f64, f64),
+    ends: (&str, &str),
+    cur: &Rc<Cell<ShellPrefs>>,
+    status: &gtk::Label,
+    get: fn(&ShellPrefs) -> f64,
+    set: fn(&mut ShellPrefs, f64),
+) -> gtk::Widget {
+    let (c, st) = (cur.clone(), status.clone());
+    form::slider_row(
+        title,
+        range,
+        get(&cur.get()).clamp(range.0, range.1),
+        ends,
+        move |v| {
+            let mut p = c.get();
+            set(&mut p, v);
+            let ok = save_shell(p);
+            if ok {
+                c.set(p);
+            }
+            say(&st, if ok { "" } else { SAVE_FAILED });
+        },
+    )
 }
 
 /// Display names for the two tiling layouts.
