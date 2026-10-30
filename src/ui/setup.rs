@@ -311,7 +311,14 @@ impl Setup {
         holder.set_vexpand(true);
         body.append(&holder);
         let pw = w::password_field("Network password");
-        let pw_row = a::form_row("Password", &pw);
+        // The Caps Lock note under the field, inside its row (hidden with it).
+        let field = w::vbox(w::S1);
+        field.set_hexpand(true);
+        field.append(&pw);
+        let caps = w::caps_lock_note();
+        caps.set_halign(gtk::Align::Start);
+        field.append(&caps);
+        let pw_row = a::form_row("Password", &field);
         pw_row.set_visible(false);
         body.append(&pw_row);
         let me = Rc::downgrade(self);

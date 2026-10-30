@@ -106,6 +106,9 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     body.append(&short);
     body.append(&pass);
     body.append(&verify);
+    let caps = w::caps_lock_note();
+    caps.set_halign(gtk::Align::Start);
+    body.append(&caps);
     body.append(&w::list_row(
         "",
         "Allow this user to administer this computer",

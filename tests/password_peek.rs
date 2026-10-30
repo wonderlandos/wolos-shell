@@ -40,3 +40,27 @@ fn every_password_field_can_show_the_password() {
     }
     assert!(fields >= 2, "found {fields} password fields");
 }
+
+/// Live: a Wi-Fi or admin password typed with Caps Lock on read as "Incorrect password". Every
+/// screen with a password field says Caps Lock is on, in words, under the field.
+#[test]
+fn every_password_screen_warns_about_caps_lock() {
+    let mut files = vec![];
+    sources(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    for (path, src) in &files {
+        let code = src.split("#[cfg(test)]").next().unwrap();
+        // Per function: the note sits next to its field.
+        for f in code.split("fn ").skip(1) {
+            if f.contains("password_field(\"") {
+                let name = &f[..f.find('(').unwrap()];
+                assert!(
+                    f.contains("caps_lock_note()"),
+                    "{path}: {name}: password field without the Caps Lock note"
+                );
+            }
+        }
+    }
+}
