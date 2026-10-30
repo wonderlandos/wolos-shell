@@ -770,6 +770,17 @@ impl DockTile {
             })
         }
     }
+    pub fn is_attention(&self) -> bool {
+        self.button.has_css_class("attention")
+    }
+    /// The app asks for attention: bounce (CSS, so reduce motion stills it) until turned off.
+    pub fn set_attention(&self, on: bool) {
+        if on {
+            self.button.add_css_class("attention")
+        } else {
+            self.button.remove_css_class("attention")
+        }
+    }
     /// Bounce on (the dot shows at once, like a started app) or off.
     pub fn set_launching(&self, on: bool) {
         if on == self.is_launching() {

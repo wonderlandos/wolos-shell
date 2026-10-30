@@ -5,10 +5,22 @@ use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    ActiveWindow { class: String, title: String },
-    OpenWindow { address: String, class: String },
-    CloseWindow { address: String },
+    ActiveWindow {
+        class: String,
+        title: String,
+    },
+    OpenWindow {
+        address: String,
+        class: String,
+    },
+    CloseWindow {
+        address: String,
+    },
     Workspace(String),
+    /// A window asks for attention (`address` as `j/clients` spells it, with `0x`).
+    Urgent {
+        address: String,
+    },
     Other,
 }
 
@@ -36,6 +48,9 @@ pub fn parse_event(line: &str) -> Option<Event> {
             address: data.into(),
         },
         "workspace" => Event::Workspace(data.into()),
+        "urgent" => Event::Urgent {
+            address: format!("0x{data}"),
+        },
         _ => Event::Other,
     })
 }
@@ -172,6 +187,16 @@ pub fn running_classes(clients: &[Client]) -> std::collections::HashSet<String> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn urgent_names_the_window_address() {
+        assert_eq!(
+            parse_event("urgent>>5a1c\n"),
+            Some(Event::Urgent {
+                address: "0x5a1c".into()
+            })
+        );
+    }
+
     use super::*;
 
     #[test]

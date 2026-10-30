@@ -151,7 +151,19 @@ pub fn hypr_events(bar: Rc<Bar>, dock: Rc<Dock>, panels: Panels) {
                 super::transient::close_all(&panels);
             }
             match ev {
-                Some(hypr::Event::ActiveWindow { class, title }) => show(&class, &title),
+                Some(hypr::Event::ActiveWindow { class, title }) => {
+                    dock.focused(&class);
+                    show(&class, &title)
+                }
+                Some(hypr::Event::Urgent { address }) => {
+                    let focused = |c: &hypr::Client| c.focus == 0;
+                    if let Some(c) = hypr::clients()
+                        .iter()
+                        .find(|c| c.address == address && !focused(c))
+                    {
+                        dock.attention(&c.class);
+                    }
+                }
                 Some(hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. }) => {
                     dock.set_running(&hypr::running_classes(&hypr::clients()));
                 }

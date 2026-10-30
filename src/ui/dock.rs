@@ -143,9 +143,19 @@ fn launched(t: &w::DockTile) {
     });
 }
 
+/// Seconds an app that asks for attention bounces at most (it stops sooner when focused).
+pub const ATTENTION_MAX_SECS: u32 = 60;
+
+/// The attention bounce ends: the app was focused, or it has bounced for the cap.
+pub fn attention_over(elapsed_secs: u32, focused: bool) -> bool {
+    focused || elapsed_secs >= ATTENTION_MAX_SECS
+}
+
 pub struct Dock {
     pub root: gtk::Box,
     tiles: Vec<w::DockTile>,
+    /// Per tile: bumped on every start and stop, so a stale 60 s timer cannot stop a newer bounce.
+    epochs: Vec<std::cell::Cell<u32>>,
     /// Newest files in Downloads (the stack).
     pub downloads: Rc<RefCell<Vec<Item>>>,
     monitor: RefCell<Option<gio::FileMonitor>>,
@@ -185,6 +195,7 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
     );
     let d = Rc::new(Dock {
         root,
+        epochs: tiles.iter().map(|_| Default::default()).collect(),
         tiles,
         downloads,
         monitor: RefCell::new(None),
@@ -273,6 +284,42 @@ pub fn set_magnify(root: &gtk::Box, on: bool) {
 }
 
 impl Dock {
+    fn tile_for(&self, class: &str) -> Option<(usize, &w::DockTile)> {
+        let classes = HashSet::from([class.to_lowercase()]);
+        PINS.iter()
+            .zip(&self.tiles)
+            .position(|(p, _)| apps::is_running(p, &classes))
+            .map(|i| (i, &self.tiles[i]))
+    }
+
+    /// A window of `class` asks for attention: its tile bounces until it is focused
+    /// ([`Dock::focused`]) or [`ATTENTION_MAX_SECS`] pass.
+    pub fn attention(self: &Rc<Self>, class: &str) {
+        let Some((i, t)) = self.tile_for(class) else {
+            return;
+        };
+        if t.is_attention() {
+            return;
+        }
+        t.set_attention(true);
+        let epoch = self.epochs[i].get().wrapping_add(1);
+        self.epochs[i].set(epoch);
+        let d = Rc::downgrade(self);
+        glib::timeout_add_seconds_local_once(ATTENTION_MAX_SECS, move || {
+            if let Some(d) = d.upgrade().filter(|d| d.epochs[i].get() == epoch) {
+                d.tiles[i].set_attention(false);
+            }
+        });
+    }
+
+    /// The window of `class` came to the front: its bounce stops.
+    pub fn focused(&self, class: &str) {
+        if let Some((i, t)) = self.tile_for(class).filter(|(_, t)| t.is_attention()) {
+            self.epochs[i].set(self.epochs[i].get().wrapping_add(1));
+            t.set_attention(false);
+        }
+    }
+
     pub fn set_running(&self, classes: &HashSet<String>) {
         for (p, t) in PINS.iter().zip(&self.tiles) {
             t.set_running(apps::is_running(p, classes));
@@ -300,5 +347,26 @@ mod launch_tests {
             "{rule}"
         );
         assert!(css.contains("@keyframes dock-bounce"));
+    }
+}
+
+#[cfg(test)]
+mod attention_tests {
+    use super::*;
+
+    /// An app asking for attention bounces until it is focused, or for at most 60 s.
+    #[test]
+    fn attention_bounce_lasts_until_focus_or_sixty_seconds() {
+        assert_eq!(ATTENTION_MAX_SECS, 60);
+        assert!(!attention_over(0, false));
+        assert!(!attention_over(59, false));
+        assert!(attention_over(60, false), "stops at the cap");
+        assert!(attention_over(3, true), "focus ends it at once");
+        let css = include_str!("../kit/kit.css");
+        let rule = css
+            .lines()
+            .find(|l| l.starts_with("button.dock-tile.attention"))
+            .expect("an .attention rule");
+        assert!(rule.contains("infinite"), "{rule}: bounces until stopped");
     }
 }
