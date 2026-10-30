@@ -618,6 +618,12 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     fx.build_controls();
     p.append(&fx.controls);
     p.append(&status);
+    // Every handler holds the state weakly: the page owns it, or it is gone once built and no
+    // card, control or button answers.
+    let keep = fx.clone();
+    p.connect_destroy(move |_| {
+        let _ = &keep;
+    });
     // Built-in graphics: a quiet hint when the look is heavy.
     let (m, f) = (e.machine(), Rc::downgrade(&fx));
     off_thread(

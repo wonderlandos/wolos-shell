@@ -995,6 +995,53 @@ fn form_kit_cases() -> Vec<Case> {
     ]
 }
 
+/// Settings > Effects & Looks keeps its state alive once built: picking a look and then Restore
+/// Defaults checks the WolOS card again (every card, control and button did nothing when the
+/// page's state was dropped at the end of building it).
+fn effects_page_answers_after_it_is_built() {
+    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+    a.open("Effects & Looks");
+    pump(50);
+    let root: gtk::Widget = a.root.clone().upcast();
+    let mut cards: Vec<gtk::ToggleButton> = Vec::new();
+    find_type(&root, &mut cards);
+    let card = |name: &str| {
+        cards
+            .iter()
+            .filter(|b| b.has_css_class("preset-card"))
+            .find(|b| b.tooltip_text().as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no {name} card in {}", cards.len()))
+            .clone()
+    };
+    card("Compact").set_active(true);
+    let mut all = Vec::new();
+    find_type::<gtk::Button>(&root, &mut all);
+    let restore = all
+        .into_iter()
+        .find(|b| {
+            let mut l = Vec::new();
+            find_type::<gtk::Label>(b.upcast_ref(), &mut l);
+            b.label().as_deref() == Some("Restore Defaults")
+                || l.iter().any(|l| l.label() == "Restore Defaults")
+        })
+        .expect("Restore Defaults");
+    restore.emit_clicked();
+    pump(50);
+    assert!(card("WolOS").is_active(), "Restore Defaults did nothing");
+    assert!(!card("Compact").is_active());
+}
+
+fn find_type<T: IsA<gtk::Widget>>(w: &gtk::Widget, out: &mut Vec<T>) {
+    if let Some(t) = w.downcast_ref::<T>() {
+        out.push(t.clone());
+    }
+    let mut c = w.first_child();
+    while let Some(ch) = c {
+        find_type(&ch, out);
+        c = ch.next_sibling();
+    }
+}
+
 fn pump(ms: u64) {
     let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
     let ctx = glib::MainContext::default();
@@ -1343,6 +1390,7 @@ fn main() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../design/icons/symbolic"
     ));
+    effects_page_answers_after_it_is_built();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
