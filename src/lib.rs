@@ -10,6 +10,7 @@ pub mod desktop;
 pub mod displays;
 pub mod files;
 pub mod focus;
+pub mod focus_grab;
 pub mod hypr;
 pub mod install;
 pub mod layout;
