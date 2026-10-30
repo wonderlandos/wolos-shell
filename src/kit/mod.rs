@@ -4,6 +4,7 @@ pub mod check;
 pub mod controls;
 pub mod data;
 pub mod form;
+pub mod motion;
 pub mod pickers;
 pub mod reveal;
 pub mod style;
