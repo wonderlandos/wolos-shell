@@ -88,6 +88,8 @@ pub struct Board {
     st: RefCell<St>,
     listener: RefCell<Option<Listener>>,
     win: RefCell<Option<gtk::Window>>,
+    /// Edit Widgets turned on: the other transient panels close (`transient`).
+    opened: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 fn entries(packages: &[Rc<Package>]) -> Vec<Entry> {
@@ -156,6 +158,7 @@ impl Board {
                 root,
                 canvas,
                 gallery,
+                opened: RefCell::new(None),
                 st: RefCell::new(St {
                     file,
                     desk,
@@ -607,6 +610,9 @@ impl Board {
             return;
         }
         self.st.borrow_mut().edit = on;
+        if on && let Some(f) = self.opened.borrow().clone() {
+            f();
+        }
         if !on {
             let rs: Vec<gtk::Button> = self
                 .st
@@ -638,6 +644,10 @@ impl Board {
         self.set_edit(true);
         self.gallery
             .select(&Kind::Builtin(Builtin::Weather), Some(id.to_string()));
+    }
+
+    pub fn on_edit(&self, f: Rc<dyn Fn()>) {
+        *self.opened.borrow_mut() = Some(f);
     }
 
     /// Socket: `show|hide|toggle widgets` (Edit Widgets).

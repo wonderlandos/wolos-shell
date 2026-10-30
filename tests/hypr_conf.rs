@@ -254,6 +254,8 @@ fn system_shortcuts_are_the_mac_ones() {
         ("CTRL", "F2", "", "wol shell show menubar"),
         ("CTRL", "F3", "", "wol shell show dock"),
         ("", "Escape", "n", "wol shell hide banners"),
+        // Esc closes Control Center, Notification Center, ... even while an app has the keys.
+        ("", "Escape", "n", "wol shell hide transient"),
     ] {
         let c = Combo::parse(mods, key).unwrap();
         assert!(
