@@ -88,6 +88,27 @@ pub fn close_on_press(win: &impl IsA<gtk::Widget>, panels: &super::Panels) {
     win.add_controller(click);
 }
 
+/// Opening any menu under `root` (menu bar menus) closes the transient panels.
+pub fn close_on_menus(root: &impl IsA<gtk::Widget>, panels: &super::Panels) {
+    let mut stack = vec![root.clone().upcast::<gtk::Widget>()];
+    while let Some(w) = stack.pop() {
+        if let Some(m) = w.downcast_ref::<gtk::MenuButton>() {
+            // `active`, not the popover: the app menu's popover is replaced per app.
+            let panels = panels.clone();
+            m.connect_active_notify(move |m| {
+                if m.is_active() {
+                    close_all(&panels)
+                }
+            });
+        }
+        let mut c = w.first_child();
+        while let Some(x) = c {
+            c = x.next_sibling();
+            stack.push(x);
+        }
+    }
+}
+
 /// Keeps the transient panels in `panels` exclusive and puts a click-catcher under them while one
 /// is open. Layer surfaces get no reliable focus-out, so a click outside lands on the catcher.
 pub fn manage(app: &gtk::Application, panels: &super::Panels) {
