@@ -31,6 +31,8 @@ pub struct Bar {
     name_seen: RefCell<Changed<String>>,
     /// The display this bar is on (connector name; "" until placed).
     pub display: RefCell<String>,
+    /// Ends with the bar's window: its clock tick, reload hook and Focus watch stop.
+    pub life: kit::lifetime::Lifetime,
 }
 
 impl Bar {
@@ -215,9 +217,10 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
             }
         })
     };
+    let life = kit::lifetime::Lifetime::new();
     {
         let tick = tick.clone();
-        kit::every_minute(move || tick());
+        kit::lifetime::every_minute_while(&life, move || tick());
     }
     let bar = Rc::new(Bar {
         root,
@@ -233,6 +236,7 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         seen: Default::default(),
         name_seen: Default::default(),
         display: Default::default(),
+        life: life.clone(),
     });
     BARS.with_borrow_mut(|b| {
         b.retain(|x| x.strong_count() > 0);
@@ -243,7 +247,7 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     {
         // Settings > Menu Bar: applied live on `reload`.
         let (b, battery) = (Rc::downgrade(&bar), sys.battery());
-        super::ipc::on_reload(move |p| {
+        super::ipc::on_reload_while(&life, move |p| {
             show_date.set(p.show_date);
             tick();
             if let Some(b) = b.upgrade() {
@@ -274,6 +278,7 @@ pub fn build(
     }
     kit::surface::set_monitor(&win, display);
     let bar = content(sys);
+    bar.life.tie(&win);
     if let Some(m) = display {
         bar.display
             .replace(m.connector().map(|c| c.to_string()).unwrap_or_default());
@@ -404,8 +409,10 @@ fn follow_focus(bar: &Rc<Bar>) {
             set_focus(&bar, &mut bar.seen.borrow_mut().4);
         }
     });
-    // The bar lives for the whole session.
-    std::mem::forget(m);
+    // Watched as long as the bar's window is there.
+    bar.life.on_end(move || {
+        m.cancel();
+    });
 }
 
 thread_local! {

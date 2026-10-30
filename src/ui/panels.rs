@@ -17,6 +17,13 @@ const DYNAMIC_TICK: u32 = 60;
 pub fn wallpaper(app: &gtk::Application, display: &gdk::Monitor) -> gtk::ApplicationWindow {
     let win = super::window(app, "wallpaper", Spec::wallpaper());
     crate::kit::surface::set_monitor(&win, Some(display));
+    dress_wallpaper(win.upcast_ref());
+    win
+}
+
+/// The wallpaper picture into `win`; its reload hook, file watch and Dynamic tick end with it.
+pub fn dress_wallpaper(win: &gtk::Window) {
+    let life = crate::kit::lifetime::Lifetime::of_window(win);
     let pic = gtk::Picture::new();
     pic.set_content_fit(gtk::ContentFit::Cover);
     win.set_child(Some(&pic));
@@ -40,7 +47,7 @@ pub fn wallpaper(app: &gtk::Application, display: &gdk::Monitor) -> gtk::Applica
     });
     {
         let s = show.clone();
-        super::ipc::on_reload(move |_| s());
+        super::ipc::on_reload_while(&life, move |_| s());
     }
     let choice = gtk::gio::File::for_path(
         std::path::Path::new(&crate::kit::config_home()).join(shared::theme::WALLPAPER_FILE),
@@ -51,21 +58,14 @@ pub fn wallpaper(app: &gtk::Application, display: &gdk::Monitor) -> gtk::Applica
     ) {
         let s = show.clone();
         m.connect_changed(move |_, _, _, _| s());
-        // The monitor lives as long as the window.
-        win.connect_destroy(move |_| {
+        life.on_end(move || {
             m.cancel();
         });
     }
-    // Stops with the window (a display unplugged takes its wallpaper with it).
-    let alive = win.downgrade();
-    glib::timeout_add_seconds_local(DYNAMIC_TICK, move || {
-        if alive.upgrade().is_none() {
-            return glib::ControlFlow::Break;
-        }
+    life.own(glib::timeout_add_seconds_local(DYNAMIC_TICK, move || {
         show();
         glib::ControlFlow::Continue
-    });
-    win
+    }));
 }
 
 /// Panel window: transparent overlay layer, glass content, Esc hides.

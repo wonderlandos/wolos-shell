@@ -1176,6 +1176,40 @@ fn a_toggle_waits_for_its_change_and_reverts_when_it_fails() {
 /// the old page stayed drawn until the window closed. No tick is delivered here (the loop does
 /// not run between the page change and the check), which is the same state: `settle` must leave
 /// only the new page, fully shown.
+/// A display plugged in and out over and over: its wallpaper and menu bar leave no minute tick,
+/// reload hook or registered bar behind (a docking laptop must not grow all day).
+fn displays_coming_and_going_leave_nothing_behind() {
+    let base = (
+        shell::kit::lifetime::live_ticks(),
+        ui::ipc::reload_hooks(),
+        ui::menubar::bars().len(),
+    );
+    for _ in 0..25 {
+        let wall = gtk::Window::new();
+        ui::panels::dress_wallpaper(&wall);
+        let bar_win = gtk::Window::new();
+        let bar = ui::menubar::content(&shell::system::Fake);
+        bar.life.tie(&bar_win);
+        bar_win.set_child(Some(&bar.root));
+        drop(bar);
+        wall.present();
+        bar_win.present();
+        pump(10);
+        wall.destroy();
+        bar_win.destroy();
+        pump(10);
+    }
+    let now = (
+        shell::kit::lifetime::live_ticks(),
+        ui::ipc::reload_hooks(),
+        ui::menubar::bars().len(),
+    );
+    assert_eq!(
+        now, base,
+        "(minute ticks, reload hooks, bars) after 25 plug/unplug cycles"
+    );
+}
+
 fn a_stalled_page_fade_settles() {
     use shell::kit::assistant as a;
     let pager = a::pager();
@@ -1608,6 +1642,7 @@ fn main() {
     ));
     effects_page_answers_after_it_is_built();
     a_stalled_page_fade_settles();
+    displays_coming_and_going_leave_nothing_behind();
     a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
