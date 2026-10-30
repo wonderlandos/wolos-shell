@@ -1087,6 +1087,27 @@ fn effects_page_answers_after_it_is_built() {
     assert!(!card("Compact").is_active());
 }
 
+/// A switch whose change takes time: insensitive while it runs, flipped back when it fails.
+fn a_toggle_waits_for_its_change_and_reverts_when_it_fails() {
+    let pending: Rc<std::cell::RefCell<Option<Box<dyn FnOnce(bool)>>>> = Default::default();
+    let p = pending.clone();
+    let s = w::pending_toggle(false, move |_on, done| *p.borrow_mut() = Some(done));
+    s.set_active(true);
+    assert!(
+        !s.is_sensitive(),
+        "the switch must wait while the change runs"
+    );
+    (pending.borrow_mut().take().expect("change started"))(false);
+    assert!(s.is_sensitive());
+    assert!(
+        !s.is_active() && !s.state(),
+        "a failed change must flip the switch back"
+    );
+    s.set_active(true);
+    (pending.borrow_mut().take().expect("change started"))(true);
+    assert!(s.is_active() && s.state());
+}
+
 fn find_type<T: IsA<gtk::Widget>>(w: &gtk::Widget, out: &mut Vec<T>) {
     if let Some(t) = w.downcast_ref::<T>() {
         out.push(t.clone());
@@ -1447,6 +1468,7 @@ fn main() {
         "/../../design/icons/symbolic"
     ));
     effects_page_answers_after_it_is_built();
+    a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");

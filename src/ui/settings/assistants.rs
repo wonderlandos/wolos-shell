@@ -47,10 +47,10 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: &Status, status: &gtk::Label) {
         .iter()
         .map(|c| {
             let (env, st, id) = (e.clone(), status.clone(), c.id.clone());
-            form::toggle_row(&c.label, "", c.allowed, move |on| {
-                if let Err(x) = env.sys().set_helper_capability(&id, on) {
-                    say(&st, x.message())
-                }
+            form::pending_toggle_row(&c.label, "", c.allowed, move |on, done| {
+                let r = env.sys().set_helper_capability(&id, on);
+                say(&st, r.as_ref().err().map_or("", |x| x.message()));
+                done(r.is_ok())
             })
         })
         .collect();

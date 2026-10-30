@@ -19,11 +19,11 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     };
     let contrast = {
         let (ctx, st) = (e.ctx.clone(), status.clone());
-        form::toggle_row(
+        form::pending_toggle_row(
             "Increase contrast",
             "Darker borders and text that stands out more.",
             a.increase_contrast,
-            move |on| ctx.act_say(Action::IncreaseContrast(on), &st),
+            move |on, done| ctx.act_switch(Action::IncreaseContrast(on), &st, done),
         )
     };
     p.append(&w::section(
@@ -54,11 +54,11 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     )];
     if let Some(on) = a.zoom {
         let (ctx, st) = (e.ctx.clone(), status.clone());
-        pointer.push(form::toggle_row(
+        pointer.push(form::pending_toggle_row(
             "Zoom",
             "Magnifies the screen around the pointer.",
             on,
-            move |v| ctx.act_say(Action::Zoom(v), &st),
+            move |v, done| ctx.act_switch(Action::Zoom(v), &st, done),
         ));
     }
     p.append(&w::section("Pointer and Zoom", &pointer));

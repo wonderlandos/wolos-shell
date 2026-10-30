@@ -45,6 +45,16 @@ pub fn toggle_row(
     row(title, subtitle, &w::toggle(on, changed))
 }
 
+/// [`toggle_row`] for a change that takes time or can fail ([`w::pending_toggle`]).
+pub fn pending_toggle_row(
+    title: &str,
+    subtitle: &str,
+    on: bool,
+    run: impl Fn(bool, Box<dyn FnOnce(bool)>) + 'static,
+) -> gtk::Widget {
+    row(title, subtitle, &w::pending_toggle(on, run))
+}
+
 /// Pop-up menu of `options`; `changed(index)` after a pick.
 ///
 /// ```ignore

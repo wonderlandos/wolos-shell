@@ -157,7 +157,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     if let (Some(on), Some(_)) = (sec.and_then(|s| s.firewall), admin("firewall", &[])) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
         let stopped = on && sec.and_then(|s| s.firewall_running) == Some(false);
-        rows.push(form::toggle_row(
+        rows.push(form::pending_toggle_row(
             "Firewall",
             if stopped {
                 "On at startup, but not running now."
@@ -165,10 +165,9 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
                 "Blocks connections from other computers that you did not start."
             },
             on,
-            move |v| {
-                if let Some(a) = admin("firewall", &[if v { "on" } else { "off" }]) {
-                    ctx.act_say(a, &st)
-                }
+            move |v, done| match admin("firewall", &[if v { "on" } else { "off" }]) {
+                Some(a) => ctx.act_switch(a, &st, done),
+                None => done(false),
             },
         ));
     }

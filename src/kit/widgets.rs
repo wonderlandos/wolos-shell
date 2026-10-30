@@ -178,6 +178,38 @@ pub fn toggle(on: bool, changed: impl Fn(bool) + 'static) -> gtk::Switch {
     s
 }
 
+/// A switch for a change that takes time or can fail: `run(on, done)` starts it; the switch waits
+/// (insensitive) until `done(ok)`, and a failed change flips it back to the real state.
+pub fn pending_toggle(
+    on: bool,
+    run: impl Fn(bool, Box<dyn FnOnce(bool)>) + 'static,
+) -> gtk::Switch {
+    let s = gtk::Switch::builder()
+        .active(on)
+        .state(on)
+        .valign(gtk::Align::Center)
+        .build();
+    s.add_css_class("toggle");
+    s.connect_state_set(move |s, want| {
+        if s.state() == want {
+            return glib::Propagation::Proceed;
+        }
+        s.set_sensitive(false);
+        let s2 = s.clone();
+        run(
+            want,
+            Box::new(move |ok| {
+                let now = if ok { want } else { !want };
+                s2.set_state(now);
+                s2.set_active(now);
+                s2.set_sensitive(true);
+            }),
+        );
+        glib::Propagation::Stop
+    });
+    s
+}
+
 pub fn slider(value: f64, changed: impl Fn(f64) + 'static) -> gtk::Scale {
     let s = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 1.0);
     s.set_value(value);

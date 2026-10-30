@@ -49,14 +49,13 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     let mut rows = vec![info("Date and time", &clock_line(&kit::now()))];
     if let (Some(on), Some(_)) = (f.ntp, admin("ntp", &[])) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
-        rows.push(form::toggle_row(
+        rows.push(form::pending_toggle_row(
             "Set time and date automatically",
             "From time servers on the internet.",
             on,
-            move |v| {
-                if let Some(a) = admin("ntp", &[if v { "on" } else { "off" }]) {
-                    ctx.act_say(a, &st)
-                }
+            move |v, done| match admin("ntp", &[if v { "on" } else { "off" }]) {
+                Some(a) => ctx.act_switch(a, &st, done),
+                None => done(false),
             },
         ));
     }
