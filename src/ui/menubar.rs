@@ -103,6 +103,7 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     root.add_css_class("menubar-strip");
     let logo = gtk::MenuButton::new();
     logo.set_child(Some(&w::icon("wolos-glyph-symbolic", w::ICON)));
+    logo.set_tooltip_text(Some("WolOS menu"));
     logo.set_valign(gtk::Align::Center);
     logo.set_popover(Some(&w::menu(
         LOGO_MENU.iter().map(|&(t, argv)| (t, run(argv))).collect(),
