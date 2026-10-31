@@ -8,7 +8,7 @@ const GLASS: [&str; 6] = [
     "wol-dock",
     "wol-panel-switcher",
     "wol-panel-banners",
-    "wol-spotlight",
+    "wol-search",
     "wol-control-center",
 ];
 
@@ -242,7 +242,7 @@ fn system_shortcuts_are_the_mac_ones() {
     use wol_core::shortcuts::{Combo, parse};
     let binds = parse(CONF);
     for (mods, key, flags, action) in [
-        ("SUPER", "Space", "", "wol-spotlight"),
+        ("SUPER", "Space", "", "wol-search"),
         ("SUPER SHIFT", "3", "", "wol-screenshot full"),
         ("SUPER SHIFT", "4", "", "wol-screenshot region"),
         ("SUPER SHIFT", "5", "", "wol shell show screenshot"),

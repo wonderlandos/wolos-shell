@@ -1,4 +1,4 @@
-//! Mission Control surface: blurred wallpaper, desktops strip on top, the current desktop's
+//! Overview surface: blurred wallpaper, desktops strip on top, the current desktop's
 //! windows scaled into a grid (live screencopy via grim; app icon until it arrives).
 use crate::hypr::Client;
 use crate::kit::{

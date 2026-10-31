@@ -21,14 +21,14 @@
   --boot-black: #000000;
   --on-art: #ffffff;
 }
-window, popover, tooltip { font-family: Inter, "SF Pro Text", Cantarell, "Noto Sans", sans-serif; font-size: 13px; }
+window, popover, tooltip { font-family: Inter, Cantarell, "Noto Sans", sans-serif; font-size: 13px; }
 * { -gtk-icon-shadow: none; }
 label.title { font-weight: 600; }
 label.secondary, .secondary label { font-size: 11px; color: var(--dim); }
 label.large-title { font-size: 22px; font-weight: 600; }
 
 /* Layer windows are see-through; only content draws. */
-window.wallpaper, window.menubar, window.dock, window.panel, window.banners, window.controlcenter, window.spotlight, window.preview, window.catcher { background: none; box-shadow: none; border: none; }
+window.wallpaper, window.menubar, window.dock, window.panel, window.banners, window.controlcenter, window.searchbar, window.preview, window.catcher { background: none; box-shadow: none; border: none; }
 window.wallpaper { background: linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04354a); }
 
 /* ---- Menu bar: 28px translucent strip ---- */
@@ -192,13 +192,13 @@ label.source-section { font-size: 11px; font-weight: 600; color: var(--dim); mar
 .page { padding: 24px; }
 label.status-bar { min-height: 24px; padding: 0 16px; border-top: 1px solid var(--line); }
 
-/* ---- Spotlight ---- */
-.spotlight-panel { padding: 0; }
-.spotlight-bar { min-height: 52px; padding: 0 16px; }
-.spotlight-bar image { color: var(--dim); }
-.spotlight-bar text, .spotlight-bar text placeholder { font-size: 22px; background: none; border: none; box-shadow: none; outline: none; color: var(--text); }
-.spotlight-hits { padding: 0 8px 8px 8px; border-top: 1px solid var(--line); padding-top: 8px; }
-.spotlight-none { padding: 16px 8px 12px 8px; }
+/* ---- Search ---- */
+.searchbar-panel { padding: 0; }
+.searchbar-bar { min-height: 52px; padding: 0 16px; }
+.searchbar-bar image { color: var(--dim); }
+.searchbar-bar text, .searchbar-bar text placeholder { font-size: 22px; background: none; border: none; box-shadow: none; outline: none; color: var(--text); }
+.searchbar-hits { padding: 0 8px 8px 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.searchbar-none { padding: 16px 8px 12px 8px; }
 button.hit { background: none; border: none; box-shadow: none; border-radius: 6px; padding: 4px 8px; min-height: 0; }
 button.hit:hover { background: var(--control); }
 button.hit.selected { background: var(--accent); }
@@ -371,7 +371,7 @@ button.hero-action { min-height: 36px; padding: 0 28px; border-radius: 999px; fo
 .switcher-tile.selected .switcher-ring { border-color: var(--accent); background: alpha(var(--accent), 0.18); }
 .switcher-name { font-size: 13px; font-weight: 600; }
 
-/* ---- Mission Control ---- */
+/* ---- Overview ---- */
 .overview-desktops { margin: 24px 0 16px 0; }
 .overview-desktop { border-radius: 10px; border: 3px solid alpha(white, 0.35); box-shadow: 0 4px 16px rgba(0,0,0,0.25); }
 .overview-desktop.current { border-color: var(--accent); }

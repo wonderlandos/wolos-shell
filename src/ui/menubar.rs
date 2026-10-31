@@ -1,4 +1,4 @@
-//! Menu bar: logo menu, frontmost app name, app menus, status icons, clock, Spotlight, Control Center.
+//! Menu bar: logo menu, frontmost app name, app menus, status icons, clock, Search, Control Center.
 use crate::kit::{self, widgets as w};
 use crate::perf::Changed;
 use crate::{appmenu, status};
@@ -174,8 +174,8 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     for (icon, tip, argv) in [
         (
             "system-search-symbolic",
-            "Spotlight",
-            &["wol-spotlight"][..],
+            "Search",
+            &["wol-search"][..],
         ),
         (
             "view-grid-symbolic",

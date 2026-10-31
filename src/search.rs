@@ -1,4 +1,4 @@
-//! Spotlight ranking (port of Iara.Core.Search.Spotlight.Rank). Titles are lowercased once at index time.
+//! Search ranking (port from IaraOS). Titles are lowercased once at index time.
 
 /// 4 prefix, 3 word start, 2 substring, 1 subsequence, 0 none. Both inputs already lowercase.
 pub fn rank(title: &str, q: &str) -> u8 {
@@ -80,7 +80,7 @@ pub fn search<'a>(items: &'a [Item], query: &str, max: usize) -> Vec<&'a Item> {
     hits.into_iter().take(max).map(|h| h.1).collect()
 }
 
-/// Spotlight's calculator: `2+2`, `(3.5 * 4) / 2`, `2^10`, `15%`. None unless the query is
+/// Search's calculator: `2+2`, `(3.5 * 4) / 2`, `2^10`, `15%`. None unless the query is
 /// arithmetic with at least one operator. The answer is shown rounded to 10 significant places.
 pub fn calc(query: &str) -> Option<String> {
     let q: Vec<char> = query.chars().filter(|c| !c.is_whitespace()).collect();

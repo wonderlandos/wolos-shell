@@ -200,49 +200,49 @@ fn cases() -> Vec<Case> {
             build: Box::new(|| ui::control_center::content(Rc::new(shell::system::Fake))),
         },
         Case {
-            name: "spotlight".into(),
+            name: "searchbar".into(),
             size: (728, 1),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
-                let items = Rc::new(std::cell::RefCell::new(ui::spotlight::index(vec![])));
-                ui::spotlight::content(items, Default::default(), "te").0
+                let items = Rc::new(std::cell::RefCell::new(ui::searchbar::index(vec![])));
+                ui::searchbar::content(items, Default::default(), "te").0
             }),
         },
         Case {
-            name: "spotlight-files".into(),
+            name: "searchbar-files".into(),
             size: (728, 1),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
-                let items = Rc::new(std::cell::RefCell::new(ui::spotlight::index(vec![])));
+                let items = Rc::new(std::cell::RefCell::new(ui::searchbar::index(vec![])));
                 let names = shell::files::Index::parse(
                     "Documents/\nDocuments/Taxes 2026.pdf\nDocuments/Tax Receipts/\n\
                      Pictures/tax receipt.jpeg\nDownloads/syntax-cheatsheet.md\n",
                     std::path::Path::new("/home/alice"),
                 );
-                ui::spotlight::content(items, Rc::new(std::cell::RefCell::new(names)), "tax").0
+                ui::searchbar::content(items, Rc::new(std::cell::RefCell::new(names)), "tax").0
             }),
         },
         Case {
             // Arithmetic answers itself; Return copies the answer.
-            name: "spotlight-calc".into(),
+            name: "searchbar-calc".into(),
             size: (728, 1),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
-                let items = Rc::new(std::cell::RefCell::new(ui::spotlight::index(vec![])));
-                ui::spotlight::content(items, Default::default(), "(1200 * 12) / 7").0
+                let items = Rc::new(std::cell::RefCell::new(ui::searchbar::index(vec![])));
+                ui::searchbar::content(items, Default::default(), "(1200 * 12) / 7").0
             }),
         },
         Case {
-            name: "spotlight-empty".into(),
+            name: "searchbar-empty".into(),
             size: (728, 1),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
-                let items = Rc::new(std::cell::RefCell::new(ui::spotlight::index(vec![])));
-                ui::spotlight::content(items, Default::default(), "qwzx kettle").0
+                let items = Rc::new(std::cell::RefCell::new(ui::searchbar::index(vec![])));
+                ui::searchbar::content(items, Default::default(), "qwzx kettle").0
             }),
         },
         Case {
@@ -1155,7 +1155,7 @@ fn form_kit_cases() -> Vec<Case> {
             w::section(
                 "Screenshots",
                 &[
-                    f::row("Show Spotlight search", "", &ok.button),
+                    f::row("Show Search", "", &ok.button),
                     f::row("Capture the screen", "", &taken.button),
                     f::notice("⇧⌘4 is used by “Capture a selection”.", &[swap, cancel]).upcast(),
                     f::row("Record the screen", "", &off.button),

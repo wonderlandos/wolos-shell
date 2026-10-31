@@ -6,7 +6,7 @@ use wol_core::shortcuts::{Group, Shortcut};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Section {
     pub title: &'static str,
-    /// (what it does, keys): ("Show Spotlight search", "⌘Space").
+    /// (what it does, keys): ("Show Search", "⌘Space").
     pub rows: Vec<(String, String)>,
 }
 
@@ -82,13 +82,13 @@ mod tests {
         let list = vec![
             sc("Force Quit apps", Group::System, "SUPER ALT", "Escape", ""),
             sc(
-                "Show Spotlight search",
-                Group::Spotlight,
+                "Show Search",
+                Group::Search,
                 "SUPER",
                 "Space",
                 "",
             ),
-            sc("Show Spotlight search", Group::Spotlight, "SUPER", "S", ""),
+            sc("Show Search", Group::Search, "SUPER", "S", ""),
             sc("Move window", Group::Windows, "SUPER", "mouse:272", "m"),
             sc("Volume up", Group::Media, "", "XF86AudioRaiseVolume", "el"),
             sc("Tile left", Group::Tiling, "SUPER", "Left", ""),
@@ -104,11 +104,11 @@ mod tests {
         let s = sections(&list, false);
         assert_eq!(
             s.iter().map(|x| x.title).collect::<Vec<_>>(),
-            ["Spotlight", "System"]
+            ["Search", "System"]
         );
         assert_eq!(
             s[0].rows,
-            [("Show Spotlight search".into(), "⌘Space".into())]
+            [("Show Search".into(), "⌘Space".into())]
         );
         assert_eq!(s[1].rows.len(), 1, "a turned-off shortcut is not listed");
         assert!(

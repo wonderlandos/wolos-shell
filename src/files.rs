@@ -1,5 +1,5 @@
-//! Spotlight's file names: a per-user list of `$HOME` (one relative path per line, folders end
-//! in `/`), rebuilt by the shell at login and by Spotlight when stale, searched by name in place.
+//! Search's file names: a per-user list of `$HOME` (one relative path per line, folders end
+//! in `/`), rebuilt by the shell at login and by Search when stale, searched by name in place.
 use crate::search::Item;
 use std::path::{Path, PathBuf};
 
@@ -9,7 +9,7 @@ const SKIP: [&str; 3] = ["node_modules", "target", "__pycache__"];
 pub const DEPTH: usize = 8;
 /// Names listed at most (shallow ones first).
 pub const MAX: usize = 200_000;
-/// A list older than this is rebuilt when Spotlight opens.
+/// A list older than this is rebuilt when Search opens.
 pub const STALE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// `$XDG_CACHE_HOME/wolos/files` (else `~/.cache/wolos/files`).
@@ -82,7 +82,7 @@ pub fn load(home: &Path) -> (Index, bool) {
     (Index::parse(&list, home), stale)
 }
 
-/// Lists `home` again and saves it (shell at login and hourly; Spotlight when stale).
+/// Lists `home` again and saves it (shell at login and hourly; Search when stale).
 pub fn rebuild(home: &Path) -> Index {
     let text = lines(&walk(home));
     let _ = save(&text, &cache_file(home));

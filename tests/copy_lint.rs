@@ -200,7 +200,7 @@ fn widget_sentences_pass() {
     assert_clean("weather offline", copy::WEATHER_OFFLINE);
 }
 
-/// `wol games steam` notifications: Steam opened from the Dock or Launchpad has no terminal.
+/// `wol games steam` notifications: Steam opened from the Dock or Apps has no terminal.
 #[test]
 fn games_notices_pass() {
     for (title, body) in wol_core::games::notice::ALL {

@@ -23,7 +23,7 @@ pub enum Zone {
     Reserve,
     /// Placed inside what others reserve.
     Respect,
-    /// Spans the whole output (wallpaper, Mission Control).
+    /// Spans the whole output (wallpaper, Overview).
     Ignore,
 }
 
@@ -402,7 +402,7 @@ mod tests {
     }
 
     /// ⌘C/V/X with a terminal in front taps Ctrl+Shift+C/V/X (appmenu::send); a shell text
-    /// field that holds the keyboard (Spotlight over a terminal) must still copy and paste.
+    /// field that holds the keyboard (Search over a terminal) must still copy and paste.
     #[test]
     fn shell_text_fields_take_the_terminal_clipboard_keys() {
         use gtk::gdk::{Key, ModifierType as M};

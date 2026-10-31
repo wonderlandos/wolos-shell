@@ -1,4 +1,4 @@
-//! Mission Control (Super+Up, 3-finger swipe up): desktops strip + every window of the current
+//! Overview (Super+Up, 3-finger swipe up): desktops strip + every window of the current
 //! desktop scaled into a grid. Own layer surface: hyprexpo is not in the hyprland-plugins pin.
 use crate::hypr::Client;
 

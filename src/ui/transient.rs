@@ -4,7 +4,7 @@ use crate::hypr;
 use gtk::prelude::*;
 use std::rc::Rc;
 
-/// Shell panels that close like macOS menus. Not the OSD, Mission Control, the screenshot bar or
+/// Shell panels that close like macOS menus. Not the OSD, Overview, the screenshot bar or
 /// Force Quit (a window that stays until dismissed).
 pub const PANELS: &[&str] = &[
     "control-center",
@@ -46,7 +46,7 @@ pub fn closes_all(c: &crate::protocol::Command) -> bool {
 }
 
 /// Panel apps in their own process (GApplication ids) that a shell panel opening closes.
-pub const PANEL_APPS: &[&str] = &["org.wolos.spotlight"];
+pub const PANEL_APPS: &[&str] = &["org.wolos.search"];
 
 /// A GApplication's D-Bus object path.
 pub fn object_path(id: &str) -> String {
@@ -110,7 +110,7 @@ pub fn close_all(panels: &super::Panels) {
     EXTRA.with(|e| e.borrow().clone()).iter().for_each(|f| f());
 }
 
-/// Panel apps (Spotlight): `close` on a click outside `win` or on a [`dismisses`] event.
+/// Panel apps (Search): `close` on a click outside `win` or on a [`dismisses`] event.
 pub fn close_outside(app: &gtk::Application, win: &gtk::ApplicationWindow, close: Rc<dyn Fn()>) {
     // Dev toplevels: a full-screen window would cover the desktop.
     if crate::kit::surface::layered() {
@@ -262,11 +262,11 @@ mod tests {
         assert_eq!(parse("hide transient").unwrap().verb, Verb::Hide);
     }
 
-    /// Spotlight (its own process) is closed over D-Bus: its GApplication's `hide` action.
+    /// Search (its own process) is closed over D-Bus: its GApplication's `hide` action.
     #[test]
     fn panel_apps_are_closed_by_their_action_path() {
-        assert_eq!(PANEL_APPS, ["org.wolos.spotlight"]);
-        assert_eq!(object_path("org.wolos.spotlight"), "/org/wolos/spotlight");
+        assert_eq!(PANEL_APPS, ["org.wolos.search"]);
+        assert_eq!(object_path("org.wolos.search"), "/org/wolos/search");
     }
 
     /// Hyprland's focus grab closes panels on a click on any display; the click-catcher (one

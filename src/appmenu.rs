@@ -198,7 +198,7 @@ const NO_KEYBOARD: [&str; 7] = [
     "wol-panel-capture-thumb",
 ];
 
-/// True when a mapped WolOS layer may hold the keyboard (Spotlight, Control Center, sheets…).
+/// True when a mapped WolOS layer may hold the keyboard (Search, Control Center, sheets…).
 pub fn panel_has_keys(namespaces: &[String]) -> bool {
     namespaces
         .iter()
@@ -576,7 +576,7 @@ mod tests {
     fn keyboard_panels_from_layer_namespaces() {
         let j = r#"{"eDP-1":{"levels":{"0":[{"namespace":"wol-wallpaper"}],"2":[{"namespace":"wol-menubar"},{"namespace":"wol-dock"}],"3":[{"namespace":"wol-panel-banners"},{"namespace":"wol-panel-osd"}]}}}"#;
         assert!(!panel_has_keys(&crate::hypr::parse_layers(j)));
-        let j = r#"{"eDP-1":{"levels":{"3":[{"namespace":"wol-panel-spotlight"}]}}}"#;
+        let j = r#"{"eDP-1":{"levels":{"3":[{"namespace":"wol-panel-searchbar"}]}}}"#;
         assert!(panel_has_keys(&crate::hypr::parse_layers(j)));
         assert!(!panel_has_keys(&crate::hypr::parse_layers(
             r#"{"eDP-1":{"levels":{"3":[{"namespace":"waybar"}]}}}"#

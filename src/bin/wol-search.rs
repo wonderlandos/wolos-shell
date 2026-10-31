@@ -1,3 +1,3 @@
 fn main() -> gtk::glib::ExitCode {
-    shell::ui::spotlight::run()
+    shell::ui::searchbar::run()
 }

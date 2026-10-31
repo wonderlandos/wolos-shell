@@ -25,7 +25,7 @@ pub trait Session {
     /// Where the person wants shared text to go; None when they cancelled. Blocks until then.
     fn share(&self, title: &str, text: &str) -> Option<ShareTo>;
     /// Titles and kinds of the apps and Settings pages found. Never the rows of provider apps:
-    /// those are the person's, for Spotlight alone.
+    /// those are the person's, for Search alone.
     fn search(&self, text: &str) -> Vec<(String, String)>;
     /// Volume and mute of the default output.
     fn volume(&self) -> Option<(u8, bool)>;
@@ -83,7 +83,7 @@ impl Session for Desktop {
     }
 
     fn search(&self, text: &str) -> Vec<(String, String)> {
-        let items = crate::ui::spotlight::index(crate::desktop::load_all());
+        let items = crate::ui::searchbar::index(crate::desktop::load_all());
         crate::search::search(&items, text, MAX_FOUND)
             .into_iter()
             .map(|i| (i.title.clone(), i.kind.to_owned()))
@@ -183,7 +183,7 @@ fn share(s: &dyn Session, title: &str, text: &str) -> Result<&'static str, Strin
     }
 }
 
-/// The person opened a row an app provided. Waits for wold: Spotlight closes next.
+/// The person opened a row an app provided. Waits for wold: Search closes next.
 pub fn open_row(provider: i32, key: &str) {
     let c = Call::SearchOpen {
         provider,
