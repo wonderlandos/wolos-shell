@@ -2,6 +2,7 @@
 pub mod alerts;
 pub mod app_host;
 pub mod app_notices;
+pub mod app_session;
 pub mod appmenu;
 pub mod apps;
 pub mod capture;
