@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-shell composition: wallpaper, menu bar, dock, notifications, OSD, clipboard, session, switcher.
+pub mod analyze;
 pub mod app_host;
 pub mod app_view;
 pub mod approval;

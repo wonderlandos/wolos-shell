@@ -35,6 +35,27 @@ struct Case {
     build: Box<dyn Fn() -> gtk::Widget>,
 }
 
+fn analyze_full() -> wol_core::malware::Full {
+    wol_core::malware::Full {
+        on: true,
+        version: 28170,
+        signatures: 3_628_245,
+        updated: 1,
+        ..Default::default()
+    }
+}
+
+/// Files' "Analyze with ClamAV" window in one state.
+fn analyze_case(tag: &str, view: ui::analyze::View) -> Case {
+    Case {
+        name: format!("analyze-{tag}"),
+        size: (400, 1),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(move || ui::analyze::content(&view).0),
+    }
+}
+
 fn cases() -> Vec<Case> {
     let mut v: Vec<Case> = vec![
         Case {
@@ -137,6 +158,48 @@ fn cases() -> Vec<Case> {
                 .0
             }),
         },
+        analyze_case("off", ui::analyze::View::NotReady(Default::default())),
+        analyze_case(
+            "waiting",
+            ui::analyze::View::NotReady(wol_core::malware::Full {
+                on: true,
+                updating: true,
+                ..Default::default()
+            }),
+        ),
+        analyze_case(
+            "checking",
+            ui::analyze::View::Checking {
+                shown: "“setup.exe”".into(),
+            },
+        ),
+        analyze_case(
+            "clean",
+            ui::analyze::View::Done {
+                analysis: wol_core::malware::Analysis::Clean,
+                shown: "“setup.exe”".into(),
+                full: analyze_full(),
+            },
+        ),
+        analyze_case(
+            "found",
+            ui::analyze::View::Done {
+                analysis: wol_core::malware::Analysis::Found(vec![wol_core::malware::Hit {
+                    name: "Eicar-Test-Signature".into(),
+                    path: "/home/julia/Downloads/eicar.com".into(),
+                }]),
+                shown: "“eicar.com”".into(),
+                full: analyze_full(),
+            },
+        ),
+        analyze_case(
+            "incomplete",
+            ui::analyze::View::Done {
+                analysis: wol_core::malware::Analysis::Incomplete(vec!["clamav: timed out".into()]),
+                shown: "“setup.exe”".into(),
+                full: analyze_full(),
+            },
+        ),
         Case {
             // An administrator change from a helper: the password, every time.
             name: "approval-admin".into(),

@@ -415,6 +415,58 @@ pub fn disk_full(free: &str) -> (String, String) {
     )
 }
 
+/// Files' "Analyze with ClamAV".
+pub const ANALYZE_TITLE: &str = "Analyze with ClamAV";
+
+pub fn analyze_checking(shown: &str) -> (String, String) {
+    (
+        format!("Checking {shown}…"),
+        "ClamAV can take a few seconds to start.".into(),
+    )
+}
+
+/// The signatures are off or not here: nothing was checked, and Settings is where to change it.
+pub fn analyze_offer(f: &wol_core::malware::Full) -> (String, String) {
+    if f.on {
+        (
+            "Signatures Aren’t Ready".into(),
+            format!("{} Nothing was checked.", malware_full(f)),
+        )
+    } else {
+        (
+            "Signatures Are Off".into(),
+            "ClamAV needs its signature database. You can turn it on in Settings > Privacy & Security, which downloads it to this computer. Nothing was checked.".into(),
+        )
+    }
+}
+
+/// Title and sentence of a finished check.
+pub fn analyze_result(
+    a: &wol_core::malware::Analysis,
+    shown: &str,
+    f: &wol_core::malware::Full,
+) -> (String, String) {
+    use wol_core::malware::Analysis;
+    match a {
+        Analysis::Clean => (
+            "Nothing Found".into(),
+            format!(
+                "ClamAV checked {shown} against {:.1} million signatures, version {}.",
+                f.signatures as f64 / 1e6,
+                f.version
+            ),
+        ),
+        Analysis::Found(_) => (
+            "Malware Found".into(),
+            format!("ClamAV matched {shown} to known malware. Move it to the Trash."),
+        ),
+        Analysis::Incomplete(_) => (
+            "Check Not Finished".into(),
+            format!("Nothing was found, but part of {shown} could not be checked."),
+        ),
+    }
+}
+
 /// Files stopped by the malware check: summary, body. Says what was found and what to do.
 pub fn malware_found(file: &str, name: &str) -> (String, String) {
     let shown: String = file.chars().take(48).collect();
