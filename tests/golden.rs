@@ -8,6 +8,8 @@ use shell::ui;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+#[path = "golden_cases/app_view.rs"]
+mod app_view_cases;
 #[path = "golden_cases/store_package.rs"]
 mod package_cases;
 #[path = "golden_cases/widgets.rs"]
@@ -924,6 +926,7 @@ fn cases() -> Vec<Case> {
     v.extend(form_kit_cases());
     v.extend(widget_cases::cases());
     v.extend(package_cases::cases());
+    v.extend(app_view_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-windows-tiling-{tag}"),

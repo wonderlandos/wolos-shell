@@ -37,7 +37,7 @@ pub(crate) fn place(d: &mut Desktop, b: Builtin) -> Option<String> {
 fn name_of(k: &Kind) -> String {
     match k {
         Kind::Builtin(b) => b.name().into(),
-        Kind::Custom(id) | Kind::Unknown(id) => id.clone(),
+        Kind::Custom(id) | Kind::Lua(id) | Kind::Unknown(id) => id.clone(),
     }
 }
 
