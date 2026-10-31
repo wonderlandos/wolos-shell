@@ -1255,7 +1255,7 @@ fn form_kit_cases() -> Vec<Case> {
             shell::kit::pickers::key_legend(&ui::settings::KEY_LEGEND)
         }),
         case("toast", || {
-            let aw = w::AppWindow::new("", false, false);
+            let aw = w::AppWindow::new(false, false);
             let t = shell::kit::toast::Toast::new(&aw);
             t.show("Wallpaper changed", "Undo", || {});
             t.revealer.set_transition_duration(0);
