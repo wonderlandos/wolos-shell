@@ -89,6 +89,8 @@ fn every_requested_wolos_app_icon_ships() {
                 .step_by(2)
                 .filter(|t| {
                     t.starts_with("wolos-")
+                        // A package repository and a runtime folder, not icons.
+                        && !["wolos-cachy", "wolos-install"].contains(t)
                         && !t.ends_with("-symbolic")
                         && t.bytes()
                             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
