@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 21] = [
+pub(crate) const KINDS: [(&str, &str, &str); 25] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -32,6 +32,26 @@ pub(crate) const KINDS: [(&str, &str, &str); 21] = [
         "window-list",
         "Window List",
         "Can see which windows are open.",
+    ),
+    (
+        "packages-install",
+        "Install Apps",
+        "Can install apps and packages for everyone on this computer.",
+    ),
+    (
+        "packages-remove",
+        "Remove Apps",
+        "Can remove apps and packages for everyone on this computer.",
+    ),
+    (
+        "packages-update",
+        "System Updates",
+        "Can update WolOS and its apps to releases WolOS signed.",
+    ),
+    (
+        "packages-unreviewed",
+        "Unreviewed Apps",
+        "Can install apps built on this computer that nobody at WolOS reviewed.",
     ),
     (
         "clipboard-read",
@@ -454,9 +474,9 @@ mod tests {
             .collect();
         assert_eq!(
             enforcement_note(&all),
-            "WolOS enforces Screen Recording and Notifications. For Remote Control, \
-             Clipboard History and Window List, WolOS passes on your choice but cannot stop an \
-             app that ignores it."
+            "WolOS enforces Screen Recording, Notifications, Install Apps, Remove Apps, System \
+             Updates and Unreviewed Apps. For Remote Control, Clipboard History and Window List, \
+             WolOS passes on your choice but cannot stop an app that ignores it."
         );
         assert_eq!(
             enforcement_note(&["screen-capture"]),
