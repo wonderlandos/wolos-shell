@@ -806,16 +806,43 @@ fn cases() -> Vec<Case> {
                 s.aw.root.clone().upcast()
             }),
         });
+        // The AUR apart from the catalogue, off, with the legend under it.
+        v.push(Case {
+            name: format!("store-aur-tab-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                let s = ui::store::content(
+                    Rc::new(shell::system::Fake),
+                    ui::store::Env {
+                        data_dirs: vec![],
+                        pkg_search: false,
+                        flatpaks: vec![],
+                    },
+                );
+                s.aw.content.set_visible_child_name("AUR");
+                s.aw.root.clone().upcast()
+            }),
+        });
         v.push(Case {
             name: format!("store-aur-audit-{tag}"),
-            size: (sw, sh),
+            size: (sw, sh + 60),
             class: "preview-app",
             wallpaper: false,
             build: Box::new(move || {
                 let graph = format!("{}/tests/golden_cases/aur-graph.svg", env!("CARGO_MANIFEST_DIR"));
                 let found = ui::store::audit_section(&shell::packages::Audit {
-                    heading: "Needs review.".into(),
-                    findings: vec!["curl downloads http://203.0.113.10/x at demo.install:2, then sh runs it at demo.install:2, and no checksum checks it first.".into()],
+                    state: "Needs Review".into(),
+                    flags: vec![shell::packages::AuditFlag {
+                        title: "Runs a Download Unchecked".into(),
+                        severity: "High".into(),
+                        count: 2,
+                    }],
+                    findings: vec![(
+                        "Runs a Download Unchecked".into(),
+                        "curl downloads http://203.0.113.10/x at demo.install:2, then sh runs it at demo.install:2, and no checksum checks it first.".into(),
+                    )],
                     graph: Some(graph),
                 });
                 found.add_css_class("background");
