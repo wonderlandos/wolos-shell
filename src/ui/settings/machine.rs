@@ -63,6 +63,10 @@ pub trait Machine: Send + Sync {
     fn power(&self) -> Option<wol_core::power::policy::Status>;
     /// Firewall, remote login and kernel protections (`wol_core::security`).
     fn security(&self) -> Option<wol_core::security::Status>;
+    /// The malware check and what it stopped (`wol_core::malware`). None: nothing to show here.
+    fn malware(&self) -> Option<wol_core::malware::Status> {
+        None
+    }
     /// The daily update check's findings; None before the first check.
     fn updates(&self) -> Option<wol_core::update::check::Updates>;
     /// /etc/passwd text (accounts and their login shells).
@@ -182,6 +186,20 @@ impl Machine for Live {
     fn security(&self) -> Option<wol_core::security::Status> {
         let os = self.os();
         Some(wol_core::security::status(&|argv: &[&str]| os.run(argv)))
+    }
+    fn malware(&self) -> Option<wol_core::malware::Status> {
+        let os = self.os();
+        let read = |p: &str| std::fs::read_to_string(p).ok();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let uid = wol_core::malware::my_uid();
+        Some(wol_core::malware::status(
+            &|argv: &[&str]| os.run(argv),
+            &read,
+            uid,
+            now,
+        ))
     }
     fn updates(&self) -> Option<wol_core::update::check::Updates> {
         use wol_core::update::check::{DIR, USERLAND_ARGV, Updates};

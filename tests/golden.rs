@@ -993,6 +993,48 @@ fn cases() -> Vec<Case> {
     v.extend(app_view_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
+            name: format!("settings-malware-{tag}"),
+            size: (sw, 1),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(|| {
+                let p = w::vbox(w::S4);
+                p.add_css_class("page");
+                p.add_css_class("app-window");
+                p.append(&ui::settings::malware_section(&wol_core::malware::Status {
+                    on: Some(true),
+                    signatures_built: Some(1),
+                    signatures_age_days: Some(0),
+                    signatures_version: Some(1),
+                    blocked: vec![wol_core::malware::Blocked {
+                        path: "/home/julia/Downloads/setup.exe".into(),
+                        name: "Win.Test.Example".into(),
+                        sha256: String::new(),
+                        when: 1,
+                        uid: 1000,
+                    }],
+                    full: wol_core::malware::Full {
+                        on: true,
+                        version: 28170,
+                        signatures: 3_628_245,
+                        updated: 1,
+                        ..Default::default()
+                    },
+                }));
+                p.append(&ui::settings::malware_full_section(
+                    &wol_core::malware::Full {
+                        on: true,
+                        version: 28170,
+                        signatures: 3_628_245,
+                        updated: 1,
+                        ..Default::default()
+                    },
+                    |_, _| {},
+                ));
+                p.upcast()
+            }),
+        });
+        v.push(Case {
             name: format!("settings-windows-tiling-{tag}"),
             size: (sw, 1),
             class: "preview-app",

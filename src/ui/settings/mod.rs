@@ -35,6 +35,7 @@ mod language;
 mod lock;
 mod login_items;
 mod machine;
+mod malware;
 mod memory_saver;
 mod network;
 mod notifications;
@@ -53,6 +54,7 @@ mod wifi;
 
 pub use accounts::{account_name, password_problem};
 pub use machine::{Demo, Kernel, Live, Machine, Sharing};
+pub use malware::{full_section as malware_full_section, section as malware_section};
 pub use shortcuts::KEY_LEGEND;
 pub use software_update::{UpdateState, parse_check, with_flatpaks};
 
