@@ -172,11 +172,7 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         root.append(&b);
     }
     for (icon, tip, argv) in [
-        (
-            "system-search-symbolic",
-            "Search",
-            &["wol-search"][..],
-        ),
+        ("system-search-symbolic", "Search", &["wol-search"][..]),
         (
             "view-grid-symbolic",
             "Control Center",

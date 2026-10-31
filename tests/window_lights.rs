@@ -8,7 +8,12 @@ const PANELS: &str = include_str!("../src/ui/panels.rs");
 
 #[test]
 fn app_windows_draw_no_window_buttons() {
-    for s in ["traffic-lights", "w.minimize()", "w.maximize()", "w.unmaximize()"] {
+    for s in [
+        "traffic-lights",
+        "w.minimize()",
+        "w.maximize()",
+        "w.unmaximize()",
+    ] {
         assert!(!WIDGETS.contains(s), "{s}");
     }
 }

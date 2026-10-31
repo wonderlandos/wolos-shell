@@ -843,18 +843,14 @@ impl Inner {
                 crate::packages::upgrade(crate::packages::present(), &crate::packages::run_wopkg)
                     .unwrap_or_else(|| c.pkg_upgrade(&pw))
             }
-            Action::PkgInstall(t) => crate::packages::install(
-                t,
-                crate::packages::present(),
-                &crate::packages::run_wopkg,
-            )
-            .unwrap_or_else(|| c.pkg_install(t, &pw)),
-            Action::PkgRemove(t) => crate::packages::remove(
-                t,
-                crate::packages::present(),
-                &crate::packages::run_wopkg,
-            )
-            .unwrap_or_else(|| c.pkg_remove(t, &pw)),
+            Action::PkgInstall(t) => {
+                crate::packages::install(t, crate::packages::present(), &crate::packages::run_wopkg)
+                    .unwrap_or_else(|| c.pkg_install(t, &pw))
+            }
+            Action::PkgRemove(t) => {
+                crate::packages::remove(t, crate::packages::present(), &crate::packages::run_wopkg)
+                    .unwrap_or_else(|| c.pkg_remove(t, &pw))
+            }
             Action::FlatpakInstall(id) => {
                 flatpak_install_tracked(id).unwrap_or_else(|| c.flatpak_install(id))
             }

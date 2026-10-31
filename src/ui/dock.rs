@@ -318,7 +318,8 @@ impl Dock {
 
     fn tile_for(&self, class: &str) -> Option<(usize, &w::DockTile)> {
         let classes = HashSet::from([class.to_lowercase()]);
-        apps::here().iter()
+        apps::here()
+            .iter()
             .zip(&self.tiles)
             .position(|(p, _)| apps::is_running(p, &classes))
             .map(|i| (i, &self.tiles[i]))
