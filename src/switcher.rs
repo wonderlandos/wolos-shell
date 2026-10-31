@@ -13,7 +13,7 @@ pub struct App {
 /// Groups clients by class (case-insensitive), ordered by each app's most recent focus.
 /// Names and icons come from the dock pins, then installed .desktop entries.
 pub fn apps(clients: &[Client], installed: &[crate::desktop::Entry]) -> Vec<App> {
-    use crate::apps::{PINS, frontmost_name, icon_for};
+    use crate::apps::{frontmost_name, here, icon_for};
     let mut sorted: Vec<&Client> = clients.iter().filter(|c| !c.class.is_empty()).collect();
     sorted.sort_by_key(|c| c.focus);
     let mut out: Vec<App> = Vec::new();
@@ -21,8 +21,8 @@ pub fn apps(clients: &[Client], installed: &[crate::desktop::Entry]) -> Vec<App>
         let class = c.class.to_lowercase();
         if out.iter().all(|a| a.class != class) {
             out.push(App {
-                name: frontmost_name(&class, "", PINS, installed),
-                icon: icon_for(&class, PINS, installed),
+                name: frontmost_name(&class, "", here(), installed),
+                icon: icon_for(&class, here(), installed),
                 class,
                 address: c.address.clone(),
             });

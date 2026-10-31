@@ -147,7 +147,7 @@ pub fn hypr_events(dock: Rc<Dock>, panels: Panels) {
         let installed = installed.clone();
         move |class: &str, title: &str| {
             let inst = installed.get_or_init(crate::desktop::load_all);
-            let name = crate::apps::frontmost_name(class, title, crate::apps::PINS, inst);
+            let name = crate::apps::frontmost_name(class, title, crate::apps::here(), inst);
             super::menubar::set_app_all(name, class.to_string());
         }
     };

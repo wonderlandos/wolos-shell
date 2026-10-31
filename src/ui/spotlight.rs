@@ -24,10 +24,10 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
     // Pinned apps come from PINS below (WolOS name, icon, launcher), never twice.
     let mut v: Vec<Item> = apps
         .into_iter()
-        .filter(|e| crate::apps::pin_for_entry(e, crate::apps::PINS).is_none())
+        .filter(|e| crate::apps::pin_for_entry(e, crate::apps::here()).is_none())
         .map(|e| Item::new(&e.name, "Application", &e.icon, e.exec))
         .collect();
-    for p in crate::apps::PINS {
+    for p in crate::apps::here() {
         if !v.iter().any(|i| i.title == p.name) {
             v.push(Item::new(
                 p.name,
@@ -133,7 +133,7 @@ fn search_url(query: &str) -> String {
 
 /// The row under [`no_results`]: the browser searches for the query.
 pub fn web_search(query: &str) -> Item {
-    let browser = crate::apps::PINS.iter().find(|p| p.name == "Browser");
+    let browser = crate::apps::here().iter().find(|p| p.name == "Browser");
     let (icon, exec) = browser.map_or(("wolos-browser", "helium"), |p| (p.icon, p.exec[0]));
     Item::new(
         &format!("Search the web for \u{201c}{query}\u{201d}"),
