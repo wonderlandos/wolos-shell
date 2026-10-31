@@ -1570,6 +1570,36 @@ fn contrast_issues(win: &gtk::Window, tex: &gdk::Texture, classes: &[&str]) -> V
     out
 }
 
+/// True when the outer ring of the render carries colour: the dusk wallpaper is pink and violet,
+/// a window without it is flat grey or white. Cases on the wallpaper must show it.
+fn shows_wallpaper(t: &gdk::Texture) -> bool {
+    let (w, h, px) = pixels(t);
+    let edge = |v: i32, n: i32| v < 4 || v >= n - 4;
+    (0..h).any(|y| {
+        (0..w).any(|x| {
+            if !(edge(x, w) || edge(y, h)) {
+                return false;
+            }
+            let p = &px[((y * w + x) * 4) as usize..][..3];
+            p.iter().max().unwrap() - p.iter().min().unwrap() > 20
+        })
+    })
+}
+
+/// Waits until the wallpaper is on screen instead of trusting a fixed delay: the stylesheet's
+/// image loads off the main loop and a starved CPU can take many seconds to deliver it. Gives up
+/// after 90 s.
+fn wait_for_wallpaper(win: &gtk::Window) -> bool {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(90);
+    while !shows_wallpaper(&render(win)) {
+        if std::time::Instant::now() > until {
+            return false;
+        }
+        pump(250);
+    }
+    true
+}
+
 fn pixels(t: &gdk::Texture) -> (i32, i32, Vec<u8>) {
     let mut d = gdk::TextureDownloader::new(t);
     d.set_format(gdk::MemoryFormat::R8g8b8a8);
@@ -1648,7 +1678,16 @@ fn main() {
                     .find(|f| f.key() == "MESSAGE")
                     .and_then(|f| f.value_str().map(str::to_owned))
                     .unwrap_or_default();
-                WARNINGS.with_borrow_mut(|v| v.push(format!("{level:?}: {msg}")));
+                // Known noise, not style bugs: GTK 4.24's deprecation notice for the
+                // `gtk-application-prefer-dark-theme` set once per variant (kit/style.rs), and
+                // Broadway's frame-timing warning that lands on a random case.
+                const NOISE: [&str; 2] = [
+                    "Use GtkSettings:gtk-interface-color-scheme instead",
+                    "Duplicate call to gdk_frame_timings_submitted",
+                ];
+                if !NOISE.iter().any(|n| msg.contains(n)) {
+                    WARNINGS.with_borrow_mut(|v| v.push(format!("{level:?}: {msg}")));
+                }
             }
             glib::log_writer_default(level, fields)
         });
@@ -1714,6 +1753,7 @@ fn main() {
             win.set_child(Some(&frame));
             win.present();
             pump(900);
+            let wallpaper_waited = !c.wallpaper || wait_for_wallpaper(&win);
             fn count(n: &shell::layout::Node) -> usize {
                 1 + n.children.iter().map(count).sum::<usize>()
             }
@@ -1746,6 +1786,9 @@ fn main() {
                     c.size.1
                 ));
             }
+            if !wallpaper_waited {
+                issues.push("wallpaper not drawn after 90 s".into());
+            }
             issues.extend(WARNINGS.with_borrow_mut(std::mem::take));
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             issues.extend(untitled_icon_buttons(win.upcast_ref()));
@@ -1755,6 +1798,9 @@ fn main() {
             if update {
                 std::fs::copy(&png, &gold).unwrap();
             } else if let Ok(g) = gdk::Texture::from_filename(&gold) {
+                if c.wallpaper && !shows_wallpaper(&g) {
+                    issues.push("golden was captured without the wallpaper".into());
+                }
                 let d = diff(&tex, &g);
                 if d > TOLERANCE {
                     issues.push(format!(
