@@ -279,6 +279,11 @@ impl Installer {
             Step::Manual => self.fill_manual(),
             Step::Edit => self.fill_edit(),
             Step::Protect => self.fill_protect(),
+            Step::Account => {
+                if let Some((_, e)) = self.editors.borrow().first() {
+                    e.grab_focus();
+                }
+            }
             Step::Summary => self.fill_summary(),
             _ => {}
         }
