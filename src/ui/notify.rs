@@ -44,8 +44,10 @@ pub const MAX_BUTTONS: usize = 2;
 
 /// Notify's flat action list (key, label, key, label…) as pairs; a dangling key is dropped.
 pub fn parse_actions(flat: &[String]) -> Vec<(String, String)> {
-    flat.chunks_exact(2)
-        .map(|p| (p[0].clone(), p[1].clone()))
+    flat.as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[key, label]| (key.clone(), label.clone()))
         .collect()
 }
 
