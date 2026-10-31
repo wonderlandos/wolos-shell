@@ -340,7 +340,7 @@ pub fn banner_with(n: &Note, count: u32, act: Rc<dyn Fn(&str)>) -> gtk::Box {
     let icon = if n.icon.is_empty() && n.app == SYSTEM_APP {
         SYSTEM_ICON.to_string()
     } else if n.icon.is_empty() {
-        crate::apps::icon_for(&n.app, crate::apps::PINS, &[])
+        crate::apps::icon_for(&n.app, crate::apps::here(), &[])
     } else {
         n.icon.clone()
     };

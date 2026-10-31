@@ -92,7 +92,7 @@ pub fn content(
             pic.set_paintable(Some(t));
         }
         frame.set_child(Some(&pic));
-        let icon_name = crate::apps::icon_for(&win.client.class, crate::apps::PINS, &[]);
+        let icon_name = crate::apps::icon_for(&win.client.class, crate::apps::here(), &[]);
         let icon = w::app_icon(&icon_name, w::ICON_XL);
         icon.set_halign(gtk::Align::Center);
         icon.set_valign(gtk::Align::Center);

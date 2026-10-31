@@ -91,7 +91,7 @@ fn about(name: &str, class: &str) {
     let Some(app) = gtk::gio::Application::default().and_downcast::<gtk::Application>() else {
         return;
     };
-    let icon = crate::apps::icon_for(class, crate::apps::PINS, &crate::desktop::load_all());
+    let icon = crate::apps::icon_for(class, crate::apps::here(), &crate::desktop::load_all());
     super::panels::about(&app, name, &icon, class).present();
 }
 

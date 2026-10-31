@@ -87,6 +87,29 @@ pub const PINS: &[Pin] = &[
     },
 ];
 
+/// Marks the live system; the installer leaves it behind.
+pub const LIVE_MARK: &str = "/etc/wolos-live";
+
+/// Install WolOS, first in the dock while trying WolOS.
+pub const INSTALL: Pin = Pin {
+    id: "org.wolos.installer",
+    name: "Install WolOS",
+    icon: "wolos-mark",
+    exec: &["/usr/lib/wolos/wol-install"],
+};
+
+/// The dock of this kind of system.
+pub fn pins(live: bool) -> Vec<Pin> {
+    let first = live.then_some(INSTALL);
+    first.into_iter().chain(PINS.iter().cloned()).collect()
+}
+
+/// The dock here (the system doesn't change kind while it runs).
+pub fn here() -> &'static [Pin] {
+    static HERE: std::sync::OnceLock<Vec<Pin>> = std::sync::OnceLock::new();
+    HERE.get_or_init(|| pins(std::path::Path::new(LIVE_MARK).exists()))
+}
+
 fn program(exec0: &str) -> &str {
     exec0.rsplit('/').next().unwrap_or(exec0)
 }
@@ -160,6 +183,18 @@ pub fn icon_for(class: &str, pins: &[Pin], installed: &[Entry]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn install_leads_the_dock_only_while_trying_wolos() {
+        let live = pins(true);
+        assert_eq!(live[0], INSTALL, "first thing in the live dock");
+        assert_eq!(&live[1..], PINS);
+        assert_eq!(
+            pins(false),
+            PINS,
+            "an installed system has nothing to install"
+        );
+    }
 
     #[test]
     fn settings_window_is_named_and_marked_running() {

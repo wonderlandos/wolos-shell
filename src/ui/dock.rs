@@ -1,5 +1,5 @@
 //! Dock: pinned apps, running dots from Hyprland clients, separator, the Downloads stack, Trash.
-use crate::apps::{self, PINS};
+use crate::apps;
 use crate::kit::{self, surface::Spec, widgets as w};
 use gtk::{gio, glib, prelude::*};
 use std::cell::RefCell;
@@ -167,7 +167,7 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
     root.add_css_class("no-row-check"); // tiles lift on hover by design
     root.set_halign(gtk::Align::Center);
     root.set_valign(gtk::Align::End);
-    let tiles: Vec<w::DockTile> = PINS
+    let tiles: Vec<w::DockTile> = apps::here()
         .iter()
         .map(|p| {
             let argv: Vec<String> = p.exec.iter().map(|s| s.to_string()).collect();
@@ -318,7 +318,7 @@ impl Dock {
 
     fn tile_for(&self, class: &str) -> Option<(usize, &w::DockTile)> {
         let classes = HashSet::from([class.to_lowercase()]);
-        PINS.iter()
+        apps::here().iter()
             .zip(&self.tiles)
             .position(|(p, _)| apps::is_running(p, &classes))
             .map(|i| (i, &self.tiles[i]))
@@ -353,7 +353,7 @@ impl Dock {
     }
 
     pub fn set_running(&self, classes: &HashSet<String>) {
-        for (p, t) in PINS.iter().zip(&self.tiles) {
+        for (p, t) in apps::here().iter().zip(&self.tiles) {
             t.set_running(apps::is_running(p, classes));
         }
     }
