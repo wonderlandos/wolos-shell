@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 20] = [
+pub(crate) const KINDS: [(&str, &str, &str); 21] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -107,6 +107,11 @@ pub(crate) const KINDS: [(&str, &str, &str); 20] = [
         "share",
         "Sharing",
         "Can offer text for you to copy or save. Nothing leaves until you choose.",
+    ),
+    (
+        "background",
+        "Background Activity",
+        "Can keep running parts of itself after you close it.",
     ),
 ];
 
