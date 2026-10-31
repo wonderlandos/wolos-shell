@@ -837,9 +837,24 @@ impl Inner {
                 admin,
                 password,
             } => c.add_user(name, full_name, *admin, password, &pw),
-            Action::PkgUpgrade => c.pkg_upgrade(&pw),
-            Action::PkgInstall(t) => c.pkg_install(t, &pw),
-            Action::PkgRemove(t) => c.pkg_remove(t, &pw),
+            // wopkg runs as the person and asks wold, which checks the consent grant (ADR 0021);
+            // without wopkg the Authenticate-sheet path through wol-admind stays.
+            Action::PkgUpgrade => {
+                crate::packages::upgrade(crate::packages::present(), &crate::packages::run_wopkg)
+                    .unwrap_or_else(|| c.pkg_upgrade(&pw))
+            }
+            Action::PkgInstall(t) => crate::packages::install(
+                t,
+                crate::packages::present(),
+                &crate::packages::run_wopkg,
+            )
+            .unwrap_or_else(|| c.pkg_install(t, &pw)),
+            Action::PkgRemove(t) => crate::packages::remove(
+                t,
+                crate::packages::present(),
+                &crate::packages::run_wopkg,
+            )
+            .unwrap_or_else(|| c.pkg_remove(t, &pw)),
             Action::FlatpakInstall(id) => {
                 flatpak_install_tracked(id).unwrap_or_else(|| c.flatpak_install(id))
             }
