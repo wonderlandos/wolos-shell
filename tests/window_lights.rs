@@ -13,6 +13,13 @@ fn app_windows_draw_no_window_buttons() {
     }
 }
 
+/// The strip above a Kit window shows the title and takes 28 px: the toolbar repeats neither.
+#[test]
+fn the_toolbar_leaves_the_title_to_the_strip() {
+    assert!(!WIDGETS.contains("toolbar-title"));
+    assert!(CSS.contains(".toolbar { min-height: 36px;"));
+}
+
 #[test]
 fn the_about_panel_keeps_its_close_light() {
     assert!(PANELS.contains("traffic-lights"));

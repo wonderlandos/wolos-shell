@@ -653,7 +653,7 @@ fn build_page(env: &Rc<Env>, name: &str) -> Option<Build> {
 }
 
 pub fn content(sys: Rc<dyn System>, host: &Host) -> w::AppWindow {
-    let aw = w::AppWindow::new("System Settings", true, false);
+    let aw = w::AppWindow::new(true, false);
     let ctx = Ctx::new(sys.clone(), "System Settings");
     let sheets = Sheets {
         join: w::toolbar_sheet(&aw, &w::vbox(0)),
@@ -880,7 +880,7 @@ pub fn windows_section(
     sys: Rc<dyn System>,
     prefs: wol_core::hyprprefs::DesktopPrefs,
 ) -> gtk::Widget {
-    let aw = w::AppWindow::new("", false, false);
+    let aw = w::AppWindow::new(false, false);
     let ctx = Ctx::new(sys, "System Settings");
     let desk = Rc::new(Desk {
         ctx: ctx.clone(),
