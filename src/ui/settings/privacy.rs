@@ -101,12 +101,12 @@ pub(crate) const KINDS: [(&str, &str, &str); 25] = [
     (
         "search",
         "Search",
-        "Can search your apps and settings the way Spotlight does.",
+        "Can search your apps and settings the way Search does.",
     ),
     (
         "search-provider",
         "Search Results",
-        "Sees what you type in Spotlight, and can add results to it.",
+        "Sees what you type in Search, and can add results to it.",
     ),
     (
         "account-info",

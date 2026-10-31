@@ -370,7 +370,7 @@ pub fn permission_row(
 /// Inline warning next to its cause (HIG §3), with the ways out as buttons.
 ///
 /// ```ignore
-/// form::notice("⌘Space is used by “Show Spotlight search”.", &[swap, cancel])
+/// form::notice("⌘Space is used by “Show Search”.", &[swap, cancel])
 /// ```
 pub fn notice(text: &str, actions: &[gtk::Button]) -> gtk::Box {
     let b = w::hbox(S2);

@@ -6,7 +6,7 @@
 use std::path::Path;
 
 /// Windows that are meant to go away when closed: a panel app's own window and its
-/// click-catcher (Spotlight quits on close).
+/// click-catcher (Search quits on close).
 const CLOSES_ON_PURPOSE: &[(&str, usize)] = &[("mod.rs", 1), ("transient.rs", 1)];
 
 fn count(s: &str, pat: &str) -> usize {

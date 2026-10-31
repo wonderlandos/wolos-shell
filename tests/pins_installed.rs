@@ -106,7 +106,7 @@ fn pins_keep_wolos_names_and_icons() {
         names,
         [
             "Files",
-            "Launchpad",
+            "Apps",
             "Browser",
             "Mail",
             "Music",

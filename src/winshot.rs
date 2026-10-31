@@ -1,4 +1,4 @@
-//! Window thumbnails for Mission Control via `hyprland_toplevel_export_v1` (works for windows
+//! Window thumbnails for Overview via `hyprland_toplevel_export_v1` (works for windows
 //! that are covered or on other desktops, unlike screen-region copies).
 //! `wol-window-shot <address>` writes `WOLSHOT <w> <h> <stride> <format>\n` + raw rows to stdout.
 

@@ -1,4 +1,4 @@
-//! Spotlight: installed apps, Settings pages and file names under `$HOME`, ranked per keystroke
+//! Search: installed apps, Settings pages and file names under `$HOME`, ranked per keystroke
 //! from prebuilt lowercase indexes.
 use crate::files;
 use crate::kit::{
@@ -48,10 +48,10 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
     v
 }
 
-/// Seconds between two listings of `$HOME` by the shell (Spotlight also lists it when stale).
+/// Seconds between two listings of `$HOME` by the shell (Search also lists it when stale).
 const RELIST_SECS: u32 = 3600;
 
-/// wol-shell: lists `$HOME` for Spotlight at login and every hour, off the main thread.
+/// wol-shell: lists `$HOME` for Search at login and every hour, off the main thread.
 pub fn keep_file_index() {
     let list = || {
         glib::spawn_future_local(async {
@@ -145,10 +145,10 @@ pub fn web_search(query: &str) -> Item {
 
 pub fn run() -> glib::ExitCode {
     super::run_panel_app(
-        "org.wolos.spotlight",
-        "spotlight",
+        "org.wolos.search",
+        "searchbar",
         Spec::panel(
-            "wol-panel-spotlight",
+            "wol-panel-searchbar",
             [true, false, false, false],
             Keyboard::Exclusive,
         ),
@@ -158,7 +158,7 @@ pub fn run() -> glib::ExitCode {
             let (c, render) = content(
                 items.clone(),
                 names.clone(),
-                &std::env::var("WOL_SPOTLIGHT_QUERY").unwrap_or_default(),
+                &std::env::var("WOL_SEARCHBAR_QUERY").unwrap_or_default(),
             );
             let _ = win;
             // Index off the main thread (parallel .desktop parse); typing before it lands re-renders when ready.
@@ -210,22 +210,22 @@ pub fn content(
     query: &str,
 ) -> (gtk::Widget, Rc<dyn Fn()>) {
     let panel = w::glass_panel(0);
-    panel.add_css_class("spotlight-panel");
-    panel.set_width_request(w::SPOTLIGHT_WIDTH);
+    panel.add_css_class("searchbar-panel");
+    panel.set_width_request(w::SEARCHBAR_WIDTH);
     panel.set_valign(gtk::Align::Start);
     panel.set_margin_top(w::PANEL_TOP);
     let bar = w::hbox(w::S3);
-    bar.add_css_class("spotlight-bar");
+    bar.add_css_class("searchbar-bar");
     bar.append(&w::icon("system-search-symbolic", w::ICON_M));
     let entry = gtk::Text::builder()
-        .placeholder_text("Spotlight Search")
+        .placeholder_text("Search Search")
         .hexpand(true)
         .valign(gtk::Align::Center)
         .build();
     bar.append(&entry);
     panel.append(&bar);
     let hits = w::vbox(w::S1);
-    hits.add_css_class("spotlight-hits");
+    hits.add_css_class("searchbar-hits");
     hits.set_visible(false);
     panel.append(&hits);
 
@@ -252,7 +252,7 @@ pub fn content(
             }
             if found.is_empty() && !q.trim().is_empty() {
                 let none = w::centered(&no_results(q.trim()), "secondary");
-                none.add_css_class("spotlight-none");
+                none.add_css_class("searchbar-none");
                 none.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
                 hits.append(&none);
                 found.push(web_search(q.trim()));
@@ -299,7 +299,7 @@ pub fn content(
             hits.set_visible(!s.is_empty());
             // WOL_SHELL_TIMING: per-keystroke search + row build time (target < 16 ms).
             if std::env::var_os("WOL_SHELL_TIMING").is_some() {
-                eprintln!("wol-spotlight: keystroke {:?}", t0.elapsed());
+                eprintln!("wol-search: keystroke {:?}", t0.elapsed());
             }
         })
     };
@@ -324,7 +324,7 @@ pub fn content(
             }
             if !crate::search::slow_in_time(
                 waited.saturating_add(delay),
-                p.spotlight_slow_timeout_ms,
+                p.searchbar_slow_timeout_ms,
             ) {
                 return;
             }
@@ -503,7 +503,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_appear_once_under_their_wolos_name() {
-        // Launchpad listed "Geary" (its .desktop) and "Mail" (the pin) for the same app.
+        // Apps listed "Geary" (its .desktop) and "Mail" (the pin) for the same app.
         let e = |id: &str, name: &str, exec: &str| crate::desktop::Entry {
             id: id.into(),
             name: name.into(),

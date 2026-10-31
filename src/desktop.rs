@@ -1,4 +1,4 @@
-//! Freedesktop `.desktop` entries: the apps Spotlight and the dock can launch.
+//! Freedesktop `.desktop` entries: the apps Search and the dock can launch.
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -173,7 +173,7 @@ mod tests {
         assert!(parse("c", "[Desktop Entry]\nType=Application\nName=C").is_none());
     }
 
-    /// Spotlight lists only what opens a window here: no daemons, setup tools or entries meant
+    /// Search lists only what opens a window here: no daemons, setup tools or entries meant
     /// for another desktop (each of these opened nothing, or a broken window, when picked).
     #[test]
     fn lists_only_apps_that_open_here() {

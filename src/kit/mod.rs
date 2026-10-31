@@ -167,6 +167,6 @@ mod spawn_tests {
         );
         assert_eq!(shell_line(&v(&["wol", "shell"])), None);
         assert_eq!(shell_line(&v(&["wol", "theme", "toggle"])), None);
-        assert_eq!(shell_line(&v(&["wol-spotlight"])), None);
+        assert_eq!(shell_line(&v(&["wol-search"])), None);
     }
 }

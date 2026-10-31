@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license = "GPL-3.0-or-later"
 authors.workspace = true
-description = "WolOS shell UI: menu bar, dock, notifications, control center, spotlight, lock, login, settings"
+description = "WolOS shell UI: menu bar, dock, notifications, control center, searchbar, lock, login, settings"
 
 [features]
 default = []
@@ -28,7 +28,7 @@ wopkg = { path = "../wopkg" }
 serde.workspace = true
 serde_json.workspace = true
 async-channel = "2"
-# wol-window-shot: hyprland_toplevel_export_v1 client (Mission Control thumbnails).
+# wol-window-shot: hyprland_toplevel_export_v1 client (Overview thumbnails).
 wayland-client = "0.31"
 wayland-scanner = "0.31"
 # client_system: the focus grab shares GTK's own Wayland connection (focus_grab.rs).

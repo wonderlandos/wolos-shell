@@ -27,9 +27,9 @@ pub const PINS: &[Pin] = &[
     },
     Pin {
         id: "wol-launcher",
-        name: "Launchpad",
+        name: "Apps",
         icon: "wolos-launcher",
-        exec: &["wol-spotlight"],
+        exec: &["wol-search"],
     },
     Pin {
         id: "helium",
@@ -131,7 +131,7 @@ fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
     })
 }
 
-/// The pin an installed .desktop entry is (desktop id or program), so Launchpad lists it once,
+/// The pin an installed .desktop entry is (desktop id or program), so Apps lists it once,
 /// under the WolOS name.
 pub fn pin_for_entry<'a>(e: &Entry, pins: &'a [Pin]) -> Option<&'a Pin> {
     let id = e.id.trim_end_matches(".desktop");

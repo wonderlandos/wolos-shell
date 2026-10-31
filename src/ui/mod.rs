@@ -20,7 +20,7 @@ pub mod panels;
 pub mod settings;
 pub mod setup;
 pub mod shortcut_sheet;
-pub mod spotlight;
+pub mod searchbar;
 pub mod store;
 pub mod switcher;
 pub mod transient;
@@ -156,7 +156,7 @@ pub fn run_shell() -> glib::ExitCode {
             ];
             let approver = approval::handler(&app, sys.clone());
             ipc::shell_socket(panels, handlers, approver, osd, sys);
-            spotlight::keep_file_index();
+            searchbar::keep_file_index();
             crate::phones::watch();
             apply_setup();
         });
@@ -215,7 +215,7 @@ fn apply_setup() {
     let _ = std::fs::rename(file, done);
 }
 
-/// One-window panel app (Control Center, Spotlight): Esc, a click outside, another app in front
+/// One-window panel app (Control Center, Search): Esc, a click outside, another app in front
 /// or a workspace switch quits.
 pub fn run_panel_app(
     id: &str,

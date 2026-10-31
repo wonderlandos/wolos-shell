@@ -23,7 +23,7 @@ pub const ICON_XL: i32 = 64;
 /// Shell metrics.
 pub const DOCK_TILE: i32 = 56;
 pub const CONTROL_CENTER_WIDTH: i32 = 320;
-pub const SPOTLIGHT_WIDTH: i32 = 680;
+pub const SEARCHBAR_WIDTH: i32 = 680;
 pub const PANEL_TOP: i32 = 160;
 pub const SIDEBAR_WIDTH: i32 = 220;
 /// Default app window and the narrow size every app must fit (HIG §5).
@@ -39,7 +39,7 @@ pub const SETUP_ROW: i32 = 36;
 pub const SETUP_ROWS: i32 = 6;
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
-/// Mission Control desktop thumbnail and window title line.
+/// Overview desktop thumbnail and window title line.
 pub const OVERVIEW_DESKTOP: (i32, i32) = (192, 108);
 pub const OVERVIEW_TITLE: i32 = 28;
 /// Screenshot thumbnail (bottom right after a capture).
