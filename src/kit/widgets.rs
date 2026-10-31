@@ -528,26 +528,22 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
 
 // ---- App scaffold ----
 
-/// HIG §1 AppWindow: 52px glass toolbar (title, actions, search), 220px sidebar, content, status bar.
-/// The compositor draws the window buttons, in a strip above the toolbar.
+/// HIG §1 AppWindow: 36px glass toolbar (actions, search), 220px sidebar, content, status bar.
+/// The compositor draws the window buttons and the title, in a 28px strip above the toolbar.
 pub struct AppWindow {
     pub root: gtk::Box,
     pub actions: gtk::Box,
     pub sidebar: gtk::ListBox,
     pub content: gtk::Stack,
     pub status: gtk::Label,
-    pub title: gtk::Label,
 }
 
 impl AppWindow {
-    pub fn new(title: &str, with_sidebar: bool, with_status: bool) -> Self {
+    pub fn new(with_sidebar: bool, with_status: bool) -> Self {
         let root = vbox(0);
         root.add_css_class("app-window");
         let bar = hbox(S2);
         bar.add_css_class("toolbar");
-        let title_l = label(title, "title");
-        title_l.add_css_class("toolbar-title");
-        bar.append(&title_l);
         bar.append(&spacer());
         let actions = hbox(S2);
         bar.append(&actions);
@@ -609,7 +605,6 @@ impl AppWindow {
             sidebar,
             content,
             status,
-            title: title_l,
         }
     }
 

@@ -502,9 +502,9 @@ impl Chrome {
 /// Tallest an app window grows to fit its content before it scrolls.
 pub const APP_MAX_HEIGHT: i32 = 640;
 
-/// An app window's content: the Kit app frame (traffic lights, title) around the view.
-pub fn app_frame(title: &str, view: &View) -> w::AppWindow {
-    let aw = w::AppWindow::new(title, false, false);
+/// An app window's content: the Kit app frame around the view.
+pub fn app_frame(view: &View) -> w::AppWindow {
+    let aw = w::AppWindow::new(false, false);
     let body = view.widget();
     body.set_margin_top(w::S4);
     body.set_margin_bottom(w::S4);

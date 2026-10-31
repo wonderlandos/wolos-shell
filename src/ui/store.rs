@@ -1813,7 +1813,7 @@ fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Loaded) {
 }
 
 pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
-    let aw = w::AppWindow::new("App Store", true, false);
+    let aw = w::AppWindow::new(true, false);
     let ctx = Ctx::new(sys, "App Store");
     let status = w::label("", "secondary");
     status.set_wrap(true);

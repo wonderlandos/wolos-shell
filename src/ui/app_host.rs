@@ -90,7 +90,6 @@ pub fn listen() {
 struct Win {
     window: gtk::ApplicationWindow,
     view: View,
-    title: gtk::Label,
     chrome: Chrome,
 }
 
@@ -173,7 +172,7 @@ pub fn run_host() -> glib::ExitCode {
                             })
                         });
                         let view = View::new(&content, sink.clone());
-                        let aw = app_frame(&title, &view);
+                        let aw = app_frame(&view);
                         let win = gtk::ApplicationWindow::builder()
                             .application(&app)
                             .title(title.as_str())
@@ -197,7 +196,6 @@ pub fn run_host() -> glib::ExitCode {
                             Win {
                                 window: win,
                                 view,
-                                title: aw.title.clone(),
                                 chrome,
                             },
                         );
@@ -212,7 +210,6 @@ pub fn run_host() -> glib::ExitCode {
                         if let Some(w) = wins.borrow().get(&window) {
                             w.view.update(&content);
                             w.chrome.update(&app, &menus, toolbar.as_ref());
-                            w.title.set_label(&title);
                             w.window.set_title(Some(&title));
                         }
                     }

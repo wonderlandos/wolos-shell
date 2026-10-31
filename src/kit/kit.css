@@ -173,7 +173,7 @@ button.row-button:hover { background: var(--control); }
 /* ---- AppWindow (HIG §1) ---- */
 .app-window { background: var(--surface); }
 .app-window label { color: var(--text); }
-.toolbar { min-height: 52px; padding: 0 16px; background: var(--glass); border-bottom: 1px solid var(--line); }
+.toolbar { min-height: 36px; padding: 0 16px; background: var(--glass); border-bottom: 1px solid var(--line); }
 .traffic-lights { margin-right: 16px; }
 button.light { min-width: 12px; min-height: 12px; padding: 0; border-radius: 999px; border: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.12); }
 button.light.close { background: var(--danger); }

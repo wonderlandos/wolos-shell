@@ -141,7 +141,7 @@ pub fn cases() -> Vec<Case> {
         wallpaper: false,
         build: Box::new(|| {
             let view = View::new(&sample(), Sink::new(|_| {}));
-            let aw = app_frame("Parts", &view);
+            let aw = app_frame(&view);
             // The view lives as long as its widgets (the golden window).
             let root = aw.root.clone();
             unsafe { root.set_data("view", view) };
