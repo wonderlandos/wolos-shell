@@ -1,6 +1,6 @@
 //! Battery (Energy on desktops): charge and health, the energy mode (Automatic, Low Power, High
 //! Power: wol-admind `power-mode`, no password for the person at the computer) and what closing the
-//! lid does. Rows whose hardware or verb is missing are not shown.
+//! lid does, and Memory Saver. Rows whose hardware or verb is missing are not shown.
 use super::*;
 use wol_core::power::policy::{self, Cpu, Mode};
 use wol_core::power::{BatteryInfo, Charge, Lid};
@@ -100,6 +100,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     if !energy.is_empty() {
         into.append(&w::section("Energy", &energy));
     }
+    into.append(&super::memory_saver::section());
     let lock = form::nav_row(
         "system-lock-screen-symbolic",
         "Lock Screen",
