@@ -13,7 +13,9 @@ use wol_core::install::plan::Protect;
 fn part_labelled(f: &Flow, label: &str) -> String {
     let d = f.disk().unwrap();
     let p = d.parts.iter().find(|p| p.label == label || p.name == label);
-    p.unwrap_or_else(|| panic!("no partition {label}")).uuid.clone()
+    p.unwrap_or_else(|| panic!("no partition {label}"))
+        .uuid
+        .clone()
 }
 
 fn esp(f: &Flow) -> String {
@@ -83,7 +85,7 @@ fn main() {
             f.method = Method::Erase;
             must(&mut f, Step::Protect);
         }
-        "alongside" => {
+        "alongside" | "encrypted-alongside" => {
             f.method = Method::Alongside;
             must(&mut f, Step::Alongside);
             must(&mut f, Step::Protect);
@@ -93,7 +95,7 @@ fn main() {
         s => panic!("no scenario {s}"),
     }
     f.protect = match scenario {
-        "password" => Protect::Password,
+        "password" | "encrypted-alongside" => Protect::Password,
         "tpm" => Protect::Tpm,
         _ => Protect::Off,
     };
