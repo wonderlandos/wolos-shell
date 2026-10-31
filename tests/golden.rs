@@ -10,6 +10,8 @@ use std::rc::Rc;
 
 #[path = "golden_cases/app_view.rs"]
 mod app_view_cases;
+#[path = "golden_cases/installer.rs"]
+mod installer_cases;
 #[path = "golden_cases/store_package.rs"]
 mod package_cases;
 #[path = "golden_cases/widgets.rs"]
@@ -647,54 +649,7 @@ fn cases() -> Vec<Case> {
             s.root.clone()
         }),
     });
-    for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
-        for page in [
-            "choose",
-            "choose-windows",
-            "secure-boot",
-            "installing",
-            "done",
-            "failed",
-        ] {
-            v.push(Case {
-                name: format!("installer-{page}-{tag}"),
-                size: (sw, sh),
-                class: "lock-window",
-                wallpaper: false,
-                build: Box::new(move || {
-                    use shell::install::{Check, Disk, Report, Stage};
-                    use ui::installer::{Installer, Page};
-                    let disk = |name: &str, model: &str, gb: u64| Disk {
-                        name: name.into(),
-                        model: model.into(),
-                        bytes: gb * 1_000_000_000,
-                    };
-                    let windows = Check {
-                        others: vec!["Windows".into()],
-                        ..Check::default()
-                    };
-                    let i = Installer::new(
-                        vec![
-                            disk("nda0", "Samsung SSD 980 PRO", 1000),
-                            disk("ada0", "WD Blue SA510", 500),
-                        ],
-                        vec![Check::default(), windows],
-                    );
-                    match page {
-                        "choose" => i.pick(0),
-                        "choose-windows" => i.pick(1),
-                        "secure-boot" => i.show(Page::SecureBoot),
-                        "installing" => {
-                            i.show_progress(&Report::new(Stage::Packages, 53), Some(200.0))
-                        }
-                        "done" => i.show(Page::Done),
-                        _ => i.show_failed(Stage::Disk),
-                    }
-                    i.root.clone()
-                }),
-            });
-        }
-    }
+    installer_cases::add(&mut v);
     for (sw, sh, tag) in [(900, 600, "wide"), (480, 360, "narrow")] {
         for p in ui::store::PAGES.into_iter().chain(["Search"]) {
             v.push(Case {

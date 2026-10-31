@@ -1,7 +1,7 @@
 //! Assistant pieces (Setup Assistant, installer; ADR 0013): full-screen pages that cross-fade, one
 //! fixed-size glass card per question over the lock backdrop, the welcome hero, choice lists,
 //! avatar tones, problem lines, Return/Escape. Surfaces in `ui/` build from these only.
-use super::widgets::{self as w, S2, S3, S4, S6};
+use super::widgets::{self as w, S1, S2, S3, S4, S6};
 use gtk::{glib, prelude::*};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -565,11 +565,169 @@ pub fn warning(text: &str) -> (gtk::Box, gtk::Label) {
     (b, l)
 }
 
+/// Centred text that wraps at the card's width.
+pub fn wrapped(text: &str, style: &str) -> gtk::Label {
+    let l = w::centered(text, style);
+    wraps(&l);
+    l
+}
+
 /// Wraps at the width the card gives; long text never widens the fixed-size card.
 fn wraps(l: &gtk::Label) {
     l.set_wrap(true);
     l.set_max_width_chars(1);
     l.set_hexpand(true);
+}
+
+/// Disk bar height and the dots of its legend.
+pub const DISK_BAR: i32 = S6;
+pub const DISK_DOT: i32 = S2;
+/// The card's inside width: the bar fills it.
+pub const DISK_BAR_WIDTH: i32 = CARD.0 - 2 * S6 - 2 * super::widgets::S8;
+/// A sliver of a partition still shows.
+pub const DISK_SEG_MIN: i32 = S1;
+
+/// What a stretch of disk is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tone {
+    Startup,
+    Other,
+    Wolos,
+    Free,
+}
+
+impl Tone {
+    fn class(self) -> &'static str {
+        match self {
+            Tone::Startup => "disk-startup",
+            Tone::Other => "disk-other",
+            Tone::Wolos => "disk-wolos",
+            Tone::Free => "disk-free",
+        }
+    }
+}
+
+/// One stretch of a [`DiskBar`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Seg {
+    pub tone: Tone,
+    pub label: String,
+    pub bytes: u64,
+}
+
+impl Seg {
+    pub fn new(tone: Tone, label: &str, bytes: u64) -> Seg {
+        Seg {
+            tone,
+            label: label.into(),
+            bytes,
+        }
+    }
+}
+
+/// Widths of stretches of `bytes` in `width` pixels: proportional, at least `min`, summing to
+/// `width` exactly (the biggest stretch gives or takes the rest).
+pub fn segment_widths(bytes: &[u64], width: i32, min: i32) -> Vec<i32> {
+    let total: u64 = bytes.iter().sum();
+    if total == 0 {
+        return vec![0; bytes.len()];
+    }
+    let mut v: Vec<i32> = bytes
+        .iter()
+        .map(|b| ((*b as f64 / total as f64 * f64::from(width)) as i32).max(min))
+        .collect();
+    let rest = width - v.iter().sum::<i32>();
+    if let Some(big) = v.iter_mut().max() {
+        *big += rest;
+    }
+    v
+}
+
+/// A disk at a glance: coloured stretches over a legend of names and sizes.
+pub struct DiskBar {
+    pub root: gtk::Box,
+    bar: gtk::Box,
+    legend: gtk::Box,
+}
+
+impl DiskBar {
+    pub fn new() -> DiskBar {
+        let root = w::vbox(S2);
+        root.add_css_class("disk-bar");
+        let bar = w::hbox(0);
+        bar.add_css_class("disk-track");
+        bar.set_overflow(gtk::Overflow::Hidden);
+        bar.set_size_request(DISK_BAR_WIDTH, DISK_BAR);
+        bar.set_halign(gtk::Align::Center);
+        root.append(&bar);
+        let legend = w::hbox(S4);
+        legend.set_halign(gtk::Align::Center);
+        root.append(&legend);
+        DiskBar { root, bar, legend }
+    }
+
+    pub fn set(&self, segs: &[Seg]) {
+        for b in [&self.bar, &self.legend] {
+            while let Some(c) = b.first_child() {
+                b.remove(&c);
+            }
+        }
+        let bytes: Vec<u64> = segs.iter().map(|s| s.bytes).collect();
+        let widths = segment_widths(&bytes, DISK_BAR_WIDTH, DISK_SEG_MIN);
+        for (s, width) in segs.iter().zip(widths) {
+            let seg = w::vbox(0);
+            seg.add_css_class("disk-seg");
+            seg.add_css_class(s.tone.class());
+            seg.set_size_request(width, DISK_BAR);
+            self.bar.append(&seg);
+        }
+        // Names of big stretches only: the list under the bar has them all.
+        let mut named: Vec<&Seg> = segs.iter().collect();
+        named.sort_by_key(|s| std::cmp::Reverse(s.bytes));
+        for s in named.iter().take(3) {
+            let item = w::hbox(S1);
+            let dot = w::vbox(0);
+            dot.add_css_class("disk-dot");
+            dot.add_css_class(s.tone.class());
+            dot.set_size_request(DISK_DOT, DISK_DOT);
+            dot.set_valign(gtk::Align::Center);
+            item.append(&dot);
+            item.append(&w::label(
+                &format!("{} {}", s.label, crate::install::size_text(s.bytes)),
+                "assistant-caption",
+            ));
+            self.legend.append(&item);
+        }
+    }
+}
+
+impl Default for DiskBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Plain sentences one under the other (the installer's summary); scrolls past [`ROWS`].
+pub fn lines(texts: &[String]) -> gtk::ScrolledWindow {
+    let list = w::vbox(S2);
+    list.add_css_class("assistant-lines");
+    list.set_valign(gtk::Align::Start);
+    for t in texts {
+        let l = w::label(t, "");
+        wraps(&l);
+        l.set_xalign(0.0);
+        list.append(&l);
+    }
+    let h = ROW * ROWS;
+    let root = gtk::ScrolledWindow::builder()
+        .child(&list)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(h)
+        .max_content_height(h)
+        .vexpand(true)
+        .build();
+    root.add_css_class("assistant-list");
+    root
 }
 
 /// Progress: bar and a line under it (what happens, time left).
@@ -670,6 +828,15 @@ mod tests {
             contain_centred((320.0, 320.0), (534.0, 400.0)),
             (1.0, 107.0, 40.0)
         );
+    }
+
+    #[test]
+    fn disk_stretches_fill_the_bar_exactly_and_slivers_still_show() {
+        assert_eq!(segment_widths(&[1, 1], 100, 4), [50, 50]);
+        let w = segment_widths(&[1, 999_999], 536, 4);
+        assert_eq!(w[0], 4);
+        assert_eq!(w.iter().sum::<i32>(), 536);
+        assert_eq!(segment_widths(&[0, 0], 536, 4), [0, 0]);
     }
 
     #[test]

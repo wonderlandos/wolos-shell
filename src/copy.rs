@@ -3,6 +3,9 @@
 //! never an error's own text (`Display`, io errors, exit codes). [`lint`] is the rule;
 //! `tests/copy_lint.rs` runs it on every sentence here and on the copy of other modules.
 use crate::system::ActionError;
+use wol_core::install::disk::{Blocked, Disk as InstallDisk};
+use wol_core::install::layout::Refusal;
+use wol_core::install::plan::Change;
 use wol_core::journal::UndoError;
 
 /// Fragments a user must never read (case-insensitive, at a word start), and what to do instead.
@@ -92,6 +95,147 @@ pub fn lint(s: &str) -> Vec<String> {
         out.push("at most two sentences".into());
     }
     out
+}
+
+/// A blank disk has nothing to sit alongside.
+pub const INSTALL_BLANK: &str =
+    "This disk is empty, so there's nothing to install alongside. Use Erase Disk.";
+pub const INSTALL_RECOVERY_NOTE: &str = "Write this key down and keep it safe. It opens your disk if your password or security chip stops working.";
+pub const INSTALL_POINT_OF_NO_RETURN: &str =
+    "Back up anything you need first. These changes can't be undone.";
+
+/// What a mount is for, in plain words.
+pub fn install_use(mount: &str) -> String {
+    match mount {
+        "/" => "WolOS system".into(),
+        "/efi" => "Startup files".into(),
+        "/home" => "Your files".into(),
+        "swap" => "Swap".into(),
+        m => format!("The {} folder", m.trim_start_matches('/')),
+    }
+}
+
+/// The same inside a sentence: "for your files".
+fn install_for(mount: &str) -> String {
+    match mount {
+        "/" => "WolOS".into(),
+        "/efi" => "startup files".into(),
+        "/home" => "your files".into(),
+        "swap" => "swap".into(),
+        m => format!("the {} folder", m.trim_start_matches('/')),
+    }
+}
+
+/// Why Install Alongside can't shrink a partition.
+pub fn install_blocked(b: Blocked) -> &'static str {
+    match b {
+        Blocked::BitLocker => {
+            "BitLocker protects Windows here. Turn it off in Windows, then start the installer again."
+        }
+        Blocked::NotShutDown => {
+            "Windows didn't shut down fully. Turn off Fast Startup in Windows, shut down, then try again."
+        }
+        Blocked::MacOs => "Make room with Disk Utility in macOS, then start the installer again.",
+        Blocked::Unreadable => {
+            "This partition couldn't be read. Check it in its own system, then try again."
+        }
+    }
+}
+
+/// Why a layout can't run, in one or two sentences; `d` names the partitions.
+pub fn install_refusal(r: &Refusal, d: &InstallDisk) -> String {
+    let named = |uuid: &str| {
+        d.part(uuid).map_or_else(
+            || "That partition".to_string(),
+            |p| format!("“{}”", p.title()),
+        )
+    };
+    match r {
+        Refusal::DiskChanged | Refusal::UnknownPartition => {
+            "The disk changed since you chose it. Go back and choose it again.".into()
+        }
+        Refusal::NotGpt => "This disk uses an older layout. Only Erase Disk can use it.".into(),
+        Refusal::TooSmall => {
+            "WolOS needs at least 16 GB. Make more room or choose another disk.".into()
+        }
+        Refusal::Conflict(id) => format!("{} has two jobs. Give it just one.", named(id)),
+        Refusal::Mounted(id) => format!("{} is in use. Restart and try again.", named(id)),
+        Refusal::CantResize(id) => {
+            format!("{} can't get that small. Choose a larger size.", named(id))
+        }
+        Refusal::NoRoom => {
+            "There isn't enough room for that. Delete or shrink a partition first.".into()
+        }
+        Refusal::NoRoot => "Choose a partition for the WolOS system.".into(),
+        Refusal::NoEsp => "Choose the startup partition, or add one of 1 GB.".into(),
+        Refusal::RootMustFormat => {
+            "The WolOS system needs an erased partition. Turn on Erase for it.".into()
+        }
+        Refusal::EspInUse => {
+            "Another system starts from that partition, so it can't be erased.".into()
+        }
+        Refusal::NotAnEsp(id) => format!(
+            "{} can't hold the startup files. Choose another or add a new one.",
+            named(id)
+        ),
+        Refusal::BadMount(_) => {
+            "That folder name can't be used. Use lowercase letters, and not a system folder.".into()
+        }
+        Refusal::DuplicateMount(_) => "Two partitions have the same job. Give each its own.".into(),
+        Refusal::BadFilesystem(id) => format!(
+            "{} can't do that job as it is. Turn on Erase or choose another job.",
+            named(id)
+        ),
+    }
+}
+
+/// One line of the summary.
+pub fn install_change(c: &Change) -> String {
+    use crate::install::size_text as size;
+    match c {
+        Change::EraseDisk { bytes, others } if others.is_empty() => {
+            format!("Erase the whole disk ({}).", size(*bytes))
+        }
+        Change::EraseDisk { bytes, others } => format!(
+            "Erase the whole disk ({}), including {}.",
+            size(*bytes),
+            others.join(" and ")
+        ),
+        Change::Delete { name, bytes } => format!("Delete {name} ({}).", size(*bytes)),
+        Change::Resize { name, from, to } if to < from => {
+            format!("Shrink {name} from {} to {}.", size(*from), size(*to))
+        }
+        Change::Resize { name, from, to } => {
+            format!("Grow {name} from {} to {}.", size(*from), size(*to))
+        }
+        Change::Format { name, mount } => {
+            format!("Erase {name} and use it for {}.", install_for(mount))
+        }
+        Change::New {
+            bytes,
+            mount,
+            encrypted,
+        } => {
+            let lock = if *encrypted { ", encrypted" } else { "" };
+            format!("Add {} for {}{lock}.", size(*bytes), install_for(mount))
+        }
+        Change::ReuseEsp => "Add WolOS to the startup partition that's already there.".into(),
+        Change::Keep { name, mount } => {
+            format!("Keep {name} as it is, for {}.", install_for(mount))
+        }
+        Change::Untouched { name } => format!("{name} stays as it is."),
+        Change::OneCopy => {
+            "This layout keeps one copy of WolOS, so updates can't be undone.".into()
+        }
+    }
+}
+
+/// Small but enough.
+pub fn install_low_space(bytes: u64) -> String {
+    format!(
+        "WolOS would have {}. It fits, but 40 GB or more leaves room for apps and updates.",
+        crate::install::size_text(bytes)
+    )
 }
 
 /// Every [`ActionError`], for the lint. [`action`] matches exhaustively, so a new variant needs a
