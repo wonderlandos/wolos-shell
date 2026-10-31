@@ -96,6 +96,131 @@ pub fn set_aur_enabled(on: bool) {
     }
 }
 
+/// Where a package comes from, in the same words as `wopkg info`.
+pub fn origin(kind: &str, repo: &str) -> String {
+    match (kind, repo) {
+        ("pacman", r)
+            if r == "wolos" || r.starts_with("wolos-cachy") || r.starts_with("cachyos") =>
+        {
+            "WolOS"
+        }
+        ("pacman", _) => "Arch",
+        ("flatpak", _) => "Flathub",
+        ("aur", _) => "AUR",
+        ("appimage", _) => "AppImage",
+        ("recipe", _) => "WolOS Recipe",
+        ("wol", _) => "WolOS",
+        _ => "Unknown",
+    }
+    .to_owned()
+}
+
+/// One place an app can come from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AppSource {
+    pub origin: String,
+    pub kind: String,
+    pub id: String,
+    pub version: String,
+    pub installed: bool,
+}
+
+/// The sources of one `wopkg info` answer, best first. The AUR keeps to its own tab.
+pub fn parse_sources(hit: &Value) -> Vec<AppSource> {
+    let text = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_owned();
+    hit["sources"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["kind"] != "aur")
+        .map(|s| AppSource {
+            origin: origin(
+                s["kind"].as_str().unwrap_or_default(),
+                s["repo"].as_str().unwrap_or_default(),
+            ),
+            kind: text(s, "kind"),
+            id: text(s, "id"),
+            version: text(s, "version"),
+            installed: s["installed"].as_bool().unwrap_or(false),
+        })
+        .collect()
+}
+
+/// Every source of one app, from the local index. Empty when there is no index yet.
+pub fn sources(name: &str) -> Vec<AppSource> {
+    let Ok(ctx) = wopkg::context::Context::new(Default::default()) else {
+        return Vec::new();
+    };
+    wopkg::info(&ctx, name)
+        .map(|h| parse_sources(&h))
+        .unwrap_or_default()
+}
+
+/// Each name's first origin, for the badges on tiles.
+pub fn origins(names: &[String]) -> Vec<(String, String)> {
+    let Ok(ctx) = wopkg::context::Context::new(Default::default()) else {
+        return Vec::new();
+    };
+    names
+        .iter()
+        .filter_map(|n| {
+            let hit = wopkg::info(&ctx, n).ok()?;
+            Some((n.clone(), parse_sources(&hit).first()?.origin.clone()))
+        })
+        .collect()
+}
+
+/// The last change to `name` that can still be undone, from `wopkg history --json`.
+pub fn undoable(history: &str, name: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(history).ok()?;
+    doc["entries"]
+        .as_array()?
+        .iter()
+        .rev()
+        .find(|e| e["name"] == name && e["undone"] != true && !e["undo"].is_null())
+        .and_then(|e| e["id"].as_str().map(str::to_owned))
+}
+
+/// Run one `wopkg` verb on a name; did it work.
+pub fn wopkg_verb(args: &[&str]) -> bool {
+    let mut a = vec![WOPKG];
+    a.extend_from_slice(args);
+    a.push("-y");
+    wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(300)).is_some()
+}
+
+/// The undo id for `name`, asked of wopkg.
+pub fn last_change(name: &str) -> Option<String> {
+    let out = wol_core::system::run_with_timeout(
+        &[WOPKG, "history", "--json"],
+        std::time::Duration::from_secs(10),
+    )?;
+    undoable(&out, name)
+}
+
+/// The version on this computer, when the system says.
+pub fn installed_version(id: &str, flatpak: bool) -> Option<String> {
+    let t = std::time::Duration::from_secs(5);
+    if flatpak {
+        let out = wol_core::system::run_with_timeout(&["flatpak", "info", id], t)?;
+        return out.lines().find_map(|l| {
+            l.trim()
+                .strip_prefix("Version:")
+                .map(|v| v.trim().to_owned())
+        });
+    }
+    let out = wol_core::system::run_with_timeout(&["pacman", "-Q", id], t)?;
+    out.split_whitespace().nth(1).map(str::to_owned)
+}
+
+/// Is this package pinned? `$XDG_STATE_HOME/wopkg/pins`, written by `wopkg pin`.
+pub fn pinned(id: &str) -> bool {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let state = std::env::var("XDG_STATE_HOME").unwrap_or_else(|_| format!("{home}/.local/state"));
+    std::fs::read_to_string(format!("{state}/wopkg/pins"))
+        .is_ok_and(|t| t.lines().any(|l| l.trim() == id))
+}
+
 /// One state for every package, in the same words everywhere: (name, icon, what it means).
 pub const STATES: [(&str, &str, &str); 4] = [
     (
@@ -422,6 +547,32 @@ mod tests {
             .chain(FLAGS.iter().map(|f| f.2))
             .chain([AUR_RISK]);
         assert!(all.into_iter().all(|t| !t.to_lowercase().contains("safe")));
+    }
+
+    #[test]
+    fn origins_read_the_same_as_wopkg_and_the_aur_stays_out() {
+        let hit = serde_json::json!({"sources": [
+            {"kind":"pacman","repo":"wolos","id":"gimp","version":"3","installed":true},
+            {"kind":"pacman","repo":"extra","id":"gimp","version":"2"},
+            {"kind":"flatpak","repo":"flathub","id":"org.gimp.GIMP","version":"3.1"},
+            {"kind":"aur","repo":"aur","id":"gimp-git","version":"9"},
+        ]});
+        let s = parse_sources(&hit);
+        let names: Vec<&str> = s.iter().map(|x| x.origin.as_str()).collect();
+        assert_eq!(names, ["WolOS", "Arch", "Flathub"]);
+        assert!(s[0].installed && !s[1].installed);
+    }
+
+    #[test]
+    fn only_a_change_that_can_be_undone_is_offered() {
+        let h = r#"{"entries":[
+            {"id":"1","name":"gimp","undone":false,"undo":{"type":"run"}},
+            {"id":"2","name":"gimp","undone":true,"undo":{"type":"run"}},
+            {"id":"3","name":"gimp","undone":false,"undo":null},
+            {"id":"4","name":"vlc","undone":false,"undo":{"type":"run"}}]}"#;
+        assert_eq!(undoable(h, "gimp").as_deref(), Some("1"));
+        assert_eq!(undoable(h, "krita"), None);
+        assert_eq!(undoable("nope", "gimp"), None);
     }
 
     #[test]

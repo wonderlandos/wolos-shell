@@ -806,6 +806,49 @@ fn cases() -> Vec<Case> {
                 s.aw.root.clone().upcast()
             }),
         });
+        // One app from three places, installed from one: versions, pin and undo.
+        v.push(Case {
+            name: format!("store-versions-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                use shell::packages::AppSource;
+                let s = ui::store::content(
+                    Rc::new(shell::system::Fake),
+                    ui::store::Env {
+                        data_dirs: vec![],
+                        pkg_search: false,
+                        flatpaks: vec![],
+                    },
+                );
+                let src = |origin: &str, kind: &str, version: &str, installed| AppSource {
+                    origin: origin.into(),
+                    kind: kind.into(),
+                    id: "demo".into(),
+                    version: version.into(),
+                    installed,
+                };
+                let hit = wol_core::store::PkgHit {
+                    name: "demo".into(),
+                    summary: "An app from three places".into(),
+                };
+                s.show_details(
+                    ui::store::Subject::pkg(&hit),
+                    ui::store::Loaded {
+                        sources: vec![
+                            src("WolOS", "pacman", "3.1-1", true),
+                            src("Arch", "pacman", "3.0-2", false),
+                            src("Flathub", "flatpak", "3.1", false),
+                        ],
+                        installed: Some("3.0-1".into()),
+                        undo: Some("7".into()),
+                        ..Default::default()
+                    },
+                );
+                s.aw.root.clone().upcast()
+            }),
+        });
         // The AUR apart from the catalogue, off, with the legend under it.
         v.push(Case {
             name: format!("store-aur-tab-{tag}"),

@@ -304,6 +304,8 @@ struct Shared {
     /// One inline error line per window (HIG §3).
     status: gtk::Label,
     /// Opens the details page (set once the page exists).
+    /// Tiles waiting to hear where their app comes from.
+    badges: RefCell<Vec<(String, w::AppTile)>>,
     open_details: RefCell<Option<OpenDetails>>,
 }
 
@@ -525,6 +527,27 @@ fn open_on_click(sh: &Rc<Shared>, root: &gtk::Box, s: Subject) {
     root.add_controller(click);
 }
 
+/// Say where each new tile's app comes from, once the index has answered.
+fn fill_badges(sh: &Rc<Shared>) {
+    let tiles = std::mem::take(&mut *sh.badges.borrow_mut());
+    if !sh.env.pkg_search || tiles.is_empty() {
+        return;
+    }
+    let names: Vec<String> = tiles.iter().map(|t| t.0.clone()).collect();
+    let (tx, rx) = async_channel::bounded(1);
+    std::thread::spawn(move || {
+        let _ = tx.send_blocking(crate::packages::origins(&names));
+    });
+    glib::spawn_future_local(async move {
+        let Ok(found) = rx.recv().await else { return };
+        for (name, t) in &tiles {
+            if let Some((_, origin)) = found.iter().find(|f| f.0 == *name) {
+                t.set_source(origin);
+            }
+        }
+    });
+}
+
 fn tile(sh: &Rc<Shared>, a: &'static App) -> gtk::Widget {
     let t = w::AppTile::new(&icon(a, w::ICON_L), a.name, a.summary);
     let t2 = t.clone();
@@ -539,6 +562,8 @@ fn tile(sh: &Rc<Shared>, a: &'static App) -> gtk::Widget {
         Some(&t.root),
     );
     open_on_click(sh, &t.root, Subject::catalog(a));
+    let pkg = a.packages.first().copied().unwrap_or(a.id);
+    sh.badges.borrow_mut().push((pkg.to_owned(), t.clone()));
     t.root.upcast()
 }
 
@@ -556,6 +581,7 @@ fn pkg_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
         Some(&t.root),
     );
     open_on_click(sh, &t.root, Subject::pkg(h));
+    sh.badges.borrow_mut().push((h.name.clone(), t.clone()));
     t.root.upcast()
 }
 
@@ -1041,6 +1067,7 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
         };
         if more.parent().is_some() {
             show_more(&sh, &more, empty.upcast_ref(), &pkgs, &flat);
+            fill_badges(&sh);
         }
     });
 }
@@ -1252,6 +1279,13 @@ pub struct Loaded {
     pub perms: Vec<wol_core::flatpak::Perm>,
     /// Installed for every account (a system Flatpak).
     pub system: bool,
+    /// Every place this app comes from, best first.
+    pub sources: Vec<crate::packages::AppSource>,
+    /// The version on this computer.
+    pub installed: Option<String>,
+    pub pinned: bool,
+    /// The history entry that undoes its last change.
+    pub undo: Option<String>,
 }
 
 fn capture(argv: &[String], secs: u64) -> Option<String> {
@@ -1263,6 +1297,14 @@ fn capture(argv: &[String], secs: u64) -> Option<String> {
 pub fn load(s: &Subject) -> Loaded {
     use wol_core::{appstream, flatpak};
     let mut l = Loaded::default();
+    if !s.aur {
+        l.sources = crate::packages::sources(s.pkg.as_deref().unwrap_or(&s.target));
+        if let Some(i) = l.sources.iter().find(|x| x.installed) {
+            l.installed = crate::packages::installed_version(&i.id, i.kind == "flatpak");
+            l.pinned = crate::packages::pinned(&i.id);
+            l.undo = crate::packages::last_change(&i.id);
+        }
+    }
     if s.flathub {
         let home = std::env::var("HOME").unwrap_or_default();
         for (xml, icons) in appstream::flathub_paths(&home) {
@@ -1477,6 +1519,110 @@ fn fill_details(
     details_body(sh, page, s, &l);
 }
 
+/// Run a wopkg verb off the main thread and say how it went.
+fn wopkg_action(sh: &Rc<Shared>, args: Vec<String>, done: String) {
+    let status = sh.status.clone();
+    let (tx, rx) = async_channel::bounded(1);
+    std::thread::spawn(move || {
+        let a: Vec<&str> = args.iter().map(String::as_str).collect();
+        let _ = tx.send_blocking(crate::packages::wopkg_verb(&a));
+    });
+    glib::spawn_future_local(async move {
+        if let Ok(ok) = rx.recv().await {
+            say(
+                &status,
+                if ok {
+                    &done
+                } else {
+                    "That did not finish. Nothing was changed."
+                },
+            );
+        }
+    });
+}
+
+/// Where an app can come from and what is on this computer: the source picker, then update, pin
+/// and undo for what is installed. Nothing shows without an index.
+fn versions(
+    sh: &Rc<Shared>,
+    page: &gtk::Box,
+    s: &Subject,
+    l: &Loaded,
+    chosen: &Rc<RefCell<(String, bool)>>,
+) {
+    if l.sources.is_empty() {
+        return;
+    }
+    let mut rows: Vec<gtk::Widget> = l
+        .sources
+        .iter()
+        .map(|x| {
+            let icon = if x.installed {
+                "object-select-symbolic"
+            } else {
+                "package-x-generic-symbolic"
+            };
+            w::list_row(icon, &x.origin, &x.version, None).upcast()
+        })
+        .collect();
+    if l.sources.len() > 1 && l.installed.is_none() {
+        let labels: Vec<String> = l
+            .sources
+            .iter()
+            .map(|x| format!("{} {}", x.origin, x.version))
+            .collect();
+        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+        let pick = w::dropdown(&refs, 0);
+        let (src, chosen) = (l.sources.clone(), chosen.clone());
+        *chosen.borrow_mut() = (src[0].id.clone(), src[0].kind == "flatpak");
+        pick.connect_selected_notify(move |d| {
+            if let Some(x) = src.get(d.selected() as usize) {
+                *chosen.borrow_mut() = (x.id.clone(), x.kind == "flatpak");
+            }
+        });
+        rows.push(w::list_row("", "Get From", "", Some(pick.upcast_ref())).upcast());
+    }
+    if let (Some(now), Some(i)) = (&l.installed, l.sources.iter().find(|x| x.installed)) {
+        rows.insert(0, w::list_row("", "On This Computer", now, None).upcast());
+        let id = i.id.clone();
+        let (sh2, id2) = (sh.clone(), id.clone());
+        let keep = w::toggle(l.pinned, move |on| {
+            let verb = if on { "pin" } else { "unpin" };
+            let done = if on {
+                "It stays at this version."
+            } else {
+                "It updates again."
+            };
+            wopkg_action(&sh2, vec![verb.into(), id2.clone()], done.into());
+        });
+        rows.push(w::list_row("", "Keep This Version", "", Some(keep.upcast_ref())).upcast());
+        let buttons = w::hbox(w::S2);
+        if i.version != *now {
+            let (sh2, id2) = (sh.clone(), id.clone());
+            buttons.append(&w::button("Update", w::Kind::Default, move || {
+                wopkg_action(&sh2, vec!["update".into(), id2.clone()], "Updated.".into());
+            }));
+        }
+        if let Some(entry) = l.undo.clone() {
+            let sh2 = sh.clone();
+            buttons.append(&w::button("Roll Back", w::Kind::Default, move || {
+                wopkg_action(
+                    &sh2,
+                    vec!["rollback".into(), entry.clone()],
+                    "Rolled back.".into(),
+                );
+            }));
+        }
+        page.append(&w::section("Versions", &rows));
+        if buttons.first_child().is_some() {
+            page.append(&buttons);
+        }
+        return;
+    }
+    let _ = s;
+    page.append(&w::section("Versions", &rows));
+}
+
 fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Loaded) {
     let d = l.details.clone().unwrap_or_default();
     let top = w::hbox(w::S6);
@@ -1527,6 +1673,8 @@ fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Loaded) {
         aur_details(page, s);
     }
 
+    let chosen = Rc::new(RefCell::new((s.target.clone(), s.flathub)));
+    versions(sh, page, s, l, &chosen);
     let installed = Rc::new(std::cell::Cell::new(is_present(sh, &s.target, s.flathub)));
     let system = Rc::new(std::cell::Cell::new(l.system));
     let set: Rc<dyn Fn(w::TileState)> = {
@@ -1545,15 +1693,22 @@ fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Loaded) {
         w::TileState::Get
     });
     {
-        let (sh, s, set, inst) = (sh.clone(), s.clone(), set.clone(), installed.clone());
+        let (sh, s, set, inst, chosen) = (
+            sh.clone(),
+            s.clone(),
+            set.clone(),
+            installed.clone(),
+            chosen.clone(),
+        );
         get.connect_clicked(move |_| {
             if inst.get() {
                 return launch(&s.target, s.flathub, s.desktop);
             }
+            let (target, flathub) = chosen.borrow().clone();
             run_store_action(
                 &sh,
-                install_action(&s.target, s.flathub, false),
-                progress_path(&s.target, s.flathub),
+                install_action(&target, flathub, false),
+                progress_path(&target, flathub),
                 set.clone(),
                 inst.clone(),
                 true,
@@ -1658,9 +1813,12 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
         env,
         preset: RefCell::new(None),
         status: status.clone(),
+        badges: RefCell::new(Vec::new()),
         open_details: RefCell::new(None),
     });
     let search = aw.sidebar_search("Search");
+    let sh2 = sh.clone();
+    glib::idle_add_local_once(move || fill_badges(&sh2));
     aw.source_item("starred-symbolic", "Discover", &discover(&sh));
     for (c, icon) in [
         (Category::Create, "applications-graphics-symbolic"),
