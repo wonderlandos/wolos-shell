@@ -920,7 +920,14 @@ impl Installer {
                 s.flow.borrow_mut().disk_verify = e.text().to_string();
             }
         });
-        self.disk_pw_rows.append(&a::form_row("Password", &pw));
+        // The Caps Lock note under the field, inside its row.
+        let field = w::vbox(w::S1);
+        field.set_hexpand(true);
+        field.append(&pw);
+        let caps = w::caps_lock_note();
+        caps.set_halign(gtk::Align::Start);
+        field.append(&caps);
+        self.disk_pw_rows.append(&a::form_row("Password", &field));
         self.disk_pw_rows.append(&a::form_row("Verify", &verify));
         body.append(&self.disk_pw_rows);
         Card::new(
@@ -981,7 +988,13 @@ impl Installer {
         });
         body.append(&a::form_row("Full name", &full));
         body.append(&a::form_row("Account name", &name));
-        body.append(&a::form_row("Password", &pw));
+        let field = w::vbox(w::S1);
+        field.set_hexpand(true);
+        field.append(&pw);
+        let caps = w::caps_lock_note();
+        caps.set_halign(gtk::Align::Start);
+        field.append(&caps);
+        body.append(&a::form_row("Password", &field));
         body.append(&a::form_row("Verify", &verify));
         *self.editors.borrow_mut() = vec![
             (Field::FullName, full.upcast()),
