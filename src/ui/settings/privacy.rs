@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 18] = [
+pub(crate) const KINDS: [(&str, &str, &str); 19] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -98,6 +98,11 @@ pub(crate) const KINDS: [(&str, &str, &str); 18] = [
         "Messages from Apps",
         "Can receive messages from apps you allow, and announce news to them.",
     ),
+    (
+        "devices",
+        "Connected Devices",
+        "Can see the names of connected USB and Bluetooth devices.",
+    ),
 ];
 
 /// "A", "A and B", "A, B and C".
@@ -173,6 +178,15 @@ struct Facts {
     encrypted: Option<bool>,
 }
 
+/// What a grant for one peer app or one device allows.
+fn scoped(entries: &[crate::desktop::Entry], cap: &str) -> Option<String> {
+    use wol_core::consent::{device_of, peer_of};
+    if let Some(peer) = peer_of(cap) {
+        return Some(format!("Can send messages to {}.", app_of(entries, peer).0));
+    }
+    device_of(cap).map(|d| format!("Can use the USB device {d}."))
+}
+
 fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     let entries = crate::desktop::load_all();
     let can_change = admin("consent", &[]).is_some();
@@ -206,10 +220,9 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     let peers: Vec<gtk::Widget> = f
         .grants
         .iter()
-        .filter_map(|(path, cap)| Some((path, cap, wol_core::consent::peer_of(cap)?)))
-        .map(|(path, cap, peer)| {
+        .filter_map(|(path, cap)| Some((path, cap, scoped(&entries, cap)?)))
+        .map(|(path, cap, what)| {
             let (name, icon) = app_of(&entries, path);
-            let what = format!("Can send messages to {}.", app_of(&entries, peer).0);
             let (ctx, st) = (e.ctx.clone(), status.clone());
             let (path, cap) = (path.clone(), cap.clone());
             let r = form::permission_row(&icon, &name, &what, true, move |on| {
