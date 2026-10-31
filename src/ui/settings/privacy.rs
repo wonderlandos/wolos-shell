@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 14] = [
+pub(crate) const KINDS: [(&str, &str, &str); 16] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -77,6 +77,16 @@ pub(crate) const KINDS: [(&str, &str, &str); 14] = [
         "audio-control",
         "Sound Control",
         "Can change the volume and mute the sound.",
+    ),
+    (
+        "search",
+        "Search",
+        "Can search your apps and settings the way Spotlight does.",
+    ),
+    (
+        "search-provider",
+        "Search Results",
+        "Sees what you type in Spotlight, and can add results to it.",
     ),
 ];
 
