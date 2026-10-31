@@ -244,3 +244,53 @@ fn j3_remove_goes_through_admind() {
     );
     friendly("remove", &said);
 }
+
+/// J1: every way through the installer ends on a plan that names what the person chose, nothing
+/// else, and refuses to go on with a sentence when it can't.
+#[test]
+fn j1_the_installer_ends_on_a_plan_or_a_sentence() {
+    use shell::install::Check;
+    use shell::install::flow::{Flow, Found, Method, Next, Step};
+    use shell::setup::Hints;
+    use wol_core::install::disk::{Disk, Table};
+    let gb = 1_000_000_000;
+    let disk = Disk {
+        path: "/dev/vda".into(),
+        bytes: 64 * gb,
+        sector: 512,
+        table: Table::None,
+        first: 2048,
+        last: 64 * gb / 512 - 34,
+        ..Disk::default()
+    };
+    let mut f = Flow::new(&Hints::default(), true, false);
+    f.set_disks(vec![Found {
+        disk,
+        check: Check::default(),
+    }]);
+    assert_eq!(
+        f.method,
+        Method::Erase,
+        "a blank disk has only Erase and Manual"
+    );
+    let mut n = Next::Go(Step::Begin);
+    for _ in 0..12 {
+        n = f.advance();
+        if let Next::Stay(_, why) = &n {
+            friendly("installer", why);
+            f.draft.set_full_name("Alice Liddell");
+            f.draft.password = "curiouser".into();
+            f.draft.verify = "curiouser".into();
+        }
+        if n == Next::Install {
+            break;
+        }
+    }
+    assert_eq!(n, Next::Install);
+    let plan = f.plan().unwrap();
+    assert!(plan.layout.wipe);
+    assert_eq!(
+        (plan.zone.as_str(), plan.locale.as_str()),
+        ("America/New_York", "en_US.UTF-8")
+    );
+}

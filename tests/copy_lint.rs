@@ -207,3 +207,106 @@ fn games_notices_pass() {
         assert_clean(&format!("games “{title}”"), body);
     }
 }
+
+/// Every refusal, blocked partition and summary line of the installer reads as one plain sentence.
+#[test]
+fn the_installer_says_everything_in_plain_sentences() {
+    use wol_core::install::disk::{Blocked, Disk, Part};
+    use wol_core::install::layout::Refusal as R;
+    use wol_core::install::plan::Change as C;
+    let d = Disk {
+        parts: vec![Part {
+            uuid: "u".into(),
+            fstype: "ntfs".into(),
+            ..Part::default()
+        }],
+        ..Disk::default()
+    };
+    let u = || "u".to_string();
+    for r in [
+        R::DiskChanged,
+        R::NotGpt,
+        R::TooSmall,
+        R::UnknownPartition,
+        R::Conflict(u()),
+        R::Mounted(u()),
+        R::CantResize(u()),
+        R::NoRoom,
+        R::NoRoot,
+        R::NoEsp,
+        R::RootMustFormat,
+        R::EspInUse,
+        R::NotAnEsp(u()),
+        R::BadMount(u()),
+        R::DuplicateMount(u()),
+        R::BadFilesystem(u()),
+        R::BadFilesystem("gone".into()),
+    ] {
+        assert_clean(&format!("{r:?}"), &copy::install_refusal(&r, &d));
+    }
+    for b in [
+        Blocked::BitLocker,
+        Blocked::NotShutDown,
+        Blocked::MacOs,
+        Blocked::Unreadable,
+    ] {
+        assert_clean(&format!("{b:?}"), copy::install_blocked(b));
+    }
+    let n = || "Windows".to_string();
+    let m = |s: &str| s.to_string();
+    for c in [
+        C::EraseDisk {
+            bytes: 1,
+            others: vec![],
+        },
+        C::EraseDisk {
+            bytes: 1,
+            others: vec![n(), m("Linux")],
+        },
+        C::Delete {
+            name: n(),
+            bytes: 1,
+        },
+        C::Resize {
+            name: n(),
+            from: 2,
+            to: 1,
+        },
+        C::Resize {
+            name: n(),
+            from: 1,
+            to: 2,
+        },
+        C::Format {
+            name: n(),
+            mount: m("/"),
+        },
+        C::New {
+            bytes: 1,
+            mount: m("/data"),
+            encrypted: true,
+        },
+        C::New {
+            bytes: 1,
+            mount: m("swap"),
+            encrypted: false,
+        },
+        C::ReuseEsp,
+        C::Keep {
+            name: m("Linux"),
+            mount: m("/home"),
+        },
+        C::Untouched { name: n() },
+        C::OneCopy,
+    ] {
+        assert_clean(&format!("{c:?}"), &copy::install_change(&c));
+    }
+    assert_clean("low space", &copy::install_low_space(30_000_000_000));
+    for s in [
+        copy::INSTALL_BLANK,
+        copy::INSTALL_POINT_OF_NO_RETURN,
+        copy::INSTALL_RECOVERY_NOTE,
+    ] {
+        assert_clean(s, s);
+    }
+}

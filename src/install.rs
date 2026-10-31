@@ -1,5 +1,9 @@
-//! Install WolOS (live desktop, ADR 0013): the disks it may erase, the progress lines of
-//! `libexec/wolos/install-run` and what the progress page says. Pure; UI in `ui::installer`.
+//! Install WolOS (ADR 0013, ADR 0023): the disks it may use, the progress lines of
+//! `/usr/lib/wolos/install-run` and what the progress page says. Pure; UI in `ui::installer`,
+//! the steps in [`flow`].
+
+#[path = "install_flow.rs"]
+pub mod flow;
 
 /// Erases the disk and installs (root; checks the disk against `install-disks` again).
 pub const RUN: &str = "/usr/lib/wolos/install-run";
@@ -13,7 +17,7 @@ pub const CHECK: &str = "/usr/lib/wolos/install-check";
 pub struct Check {
     /// Other systems on the disk, as named for people: "Windows", "Linux", "macOS", "FreeBSD".
     pub others: Vec<String>,
-    /// Secure Boot is on: the installed WolOS would not start (beta: no signed loader).
+    /// Secure Boot is on: the installed WolOS would not start.
     pub secure_boot: bool,
     pub refused: Option<String>,
 }
@@ -92,35 +96,8 @@ impl Awake {
     }
 }
 
-/// Prefix of every progress line `install-run` and the installer script print.
+/// Prefix of every progress line `install-run` prints.
 pub const MARK: &str = "wolos-install: ";
-/// Title word of a bsdinstall error box (an extract error; the installer script replaces the
-/// final one with a progress line): the app answers it with Return so the run can end.
-pub const BSDINSTALL_ERROR: &str = "Error";
-/// Smallest disk WolOS installs on (system, apps, swap and room to work).
-pub const MIN_BYTES: u64 = 16_000_000_000;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Disk {
-    pub name: String,
-    pub model: String,
-    pub bytes: u64,
-}
-
-impl Disk {
-    /// "Samsung SSD 980 · 500 GB"-style title: the model, else the device name.
-    pub fn title(&self) -> String {
-        if self.model.is_empty() {
-            self.name.clone()
-        } else {
-            self.model.clone()
-        }
-    }
-
-    pub fn big_enough(&self) -> bool {
-        self.bytes >= MIN_BYTES
-    }
-}
 
 /// Decimal size as disks are sold: "500 GB", "1 TB", "1.5 TB".
 pub fn size_text(bytes: u64) -> String {
@@ -138,107 +115,82 @@ pub fn size_text(bytes: u64) -> String {
     }
 }
 
-/// Disks from `geom disk list`, keeping only `allowed` (from `install-disks`), in that order.
-pub fn parse_disks(geom: &str, allowed: &str) -> Vec<Disk> {
-    let mut all: Vec<Disk> = Vec::new();
-    for line in geom.lines() {
-        let (k, v) = match line.trim().split_once(':') {
-            Some((k, v)) => (k.trim(), v.trim()),
-            None => continue,
-        };
-        match k {
-            "Geom name" => all.push(Disk {
-                name: v.into(),
-                model: String::new(),
-                bytes: 0,
-            }),
-            "Mediasize" => {
-                if let Some(d) = all.last_mut() {
-                    d.bytes = v
-                        .split_whitespace()
-                        .next()
-                        .and_then(|n| n.parse().ok())
-                        .unwrap_or(0);
-                }
-            }
-            "descr" => {
-                if let Some(d) = all.last_mut()
-                    && v != "(null)"
-                {
-                    d.model = v.into();
-                }
-            }
-            _ => {}
-        }
-    }
+/// `install-check <disk> --probe`: everything about a disk, for the list and the layout pages.
+pub fn probe_command(disk: &str) -> Vec<String> {
+    ["sudo", "-n", CHECK, disk, "--probe"]
+        .map(String::from)
+        .to_vec()
+}
+
+/// The disks `install-disks` printed.
+pub fn parse_disks(allowed: &str) -> Vec<String> {
     allowed
         .lines()
         .map(str::trim)
-        .filter_map(|n| all.iter().find(|d| d.name == n).cloned())
+        .filter(|l| !l.is_empty())
+        .map(String::from)
         .collect()
 }
 
-/// Root for `install-run <disk>`: sudo, which the live image allows its user without a password
-/// (`image/build.sh`); `su` to the live root (empty password) where sudo is missing.
-pub fn install_command(disk: &str, sudo: bool) -> Vec<String> {
-    if sudo {
-        ["sudo", "-n", RUN, disk].map(String::from).to_vec()
-    } else {
-        vec![
-            "su".into(),
-            "-m".into(),
-            "root".into(),
-            "-c".into(),
-            format!("{RUN} {disk}"),
-        ]
-    }
+/// Runs the plan: everything else install-run needs is in the files next to it.
+pub fn install_command(plan: &std::path::Path) -> Vec<String> {
+    vec![
+        "sudo".into(),
+        "-n".into(),
+        RUN.into(),
+        "--plan".into(),
+        plan.to_string_lossy().into_owned(),
+    ]
 }
 
-/// "Encrypt disk" choice from the Install app: `None` = leave it to install-run (on when a TPM2
-/// exists); the passphrase travels as a file (never an argument) and is needed without a TPM.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Encryption {
-    pub on: Option<bool>,
-    pub passphrase_file: Option<String>,
+/// The plan goes here, 0700: passwords are side files, removed by install-run.
+pub fn plan_dir(runtime: &std::path::Path) -> std::path::PathBuf {
+    runtime.join("wolos-install")
 }
 
-/// [`install_command`] with the encryption choice, as environment for install-run.
-pub fn install_command_with(disk: &str, sudo: bool, enc: &Encryption) -> Vec<String> {
-    let mode = match enc.on {
-        None => "auto",
-        Some(true) => "yes",
-        Some(false) => "no",
+/// What the startup setup has to tell the person, in plain words (written by the install).
+pub const BOOT_NOTE: &str = "/run/wolos/boot-note";
+
+/// Name of the side files in [`plan_dir`].
+pub const PLAN_FILE: &str = "plan.json";
+pub const DISK_PASSWORD: &str = "disk-password";
+pub const ACCOUNT_PASSWORD: &str = "account-password";
+pub const RECOVERY_KEY: &str = "recovery-key";
+
+/// Writes the plan and its passwords (0600). Newlines end a password: refused by the fields' length
+/// only in the sense that none can be typed.
+pub fn write_plan(
+    dir: &std::path::Path,
+    plan: &wol_core::install::plan::Plan,
+    disk_password: &str,
+    account_password: &str,
+) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::DirBuilder::new().mode(0o700).create(dir)?;
+    let put = |name: &str, text: &str| -> std::io::Result<()> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(dir.join(name))?
+            .write_all(text.as_bytes())
     };
-    let mut env = vec![format!("WOLOS_ENCRYPT={mode}")];
-    if let Some(f) = enc
-        .passphrase_file
-        .as_deref()
-        .filter(|_| enc.on != Some(false))
-    {
-        env.push(format!("WOLOS_PASSPHRASE_FILE={f}"));
+    let json = serde_json::to_string(plan).map_err(std::io::Error::other)?;
+    put(PLAN_FILE, &json)?;
+    put(ACCOUNT_PASSWORD, account_password)?;
+    if !disk_password.is_empty() {
+        put(DISK_PASSWORD, disk_password)?;
     }
-    if sudo {
-        let mut v: Vec<String> = ["sudo", "-n", "env"].map(String::from).to_vec();
-        v.extend(env);
-        v.extend([RUN.to_owned(), disk.to_owned()]);
-        v
-    } else {
-        vec![
-            "su".into(),
-            "-m".into(),
-            "root".into(),
-            "-c".into(),
-            format!("env {} {RUN} {disk}", env.join(" ")),
-        ]
-    }
+    Ok(dir.join(PLAN_FILE))
 }
 
-/// Recovery key file install-run leaves (mode 600): shown once, then deleted.
-pub const RECOVERY_KEY: &str = "/run/wolos/recovery-key";
-
-/// The live user is in `operator`, which may run shutdown.
+/// The live user may restart with sudo (`image/build.sh`).
 pub fn restart_command() -> Vec<String> {
-    ["/sbin/shutdown", "-r", "now"].map(String::from).to_vec()
+    ["sudo", "-n", "systemctl", "reboot"]
+        .map(String::from)
+        .to_vec()
 }
 
 /// Where an install is: the stage words of the progress lines.
@@ -246,13 +198,13 @@ pub fn restart_command() -> Vec<String> {
 pub enum Stage {
     /// Checking the disk.
     Prepare,
-    /// GPT, EFI and BIOS boot partitions, the ZFS pool and boot environment.
+    /// The partitions.
     Disk,
     /// The system files are copied (no progress of their own).
     Files,
     /// Boot loader on the EFI partition.
     Boot,
-    /// rc.conf, fstab, time zone of the new system.
+    /// Language, time zone and the account.
     Settings,
     /// Apps from the local repository.
     Packages,
@@ -299,7 +251,7 @@ impl Report {
     }
 }
 
-/// One progress line (bsdinstall may draw around it on the same terminal line).
+/// One progress line.
 pub fn parse_line(line: &str) -> Option<Report> {
     let rest = &line[line.find(MARK)? + MARK.len()..];
     let rest = rest.trim_end_matches(['\r', '\n']);
@@ -384,79 +336,37 @@ pub fn stopped_text(at: Stage) -> &'static str {
 mod tests {
     use super::*;
 
-    const GEOM: &str = "\
-Geom name: ada0
-Providers:
-1. Name: ada0
-   Mediasize: 500107862016 (466G)
-   Sectorsize: 512
-   Mode: r0w0e0
-   descr: Samsung SSD 870 EVO 500GB
-   ident: S5Y1NX0R
-Geom name: da0
-Providers:
-1. Name: da0
-   Mediasize: 15518924800 (14G)
-   descr: SanDisk Ultra
-Geom name: nda0
-Providers:
-1. Name: nda0
-   Mediasize: 1000204886016 (932G)
-   descr: (null)
-";
-
     #[test]
-    fn encryption_choice_reaches_install_run_without_a_secret_argument() {
-        let e = Encryption {
-            on: Some(true),
-            passphrase_file: Some("/run/p".into()),
-        };
+    fn disks_are_the_ones_install_disks_allows_and_the_plan_goes_by_file() {
         assert_eq!(
-            install_command_with("/dev/sda", true, &e).join(" "),
-            format!("sudo -n env WOLOS_ENCRYPT=yes WOLOS_PASSPHRASE_FILE=/run/p {RUN} /dev/sda")
+            parse_disks("/dev/nvme0n1\n\n/dev/sda\n"),
+            ["/dev/nvme0n1", "/dev/sda"]
         );
-        let auto = Encryption {
-            on: None,
-            passphrase_file: None,
-        };
-        assert_eq!(
-            install_command_with("/dev/sda", true, &auto).join(" "),
-            format!("sudo -n env WOLOS_ENCRYPT=auto {RUN} /dev/sda")
-        );
-        let off = Encryption {
-            on: Some(false),
-            passphrase_file: Some("/run/p".into()),
-        };
-        assert!(
-            !install_command_with("/dev/sda", false, &off)
-                .join(" ")
-                .contains("PASSPHRASE")
-        );
-        assert!(install_command_with("/dev/sda", false, &auto)[4].contains("WOLOS_ENCRYPT=auto"));
+        assert_eq!(size_text(1_500_000_000_000), "1.5 TB");
+        let argv = install_command(std::path::Path::new("/run/x/plan.json"));
+        assert_eq!(argv[..3], ["sudo", "-n", RUN]);
+        assert_eq!(argv[3..], ["--plan", "/run/x/plan.json"]);
+        assert_eq!(restart_command().join(" "), "sudo -n systemctl reboot");
     }
 
     #[test]
-    fn disks_are_listed_by_model_and_size() {
-        let d = parse_disks(GEOM, "nda0\nada0\n");
+    fn the_plan_and_its_passwords_are_private_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("wolos-plan-{}", std::process::id()));
+        let plan = wol_core::install::plan::Plan::default();
+        let f = write_plan(&dir, &plan, "disk pw", "account pw").unwrap();
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&f), 0o600);
+        assert_eq!(mode(&dir.join(DISK_PASSWORD)), 0o600);
         assert_eq!(
-            d.iter()
-                .map(|d| (d.title(), size_text(d.bytes)))
-                .collect::<Vec<_>>(),
-            [
-                ("nda0".to_string(), "1 TB".to_string()),
-                (
-                    "Samsung SSD 870 EVO 500GB".to_string(),
-                    "500 GB".to_string()
-                ),
-            ],
-            "only install-disks' disks, in its order; boot stick left out"
+            std::fs::read_to_string(dir.join(ACCOUNT_PASSWORD)).unwrap(),
+            "account pw"
         );
-        assert!(d.iter().all(Disk::big_enough));
-        let stick = &parse_disks(GEOM, "da0")[0];
-        assert!(!stick.big_enough());
-        assert_eq!(size_text(1_500_000_000_000), "1.5 TB");
-        assert_eq!(install_command("ada0", true), ["sudo", "-n", RUN, "ada0"]);
-        assert_eq!(install_command("ada0", false)[4], format!("{RUN} ada0"));
+        // A second run starts clean; no disk password leaves no file behind.
+        write_plan(&dir, &plan, "", "account pw").unwrap();
+        assert!(!dir.join(DISK_PASSWORD).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -567,7 +477,7 @@ Providers:
     #[test]
     fn the_app_checks_a_disk_and_says_why_not() {
         assert_eq!(check_command("ada0", true), ["sudo", "-n", CHECK, "ada0"]);
-        assert_eq!(check_command("ada0", false), [CHECK, "ada0"]);
+        assert_eq!(probe_command("/dev/sda")[3..], ["/dev/sda", "--probe"]);
         assert_eq!(refusal_text("in-use", "SanDisk"), None);
         for why in ["too-small", "not-listed"] {
             let t = refusal_text(why, "SanDisk").unwrap();
