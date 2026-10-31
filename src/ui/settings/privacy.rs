@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 17] = [
+pub(crate) const KINDS: [(&str, &str, &str); 18] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -92,6 +92,11 @@ pub(crate) const KINDS: [(&str, &str, &str); 17] = [
         "account-info",
         "Account Name",
         "Can read your account name and full name.",
+    ),
+    (
+        "ipc",
+        "Messages from Apps",
+        "Can receive messages from apps you allow, and announce news to them.",
     ),
 ];
 
@@ -197,6 +202,28 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
             })
             .collect();
         into.append(&w::section(title, &rows));
+    }
+    let peers: Vec<gtk::Widget> = f
+        .grants
+        .iter()
+        .filter_map(|(path, cap)| Some((path, cap, wol_core::consent::peer_of(cap)?)))
+        .map(|(path, cap, peer)| {
+            let (name, icon) = app_of(&entries, path);
+            let what = format!("Can send messages to {}.", app_of(&entries, peer).0);
+            let (ctx, st) = (e.ctx.clone(), status.clone());
+            let (path, cap) = (path.clone(), cap.clone());
+            let r = form::permission_row(&icon, &name, &what, true, move |on| {
+                let verdict = if on { "allow" } else { "deny" };
+                if let Some(a) = admin("consent", &[&path, &cap, verdict]) {
+                    ctx.act_say(a, &st)
+                }
+            });
+            r.set_sensitive(can_change);
+            r
+        })
+        .collect();
+    if !peers.is_empty() {
+        into.append(&w::section("App Connections", &peers));
     }
     for app in &f.flatpaks {
         into.append(&flatpak_section(e, app, status));
