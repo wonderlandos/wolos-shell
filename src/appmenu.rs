@@ -295,10 +295,7 @@ pub fn parse_verb(v: &str) -> Option<Act> {
             Ok(n) if (1..=DESKTOPS).contains(&n) => Act::ToDesktop(n),
             _ => return None,
         },
-        (v, None) => match Cmd::ALL.into_iter().find(|c| c.verb() == v) {
-            Some(c) => Act::Key(c),
-            None => return None,
-        },
+        (v, None) => Act::Key(Cmd::ALL.into_iter().find(|c| c.verb() == v)?),
         _ => return None,
     };
     w.next().is_none().then_some(a)

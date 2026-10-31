@@ -23,13 +23,13 @@ pub fn parse_hits(doc: &Value) -> (Vec<PkgHit>, Vec<flatpak::Hit>) {
         if let Some(s) = of(&["pacman", "wol"]) {
             pkgs.push(PkgHit {
                 name: text(s, "id"),
-                summary: text(&hit, "summary"),
+                summary: text(hit, "summary"),
             });
         } else if let Some(s) = of(&["flatpak"]) {
             flat.push(flatpak::Hit {
                 id: text(s, "id"),
-                name: text(&hit, "name"),
-                summary: text(&hit, "summary"),
+                name: text(hit, "name"),
+                summary: text(hit, "summary"),
             });
         }
     }
