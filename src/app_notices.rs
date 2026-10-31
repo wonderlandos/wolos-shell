@@ -97,7 +97,7 @@ fn wold_socket() -> PathBuf {
 }
 
 /// One call to wold.
-fn call(wold: &Path, c: &Call) -> Answer {
+pub(crate) fn call(wold: &Path, c: &Call) -> Answer {
     let ask = || -> std::io::Result<Answer> {
         let mut s = UnixStream::connect(wold)?;
         s.set_read_timeout(Some(Duration::from_secs(5)))?;
@@ -167,6 +167,12 @@ pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
         let Some(event) = Event::parse(&line) else {
             continue;
         };
+        if let Event::SessionAsk { uid: u, id, ask } = event {
+            if u == uid {
+                crate::app_session::answer_later(wold.to_path_buf(), id, ask);
+            }
+            continue;
+        }
         if let Event::NotificationWithdrawn { uid: u, id } = event {
             let banner = ids.lock().map_or(0, |i| i.banner(id));
             if u == uid && banner != 0 {

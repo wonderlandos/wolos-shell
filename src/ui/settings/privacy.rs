@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 5] = [
+pub(crate) const KINDS: [(&str, &str, &str); 7] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -32,6 +32,16 @@ pub(crate) const KINDS: [(&str, &str, &str); 5] = [
         "window-list",
         "Window List",
         "Can see which windows are open.",
+    ),
+    (
+        "clipboard-read",
+        "Read Clipboard",
+        "Can read the text you copied, when it asks.",
+    ),
+    (
+        "clipboard-write",
+        "Change Clipboard",
+        "Can replace what you copied.",
     ),
 ];
 
@@ -335,7 +345,13 @@ mod tests {
 
     #[test]
     fn the_note_says_which_choices_are_enforced() {
-        let all: Vec<&str> = KINDS.iter().map(|k| k.0).collect();
+        // The libwol services are all enforced (tested in api::portal): the sentence stays readable.
+        let services = shared::portal::CAPABILITIES;
+        let all: Vec<&str> = KINDS
+            .iter()
+            .map(|k| k.0)
+            .filter(|c| *c == "notifications" || !services.contains(c))
+            .collect();
         assert_eq!(
             enforcement_note(&all),
             "WolOS enforces Screen Recording and Notifications. For Remote Control, \
