@@ -73,19 +73,23 @@ fn home() -> PathBuf {
     PathBuf::from(kit::config_home())
 }
 
-fn change(f: impl FnOnce(&mut Prefs)) {
+fn change(f: impl FnOnce(&mut Prefs)) -> bool {
     let mut p = ms::load(&home());
     f(&mut p);
-    if let Err(e) = ms::save(&home(), &p) {
+    let saved = ms::save(&home(), &p);
+    if let Err(e) = &saved {
         eprintln!("wol: memory saver prefs: {e}");
     }
+    saved.is_ok()
 }
 
 /// The Memory section.
 pub(super) fn section() -> gtk::Box {
     let prefs = ms::load(&home());
     let st = status();
-    let toggle = w::toggle(prefs.enabled, |_| {});
+    let toggle = w::pending_toggle(prefs.enabled, |on, done| {
+        done(change(|p| p.enabled = on));
+    });
     let (main, line) = form::status_row(
         "",
         "Memory Saver",
@@ -94,7 +98,9 @@ pub(super) fn section() -> gtk::Box {
     );
     line.set_wrap(true);
     let mut rows = vec![main];
-    let nap_toggle = w::toggle(prefs.nap, |on| change(|p| p.nap = on));
+    let nap_toggle = w::pending_toggle(prefs.nap, |on, done| {
+        done(change(|p| p.nap = on));
+    });
     let (nap, nap_line) = form::status_row(
         "",
         "App Nap",
@@ -115,14 +121,14 @@ pub(super) fn section() -> gtk::Box {
                     .map(app_line)
                     .unwrap_or_else(|| "Not open".into());
                 let id = id.clone();
-                form::toggle_row(
+                form::pending_toggle_row(
                     &app_title(&id),
                     &sub,
                     !prefs.exclude.contains(&id),
-                    move |on| {
-                        change(|p| {
+                    move |on, done| {
+                        done(change(|p| {
                             p.set_excluded(&id, !on);
-                        })
+                        }))
                     },
                 )
             })
@@ -134,7 +140,6 @@ pub(super) fn section() -> gtk::Box {
         let (line, nap, per_app) = (line.clone(), nap.clone(), per_app.clone());
         toggle.connect_active_notify(move |t| {
             let on = t.is_active();
-            change(|p| p.enabled = on);
             line.set_label(&summary(on, status().as_ref()));
             nap.set_sensitive(on);
             per_app.set_sensitive(on);
