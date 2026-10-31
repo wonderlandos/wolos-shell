@@ -185,6 +185,7 @@ struct Facts {
     grants: Vec<(String, String)>,
     flatpaks: Vec<wol_core::flatpak::App>,
     security: Option<security::Status>,
+    malware: Option<wol_core::malware::Status>,
     encrypted: Option<bool>,
 }
 
@@ -306,6 +307,19 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     if !rows.is_empty() {
         into.append(&w::section("Security", &rows));
     }
+    if let Some(m) = &f.malware {
+        into.append(&super::malware::section(m));
+        if admin("malware-signatures", &[]).is_some() {
+            let (ctx, st) = (e.ctx.clone(), status.clone());
+            into.append(&super::malware::full_section(
+                &m.full,
+                move |v, done| match admin("malware-signatures", &[if v { "on" } else { "off" }]) {
+                    Some(a) => ctx.act_switch(a, &st, done),
+                    None => done(false),
+                },
+            ));
+        }
+    }
     let helpers = form::nav_row(
         "wolos-assistant-symbolic",
         "Assistants & Automation",
@@ -407,6 +421,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             grants: m.consent(),
             flatpaks: m.flatpak_apps(),
             security: m.security(),
+            malware: m.malware(),
             encrypted: m.storage().and_then(|s| s.encrypted),
         },
         move |into, f| render(&e2, into, f, &status),
