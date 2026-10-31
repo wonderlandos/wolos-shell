@@ -9,7 +9,7 @@ pub mod flow;
 pub const RUN: &str = "/usr/lib/wolos/install-run";
 /// Disks that are not the boot media, one per line.
 pub const DISKS: &str = "/usr/lib/wolos/install-disks";
-/// Facts about one disk before anything is written (`size`, `os`, `secureboot`, `refuse` lines).
+/// Facts about one disk before anything is written (`size`, `os`, `boot`, `refuse` lines).
 pub const CHECK: &str = "/usr/lib/wolos/install-check";
 
 /// What `install-check <disk>` found.
@@ -17,7 +17,7 @@ pub const CHECK: &str = "/usr/lib/wolos/install-check";
 pub struct Check {
     /// Other systems on the disk, as named for people: "Windows", "Linux", "macOS", "FreeBSD".
     pub others: Vec<String>,
-    /// Secure Boot is on: the installed WolOS would not start.
+    /// A firmware setting must change first: as it stands the installed WolOS would not start.
     pub secure_boot: bool,
     pub refused: Option<String>,
 }
@@ -27,7 +27,7 @@ pub fn parse_check(out: &str) -> Check {
     for line in out.lines() {
         match line.split_once(' ') {
             Some(("os", name)) => c.others.push(name.to_string()),
-            Some(("secureboot", "on")) => c.secure_boot = true,
+            Some(("boot", "firmware")) => c.secure_boot = true,
             Some(("refuse", why)) => c.refused = Some(why.to_string()),
             _ => {}
         }
@@ -71,11 +71,12 @@ pub fn refusal_text(why: &str, title: &str) -> Option<String> {
     }
 }
 
-/// Sheet shown when Secure Boot is on: honest, no jargon beyond the setting's own name.
-pub const SECURE_BOOT_TITLE: &str = "Turn Off Secure Boot to Start WolOS";
-pub const SECURE_BOOT_TEXT: &str = "This beta of WolOS can’t start while Secure Boot is on. \
-Restart, open your computer's startup settings (often F2, F10, F12 or Delete), turn off \
-Secure Boot, then install again.";
+/// Sheet shown when this computer trusts only Windows at startup: honest, no jargon beyond the
+/// setting's own name. Every other case installs, and the last page says what comes next.
+pub const SECURE_BOOT_TITLE: &str = "Change One Startup Setting First";
+pub const SECURE_BOOT_TEXT: &str = "This computer's Secure Boot only trusts Windows, so WolOS \
+can’t start yet. Restart, open your computer's startup settings (often F2, F10, F12 or Delete), \
+allow third-party certificates or clear the Secure Boot keys, then install again.";
 
 /// Why the screen stays on and the machine awake (idle inhibitors show it).
 pub const AWAKE_REASON: &str = "Installing WolOS";
@@ -491,7 +492,8 @@ mod tests {
 
     #[test]
     fn check_names_other_systems_in_the_warning() {
-        let c = parse_check("size 500000000000\nos Windows\nos Linux\nsecureboot on\n");
+        let c = parse_check("size 500000000000\nos Windows\nos Linux\nboot firmware\n");
+        assert!(!parse_check("boot mok\n").secure_boot, "those just install");
         assert_eq!(c.others, ["Windows", "Linux"]);
         assert!(c.secure_boot && c.refused.is_none());
         assert_eq!(
@@ -517,7 +519,7 @@ mod tests {
         let text = std::fs::read_to_string(script).unwrap();
         for w in [
             "\"os \" names[i]",
-            "secureboot on",
+            "echo \"boot ",
             "refuse too-small",
             "Windows Linux macOS FreeBSD",
         ] {
