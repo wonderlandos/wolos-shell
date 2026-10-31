@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 9] = [
+pub(crate) const KINDS: [(&str, &str, &str); 11] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -52,6 +52,16 @@ pub(crate) const KINDS: [(&str, &str, &str); 9] = [
         "file-panels",
         "File Panels",
         "Can ask you to choose a file. It sees only the file you pick.",
+    ),
+    (
+        "power-info",
+        "Battery Status",
+        "Can see the battery level and whether Low Power Mode is on.",
+    ),
+    (
+        "keep-awake",
+        "Keep Awake",
+        "Can keep this computer from sleeping while it works.",
     ),
 ];
 
