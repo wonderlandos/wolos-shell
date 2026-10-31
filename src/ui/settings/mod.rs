@@ -488,6 +488,12 @@ impl Ctx {
     pub(crate) fn place(&self, aw: &w::AppWindow) {
         w::toolbar_place(aw, &self.auth.revealer);
     }
+    /// Says why the password is wanted; returns what the sheet said before.
+    pub(crate) fn set_why(&self, why: &str) -> String {
+        let was = self.auth.why.text().to_string();
+        self.auth.why.set_label(why);
+        was
+    }
     /// `a` off the UI thread; root actions ask for the password, then retry; `done` gets the final result.
     pub(crate) fn act(self: &Rc<Self>, a: Action, done: Rc<dyn Fn(Result<(), ActionError>)>) {
         let rx = self.sys.spawn(a.clone());

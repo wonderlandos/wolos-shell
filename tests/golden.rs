@@ -849,7 +849,7 @@ fn cases() -> Vec<Case> {
                 s.aw.root.clone().upcast()
             }),
         });
-        // The AUR apart from the catalogue, off, with the legend under it.
+        // The AUR apart from the catalogue, locked: the warning and the way in, no package.
         v.push(Case {
             name: format!("store-aur-tab-{tag}"),
             size: (sw, sh),
@@ -864,6 +864,26 @@ fn cases() -> Vec<Case> {
                         flatpaks: vec![],
                     },
                 );
+                s.aw.content.set_visible_child_name("AUR");
+                s.aw.root.clone().upcast()
+            }),
+        });
+        // After the password: its search and the legend under it.
+        v.push(Case {
+            name: format!("store-aur-open-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                let s = ui::store::content(
+                    Rc::new(shell::system::Fake),
+                    ui::store::Env {
+                        data_dirs: vec![],
+                        pkg_search: false,
+                        flatpaks: vec![],
+                    },
+                );
+                s.aur.show_open();
                 s.aw.content.set_visible_child_name("AUR");
                 s.aw.root.clone().upcast()
             }),
@@ -1255,7 +1275,10 @@ fn return_belongs_to_the_button_with_the_keyboard_ring() {
     win.set_focus_visible(true);
     assert!(return_is_the_buttons(&win), "a ringed button takes Return");
     win.set_focus_visible(false);
-    assert!(!return_is_the_buttons(&win), "focus nobody can see: Continue");
+    assert!(
+        !return_is_the_buttons(&win),
+        "focus nobody can see: Continue"
+    );
     GtkWindowExt::set_focus(&win, Some(&entry));
     win.set_focus_visible(true);
     assert!(!return_is_the_buttons(&win), "a field: Continue");
