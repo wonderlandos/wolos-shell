@@ -4,7 +4,9 @@
 //! GTK: a short thread per ask, its reply a `session.answer` to wold.
 use serde_json::{Value, json};
 use shared::portal::{Ask, Call, MAX_CLIPBOARD, MAX_LINE};
+use std::fs::File;
 use std::io::{Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -13,6 +15,8 @@ pub trait Session {
     /// Text on the clipboard, at most `max` + 1 bytes; None when it holds no text.
     fn clipboard(&self, max: usize) -> Option<Vec<u8>>;
     fn set_clipboard(&self, text: &str) -> bool;
+    /// What the person picked; None when they cancelled. Blocks until then.
+    fn panel(&self, save: bool, title: &str, name: &str) -> Option<PathBuf>;
 }
 
 /// The running desktop.
@@ -59,6 +63,17 @@ impl Session for Desktop {
             .is_some_and(|mut i| i.write_all(text.as_bytes()).is_ok());
         wrote && c.wait().is_ok_and(|s| s.success())
     }
+
+    fn panel(&self, save: bool, title: &str, name: &str) -> Option<PathBuf> {
+        let (title, name) = (title.to_owned(), name.to_owned());
+        let (tx, rx) = std::sync::mpsc::channel();
+        gtk::glib::MainContext::default().invoke(move || {
+            crate::ui::app_host::pick_file(save, &title, &name, move |p| {
+                let _ = tx.send(p);
+            })
+        });
+        rx.recv().ok().flatten()
+    }
 }
 
 /// One ask -> what goes back, or a sentence to show.
@@ -74,6 +89,7 @@ pub fn answer(s: &dyn Session, ask: Ask) -> Result<Option<Value>, String> {
             let text = String::from_utf8(bytes).map_err(|_| "The clipboard holds no text.")?;
             Ok(Some(json!({ "text": text })))
         }
+        Ask::Panel { .. } => Err("Panels are answered with a file.".into()),
         Ask::ClipboardWrite { text } => {
             if s.set_clipboard(&text) {
                 Ok(None)
@@ -101,8 +117,55 @@ pub fn reply_of(s: &dyn Session, id: u32, ask: Ask) -> Call {
     }
 }
 
+/// Open what the person picked, as them: wold never opens a path for an app. Only a plain file,
+/// so a pipe cannot stall the app or the desktop.
+fn open_pick(path: &Path, save: bool) -> std::io::Result<File> {
+    let mut o = File::options();
+    o.custom_flags(shared::sys::OPEN_QUIET);
+    if save {
+        o.write(true).create(true).truncate(false);
+    } else {
+        o.read(true);
+    }
+    let f = o.open(path)?;
+    if !f.metadata()?.is_file() {
+        return Err(std::io::ErrorKind::InvalidInput.into());
+    }
+    if save {
+        f.set_len(0)?;
+    }
+    Ok(f)
+}
+
+/// The answer to a panel, and the file to attach.
+pub fn panel_reply(
+    s: &dyn Session,
+    id: u32,
+    save: bool,
+    title: &str,
+    name: &str,
+) -> (Call, Option<File>) {
+    let answer = |error: Option<&str>, data| Call::SessionAnswer {
+        id,
+        error: error.map(str::to_owned),
+        data,
+    };
+    let Some(path) = s.panel(save, title, name) else {
+        return (answer(None, Some(json!({"cancelled": true}))), None);
+    };
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+    match (open_pick(&path, save), name) {
+        (Ok(f), Some(name)) => (answer(None, Some(json!({ "name": name }))), Some(f)),
+        _ => (answer(Some("That file could not be opened."), None), None),
+    }
+}
+
 fn reply(wold: &Path, s: &dyn Session, id: u32, ask: Ask) {
-    let a = crate::app_notices::call(wold, &reply_of(s, id, ask));
+    let (call, file) = match ask {
+        Ask::Panel { save, title, name } => panel_reply(s, id, save, &title, &name),
+        ask => (reply_of(s, id, ask), None),
+    };
+    let a = crate::app_notices::call_with(wold, &call, file.as_ref());
     if !a.ok {
         eprintln!("wol-shell: answer to wold: {:?}", a.message);
     }
@@ -123,6 +186,7 @@ mod tests {
         clip: Option<Vec<u8>>,
         set: RefCell<Vec<String>>,
         refuse: bool,
+        pick: Option<PathBuf>,
     }
 
     impl Session for Fake {
@@ -133,6 +197,48 @@ mod tests {
             self.set.borrow_mut().push(text.into());
             !self.refuse
         }
+        fn panel(&self, _: bool, _: &str, _: &str) -> Option<PathBuf> {
+            self.pick.clone()
+        }
+    }
+
+    #[test]
+    fn a_panel_gives_the_picked_file_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("wol-app-panel-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let picked = |p: Option<PathBuf>| Fake {
+            pick: p,
+            ..Fake::default()
+        };
+        let data = |c: Call| match c {
+            Call::SessionAnswer { error, data, .. } => (error, data),
+            _ => panic!(),
+        };
+
+        let (c, f) = panel_reply(&picked(None), 1, false, "Open", "");
+        assert_eq!(data(c), (None, Some(json!({"cancelled": true}))));
+        assert!(f.is_none());
+
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "text").unwrap();
+        let (c, f) = panel_reply(&picked(Some(file.clone())), 2, false, "Open", "");
+        assert_eq!(data(c), (None, Some(json!({"name": "a.txt"}))));
+        let mut got = String::new();
+        f.unwrap().read_to_string(&mut got).unwrap();
+        assert_eq!(got, "text");
+
+        let (c, f) = panel_reply(&picked(Some(file.clone())), 3, true, "Save", "a.txt");
+        assert_eq!(data(c), (None, Some(json!({"name": "a.txt"}))));
+        f.unwrap().write_all(b"new").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+
+        for bad in [dir.clone(), dir.join("missing")] {
+            let (c, f) = panel_reply(&picked(Some(bad)), 4, false, "Open", "");
+            assert!(data(c).0.is_some());
+            assert!(f.is_none());
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn holding(clip: Option<&[u8]>) -> Fake {

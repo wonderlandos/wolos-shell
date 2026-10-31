@@ -98,10 +98,19 @@ fn wold_socket() -> PathBuf {
 
 /// One call to wold.
 pub(crate) fn call(wold: &Path, c: &Call) -> Answer {
+    call_with(wold, c, None)
+}
+
+/// One call to wold, with an open file attached.
+pub(crate) fn call_with(wold: &Path, c: &Call, file: Option<&std::fs::File>) -> Answer {
     let ask = || -> std::io::Result<Answer> {
         let mut s = UnixStream::connect(wold)?;
         s.set_read_timeout(Some(Duration::from_secs(5)))?;
-        s.write_all(format!("call {}\n", c.encode()).as_bytes())?;
+        let line = format!("call {}\n", c.encode());
+        match file {
+            Some(f) => shared::sys::send_with_fd(&s, line.as_bytes(), std::os::fd::AsFd::as_fd(f))?,
+            None => s.write_all(line.as_bytes())?,
+        }
         let mut line = String::new();
         BufReader::new(&s).take(64 * 1024).read_line(&mut line)?;
         Ok(Answer::parse(&line))
