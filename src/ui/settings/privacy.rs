@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 16] = [
+pub(crate) const KINDS: [(&str, &str, &str); 17] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -87,6 +87,11 @@ pub(crate) const KINDS: [(&str, &str, &str); 16] = [
         "search-provider",
         "Search Results",
         "Sees what you type in Spotlight, and can add results to it.",
+    ),
+    (
+        "account-info",
+        "Account Name",
+        "Can read your account name and full name.",
     ),
 ];
 
