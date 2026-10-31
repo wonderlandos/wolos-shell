@@ -1239,6 +1239,29 @@ fn effects_page_answers_after_it_is_built() {
     assert!(!card("Compact").is_active());
 }
 
+/// Return is Continue, unless the keyboard ring is on a button: then it is that button's.
+fn return_belongs_to_the_button_with_the_keyboard_ring() {
+    use shell::kit::assistant::return_is_the_buttons;
+    let win = gtk::Window::new();
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let button = gtk::Button::with_label("Try");
+    let entry = gtk::Entry::new();
+    body.append(&button);
+    body.append(&entry);
+    win.set_child(Some(&body));
+    win.present();
+    pump(20);
+    GtkWindowExt::set_focus(&win, Some(&button));
+    win.set_focus_visible(true);
+    assert!(return_is_the_buttons(&win), "a ringed button takes Return");
+    win.set_focus_visible(false);
+    assert!(!return_is_the_buttons(&win), "focus nobody can see: Continue");
+    GtkWindowExt::set_focus(&win, Some(&entry));
+    win.set_focus_visible(true);
+    assert!(!return_is_the_buttons(&win), "a field: Continue");
+    win.close();
+}
+
 /// A switch whose change takes time: insensitive while it runs, flipped back when it fails.
 fn a_toggle_waits_for_its_change_and_reverts_when_it_fails() {
     type Done = Box<dyn FnOnce(bool)>;
@@ -1772,6 +1795,7 @@ fn main() {
     a_stalled_page_fade_settles();
     displays_coming_and_going_leave_nothing_behind();
     a_toggle_waits_for_its_change_and_reverts_when_it_fails();
+    return_belongs_to_the_button_with_the_keyboard_ring();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");

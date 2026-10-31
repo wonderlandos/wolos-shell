@@ -760,13 +760,26 @@ impl Default for Progress {
     }
 }
 
+/// The keyboard ring is on a button, so Return is that button's.
+pub fn return_is_the_buttons(win: &gtk::Window) -> bool {
+    win.gets_focus_visible() && GtkWindowExt::focus(win).is_some_and(|f| f.is::<gtk::Button>())
+}
+
 /// Return continues and Escape goes back, wherever the focus is (captured before fields see them).
+/// A button with the keyboard ring on it keeps its own Return.
 pub fn keys(win: &impl IsA<gtk::Widget>, enter: impl Fn() + 'static, escape: impl Fn() + 'static) {
     let k = gtk::EventControllerKey::new();
     k.set_propagation_phase(gtk::PropagationPhase::Capture);
-    k.connect_key_pressed(move |_, key, _, _| {
+    k.connect_key_pressed(move |c, key, _, _| {
         use gtk::gdk::Key;
         if key == Key::Return || key == Key::KP_Enter || key == Key::ISO_Enter {
+            let win = c
+                .widget()
+                .and_then(|w| w.root())
+                .and_downcast::<gtk::Window>();
+            if win.is_some_and(|w| return_is_the_buttons(&w)) {
+                return glib::Propagation::Proceed;
+            }
             enter();
             glib::Propagation::Stop
         } else if key == Key::Escape {
