@@ -35,6 +35,7 @@ mod language;
 mod lock;
 mod login_items;
 mod machine;
+mod memory_saver;
 mod network;
 mod notifications;
 mod printers;
@@ -146,7 +147,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Battery",
             "battery-full-symbolic",
-            "energy power low power mode health lid sleep",
+            "energy power low power mode health lid sleep memory saver ram app nap",
         ),
     ],
     &[
