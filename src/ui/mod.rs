@@ -1,4 +1,6 @@
 //! wol-shell composition: wallpaper, menu bar, dock, notifications, OSD, clipboard, session, switcher.
+pub mod app_host;
+pub mod app_view;
 pub mod approval;
 pub mod capture;
 pub mod control_center;
@@ -10,6 +12,7 @@ pub mod force_quit;
 pub mod installer;
 pub mod ipc;
 pub mod lock;
+pub mod lua_widgets;
 pub mod menubar;
 pub mod notify;
 pub mod overview;
@@ -120,6 +123,9 @@ pub fn run_shell() -> glib::ExitCode {
             p.insert("clipboard", panels::clipboard(&app));
             p.insert("session", panels::session(&app));
             let (center, dismiss) = notify::start(&app);
+            // App windows and app notifications through libwol (ADR 0020).
+            app_host::listen();
+            crate::app_notices::start();
             p.insert("notifications", center);
             p.insert("overview", overview::build(&app));
             p.insert("control-center", control_center::panel(&app, sys.clone()));

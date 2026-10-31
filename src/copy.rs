@@ -236,6 +236,8 @@ pub fn widget_problems(name: &str) -> String {
 
 /// A widget on the desktop whose package is gone.
 pub const WIDGET_MISSING: &str = "This widget isn't installed. Reinstall it, or remove it.";
+/// A Lua widget file that does not load or whose script stopped (the reason is in the details).
+pub const LUA_WIDGET_FAILED: &str = "This widget's script stopped. Fix the file and it reloads.";
 /// A widget kind from a newer WolOS.
 pub const WIDGET_NEWER: &str = "This widget needs a newer version of WolOS.";
 /// The Weather city search got no answer.

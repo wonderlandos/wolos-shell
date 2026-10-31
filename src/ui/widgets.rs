@@ -17,7 +17,9 @@ use crate::widgets::{
 use gtk::{gio, glib, prelude::*};
 use serde_json::Value;
 use shared::widgets::manifest::{Manifest, Source};
-use shared::widgets::{Builtin, Desktop, Face, Kind, Options, Place, Placed, Size, Units};
+use shared::widgets::{
+    Builtin, Desktop, Face, Kind, LUA_PREFIX, Options, Place, Placed, Size, Units,
+};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -44,6 +46,11 @@ pub enum Content {
         name: String,
         host: String,
     },
+    /// A Lua widget's tree (`ui::lua_widgets`).
+    View {
+        name: String,
+        node: shared::view::Node,
+    },
 }
 
 pub type Listener = Rc<dyn Fn(Change)>;
@@ -61,6 +68,8 @@ pub enum Change {
     Edit(bool),
     /// A Timer card's button.
     Timer(String, timer::Press),
+    /// A button on a Lua widget: (file id, button id).
+    Lua(String, u32),
     /// The whole layout was swapped (reload, a display came or went).
     Replaced,
 }
@@ -122,6 +131,7 @@ fn sizes_of(kind: &Kind, packages: &[Rc<Package>], current: Size) -> Vec<Size> {
             .and_then(|p| p.manifest.as_ref().ok())
             .map(|m| m.sizes.clone())
             .unwrap_or_else(|| vec![current]),
+        Kind::Lua(_) => Size::ALL.to_vec(),
         Kind::Unknown(_) => vec![current],
     }
 }
@@ -460,6 +470,14 @@ impl Board {
                 }),
                 _,
             ) => lay::error_card(p.size, name, message, details),
+            (Some(Content::View { node, .. }), Kind::Lua(file)) => {
+                let (me, file) = (Rc::downgrade(self), file.clone());
+                super::lua_widgets::card(p.size, node, !st.edit, move |button| {
+                    if let Some(b) = me.upgrade() {
+                        b.notify(Change::Lua(file.clone(), button));
+                    }
+                })
+            }
             (Some(Content::Consent { name, host }), _) => {
                 let me = Rc::downgrade(self);
                 let id = p.id.clone();
@@ -1158,6 +1176,9 @@ struct Live {
     batteries: RefCell<Vec<power::Device>>,
     weather: RefCell<HashMap<String, WeatherView>>,
     custom: RefCell<HashMap<String, Value>>,
+    /// Lua widget files and their last render; the folder watch once one is placed.
+    lua: RefCell<super::lua_widgets::Lua>,
+    lua_watch: RefCell<Option<gio::FileMonitor>>,
     /// Timer widgets' counters by widget id (this session only).
     timers: RefCell<HashMap<String, timer::Counter>>,
 }
@@ -1256,6 +1277,7 @@ impl Live {
                     data,
                 }
             }
+            Kind::Lua(file) => self.lua.borrow().content(file)?,
             Kind::Unknown(k) => Content::Error {
                 name: k.clone(),
                 message: crate::copy::WIDGET_NEWER.into(),
@@ -1396,7 +1418,60 @@ impl Live {
         for k in gone {
             self.unschedule(&k);
         }
+        self.sync_lua(&ws);
         self.arm();
+    }
+
+    /// Lua widgets: read the folder when the first one is placed and watch it from then on;
+    /// each placed file renders at its own refresh.
+    fn sync_lua(self: &Rc<Self>, ws: &[Placed]) {
+        let files: HashSet<String> = ws
+            .iter()
+            .filter_map(|p| match &p.kind {
+                Kind::Lua(f) => Some(f.clone()),
+                _ => None,
+            })
+            .collect();
+        if !files.is_empty() && self.lua_watch.borrow().is_none() {
+            self.lua.borrow_mut().poll();
+            let dir = gio::File::for_path(wol_lua::user_dir());
+            if let Ok(m) =
+                dir.monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            {
+                let me = Rc::downgrade(self);
+                m.connect_changed(move |_, _, _, _| {
+                    if let Some(l) = me.upgrade() {
+                        let changed = l.lua.borrow_mut().poll();
+                        for f in changed {
+                            l.show_lua(&f);
+                        }
+                        l.sync();
+                    }
+                });
+                *self.lua_watch.borrow_mut() = Some(m);
+            }
+        }
+        for f in &files {
+            let key = format!("{LUA_PREFIX}{f}");
+            match self.lua.borrow_mut().refresh(f) {
+                Some(r) => self.schedule(&key, u64::from(r)),
+                None => self.unschedule(&key),
+            }
+        }
+        let gone: Vec<String> = self
+            .scheduled
+            .borrow()
+            .iter()
+            .filter(|k| k.starts_with(LUA_PREFIX) && !files.contains(&k[LUA_PREFIX.len()..]))
+            .cloned()
+            .collect();
+        for k in gone {
+            self.unschedule(&k);
+        }
+    }
+
+    fn show_lua(&self, file: &str) {
+        self.show(|p| matches!(&p.kind, Kind::Lua(f) if f == file));
     }
 
     fn arm(self: &Rc<Self>) {
@@ -1466,6 +1541,11 @@ impl Live {
                 self.show_kind(Builtin::Battery);
             }
             c if c.starts_with("custom:") => self.run_custom(&c["custom:".len()..]),
+            c if c.starts_with(LUA_PREFIX) => {
+                let file = &c[LUA_PREFIX.len()..];
+                self.lua.borrow_mut().render(file);
+                self.show_lua(file);
+            }
             _ => {}
         }
     }
@@ -1754,6 +1834,10 @@ impl Live {
                     self.sync();
                 }
             }
+            Change::Lua(file, button) => {
+                self.lua.borrow_mut().click(&file, button);
+                self.show_lua(&file);
+            }
             Change::Removed(p) => {
                 self.timers.borrow_mut().remove(&p.id);
                 self.custom.borrow_mut().remove(&p.id);
@@ -1851,6 +1935,8 @@ fn surface_for(
         batteries: Default::default(),
         weather: Default::default(),
         custom: Default::default(),
+        lua: RefCell::new(super::lua_widgets::Lua::user()),
+        lua_watch: Default::default(),
         timers: Default::default(),
     });
     let l2 = Rc::downgrade(&live);

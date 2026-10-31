@@ -1,5 +1,7 @@
 //! WolOS shell: pure logic (tested) + GTK UI (`kit`, `ui`). Binaries in `src/bin/` are thin composition roots.
 pub mod alerts;
+pub mod app_host;
+pub mod app_notices;
 pub mod appmenu;
 pub mod apps;
 pub mod capture;
@@ -8,6 +10,7 @@ pub mod clock;
 pub mod copy;
 pub mod desktop;
 pub mod displays;
+pub mod drop_shelf;
 pub mod files;
 pub mod focus;
 pub mod focus_grab;
@@ -21,7 +24,6 @@ pub mod phones;
 pub mod protocol;
 pub mod search;
 pub mod setup;
-pub mod drop_shelf;
 pub mod shortcut_sheet;
 pub mod status;
 pub mod switcher;
