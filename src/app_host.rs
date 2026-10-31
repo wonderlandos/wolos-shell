@@ -2,7 +2,7 @@
 //! ([`ToHost::Hello`]), then shows, updates and closes its windows. Pure rules here; drawing is
 //! `ui::app_host`. Anything out of order ends the connection; nothing an app sends can reach
 //! another app's windows (one host process per connection).
-use shared::view::{Node, ToHost};
+use shared::view::{Menu, Node, ToHost, Toolbar};
 use std::io::{BufRead, Read};
 use std::path::PathBuf;
 
@@ -28,11 +28,15 @@ pub enum Step {
         window: u32,
         title: String,
         content: Node,
+        menus: Vec<Menu>,
+        toolbar: Option<Toolbar>,
     },
     Update {
         window: u32,
         title: String,
         content: Node,
+        menus: Vec<Menu>,
+        toolbar: Option<Toolbar>,
     },
     Close {
         window: u32,
@@ -66,6 +70,8 @@ impl Session {
                     window,
                     title,
                     content,
+                    menus,
+                    toolbar,
                 },
                 true,
             ) => {
@@ -74,6 +80,8 @@ impl Session {
                         window,
                         title,
                         content,
+                        menus,
+                        toolbar,
                     });
                 }
                 if self.open.len() >= MAX_WINDOWS {
@@ -84,6 +92,8 @@ impl Session {
                     window,
                     title,
                     content,
+                    menus,
+                    toolbar,
                 })
             }
             (ToHost::Close { window }, true) => Ok(if self.forget(window) {
@@ -116,6 +126,29 @@ pub fn read_line(r: &mut impl BufRead) -> Option<String> {
     String::from_utf8(buf).ok()
 }
 
+/// A `shared::view::shortcut_ok` shortcut as a GTK accelerator. `cmd` is Control: the key Command
+/// hands to the app in front (`appmenu::Cmd`).
+pub fn accelerator(shortcut: &str) -> Option<String> {
+    if !shared::view::shortcut_ok(shortcut) {
+        return None;
+    }
+    let mut out = String::new();
+    let (mods, key) = shortcut.rsplit_once('+').unwrap_or(("", shortcut));
+    for m in mods.split('+').filter(|m| !m.is_empty()) {
+        out.push_str(match m {
+            "cmd" => "<Control>",
+            "shift" => "<Shift>",
+            _ => "<Alt>",
+        });
+    }
+    out.push_str(&if key.len() > 1 {
+        key.to_uppercase()
+    } else {
+        key.to_owned()
+    });
+    Some(out)
+}
+
 /// GTK application id for the app's windows (the compositor's window class): the app's own id
 /// when GLib accepts it.
 pub fn gtk_app_id(app: &str) -> Option<&str> {
@@ -139,6 +172,8 @@ mod tests {
             window,
             title: "T".into(),
             content: Node::Spacer,
+            menus: Vec::new(),
+            toolbar: None,
         }
     }
 
@@ -182,6 +217,20 @@ mod tests {
         assert_eq!(read_line(&mut r), None);
         let long = vec![b'x'; MAX_LINE + 1];
         assert_eq!(read_line(&mut std::io::BufReader::new(&long[..])), None);
+    }
+
+    #[test]
+    fn accelerators() {
+        for (s, want) in [
+            ("cmd+s", Some("<Control>s")),
+            ("cmd+shift+n", Some("<Control><Shift>n")),
+            ("alt+f4", Some("<Alt>F4")),
+            ("f5", Some("F5")),
+            ("ctrl+s", None),
+            ("<Shift>s", None),
+        ] {
+            assert_eq!(accelerator(s).as_deref(), want, "{s}");
+        }
     }
 
     #[test]

@@ -4,8 +4,8 @@
 //! cursor while the app changes a label next to it); a different shape rebuilds that branch.
 use crate::kit::data as d;
 use crate::kit::widgets as w;
-use gtk::prelude::*;
-use shared::view::{Node, Role};
+use gtk::{gio, glib, prelude::*};
+use shared::view::{Menu, MenuEntry, Node, Role, Tool, Toolbar};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -16,6 +16,8 @@ pub enum Act {
     Edited(u32, String),
     Toggled(u32, bool),
     Slid(u32, f64),
+    /// Menu or toolbar id, and the key chosen.
+    Chose(u32, String),
 }
 
 /// Receives [`Act`]s; quiet while the view itself sets values.
@@ -356,6 +358,144 @@ impl View {
             patch(&mut d, node, &self.sink);
         }
         self.sink.quiet.set(false);
+    }
+}
+
+/// A window's menu bar and toolbar. Rebuilt only when the app's data changes, so an open menu
+/// stays open while the app updates a label.
+pub struct Chrome {
+    window: gtk::ApplicationWindow,
+    bar: gtk::Box,
+    actions: gtk::Box,
+    sink: Rc<Sink>,
+    drawn: RefCell<(Vec<Menu>, Option<Toolbar>)>,
+    /// Action names in use, for taking their shortcuts off again.
+    names: RefCell<Vec<String>>,
+}
+
+/// GIO action name of menu `menu`'s entry `entry` (keys may hold `_`, which GIO refuses).
+fn action_name(menu: u32, entry: usize) -> String {
+    format!("kit-{menu}-{entry}")
+}
+
+impl Chrome {
+    /// A bar under the title row, hidden until the app has menus; the toolbar lives in the title
+    /// row's action box.
+    pub fn new(window: &gtk::ApplicationWindow, aw: &w::AppWindow, sink: Rc<Sink>) -> Chrome {
+        let bar = w::hbox(0);
+        bar.add_css_class("app-menubar");
+        bar.set_margin_start(w::S2);
+        bar.set_visible(false);
+        if let Some(head) = aw.root.first_child() {
+            aw.root.insert_child_after(&bar, Some(&head));
+        }
+        Chrome {
+            window: window.clone(),
+            bar,
+            actions: aw.actions.clone(),
+            sink,
+            drawn: RefCell::default(),
+            names: RefCell::default(),
+        }
+    }
+
+    pub fn update(&self, app: &gtk::Application, menus: &[Menu], toolbar: Option<&Toolbar>) {
+        {
+            let d = self.drawn.borrow();
+            if d.0 == menus && d.1.as_ref() == toolbar {
+                return;
+            }
+        }
+        *self.drawn.borrow_mut() = (menus.to_vec(), toolbar.cloned());
+        self.menus(app, menus);
+        self.tools(toolbar);
+    }
+
+    fn menus(&self, app: &gtk::Application, menus: &[Menu]) {
+        for n in self.names.borrow_mut().drain(..) {
+            self.window.remove_action(&n);
+            app.set_accels_for_action(&format!("win.{n}"), &[]);
+        }
+        let bar = gio::Menu::new();
+        for m in menus {
+            let mut section = gio::Menu::new();
+            let sub = gio::Menu::new();
+            for (i, e) in m.entries.iter().enumerate() {
+                match e {
+                    MenuEntry::Separator => {
+                        sub.append_section(None, &section);
+                        section = gio::Menu::new();
+                    }
+                    MenuEntry::Item {
+                        key,
+                        label,
+                        shortcut,
+                        enabled,
+                        checked,
+                    } => {
+                        let name = action_name(m.id, i);
+                        // Only a checked item carries state: plain items draw no tick mark.
+                        let a = if *checked {
+                            gio::SimpleAction::new_stateful(&name, None, &true.to_variant())
+                        } else {
+                            gio::SimpleAction::new(&name, None)
+                        };
+                        a.set_enabled(*enabled);
+                        let (sink, id, key) = (self.sink.clone(), m.id, key.clone());
+                        a.connect_activate(move |_, _: Option<&glib::Variant>| {
+                            sink.act(Act::Chose(id, key.clone()))
+                        });
+                        self.window.add_action(&a);
+                        let full = format!("win.{name}");
+                        section.append(Some(label), Some(&full));
+                        if let Some(accel) = crate::app_host::accelerator(shortcut) {
+                            app.set_accels_for_action(&full, &[accel.as_str()]);
+                        }
+                        self.names.borrow_mut().push(name);
+                    }
+                }
+            }
+            sub.append_section(None, &section);
+            bar.append_submenu(Some(&m.title), &sub);
+        }
+        while let Some(c) = self.bar.first_child() {
+            self.bar.remove(&c);
+        }
+        self.bar.set_visible(!menus.is_empty());
+        if !menus.is_empty() {
+            self.bar
+                .append(&gtk::PopoverMenuBar::from_model(Some(&bar)));
+        }
+    }
+
+    fn tools(&self, toolbar: Option<&Toolbar>) {
+        while let Some(c) = self.actions.first_child() {
+            self.actions.remove(&c);
+        }
+        let Some(t) = toolbar else { return };
+        for tool in &t.tools {
+            match tool {
+                Tool::Spacer => self.actions.append(&w::spacer()),
+                Tool::Button {
+                    key,
+                    label,
+                    icon,
+                    enabled,
+                } => {
+                    let (sink, id, k) = (self.sink.clone(), t.id, key.clone());
+                    let press = move || sink.act(Act::Chose(id, k.clone()));
+                    let b: gtk::Button = if icon.is_empty() {
+                        w::button(label, w::Kind::Default, press)
+                    } else {
+                        w::icon_button(icon, label, press)
+                    };
+                    b.set_tooltip_text(Some(label));
+                    b.set_sensitive(*enabled);
+                    b.set_valign(gtk::Align::Center);
+                    self.actions.append(&b);
+                }
+            }
+        }
     }
 }
 

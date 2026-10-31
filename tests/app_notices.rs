@@ -60,6 +60,7 @@ fn a_wold_notification_becomes_a_banner_and_its_button_answers() {
                                 key: "open".into(),
                                 label: "Open".into(),
                             }],
+                            replace: false,
                         };
                         w.write_all(e.to_line().as_bytes()).unwrap();
                     }
@@ -115,5 +116,85 @@ fn a_wold_notification_becomes_a_banner_and_its_button_answers() {
         },
         "wold's id, not the banner's"
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn replacing_updates_the_banner_and_withdrawing_closes_it() {
+    let Some(d) = daemon() else {
+        eprintln!("skipped: no dbus-daemon");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("wol-app-replace-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let wold = dir.join("wold.sock");
+    let l = UnixListener::bind(&wold).unwrap();
+    let uid = shared::sys::euid();
+    std::thread::spawn(move || {
+        let conn = l.incoming().next().unwrap().unwrap();
+        let mut line = String::new();
+        BufReader::new(&conn).read_line(&mut line).unwrap();
+        let note = |body: &str, replace| Event::Notification {
+            uid,
+            app: "/usr/bin/hello".into(),
+            title: "Copying".into(),
+            body: body.into(),
+            id: 7,
+            actions: Vec::new(),
+            replace,
+        };
+        let mut w = &conn;
+        for e in [
+            note("1 of 5", false),
+            note("2 of 5", true),
+            Event::NotificationWithdrawn {
+                uid: uid + 1,
+                id: 7,
+            },
+            Event::NotificationWithdrawn { uid, id: 7 },
+        ] {
+            w.write_all(e.to_line().as_bytes()).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        std::thread::sleep(Duration::from_secs(10));
+    });
+
+    let (tx, rx) = async_channel::unbounded();
+    let addr = d.1.clone();
+    let (bus_tx, bus_rx) = mpsc::channel::<Bus>();
+    std::thread::spawn(move || {
+        async_io::block_on(async {
+            let b = Bus::serve(Some(&addr), tx).await.expect("serve");
+            bus_tx.send(b).unwrap();
+            futures_lite::future::pending::<()>().await;
+        })
+    });
+    let _bus = bus_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let (addr, w2) = (d.1.clone(), wold.clone());
+    std::thread::spawn(move || shell::app_notices::run(&w2, Some(&addr)));
+
+    let next = || {
+        async_io::block_on(async {
+            futures_lite::future::or(async { rx.recv().await.ok() }, async {
+                async_io::Timer::after(Duration::from_secs(10)).await;
+                None
+            })
+            .await
+        })
+    };
+    let Some(Shown::Show(first)) = next() else {
+        panic!("no banner")
+    };
+    assert_eq!(first.body, "1 of 5");
+    let Some(Shown::Show(second)) = next() else {
+        panic!("no replacement")
+    };
+    assert_eq!(second.body, "2 of 5");
+    assert_eq!(second.id, first.id, "same banner");
+    let Some(Shown::Close(id)) = next() else {
+        panic!("not closed")
+    };
+    assert_eq!(id, first.id);
     let _ = std::fs::remove_dir_all(dir);
 }

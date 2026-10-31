@@ -2,7 +2,7 @@
 //! account only) and starts one `wol-kit-host` per app connection, so each app's windows carry
 //! its own window class and a misbehaving app takes down only its own host. The host draws the
 //! app's view trees with Kit parts (`ui::app_view`) and sends what the person does back.
-use super::app_view::{Act, Sink, View, app_frame};
+use super::app_view::{Act, Chrome, Sink, View, app_frame};
 use crate::app_host::{Session, Step, gtk_app_id, read_line, socket_path};
 use crate::kit;
 use gtk::{gio, glib, prelude::*};
@@ -72,6 +72,7 @@ struct Win {
     window: gtk::ApplicationWindow,
     view: View,
     title: gtk::Label,
+    chrome: Chrome,
 }
 
 /// `wol-kit-host`: the app connection is stdin. Reads the hello, then draws until the app goes.
@@ -125,6 +126,8 @@ pub fn run_host() -> glib::ExitCode {
                         window,
                         title,
                         content,
+                        menus,
+                        toolbar,
                     }) => {
                         let s = send.clone();
                         let sink = Sink::new(move |a| {
@@ -143,9 +146,14 @@ pub fn run_host() -> glib::ExitCode {
                                     widget,
                                     value,
                                 },
+                                Act::Chose(source, key) => FromHost::Chose {
+                                    window,
+                                    source,
+                                    key,
+                                },
                             })
                         });
-                        let view = View::new(&content, sink);
+                        let view = View::new(&content, sink.clone());
                         let aw = app_frame(&title, &view);
                         let win = gtk::ApplicationWindow::builder()
                             .application(&app)
@@ -154,6 +162,8 @@ pub fn run_host() -> glib::ExitCode {
                             .build();
                         win.add_css_class("app");
                         win.set_child(Some(&aw.root));
+                        let chrome = Chrome::new(&win, &aw, sink);
+                        chrome.update(&app, &menus, toolbar.as_ref());
                         let (s, session, wins2) = (send.clone(), session.clone(), wins.clone());
                         win.connect_close_request(move |_| {
                             if session.borrow_mut().forget(window) {
@@ -169,6 +179,7 @@ pub fn run_host() -> glib::ExitCode {
                                 window: win,
                                 view,
                                 title: aw.title.clone(),
+                                chrome,
                             },
                         );
                     }
@@ -176,9 +187,12 @@ pub fn run_host() -> glib::ExitCode {
                         window,
                         title,
                         content,
+                        menus,
+                        toolbar,
                     }) => {
                         if let Some(w) = wins.borrow().get(&window) {
                             w.view.update(&content);
+                            w.chrome.update(&app, &menus, toolbar.as_ref());
                             w.title.set_label(&title);
                             w.window.set_title(Some(&title));
                         }
