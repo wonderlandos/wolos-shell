@@ -783,6 +783,45 @@ fn cases() -> Vec<Case> {
                 }),
             });
         }
+        // An AUR package: the risk first, no Get button, and what reading it found.
+        v.push(Case {
+            name: format!("store-aur-details-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                let s = ui::store::content(
+                    Rc::new(shell::system::Fake),
+                    ui::store::Env {
+                        data_dirs: vec![],
+                        pkg_search: false,
+                        flatpaks: vec![],
+                    },
+                );
+                let hit = wol_core::store::PkgHit {
+                    name: "demo-patched-bin".into(),
+                    summary: "A browser with extra patches".into(),
+                };
+                s.show_details(ui::store::Subject::aur(&hit), Default::default());
+                s.aw.root.clone().upcast()
+            }),
+        });
+        v.push(Case {
+            name: format!("store-aur-audit-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                let graph = format!("{}/tests/golden_cases/aur-graph.svg", env!("CARGO_MANIFEST_DIR"));
+                let found = ui::store::audit_section(&shell::packages::Audit {
+                    heading: "Needs review.".into(),
+                    findings: vec!["curl downloads http://203.0.113.10/x at demo.install:2, then sh runs it at demo.install:2, and no checksum checks it first.".into()],
+                    graph: Some(graph),
+                });
+                found.add_css_class("background");
+                found.upcast()
+            }),
+        });
         for p in ui::settings::PAGES
             .into_iter()
             .chain(ui::settings::SUBPAGES)

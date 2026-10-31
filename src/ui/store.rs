@@ -578,6 +578,118 @@ fn flathub_tile(sh: &Rc<Shared>, h: &wol_core::flatpak::Hit) -> gtk::Widget {
     t.root.upcast()
 }
 
+/// An AUR package: no Get button here, because building one is a decision made in Terminal.
+fn aur_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
+    let t = w::AppTile::new(&w::store_icon(&h.name, w::ICON_L), &h.name, &h.summary);
+    t.set_source("AUR");
+    t.action.set_visible(false);
+    open_on_click(sh, &t.root, Subject::aur(h));
+    t.root.upcast()
+}
+
+/// The AUR under the other results: off until asked for, and its risk said before any name.
+fn aur_results(sh: &Rc<Shared>, more: &gtk::Box, term: &str) {
+    let found = w::vbox(w::S2);
+    let (sh2, found2, term2) = (sh.clone(), found.clone(), term.to_owned());
+    let fill: Rc<dyn Fn(bool)> = Rc::new(move |on| {
+        while let Some(c) = found2.first_child() {
+            found2.remove(&c);
+        }
+        if !on {
+            return;
+        }
+        let (tx, rx) = async_channel::bounded(1);
+        let term = term2.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send_blocking(crate::packages::aur_search(&term));
+        });
+        let (sh, found) = (sh2.clone(), found2.clone());
+        glib::spawn_future_local(async move {
+            if let Ok(hits) = rx.recv().await {
+                found.append(&grid(hits.iter().take(30).map(|h| aur_tile(&sh, h))));
+            }
+        });
+    });
+    let on = crate::packages::aur_enabled();
+    let fill2 = fill.clone();
+    let sw = w::toggle(on, move |v| {
+        crate::packages::set_aur_enabled(v);
+        fill2(v);
+    });
+    let row = note_row(
+        "dialog-warning-symbolic",
+        "Include the AUR",
+        crate::packages::AUR_RISK,
+    );
+    let rows = [
+        row,
+        w::list_row("", "Search the AUR", "", Some(sw.upcast_ref())).upcast(),
+    ];
+    more.append(&w::section("Community Packages", &rows));
+    more.append(&found);
+    fill(on);
+}
+
+/// What reading a package found: the verdict, each sentence, and the graph when it was drawn.
+pub fn audit_section(a: &crate::packages::Audit) -> gtk::Box {
+    let mut rows: Vec<gtk::Widget> =
+        vec![w::list_row("help-about-symbolic", &a.heading, "", None).upcast()];
+    rows.extend(
+        a.findings
+            .iter()
+            .enumerate()
+            .map(|(i, f)| note_row("dialog-warning-symbolic", &format!("Finding {}", i + 1), f)),
+    );
+    let b = w::vbox(w::S2);
+    b.append(&w::section("What the Check Found", &rows));
+    if let Some(g) = &a.graph {
+        let pic = gtk::Picture::for_filename(g);
+        pic.set_content_fit(gtk::ContentFit::ScaleDown);
+        pic.set_can_shrink(true);
+        pic.set_size_request(-1, w::SCREENSHOT_H);
+        b.append(&pic);
+    }
+    b
+}
+
+/// The AUR's part of a details page: the risk, the way to install it, and the check on request.
+fn aur_details(page: &gtk::Box, s: &Subject) {
+    let how = format!(
+        "To install it, run wopkg install {} in Terminal, where you can read what it does first.",
+        s.target
+    );
+    let rows = [
+        note_row(
+            "dialog-warning-symbolic",
+            "Community Package",
+            crate::packages::AUR_RISK,
+        ),
+        note_row("package-x-generic-symbolic", "How to Install", &how),
+    ];
+    page.append(&w::section("Before You Install", &rows));
+    let found = w::vbox(w::S2);
+    let (f2, target) = (found.clone(), s.target.clone());
+    let read = w::button("Read This Package", w::Kind::Default, move || {
+        let (tx, rx) = async_channel::bounded(1);
+        let t = target.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send_blocking(crate::packages::audit(&t));
+        });
+        let f = f2.clone();
+        glib::spawn_future_local(async move {
+            if let Ok(a) = rx.recv().await {
+                while let Some(c) = f.first_child() {
+                    f.remove(&c);
+                }
+                f.append(&audit_section(&a));
+            }
+        });
+    });
+    read.set_halign(gtk::Align::Start);
+    page.append(&read);
+    page.append(&found);
+}
+
 /// Whether a native package (catalog first, then a repo hit) already covers a Flathub app.
 pub fn covered_natively(h: &wol_core::flatpak::Hit, pkgs: &[store::PkgHit]) -> bool {
     let guess = wol_core::flatpak::native_guess(h);
@@ -840,6 +952,7 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     };
     let flat_argv = wol_core::flatpak::search_argv(term);
     let term = term.to_owned();
+    let term2 = term.clone();
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
         // The package index answers in milliseconds; the commands below are the fallback.
@@ -867,6 +980,7 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
         };
         if more.parent().is_some() {
             show_more(&sh, &more, empty.upcast_ref(), &pkgs, &flat);
+            aur_results(&sh, &more, &term2);
         }
     });
 }
@@ -1016,6 +1130,8 @@ pub struct Subject {
     pub desktop: Option<&'static str>,
     /// The native package (`pacman -Si`, Arch's AppStream).
     pub pkg: Option<String>,
+    /// Only the AUR has it: built here, reviewed by nobody.
+    pub aur: bool,
 }
 
 impl Subject {
@@ -1027,6 +1143,18 @@ impl Subject {
             flathub: false,
             desktop: Some(a.desktop),
             pkg: a.packages.first().map(|p| (*p).to_owned()),
+            aur: false,
+        }
+    }
+    pub fn aur(h: &store::PkgHit) -> Self {
+        Subject {
+            target: h.name.clone(),
+            name: h.name.clone(),
+            summary: h.summary.clone(),
+            flathub: false,
+            desktop: None,
+            pkg: None,
+            aur: true,
         }
     }
     pub fn pkg(h: &store::PkgHit) -> Self {
@@ -1037,6 +1165,7 @@ impl Subject {
             flathub: false,
             desktop: None,
             pkg: Some(h.name.clone()),
+            aur: false,
         }
     }
     pub fn flathub(h: &wol_core::flatpak::Hit) -> Self {
@@ -1047,6 +1176,7 @@ impl Subject {
             flathub: true,
             desktop: None,
             pkg: None,
+            aur: false,
         }
     }
 }
@@ -1138,7 +1268,9 @@ pub fn info_rows(s: &Subject, l: &Loaded) -> Vec<(&'static str, String)> {
     }
     v.push((
         "Source",
-        if s.flathub {
+        if s.aur {
+            "AUR"
+        } else if s.flathub {
             "Flathub"
         } else {
             "WolOS packages"
@@ -1329,6 +1461,11 @@ fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Loaded) {
     text.append(&buttons);
     top.append(&text);
     page.append(&top);
+
+    if s.aur {
+        buttons.set_visible(false);
+        aur_details(page, s);
+    }
 
     let installed = Rc::new(std::cell::Cell::new(is_present(sh, &s.target, s.flathub)));
     let system = Rc::new(std::cell::Cell::new(l.system));

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1166 434" width="1166" height="434" font-family="sans-serif" font-size="12">
+<defs><marker id="a" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0 0L8 3L0 6z" fill="#777"/></marker><marker id="h" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0 0L8 3L0 6z" fill="#b3261e"/></marker></defs>
+<path d="M228 31C273 31 273 31 318 31" fill="none" stroke="#999" stroke-width="1" marker-end="url(#a)"><title>reads</title></path>
+<path d="M538 31C583 31 583 31 628 31" fill="none" stroke="#999" stroke-width="1" marker-end="url(#a)"><title>writes</title></path>
+<path d="M228 217C273 217 273 93 318 93" fill="none" stroke="#b3261e" stroke-width="2" marker-end="url(#h)"><title>fetches</title></path>
+<path d="M538 93C803 93 -257 217 8 217" fill="none" stroke="#999" stroke-width="1" marker-end="url(#a)"><title>sends</title></path>
+<path d="M538 93C583 93 583 93 628 93" fill="none" stroke="#b3261e" stroke-width="2" marker-end="url(#h)"><title>writes</title></path>
+<path d="M848 93C893 93 893 31 938 31" fill="none" stroke="#b3261e" stroke-width="2" marker-end="url(#h)"><title>executes</title></path>
+<path d="M228 403C273 403 273 155 318 155" fill="none" stroke="#b3261e" stroke-width="2" marker-end="url(#h)"><title>fetches</title></path>
+<path d="M538 155C803 155 -257 403 8 403" fill="none" stroke="#999" stroke-width="1" marker-end="url(#a)"><title>sends</title></path>
+<path d="M538 155C583 155 583 155 628 155" fill="none" stroke="#b3261e" stroke-width="2" marker-end="url(#h)"><title>writes</title></path>
+<path d="M848 155C893 155 893 93 938 93" fill="none" stroke="#b3261e" stroke-width="2" marker-end="url(#h)"><title>executes</title></path>
+<g><title>demo.tar.gz at PKGBUILD:6</title><rect x="318" y="8" width="220" height="46" rx="6" fill="#fff" stroke="#888" stroke-width="1"/><text x="326" y="23" fill="#666" font-size="10">source</text><text x="326" y="41" fill="#111">demo.tar.gz</text></g>
+<g><title>demo.tar.gz at PKGBUILD:6</title><rect x="628" y="8" width="220" height="46" rx="6" fill="#fff" stroke="#888" stroke-width="1"/><text x="636" y="23" fill="#666" font-size="10">file</text><text x="636" y="41" fill="#111">demo.tar.gz</text></g>
+<g><title>demo.tar.gz at PKGBUILD:6</title><rect x="8" y="8" width="220" height="46" rx="6" fill="#fff" stroke="#888" stroke-width="1"/><text x="16" y="23" fill="#666" font-size="10">file</text><text x="16" y="41" fill="#111">demo.tar.gz</text></g>
+<g><title>build at PKGBUILD:9</title><rect x="8" y="70" width="220" height="46" rx="6" fill="#fff" stroke="#888" stroke-width="1"/><text x="16" y="85" fill="#666" font-size="10">function</text><text x="16" y="103" fill="#111">build</text></g>
+<g><title>curl at PKGBUILD:9</title><rect x="318" y="70" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="326" y="85" fill="#666" font-size="10">process</text><text x="326" y="103" fill="#111">curl</text></g>
+<g><title>curl</title><rect x="8" y="132" width="220" height="46" rx="6" fill="#fff" stroke="#888" stroke-width="1"/><text x="16" y="147" fill="#666" font-size="10">command</text><text x="16" y="165" fill="#111">curl</text></g>
+<g><title>http://203.0.113.10/x at PKGBUILD:9</title><rect x="8" y="194" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="16" y="209" fill="#666" font-size="10">address</text><text x="16" y="227" fill="#111">http://203.0.113.10/x</text></g>
+<g><title>$srcdir/helper.sh at PKGBUILD:9</title><rect x="628" y="70" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="636" y="85" fill="#666" font-size="10">file</text><text x="636" y="103" fill="#111">$srcdir/helper.sh</text></g>
+<g><title>sh at PKGBUILD:9</title><rect x="938" y="8" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="946" y="23" fill="#666" font-size="10">process</text><text x="946" y="41" fill="#111">sh</text></g>
+<g><title>sh</title><rect x="8" y="256" width="220" height="46" rx="6" fill="#fff" stroke="#888" stroke-width="1"/><text x="16" y="271" fill="#666" font-size="10">command</text><text x="16" y="289" fill="#111">sh</text></g>
+<g><title>post_install at demo.install:1</title><rect x="8" y="318" width="220" height="46" rx="6" fill="#fff" stroke="#888" stroke-width="1"/><text x="16" y="333" fill="#666" font-size="10">function</text><text x="16" y="351" fill="#111">post_install</text></g>
+<g><title>a pipe at demo.install:2</title><rect x="628" y="132" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="636" y="147" fill="#666" font-size="10">file</text><text x="636" y="165" fill="#111">a pipe</text></g>
+<g><title>curl at demo.install:2</title><rect x="318" y="132" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="326" y="147" fill="#666" font-size="10">process</text><text x="326" y="165" fill="#111">curl</text></g>
+<g><title>http://203.0.113.11/x at demo.install:2</title><rect x="8" y="380" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="16" y="395" fill="#666" font-size="10">address</text><text x="16" y="413" fill="#111">http://203.0.113.11/x</text></g>
+<g><title>sh at demo.install:2</title><rect x="938" y="70" width="220" height="46" rx="6" fill="#fff" stroke="#b3261e" stroke-width="2"/><text x="946" y="85" fill="#666" font-size="10">process</text><text x="946" y="103" fill="#111">sh</text></g>
+</svg>

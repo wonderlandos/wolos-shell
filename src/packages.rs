@@ -45,6 +45,101 @@ pub fn search(term: &str) -> Option<(Vec<PkgHit>, Vec<flatpak::Hit>)> {
     Some(parse_hits(&wopkg::search(&ctx, term, 30)))
 }
 
+/// What the App Store says about every AUR package, wherever one appears.
+pub const AUR_RISK: &str = "Built on this computer from a script a stranger wrote. Nobody at WolOS reviewed it, and no check can prove it is safe.";
+
+/// Packages only the AUR has, from one `wopkg::search` document.
+pub fn aur_hits(doc: &Value) -> Vec<PkgHit> {
+    let mut out = Vec::new();
+    for hit in doc["results"].as_array().into_iter().flatten() {
+        let sources = hit["sources"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        let aur = sources.iter().find(|s| s["kind"] == "aur");
+        if let (Some(s), 1) = (aur, sources.len()) {
+            out.push(PkgHit {
+                name: s["id"].as_str().unwrap_or_default().to_owned(),
+                summary: hit["summary"].as_str().unwrap_or_default().to_owned(),
+            });
+        }
+    }
+    out
+}
+
+/// The AUR's matches from the local index.
+pub fn aur_search(term: &str) -> Vec<PkgHit> {
+    let Ok(ctx) = wopkg::context::Context::new(Default::default()) else {
+        return Vec::new();
+    };
+    aur_hits(&wopkg::search(&ctx, term, 30))
+}
+
+/// The AUR stays out of search until the person asks for it.
+fn aur_choice() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let base = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
+    std::path::Path::new(&base).join("wolos/store-aur")
+}
+
+pub fn aur_enabled() -> bool {
+    aur_choice().is_file()
+}
+
+/// Remember the choice. A failure leaves the safer answer in place.
+pub fn set_aur_enabled(on: bool) {
+    let p = aur_choice();
+    if on {
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(p, "");
+    } else {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// What reading a package found, in the words the App Store shows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Audit {
+    pub heading: String,
+    pub findings: Vec<String>,
+    /// The drawn graph, when there is one.
+    pub graph: Option<String>,
+}
+
+/// wopkg's `audit --json` answer. Anything else is "not checked", never a clean result.
+pub fn parse_audit(text: &str) -> Audit {
+    let doc: Value = serde_json::from_str(text).unwrap_or_default();
+    let heading = match doc["verdict"].as_str() {
+        Some("pass") => "No law broken. That does not mean this package is safe.",
+        Some("flag" | "block") => "Needs review.",
+        _ => "Not checked.",
+    };
+    let findings = doc["findings"].as_array().into_iter().flatten();
+    Audit {
+        heading: heading.to_owned(),
+        findings: findings
+            .filter_map(|f| f["sentence"].as_str().map(str::to_owned))
+            .collect(),
+        graph: doc["graph"].as_str().map(str::to_owned),
+    }
+}
+
+pub fn audit_argv(target: &str) -> Option<Vec<String>> {
+    plain(target).then(|| {
+        [WOPKG, "audit", "--json", target]
+            .map(String::from)
+            .to_vec()
+    })
+}
+
+/// Blocking: fetch the package's files and read them. Nothing is built.
+pub fn audit(target: &str) -> Audit {
+    let out = audit_argv(target).and_then(|a| {
+        let a: Vec<&str> = a.iter().map(String::as_str).collect();
+        wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(60))
+    });
+    parse_audit(&out.unwrap_or_default())
+}
+
 /// The package a catalog id or name stands for (`wopkg` takes package names).
 fn package_of(target: &str) -> String {
     store::get(target)
@@ -130,6 +225,44 @@ pub fn present() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_packages_nothing_else_has_are_aur_hits() {
+        let doc = serde_json::json!({"results": [
+            {"name": "a", "summary": "A", "sources": [{"kind": "aur", "id": "a"}]},
+            {"name": "b", "summary": "B", "sources": [{"kind": "pacman", "id": "b"}, {"kind": "aur", "id": "b"}]},
+        ]});
+        let hits = aur_hits(&doc);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            (hits[0].name.as_str(), hits[0].summary.as_str()),
+            ("a", "A")
+        );
+    }
+
+    #[test]
+    fn an_audit_never_reads_as_safe_and_a_bad_answer_is_not_checked() {
+        let a = parse_audit(r#"{"verdict":"pass","findings":[]}"#);
+        assert_eq!(
+            a.heading,
+            "No law broken. That does not mean this package is safe."
+        );
+        let a = parse_audit(
+            r#"{"verdict":"flag","findings":[{"sentence":"curl runs it."}],"graph":"/g.svg"}"#,
+        );
+        assert_eq!(a.heading, "Needs review.");
+        assert_eq!(a.findings, ["curl runs it."]);
+        assert_eq!(a.graph.as_deref(), Some("/g.svg"));
+        for bad in ["", "nonsense", r#"{"verdict":"fine"}"#] {
+            assert_eq!(parse_audit(bad).heading, "Not checked.");
+        }
+    }
+
+    #[test]
+    fn a_name_that_looks_like_an_option_is_never_audited() {
+        assert_eq!(audit_argv("--evil"), None);
+        assert_eq!(audit_argv("foo").unwrap()[1..], ["audit", "--json", "foo"]);
+    }
 
     #[test]
     fn native_wins_and_flathub_only_apps_stay_flatpaks() {
