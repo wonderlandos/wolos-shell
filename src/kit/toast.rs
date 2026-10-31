@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Toast: one short line at the bottom of an AppWindow with at most one action ("Theme changed ·
 //! Undo"). It floats over the content (no reflow), replaces the previous toast, and leaves on its
 //! own after [`TOAST_MS`]. Style: kit.css "Toast".

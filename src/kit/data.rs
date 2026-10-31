@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Data display components: the desktop widget Card and the pieces any surface shows data with —
 //! label roles and tones, Badge, Meter (progress with a tone), Gauge (ring), Chart (line or bar),
 //! RangeBar, ClockFace, MonthGrid, cover art and local pictures. Built-in desktop widgets and

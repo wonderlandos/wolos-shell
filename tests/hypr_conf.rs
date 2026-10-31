@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The desktop hyprland.conf must blur every glass surface the shell creates.
 //! Live Hyprland 0.56: `match:namespace wol-shell` matched nothing (namespaces are wol-menubar, ...),
 //! so the dock and menu bar had no blur; `ignore_alpha 0` then blurred their transparent margins.

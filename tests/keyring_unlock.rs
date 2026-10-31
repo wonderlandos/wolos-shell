@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Start-up lock (ADR 0012) opens the login keyring with the password typed at the lock screen.
 //! Real gnome-keyring on a private D-Bus; skipped where gnome-keyring-daemon or dbus-daemon is missing.
 use std::collections::HashMap;

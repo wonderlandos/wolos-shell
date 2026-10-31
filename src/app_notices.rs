@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App notifications through wold (ADR 0020). wold admits only the shell to the account's
 //! notifications (`subscribe account`); each one goes to the session's notification server (our
 //! own banners and Notification Center, Focus included) as a plain Notify. A pressed button comes

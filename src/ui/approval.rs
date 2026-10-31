@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Helper approvals (archicture/modules/automation.md): a helper (a `wol mcp` client, a
 //! `WOL_HELPER` script) asks before a change (`approve <json>` on the shell socket). One glass
 //! sheet names the helper and says what will change, in plain words. User-level changes: Deny,

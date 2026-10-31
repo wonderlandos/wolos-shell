@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! General > About: product mark, version, kernel and a hardware summary (`wol_core::hardware`).
 use super::machine::{HardwareSnapshot, Kernel, Kind};
 use super::*;

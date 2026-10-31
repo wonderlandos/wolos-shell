@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App Store install page for a double-clicked `.wol` (ADR 0011): signed, unsigned and damaged
 //! files, read through the real `verify`, wide and narrow.
 use super::Case;

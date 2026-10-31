@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Keyboard > Keyboard Shortcuts: every WolOS shortcut, grouped, read from the shipped hyprland.conf.
 //! Click a shortcut to record new keys; a combo already in use offers a swap; each changed shortcut
 //! resets on its own, Restore Defaults resets all. Custom shortcuts open an app or run a command.

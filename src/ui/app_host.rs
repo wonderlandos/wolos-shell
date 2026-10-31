@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Kit host (ADR 0020). The shell listens on `$XDG_RUNTIME_DIR/wol-kit.sock` (mode 0600, own
 //! account only) and starts one `wol-kit-host` per app connection, so each app's windows carry
 //! its own window class and a misbehaving app takes down only its own host. The host draws the

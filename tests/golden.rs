@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Golden screenshots of every surface, light and dark, with the layout check on.
 //! Runs under a private `gtk4-broadwayd` (headless). `WOL_GOLDEN_UPDATE=1` rewrites goldens.
 //! Renders land in `$CARGO_TARGET_TMPDIR/golden/`.

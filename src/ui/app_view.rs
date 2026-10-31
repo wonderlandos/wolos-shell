@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Draws a `shared::view` tree (ADR 0020) with Kit parts: app windows from libwol
 //! (`ui::app_host`) and Lua desktop widgets. What the person does goes to the [`Sink`].
 //! A new tree of the same shape updates the parts in place (a text field keeps its focus and

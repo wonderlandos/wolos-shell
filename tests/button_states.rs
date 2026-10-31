@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every Kit button looks pressed while held, shows a focus ring from the keyboard and looks
 //! disabled when it can't act (kit.css).
 const CSS: &str = include_str!("../src/kit/kit.css");

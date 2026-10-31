@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Software Update: what the daily check found (base system fixes, package updates, the ones that
 //! fix security problems), Check Now, and Update Now into a new boot environment.
 use super::*;

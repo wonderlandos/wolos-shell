@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Setup Assistant (`wol-setup`, ADR 0004, ADR 0013): the welcome art, then one card per question
 //! over the blurred wallpaper, the same glass as the login window and the lock screen. Runs as
 //! `_wollogin` on first boot; Wi-Fi and the account go to wol-login over its socket. Return

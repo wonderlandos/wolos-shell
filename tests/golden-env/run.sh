@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # One command: build the golden image and run tests/golden.rs in it. From any directory:
 #   crates/shell/tests/golden-env/run.sh                      all cases, compare with the goldens
 #   WOL_GOLDEN_ONLY=lua-clock crates/shell/tests/golden-env/run.sh   cases whose name contains it

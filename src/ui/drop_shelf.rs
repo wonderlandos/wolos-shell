@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The drop shelf: files dropped on the desktop gather on a glass shelf at the right edge, and
 //! are dragged from there into any app (one row, or all of them at once). Kit parts only.
 use crate::drop_shelf::{Shelf, count, name};

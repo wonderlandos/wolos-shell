@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Layer-shell placement. Without the `layer-shell` feature windows are plain toplevels (dev on any desktop).
 use gtk::prelude::*;
 

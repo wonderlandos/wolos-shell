@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! What the user reads when something did not work: the one place errors become sentences.
 //! HIG §3: inline, one or two short sentences, what happened + what to do. Surfaces show these,
 //! never an error's own text (`Display`, io errors, exit codes). [`lint`] is the rule;

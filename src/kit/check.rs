@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Layout check over live GTK allocations (rules: `crate::layout`). `WOL_LAYOUT_CHECK=exit` exits 1 on issues.
 use crate::layout::{self, Node, Rect};
 use gtk::{glib, prelude::*};

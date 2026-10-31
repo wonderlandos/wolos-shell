@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Screenshot toolbar (Super+Shift+5) and the floating thumbnail that follows a capture.
 use crate::capture::{self, DELAYS, Dest, Mode, Options};
 use crate::kit::{surface::Spec, widgets as w};

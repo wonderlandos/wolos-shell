@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Clipboard history and session actions: pure data rules.
 
 pub const MAX: usize = 25;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every layer surface the shell builds survives its display being unplugged: either
 //! `survive_output_loss` (the primary menu bar, Dock and desktop come back; panels hide),
 //! `set_hide_on_close`, or it belongs to one display (`set_monitor`: `ui::displays` builds it

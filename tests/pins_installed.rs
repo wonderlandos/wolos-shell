@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every Dock pin launches a program the image installs, and its window class names it.
 //! Real-GPU run: the Dock pinned wol-files/wol-mail/wol-music/... ("No such file or directory").
 //! WolOS apps are mature ports: each pin maps to a package in desktop/packages.txt (or a WolOS binary)

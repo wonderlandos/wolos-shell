@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Click outside closes the open panel on every display: Hyprland's focus grab
 //! (`hyprland_focus_grab_v1`, protocols/hyprland-focus-grab-v1.xml). The shell names the
 //! surfaces a click may land on (the open panel, menu bars, the Dock); a click anywhere else, on

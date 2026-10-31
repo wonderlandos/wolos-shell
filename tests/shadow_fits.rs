@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Glass shadows must fit inside the surface: GTK cannot draw outside a layer surface, so a shadow wider
 //! than the transparent margin around a panel ends in a hard edge (FreeBSD sway shots: a band 24 px under
 //! Control Center, the switcher and banners). Margins around every glass card cover the shadow extent.

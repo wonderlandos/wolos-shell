@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! libwol app windows (ADR 0020): a view tree with every Kit part, drawn by the Kit host.
 use super::Case;
 use gtk::prelude::*;

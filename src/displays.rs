@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Which shell surfaces go on which display, pure side. Every display gets the wallpaper and a
 //! menu bar (dimmed while another display has the focus, like macOS); the main display (the
 //! first one Hyprland lists) also gets the Dock and the desktop widgets. `ui::displays` builds

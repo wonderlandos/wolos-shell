@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! First surface of a compositor (ADR 0012): content fades in from the black that the loader splash,
 //! the console and the compositor show, and leaves the same way, so every hand-off is black to black.
 //! Login window, setup assistant and start-up lock screen use it; golden renders start it shown.

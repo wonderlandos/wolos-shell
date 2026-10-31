@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Search: installed apps, Settings pages and file names under `$HOME`, ranked per keystroke
 //! from prebuilt lowercase indexes.
 use crate::files;

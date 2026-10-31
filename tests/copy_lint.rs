@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! HIG §3 Errors: what the user reads when something did not work is a friendly sentence from
 //! `shell::copy`, never raw error text (errno, exit codes, paths, "failed", program names).
 use shell::copy::{self, ACTION_ERRORS};

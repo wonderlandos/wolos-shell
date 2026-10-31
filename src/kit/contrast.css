@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Accessibility > Increase Contrast: appended after kit.css when `wol/contrast` exists.
    Secondary text at full text colour, visible edges on every card and control, opaque panels. */
 :root {

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Focus (Do Not Disturb): `$XDG_CONFIG_HOME/wol/dnd`. Missing = off; empty = on until turned off;
 //! `until=<unix secs>` = on until then. Banners stay quiet while on (critical ones still show);
 //! the menu bar shows the moon.

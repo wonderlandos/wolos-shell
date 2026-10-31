@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Privacy & Security: which apps may record the screen, post notifications (libwol, ADR 0020),
 //! control input, read the clipboard history or see the window list (consent through wol-admind
 //! `consent`) and how each choice is

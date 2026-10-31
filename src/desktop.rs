@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Freedesktop `.desktop` entries: the apps Search and the dock can launch.
 use std::path::{Path, PathBuf};
 

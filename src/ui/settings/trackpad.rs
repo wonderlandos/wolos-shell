@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Trackpad & Mouse: pointer speed, scrolling and clicking (desktop prefs, applied live, journaled).
 use super::*;
 

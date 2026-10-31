@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Shell socket (port of Iara.Core.Shell.ShellCommand): one line `<verb> [panel]`, e.g. `toggle switcher`.
 //! Path `$XDG_RUNTIME_DIR/wol-shell.sock`; sent by `wol shell ...` and keybinds. `approve <json>`
 //! comes from `wol mcp` (helper approvals, `ui::approval`).

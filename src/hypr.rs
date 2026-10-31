@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Hyprland IPC: `.socket2.sock` events (event-driven, no polling) and `j/clients` on `.socket.sock`.
 //! Replace with the `realtime` crate's client when it lands.
 use std::io::{Read, Write};

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Effects & Looks: a live picture of the desktop, Looks (presets that set every effect at once:
 //! shipped ones, imported ones, or Custom once you change anything), and every effect on its own:
 //! corners, spacing, blur and glass, window opacity, borders with gradients, shadows, dimming and

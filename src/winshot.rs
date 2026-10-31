@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Window thumbnails for Overview via `hyprland_toplevel_export_v1` (works for windows
 //! that are covered or on other desktops, unlike screen-region copies).
 //! `wol-window-shot <address>` writes `WOLSHOT <w> <h> <stride> <format>\n` + raw rows to stdout.

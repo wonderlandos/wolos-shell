@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Shell surfaces per display (plan in `crate::displays`): a wallpaper and a menu bar on every
 //! display, the Dock and the desktop widgets on the main one. Follows the display list live, so
 //! plugging a display in dresses it and unplugging one moves the Dock and the desktop over.

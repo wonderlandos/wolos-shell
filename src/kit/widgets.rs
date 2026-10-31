@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! IaraKit component set (HIG, archicture/modules/hig.md). The ONLY place widget metrics live:
 //! surfaces pass tokens from this module, never numbers.
 use gtk::{glib, prelude::*};

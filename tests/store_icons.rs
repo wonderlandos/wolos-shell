@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every catalog app ships its official icon (design/icons/store/<id>.svg, < 100 KB, licensed).
 use shell::kit;
 use wol_core::store::CATALOG;

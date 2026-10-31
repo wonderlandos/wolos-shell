@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Lua desktop widgets (ADR 0020, `wol_lua`): `~/.config/wolos/widgets/<id>.lua`, placed on the
 //! desktop as kind `lua:<id>`. Scripts run sandboxed in the shell; each file reloads when it
 //! changes, renders on the desktop widget timer at its own `refresh`, and after a click. The tree

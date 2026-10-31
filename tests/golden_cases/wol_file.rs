@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Builds real `.wol` files (ADR 0011) for the install page tests and goldens.
 use shared::package::{ICON, MANIFEST, PAYLOAD, SIGNATURE};
 use std::path::{Path, PathBuf};

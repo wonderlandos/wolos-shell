@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* WolOS kit stylesheet: the only visual style (HIG). Colours: var(--token). Glass light (white/black rims and
    shadows) is fixed material, not theme. Spacing 4/8/12/16/24/32; radius 6 controls, 10 cards, 16/24 panels;
    type 13 body, 11 secondary, 22 large title (Inter). */

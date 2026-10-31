@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Search's file names: a per-user list of `$HOME` (one relative path per line, folders end
 //! in `/`), rebuilt by the shell at login and by Search when stale, searched by name in place.
 use crate::search::Item;

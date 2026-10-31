@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App Store install page for a double-clicked `.wol` (ADR 0011): what it says for signed,
 //! unsigned, damaged and already installed files, read through the real `verify`.
 #[path = "golden_cases/wol_file.rs"]

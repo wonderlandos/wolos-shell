@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Sound: output device, volume, mute.
 use super::*;
 

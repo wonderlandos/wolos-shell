@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Auth wire formats. Lock: `/usr/lib/wol-authcheck`, password on stdin, exit 0 ok / 1 denied / 2 error (ADR 0023).
 //! Login window: `/var/run/wol-login.sock`, `user\n` + password, write side closed, reply `ok|denied|error` (ADR 0024).
 use std::io::{Read, Write};

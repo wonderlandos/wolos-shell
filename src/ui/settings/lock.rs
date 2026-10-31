@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Lock Screen: when the screen locks (hypridle timeouts, journaled so the change can be undone).
 use super::*;
 

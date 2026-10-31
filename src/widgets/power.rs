@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Batteries widget: this computer's battery and connected devices that report one.
 //! UPower (system bus) when it runs: event-driven, devices included. Without it: the built-in
 //! battery only (Linux sysfs), refreshed on the widget schedule.

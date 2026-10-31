@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Notifications: Focus (Do Not Disturb, for a while or until turned off) and Notification Center.
 //! Same file as the Control Center Focus tile and `wol focus` (`crate::focus`).
 use super::*;

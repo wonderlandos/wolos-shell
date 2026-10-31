@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Network: every connection with its addresses, router and DNS (read off the UI thread).
 use super::*;
 use wol_core::netinfo::{IfKind, Interface, NetInfo};

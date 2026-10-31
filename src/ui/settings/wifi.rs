@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Wi-Fi: the radio, the network in use, known networks and the ones in range; secured networks ask
 //! for their password in the Join sheet. Joining goes through wol-admind (wpa_supplicant.conf).
 use super::*;

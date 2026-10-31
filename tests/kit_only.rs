@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! HIG §2: assistant surfaces (Setup, installer) are built from Kit components only; no GTK widget
 //! is constructed in them directly, so every page shares the Kit's sizes, insets and states.
 use std::path::Path;

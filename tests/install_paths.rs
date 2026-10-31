@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Absolute `/usr/local/share/...` paths in the shell name directories the image installs (image/build.sh
 //! or desktop/overlay). Installed-disk setup shot: no wallpaper behind Setup/lock, because they looked in
 //! `/usr/local/share/wol/wallpapers` while the image ships `/usr/local/share/wolos/wallpapers`.

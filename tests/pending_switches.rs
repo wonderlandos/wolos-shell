@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Settings switches that save a preference wait for the save and flip back, with the reason under
 //! the pane, when it fails (`form::pending_toggle_row`). A plain `form::toggle_row` there would show
 //! a change that never happened.

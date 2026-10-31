@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Today's events from evolution-data-server (session bus), when it is installed. Bus names carry
 //! a version (`...Calendar8`, `...Sources5`), found by prefix. Calendar objects only live as long
 //! as the connection that opened them, so one connection does the whole read. Blocking: call off

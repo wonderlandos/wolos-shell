@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Weather from Open-Meteo (no API key, no account): the user picks a city by name (geocoding);
 //! the network address is never used to locate anyone. Responses are cached per place and
 //! refreshed every 30 minutes; offline, the cache shows with its age.

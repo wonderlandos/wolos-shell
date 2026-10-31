@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Install WolOS (`wol-installer`, ADR 0013, ADR 0023): one decision per card, a summary of exactly
 //! what will change, then `install-run` as root. The same cards as the Setup Assistant; the steps
 //! and every word are `install::flow`. `--boot` is the first screen of the live image: Install or

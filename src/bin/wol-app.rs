@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol-app <verb>`: menu bar app/Window menu actions on the frontmost window (also bound to keys).
 //! Verbs: settings hide hide-others quit force-quit minimise zoom fill centre `desktop N`, and the
 //! app commands (copy paste undo … `appmenu::Cmd`) that ⌘ shortcuts tap into the app in front.

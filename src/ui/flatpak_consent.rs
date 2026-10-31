@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-flatpak-consent: Flatpak asks before an app gets its permissions
 //! (`$FLATPAK_WOLOS_CONSENT_HELPER install|update <app-id> user|system -- <perm>...`). One glass
 //! sheet with the app's name and icon and each permission in plain words; Allow exits 0,

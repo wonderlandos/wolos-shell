@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Install WolOS (ADR 0013, ADR 0023): the disks it may use, the progress lines of
 //! `/usr/lib/wolos/install-run` and what the progress page says. Pure; UI in `ui::installer`,
 //! the steps in [`flow`].

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! User journeys (archicture/modules/ux-journeys.md) driven through the real flows with fakes:
 //! what the person does, what they end up reading. Every sentence a journey shows on a failure
 //! must pass `shell::copy::lint`.

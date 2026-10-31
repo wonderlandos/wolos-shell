@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Hardware: every device the hardware catalogue knows (`wol hw`, snapshot written at boot), what
 //! drives it, and a Fix button for those that need a driver module or a firmware package
 //! (wol-admind `hw-load`, App Store install; the Authenticate sheet asks first).

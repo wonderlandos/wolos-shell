@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Users & Groups: the people who log in (name, full name, login shell) and the Add User sheet.
 use super::*;
 

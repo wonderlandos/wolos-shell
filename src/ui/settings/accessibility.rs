@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Accessibility: contrast, transparency, motion, pointer size and zoom. Desktop prefs apply live
 //! through one `hyprctl` batch and are journaled; contrast restyles every shell process.
 use super::*;

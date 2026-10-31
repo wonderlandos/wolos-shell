@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Assistant pieces (Setup Assistant, installer; ADR 0013): full-screen pages that cross-fade, one
 //! fixed-size glass card per question over the lock backdrop, the welcome hero, choice lists,
 //! avatar tones, problem lines, Return/Escape. Surfaces in `ui/` build from these only.

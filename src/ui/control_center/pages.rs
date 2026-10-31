@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Control Center detail pages: Wi-Fi networks (join with password), Bluetooth devices, Sound
 //! output, Focus modes. Rows rebuild only when their data changed.
 use super::{SOUND_SETTINGS, Ui, WIFI_SETTINGS, launch};

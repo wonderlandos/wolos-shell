@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Built-in desktop widgets (Clock, Calendar, Weather, Music, Batteries, System) in each size,
 //! made of Kit parts only (`kit::data`, `kit::controls`, `kit::widgets`). A view is a function of
 //! its data: the desktop rebuilds a card's content when that data changes, never on a timer of

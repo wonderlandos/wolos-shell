@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! General > Language & Region: the language of menus and formats (desktop prefs `language`, the
 //! session's `LANG` from the next login) and the keyboard's input sources live in Keyboard.
 use super::*;

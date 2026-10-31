@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Status icon selection (port of Iara.Core.Shell.StatusIcons). Static names: no allocation per poll.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

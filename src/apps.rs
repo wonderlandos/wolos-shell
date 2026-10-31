@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Dock pins, running state and the menu bar's frontmost app name (port of Iara.Core.Shell.Frontmost).
 use crate::desktop::Entry;
 

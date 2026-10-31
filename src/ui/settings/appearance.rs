@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Appearance: Light, Dark or Auto with an accent colour (the WolOS themes), or any theme of the
 //! catalogue in one click. Every pick is journaled (`wol undo`, Settings > Restore).
 use super::*;
