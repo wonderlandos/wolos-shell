@@ -776,14 +776,24 @@ pub fn covered_natively(h: &wol_core::flatpak::Hit, pkgs: &[store::PkgHit]) -> b
         || pkgs.iter().any(|p| p.name == guess)
 }
 
+/// Repo hits the catalog's tiles for `term` do not already show: one app, one tile.
+pub fn beyond_catalog<'a>(term: &str, pkgs: &'a [store::PkgHit]) -> Vec<&'a store::PkgHit> {
+    let shown = store::search(term);
+    pkgs.iter()
+        .filter(|p| !shown.iter().any(|a| a.packages.contains(&p.name.as_str())))
+        .collect()
+}
+
 /// Repo and Flathub hits under the catalog's, one tile per app.
 fn show_more(
     sh: &Rc<Shared>,
+    term: &str,
     more: &gtk::Box,
     empty: &gtk::Widget,
     pkgs: &[store::PkgHit],
     flat: &[wol_core::flatpak::Hit],
 ) {
+    let pkgs = beyond_catalog(term, pkgs);
     if !pkgs.is_empty() || !flat.is_empty() {
         empty.set_visible(false);
     }
@@ -1033,13 +1043,14 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     empty.set_visible(store::search(term).is_empty());
     page.append(&empty);
     if let Some(found) = sh.preset.borrow().clone() {
-        return show_more(sh, &more, empty.upcast_ref(), &found.0, &found.1);
+        return show_more(sh, term, &more, empty.upcast_ref(), &found.0, &found.1);
     }
     let Some(argv) = store::search_argv(term).filter(|_| sh.env.pkg_search) else {
         return;
     };
     let flat_argv = wol_core::flatpak::search_argv(term);
     let term = term.to_owned();
+    let shown_for = term.clone();
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
         // The package index answers in milliseconds; the commands below are the fallback.
@@ -1066,7 +1077,7 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
             return;
         };
         if more.parent().is_some() {
-            show_more(&sh, &more, empty.upcast_ref(), &pkgs, &flat);
+            show_more(&sh, &shown_for, &more, empty.upcast_ref(), &pkgs, &flat);
             fill_badges(&sh);
         }
     });
@@ -1375,7 +1386,7 @@ pub fn info_rows(s: &Subject, l: &Loaded) -> Vec<(&'static str, String)> {
         } else if s.flathub {
             "Flathub"
         } else {
-            "WolOS packages"
+            "System packages"
         }
         .into(),
     ));
@@ -1992,7 +2003,7 @@ mod tests {
         assert_eq!(native.pkg.as_deref(), Some("gimp"));
         assert_eq!(
             info_rows(&native, &Loaded::default()),
-            [("Source", "WolOS packages".to_string())]
+            [("Source", "System packages".to_string())]
         );
     }
 
@@ -2027,6 +2038,18 @@ mod tests {
             progress_path("gimp", false).as_deref(),
             Some("/run/wolos/progress/gimp")
         );
+    }
+
+    #[test]
+    fn a_catalog_app_is_not_listed_again_under_more_packages() {
+        let hit = |n: &str| store::PkgHit {
+            name: n.into(),
+            summary: String::new(),
+        };
+        let pkgs = [hit("gimp"), hit("gimp-help-en")];
+        let left = beyond_catalog("gimp", &pkgs);
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].name, "gimp-help-en");
     }
 
     #[test]

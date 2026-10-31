@@ -136,7 +136,7 @@ pub trait System: Send + Sync {
     fn set_power_mode(&self, _m: PowerMode) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
-    /// Admin authorization (IaraOS ADR 0026): password for the pending admin action.
+    /// Admin authorization (IaraOS ADR 0025): password for the pending admin action.
     fn authorize(&self, _password: &str) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
@@ -950,6 +950,8 @@ fn flatpak_install_tracked(id: &str) -> Option<Result<(), wol_core::controls::Co
     if !flatpak::is_app_id(id) {
         return Some(Err(ControlError::Invalid));
     }
+    let add = flatpak::remote_add_argv();
+    let _ = std::process::Command::new(&add[0]).args(&add[1..]).output();
     let path = progress::file_for(&progress::user_dir()?, id)?;
     let argv = flatpak::install_argv(id);
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
