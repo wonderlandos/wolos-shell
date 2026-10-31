@@ -19,6 +19,8 @@ pub enum Notice {
     Show(String, String, bool),
     /// Notify, then lock and sleep now (the battery is about to die).
     Sleep(String, String),
+    /// A file was stopped: summary, body, path. Move to Trash and Details buttons.
+    Malware(String, String, String),
     /// Notify with a Restart action (a driver was installed in the background).
     Restart(String, String),
 }
@@ -33,6 +35,8 @@ pub struct Alerts {
     updates_shown: u64,
     /// The online install result already shown (its `at` time).
     online_shown: Option<u64>,
+    /// Newest stopped file already shown (its `when`).
+    malware_shown: u64,
 }
 
 impl Alerts {
@@ -77,6 +81,24 @@ impl Alerts {
         self.updates_shown = u.checked;
         let (s, body) = crate::copy::updates_ready(u.count(), !u.security.is_empty());
         Some(Notice::Show(s, body, false))
+    }
+
+    /// Each file the malware check stopped, once. Nothing appears when nothing is wrong.
+    pub fn malware(&mut self, blocked: &[wol_core::malware::Blocked]) -> Vec<Notice> {
+        let fresh: Vec<Notice> = blocked
+            .iter()
+            .filter(|b| b.when > self.malware_shown)
+            .map(|b| {
+                let file = wol_core::malware::file_name(&b.path);
+                let (s, body) = crate::copy::malware_found(file, &b.name);
+                Notice::Malware(s, body, b.path.clone())
+            })
+            .collect();
+        self.malware_shown = blocked
+            .iter()
+            .map(|b| b.when)
+            .fold(self.malware_shown, u64::max);
+        fresh
     }
 
     /// A driver installed (or not) when the network came up: one notice per attempt, with
@@ -141,6 +163,34 @@ pub fn poll(b: Option<Battery>) {
     for n in battery.into_iter().chain(disk).chain(updates) {
         act(n);
     }
+    for n in malware_poll() {
+        act(n);
+    }
+}
+
+/// The account's list, read only when it changed: a stat every poll, no read at rest.
+fn malware_poll() -> Vec<Notice> {
+    thread_local!(static SEEN: std::cell::Cell<Option<std::time::SystemTime>> =
+        const { std::cell::Cell::new(None) });
+    let uid = wol_core::malware::my_uid();
+    let dir = std::path::Path::new(wol_core::malware::STATE_DIR);
+    let files = [
+        dir.join(wol_core::malware::findings_file(uid)),
+        dir.join(wol_core::malware::sweep_file(uid)),
+    ];
+    let newest = files
+        .iter()
+        .filter_map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok())
+        .max();
+    if newest.is_none() || SEEN.replace(newest) == newest {
+        return Vec::new();
+    }
+    let texts: Vec<String> = files
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(f).ok())
+        .collect();
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    STATE.with_borrow_mut(|a| a.malware(&wol_core::malware::merge(&refs)))
 }
 
 fn act(n: Notice) {
@@ -162,6 +212,20 @@ fn act(n: Notice) {
             );
             crate::kit::spawn(&["sh".into(), "-c".into(), script, "sh".into(), s, body]);
         }
+        Notice::Malware(s, body, path) => {
+            // Open Anyway is a deliberate step in Settings; a notification only offers the safe one.
+            let script = "case \"$(notify-send -a WolOS -u critical -w -A trash='Move to Trash' -A details=Details \"$1\" \"$2\")\" in \
+                 trash) exec gio trash -- \"$3\" ;; details) exec wol-settings ;; esac";
+            crate::kit::spawn(&[
+                "sh".into(),
+                "-c".into(),
+                script.into(),
+                "sh".into(),
+                s,
+                body,
+                path,
+            ]);
+        }
         Notice::Sleep(s, body) => {
             notify(&s, &body, true);
             crate::kit::spawn(&["wol".into(), "power".into(), "sleep".into()]);
@@ -172,6 +236,37 @@ fn act(n: Notice) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_stopped_file_is_told_once_and_nothing_otherwise() {
+        let b = |p: &str, when| wol_core::malware::Blocked {
+            path: p.into(),
+            name: "Win.Test".into(),
+            sha256: String::new(),
+            when,
+            uid: 1000,
+        };
+        let mut a = Alerts::default();
+        assert!(a.malware(&[]).is_empty(), "nothing wrong, nothing shown");
+        let first = a.malware(&[b("/home/a/x.exe", 5)]);
+        assert_eq!(first.len(), 1);
+        let Notice::Malware(s, body, path) = &first[0] else {
+            panic!()
+        };
+        assert_eq!(s, "Malware Found");
+        assert!(body.contains("x.exe") && body.contains("Trash"), "{body}");
+        assert_eq!(path, "/home/a/x.exe");
+        assert!(
+            crate::copy::lint(body).is_empty(),
+            "{:?}",
+            crate::copy::lint(body)
+        );
+        assert!(a.malware(&[b("/home/a/x.exe", 5)]).is_empty(), "once");
+        assert_eq!(
+            a.malware(&[b("/home/a/y", 9), b("/home/a/x.exe", 5)]).len(),
+            1
+        );
+    }
 
     fn bat(percent: u8, status: BatteryStatus) -> Option<Battery> {
         Some(Battery { percent, status })
@@ -197,7 +292,7 @@ mod tests {
             seen.push(match a.battery(bat(p, s)) {
                 Some(Notice::Show(_, body, critical)) => format!("{p}:show:{critical}:{body}"),
                 Some(Notice::Sleep(..)) => format!("{p}:sleep"),
-                Some(Notice::Restart(..)) => unreachable!(),
+                Some(Notice::Restart(..)) | Some(Notice::Malware(..)) => unreachable!(),
                 None => format!("{p}:-"),
             });
         }

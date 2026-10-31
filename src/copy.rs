@@ -414,6 +414,57 @@ pub fn disk_full(free: &str) -> (String, String) {
     )
 }
 
+/// Files stopped by the malware check: summary, body. Says what was found and what to do.
+pub fn malware_found(file: &str, name: &str) -> (String, String) {
+    let shown: String = file.chars().take(48).collect();
+    (
+        "Malware Found".into(),
+        format!("“{shown}” matches known malware ({name}). Move it to the Trash."),
+    )
+}
+
+/// The malware check's status line.
+pub fn malware_state(s: &wol_core::malware::Status) -> String {
+    match (s.on, s.signatures_age_days) {
+        (Some(false), _) => "Off".into(),
+        (_, None) => "No signatures yet".into(),
+        (_, Some(0)) => "On, updated today".into(),
+        (_, Some(1)) => "On, updated yesterday".into(),
+        (_, Some(d)) if d >= wol_core::malware::STALE_DAYS => {
+            format!("On, last updated {d} days ago")
+        }
+        (_, Some(d)) => format!("On, updated {d} days ago"),
+    }
+}
+
+/// The full signature database's line in Settings.
+pub fn malware_full(f: &wol_core::malware::Full) -> String {
+    if !f.on {
+        "Off. The standard check stays on.".into()
+    } else if f.updating {
+        "Downloading signatures…".into()
+    } else if f.failed {
+        "The last download did not finish. WolOS will try again tomorrow.".into()
+    } else if f.version == 0 {
+        "Waiting to download.".into()
+    } else {
+        format!(
+            "{:.1} million signatures, version {}.",
+            f.signatures as f64 / 1e6,
+            f.version
+        )
+    }
+}
+
+/// What turning it on means.
+pub const MALWARE_FULL_NOTE: &str = "Downloads about 110 MB from the ClamAV project, then a small \
+     update each day. While it checks a download it can use about 1 GB of memory.";
+
+/// What the check does, and what it cannot do.
+pub const MALWARE_SCOPE: &str = "Checks downloads, new programs and removable disks against \
+     known malware, on this computer. New malware can get past it, so stay careful with files you \
+     did not expect.";
+
 /// The daily update check found something (wol_core::update::check).
 pub fn updates_ready(count: usize, security: bool) -> (String, String) {
     let (n, it) = if count == 1 {
