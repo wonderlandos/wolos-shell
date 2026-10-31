@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 12] = [
+pub(crate) const KINDS: [(&str, &str, &str); 14] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -67,6 +67,16 @@ pub(crate) const KINDS: [(&str, &str, &str); 12] = [
         "network-info",
         "Network Status",
         "Can see whether this computer is online, but not where.",
+    ),
+    (
+        "audio-info",
+        "Sound Status",
+        "Can see the volume and what is playing.",
+    ),
+    (
+        "audio-control",
+        "Sound Control",
+        "Can change the volume and mute the sound.",
     ),
 ];
 
