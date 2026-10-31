@@ -12,12 +12,17 @@ use std::process::{Command, Stdio};
 use wol_core::system::{Host, PosixHost};
 
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
+/// Rows a search hands an app.
+const MAX_FOUND: usize = 20;
 
 /// The session, apart from the rules (fake in tests).
 pub trait Session {
     /// Text on the clipboard, at most `max` + 1 bytes; None when it holds no text.
     fn clipboard(&self, max: usize) -> Option<Vec<u8>>;
     fn set_clipboard(&self, text: &str) -> bool;
+    /// Titles and kinds of the apps and Settings pages found. Never the rows of provider apps:
+    /// those are the person's, for Spotlight alone.
+    fn search(&self, text: &str) -> Vec<(String, String)>;
     /// Volume and mute of the default output.
     fn volume(&self) -> Option<(u8, bool)>;
     /// (title, artist, player, playing).
@@ -73,6 +78,14 @@ impl Session for Desktop {
         wrote && c.wait().is_ok_and(|s| s.success())
     }
 
+    fn search(&self, text: &str) -> Vec<(String, String)> {
+        let items = crate::ui::spotlight::index(crate::desktop::load_all());
+        crate::search::search(&items, text, MAX_FOUND)
+            .into_iter()
+            .map(|i| (i.title.clone(), i.kind.to_owned()))
+            .collect()
+    }
+
     fn volume(&self) -> Option<(u8, bool)> {
         let t = PosixHost.run(&["wpctl", "get-volume", SINK])?;
         wol_core::controls::parse_wpctl_volume(&t).map(|v| (v.percent, v.muted))
@@ -105,6 +118,55 @@ impl Session for Desktop {
     }
 }
 
+/// The person opened a row an app provided. Waits for wold: Spotlight closes next.
+pub fn open_row(provider: i32, key: &str) {
+    let c = Call::SearchOpen {
+        provider,
+        key: key.to_owned(),
+    };
+    let a = crate::app_notices::call(&crate::app_notices::wold_socket(), &c);
+    if !a.ok {
+        eprintln!("wol-shell: open a search row: {:?}", a.message);
+    }
+}
+
+/// A row from an app that provides search results.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+pub struct ProviderRow {
+    pub key: String,
+    pub title: String,
+    #[serde(default)]
+    pub detail: String,
+    /// The app's name.
+    pub app: String,
+    pub provider: i32,
+}
+
+/// What the apps providing search results have for `text`, within wold's short wait.
+pub fn provider_rows(text: &str) -> Vec<ProviderRow> {
+    let c = Call::SearchCollect {
+        text: text.to_owned(),
+    };
+    if c.validate().is_err() {
+        return Vec::new();
+    }
+    let a = crate::app_notices::call(&crate::app_notices::wold_socket(), &c);
+    parse_rows(a.data)
+}
+
+fn parse_rows(data: Option<Value>) -> Vec<ProviderRow> {
+    let rows = data.and_then(|d| d.get("results").cloned());
+    let mut rows: Vec<ProviderRow> = rows
+        .and_then(|r| serde_json::from_value(r).ok())
+        .unwrap_or_default();
+    for r in &mut rows {
+        if let Some(name) = r.app.rsplit('/').next().filter(|n| !n.is_empty()) {
+            r.app = name.to_owned();
+        }
+    }
+    rows
+}
+
 fn done(ok: bool) -> Result<Option<Value>, String> {
     if ok {
         Ok(None)
@@ -127,6 +189,14 @@ pub fn answer(s: &dyn Session, ask: Ask) -> Result<Option<Value>, String> {
             Ok(Some(json!({ "text": text })))
         }
         Ask::Panel { .. } => Err("Panels are answered with a file.".into()),
+        Ask::Search { text } => {
+            let rows: Vec<Value> = s
+                .search(&text)
+                .into_iter()
+                .map(|(title, kind)| json!({ "title": title, "kind": kind }))
+                .collect();
+            Ok(Some(json!({ "results": rows })))
+        }
         Ask::AudioInfo => {
             let (volume, muted) = s.volume().ok_or("Sound is not available.")?;
             let mut v = json!({ "volume": volume, "muted": muted });
@@ -253,6 +323,9 @@ mod tests {
         fn volume(&self) -> Option<(u8, bool)> {
             self.sound.then_some((40, false))
         }
+        fn search(&self, text: &str) -> Vec<(String, String)> {
+            vec![(text.to_uppercase(), "Application".into())]
+        }
         fn now_playing(&self) -> Option<(String, String, String, bool)> {
             self.sound
                 .then(|| ("Song".into(), "Band".into(), "Player".into(), true))
@@ -265,6 +338,28 @@ mod tests {
             self.set.borrow_mut().push(format!("muted {muted}"));
             self.sound
         }
+    }
+
+    #[test]
+    fn a_search_answers_titles_and_kinds_only() {
+        let v = answer(&Fake::default(), Ask::Search { text: "ab".into() });
+        assert_eq!(
+            v,
+            Ok(Some(
+                json!({"results": [{"title": "AB", "kind": "Application"}]})
+            ))
+        );
+    }
+
+    #[test]
+    fn provider_rows_name_the_app_and_garbage_is_nothing() {
+        let got = parse_rows(Some(json!({"results": [
+            {"key": "k", "title": "T", "detail": "", "app": "/usr/bin/notes", "provider": 7}
+        ]})));
+        assert_eq!(got[0].app, "notes");
+        assert_eq!(got[0].provider, 7);
+        assert!(parse_rows(None).is_empty());
+        assert!(parse_rows(Some(json!({"results": 3}))).is_empty());
     }
 
     #[test]

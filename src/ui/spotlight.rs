@@ -13,6 +13,9 @@ use std::rc::Rc;
 
 /// Kind shown on a Settings result.
 pub const SETTINGS: &str = "System Settings";
+/// Kind shown on a row an app provided, and what opens one.
+pub const PROVIDED: &str = "From an app";
+const OPEN_ROW: &str = "wol-open-provided-row";
 /// Results shown at most; apps and Settings keep at most [`APPS`] of them when files match.
 pub const ROWS: usize = 8;
 pub const APPS: usize = 5;
@@ -83,6 +86,31 @@ pub fn results(items: &[Item], files: &files::Index, query: &str) -> Vec<Item> {
     top.truncate(ROWS - found.len());
     top.extend(found);
     top
+}
+
+/// Rows apps provided. The app's name comes from wold, so a row cannot pass for another's.
+pub fn provided(rows: Vec<crate::app_session::ProviderRow>) -> Vec<Item> {
+    let row = |r: crate::app_session::ProviderRow| {
+        let title = match r.detail.as_str() {
+            "" => format!("{} \u{b7} {}", r.title, r.app),
+            d => format!("{} \u{2014} {d} \u{b7} {}", r.title, r.app),
+        };
+        let exec = vec![OPEN_ROW.into(), r.provider.to_string(), r.key];
+        Item::new(&title, PROVIDED, "system-search-symbolic", exec)
+    };
+    rows.into_iter().map(row).collect()
+}
+
+/// Open a result: run it, or tell the app that provided it.
+fn launch(exec: &[String]) {
+    match exec {
+        [open, pid, key] if open == OPEN_ROW => {
+            if let Ok(pid) = pid.parse() {
+                crate::app_session::open_row(pid, key);
+            }
+        }
+        _ => kit::spawn(exec),
+    }
 }
 
 pub fn no_results(query: &str) -> String {
@@ -203,7 +231,10 @@ pub fn content(
 
     let shown: Rc<RefCell<Vec<Hit>>> = Default::default();
     let sel = Rc::new(Cell::new(0usize));
+    // Rows from apps, for the text they answered.
+    let apps: Rc<RefCell<(String, Vec<Item>)>> = Default::default();
     let render: Rc<dyn Fn()> = {
+        let from_apps = apps.clone();
         let (shown, hits, sel, entry) = (shown.clone(), hits.clone(), sel.clone(), entry.clone());
         Rc::new(move || {
             let t0 = std::time::Instant::now();
@@ -215,6 +246,10 @@ pub fn content(
             sel.set(0);
             let q = entry.text();
             let mut found = results(&items.borrow(), &names.borrow(), &q);
+            let more = from_apps.borrow();
+            if more.0 == q.as_str() {
+                found = search::merge_slow(found, vec![(0, more.1.clone())], 0, ROWS);
+            }
             if found.is_empty() && !q.trim().is_empty() {
                 let none = w::centered(&no_results(q.trim()), "secondary");
                 none.add_css_class("spotlight-none");
@@ -237,7 +272,7 @@ pub fn content(
                 }
                 let exec = it.exec.clone();
                 b.connect_clicked(move |b| {
-                    kit::spawn(&exec);
+                    launch(&exec);
                     if let Some(w) = b.root().and_downcast::<gtk::Window>() {
                         w.close();
                     }
@@ -304,10 +339,31 @@ pub fn content(
         })
     };
     {
+        let late = late.clone();
+        entry.connect_changed(move |e| {
+            let q = e.text().to_string();
+            if q.trim().is_empty() {
+                return;
+            }
+            let (e, late, apps) = (e.clone(), late.clone(), apps.clone());
+            glib::spawn_future_local(async move {
+                let asked = q.clone();
+                let rows =
+                    gtk::gio::spawn_blocking(move || crate::app_session::provider_rows(&asked));
+                let Ok(rows) = rows.await else { return };
+                if rows.is_empty() || e.text().as_str() != q {
+                    return;
+                }
+                *apps.borrow_mut() = (q, provided(rows));
+                late();
+            });
+        });
+    }
+    {
         let (shown, sel) = (shown.clone(), sel.clone());
         entry.connect_activate(move |e| {
             if let Some((_, exec)) = shown.borrow().get(sel.get()) {
-                kit::spawn(exec);
+                launch(exec);
                 if let Some(w) = e.root().and_downcast::<gtk::Window>() {
                     w.close();
                 }
@@ -354,6 +410,21 @@ mod tests {
         assert_eq!(hover_select(0, 3, 5), Some(3));
         assert_eq!(hover_select(3, 3, 5), None);
         assert_eq!(hover_select(0, 7, 5), None);
+    }
+
+    #[test]
+    fn a_provided_row_names_its_app_and_opens_through_wold() {
+        let row = crate::app_session::ProviderRow {
+            key: "k".into(),
+            title: "A note".into(),
+            detail: "Today".into(),
+            app: "notes".into(),
+            provider: 7,
+        };
+        let items = provided(vec![row]);
+        assert_eq!(items[0].title, "A note \u{2014} Today \u{b7} notes");
+        assert_eq!(items[0].kind, PROVIDED);
+        assert_eq!(items[0].exec, [OPEN_ROW, "7", "k"]);
     }
 
     #[test]

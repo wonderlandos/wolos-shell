@@ -90,7 +90,7 @@ impl Ids {
     }
 }
 
-fn wold_socket() -> PathBuf {
+pub(crate) fn wold_socket() -> PathBuf {
     std::env::var_os("WOL_SOCKET")
         .map(PathBuf::from)
         .unwrap_or_else(|| shared::jobs::SOCKET.into())
