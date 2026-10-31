@@ -33,6 +33,25 @@ fn bind(path: &Path) -> std::io::Result<UnixListener> {
 }
 
 /// Shell side: accept app connections for the session (a thread; never touches GTK).
+/// A file panel for an app (`app_session`): `done` gets the person's pick, None if they cancel.
+pub fn pick_file(
+    save: bool,
+    title: &str,
+    name: &str,
+    done: impl FnOnce(Option<std::path::PathBuf>) + 'static,
+) {
+    let d = gtk::FileDialog::builder().title(title).modal(true).build();
+    let finish = move |r: Result<gtk::gio::File, gtk::glib::Error>| {
+        done(r.ok().and_then(|f| f.path()));
+    };
+    if save {
+        d.set_initial_name(Some(name));
+        d.save(None::<&gtk::Window>, gtk::gio::Cancellable::NONE, finish);
+    } else {
+        d.open(None::<&gtk::Window>, gtk::gio::Cancellable::NONE, finish);
+    }
+}
+
 pub fn listen() {
     let Some(path) = socket_path() else {
         eprintln!("wol-shell: Kit host: no XDG_RUNTIME_DIR");
