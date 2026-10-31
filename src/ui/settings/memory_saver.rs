@@ -188,9 +188,7 @@ mod tests {
     #[test]
     fn every_state_reads_as_a_sentence_without_jargon() {
         use AppState::*;
-        for s in [
-            Active, Waiting, Saving, Napping, Excluded, Playing, Game,
-        ] {
+        for s in [Active, Waiting, Saving, Napping, Excluded, Playing, Game] {
             let l = app_line(&app("x", s, 420_000_000));
             for jargon in ["cgroup", "zram", "swap", "reclaim", "memory.high"] {
                 assert!(!l.contains(jargon), "{l}");

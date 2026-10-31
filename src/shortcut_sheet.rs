@@ -81,13 +81,7 @@ mod tests {
         off.combo = None;
         let list = vec![
             sc("Force Quit apps", Group::System, "SUPER ALT", "Escape", ""),
-            sc(
-                "Show Search",
-                Group::Search,
-                "SUPER",
-                "Space",
-                "",
-            ),
+            sc("Show Search", Group::Search, "SUPER", "Space", ""),
             sc("Show Search", Group::Search, "SUPER", "S", ""),
             sc("Move window", Group::Windows, "SUPER", "mouse:272", "m"),
             sc("Volume up", Group::Media, "", "XF86AudioRaiseVolume", "el"),
@@ -106,10 +100,7 @@ mod tests {
             s.iter().map(|x| x.title).collect::<Vec<_>>(),
             ["Search", "System"]
         );
-        assert_eq!(
-            s[0].rows,
-            [("Show Search".into(), "⌘Space".into())]
-        );
+        assert_eq!(s[0].rows, [("Show Search".into(), "⌘Space".into())]);
         assert_eq!(s[1].rows.len(), 1, "a turned-off shortcut is not listed");
         assert!(
             !s.iter().any(|x| x.title == "Windows"),
