@@ -2,7 +2,8 @@
 //! notifications (`subscribe account`); each one goes to the session's notification server (our
 //! own banners and Notification Center, Focus included) as a plain Notify. A pressed button comes
 //! back as ActionInvoked and goes to wold as `notification.answer`, which tells only the app that
-//! posted it. No GTK here: a thread, two sockets.
+//! posted it. An app replacing a notification updates its banner in place (`replaces_id`), and
+//! withdrawing closes it. No GTK here: a thread, two sockets.
 use shared::events::Event;
 use shared::portal::{Answer, Call};
 use std::collections::HashMap;
@@ -24,6 +25,8 @@ pub struct Notify {
     pub summary: String,
     pub body: String,
     pub actions: Vec<String>,
+    /// New text for a banner already up.
+    pub replace: bool,
 }
 
 /// None for every event that is not a notification for this account.
@@ -35,6 +38,7 @@ pub fn notify_of(e: &Event, uid: u32) -> Option<(u32, Notify)> {
         body,
         id,
         actions,
+        replace,
     } = e
     else {
         return None;
@@ -57,6 +61,7 @@ pub fn notify_of(e: &Event, uid: u32) -> Option<(u32, Notify)> {
                 .iter()
                 .flat_map(|a| [a.key.clone(), a.label.clone()])
                 .collect(),
+            replace: *replace,
         },
     ))
 }
@@ -67,6 +72,7 @@ struct Ids(Vec<(u32, u32)>);
 
 impl Ids {
     fn add(&mut self, banner: u32, wold: u32) {
+        self.0.retain(|e| e.1 != wold);
         if self.0.len() == KEPT {
             self.0.remove(0);
         }
@@ -76,6 +82,11 @@ impl Ids {
     fn take(&mut self, banner: u32) -> Option<u32> {
         let i = self.0.iter().position(|e| e.0 == banner)?;
         Some(self.0.remove(i).1)
+    }
+
+    /// The banner showing wold's notification `wold`; 0 when it is gone.
+    fn banner(&self, wold: u32) -> u32 {
+        self.0.iter().find(|e| e.1 == wold).map_or(0, |e| e.0)
     }
 }
 
@@ -153,15 +164,34 @@ pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
     let uid = shared::sys::euid();
     let mut r = BufReader::new(s);
     while let Some(line) = crate::app_host::read_line(&mut r) {
-        let Some((id, n)) = Event::parse(&line).and_then(|e| notify_of(&e, uid)) else {
+        let Some(event) = Event::parse(&line) else {
             continue;
+        };
+        if let Event::NotificationWithdrawn { uid: u, id } = event {
+            let banner = ids.lock().map_or(0, |i| i.banner(id));
+            if u == uid && banner != 0 {
+                let closed: Result<(), _> = proxy.call("CloseNotification", &(banner,));
+                if let Err(e) = closed {
+                    eprintln!("wol-shell: withdrawing a notification: {e}");
+                }
+            }
+            continue;
+        }
+        let Some((id, n)) = notify_of(&event, uid) else {
+            continue;
+        };
+        // A banner the person already dismissed comes back as a new one.
+        let replaces = if n.replace {
+            ids.lock().map_or(0, |i| i.banner(id))
+        } else {
+            0
         };
         let hints: HashMap<&str, zbus::zvariant::Value> = HashMap::new();
         let banner: Result<u32, _> = proxy.call(
             "Notify",
             &(
                 n.app.as_str(),
-                0u32,
+                replaces,
                 "",
                 n.summary.as_str(),
                 n.body.as_str(),
@@ -222,6 +252,7 @@ mod tests {
                 key: "open".into(),
                 label: "Open".into(),
             }],
+            replace: false,
         };
         assert_eq!(
             notify_of(&e, 1000),
@@ -232,6 +263,7 @@ mod tests {
                     summary: "Done".into(),
                     body: "ok".into(),
                     actions: vec!["open".into(), "Open".into()],
+                    replace: false,
                 }
             ))
         );
@@ -249,5 +281,8 @@ mod tests {
         assert_eq!(i.take(1), None, "oldest forgotten");
         assert_eq!(i.take(2), Some(2));
         assert_eq!(i.take(2), None, "answered once");
+        i.add(500, 3);
+        assert_eq!(i.banner(3), 500, "the newest banner of a replaced note");
+        assert_eq!(i.banner(9999), 0);
     }
 }
