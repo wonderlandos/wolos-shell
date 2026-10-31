@@ -19,6 +19,7 @@ pub mod install;
 pub mod layout;
 pub mod login;
 pub mod overview;
+pub mod packages;
 pub mod perf;
 pub mod phones;
 pub mod protocol;

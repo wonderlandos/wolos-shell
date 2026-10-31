@@ -23,6 +23,8 @@ shared.workspace = true
 wol_core.workspace = true
 # Lua desktop widgets (ADR 0020).
 wol_lua = { path = "../wol-lua", package = "wol-lua" }
+# App Store search runs on the package index (ADR 0021).
+wopkg = { path = "../wopkg" }
 serde.workspace = true
 serde_json.workspace = true
 async-channel = "2"
