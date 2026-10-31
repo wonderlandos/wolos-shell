@@ -839,8 +839,14 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
         return;
     };
     let flat_argv = wol_core::flatpak::search_argv(term);
+    let term = term.to_owned();
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
+        // The package index answers in milliseconds; the commands below are the fallback.
+        if let Some(found) = crate::packages::search(&term) {
+            let _ = tx.send_blocking(found);
+            return;
+        }
         let run = |argv: &[String]| {
             let a: Vec<&str> = argv.iter().map(String::as_str).collect();
             wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(15))
