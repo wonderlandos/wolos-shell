@@ -179,6 +179,8 @@ button.light { min-width: 12px; min-height: 12px; padding: 0; border-radius: 999
 button.light.close { background: var(--danger); }
 button.light.minimize { background: var(--warning); }
 button.light.zoom { background: var(--success); }
+button.light image { -gtk-icon-size: 8px; color: transparent; }
+.traffic-lights:hover button.light image { color: rgba(0,0,0,0.55); }
 list.sidebar { background: var(--sidebar); padding: 8px; border-right: 1px solid var(--line); }
 list.sidebar row { background: none; padding: 0 8px; min-height: 28px; border-radius: 6px; margin: 0; }
 list.sidebar row.source-item:hover { background: var(--control); }
@@ -343,6 +345,16 @@ button.tone-button { background: none; border: none; box-shadow: none; padding: 
 button.tone-button:checked { box-shadow: 0 0 0 2px var(--accent); }
 .assistant-warning { padding: 12px; border-radius: var(--glass-radius-s); background: alpha(var(--warning), 0.12); border: 1px solid alpha(var(--warning), 0.40); }
 .assistant-warning label { font-size: 13px; }
+.disk-track { border-radius: var(--glass-radius-s); background: var(--card); }
+.disk-seg + .disk-seg { box-shadow: inset 1px 0 var(--line); }
+.disk-startup { background: var(--dim); }
+.disk-other { background: alpha(var(--text), 0.36); }
+.disk-wolos { background: var(--accent); }
+.disk-free { background: var(--card); }
+.disk-dot { border-radius: 999px; }
+.assistant-lines { padding: 12px; }
+.assistant-lines label { font-size: 13px; }
+label.assistant-key { font-family: monospace; font-size: 13px; }
 .assistant-progress progressbar trough { min-height: 6px; border-radius: 3px; border: none; box-shadow: none; background: alpha(var(--text), 0.12); }
 .assistant-progress progressbar progress { min-height: 6px; margin: 0; border-radius: 3px; border: none; background: var(--accent); }
 /* Welcome: the art is a dusk scene in both appearances, so its words stay light. */

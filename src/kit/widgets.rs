@@ -546,12 +546,12 @@ impl AppWindow {
         bar.add_css_class("toolbar");
         let lights = hbox(S2);
         lights.add_css_class("traffic-lights");
-        for (c, tip) in [
-            ("close", "Close"),
-            ("minimize", "Minimize"),
-            ("zoom", "Zoom"),
+        for (c, tip, icon) in [
+            ("close", "Close", "window-close-symbolic"),
+            ("minimize", "Minimize", "window-minimize-symbolic"),
+            ("zoom", "Zoom", "window-maximize-symbolic"),
         ] {
-            let b = gtk::Button::new();
+            let b = gtk::Button::from_icon_name(icon);
             b.add_css_class("light");
             b.add_css_class(c);
             b.set_tooltip_text(Some(tip));
@@ -567,6 +567,17 @@ impl AppWindow {
                 b.connect_clicked(|b| {
                     if let Some(w) = b.root().and_downcast::<gtk::Window>() {
                         w.minimize();
+                    }
+                });
+            }
+            if c == "zoom" {
+                b.connect_clicked(|b| {
+                    if let Some(w) = b.root().and_downcast::<gtk::Window>() {
+                        if w.is_maximized() {
+                            w.unmaximize();
+                        } else {
+                            w.maximize();
+                        }
                     }
                 });
             }
