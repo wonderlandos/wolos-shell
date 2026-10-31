@@ -587,61 +587,111 @@ fn aur_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
     t.root.upcast()
 }
 
-/// The AUR under the other results: off until asked for, and its risk said before any name.
-fn aur_results(sh: &Rc<Shared>, more: &gtk::Box, term: &str) {
+/// What the states and flags mean, under the AUR's results.
+fn legend() -> gtk::Box {
+    use crate::packages::{FLAGS, SEVERITIES, STATES};
+    let b = w::vbox(w::S6);
+    let states: Vec<gtk::Widget> = STATES.iter().map(|(n, i, t)| note_row(i, n, t)).collect();
+    b.append(&w::section("What the Check Can Say", &states));
+    let levels: Vec<gtk::Widget> = SEVERITIES
+        .iter()
+        .map(|(n, t)| note_row(severity_icon(n), n, t))
+        .collect();
+    b.append(&w::section("How Serious a Flag Is", &levels));
+    let flags: Vec<gtk::Widget> = FLAGS
+        .iter()
+        .map(|(n, l, t)| note_row(severity_icon(l), n, &format!("{l}. {t}")))
+        .collect();
+    b.append(&w::section("The Flags", &flags));
+    b
+}
+
+fn severity_icon(level: &str) -> &'static str {
+    match level {
+        "High" => "dialog-warning-symbolic",
+        "Medium" => "view-more-symbolic",
+        _ => "help-about-symbolic",
+    }
+}
+
+/// The AUR's own page: apart from the catalogue, off until asked for, its risk before any name.
+fn aur_page(sh: &Rc<Shared>) -> gtk::Box {
+    let p = w::page("AUR");
+    let on = crate::packages::aur_enabled();
     let found = w::vbox(w::S2);
-    let (sh2, found2, term2) = (sh.clone(), found.clone(), term.to_owned());
-    let fill: Rc<dyn Fn(bool)> = Rc::new(move |on| {
-        while let Some(c) = found2.first_child() {
-            found2.remove(&c);
+    let entry = gtk::SearchEntry::new();
+    entry.set_placeholder_text(Some("Search the AUR"));
+    entry.set_visible(on);
+    let (e2, f2) = (entry.clone(), found.clone());
+    let sw = w::toggle(on, move |v| {
+        crate::packages::set_aur_enabled(v);
+        e2.set_visible(v);
+        while let Some(c) = f2.first_child() {
+            f2.remove(&c);
         }
-        if !on {
+    });
+    let rows = [
+        note_row(
+            "dialog-warning-symbolic",
+            "Community Packages",
+            crate::packages::AUR_RISK,
+        ),
+        w::list_row("", "Include the AUR", "", Some(sw.upcast_ref())).upcast(),
+    ];
+    p.append(&w::section("Before You Search", &rows));
+    let (sh2, f3) = (sh.clone(), found.clone());
+    entry.connect_search_changed(move |e| {
+        while let Some(c) = f3.first_child() {
+            f3.remove(&c);
+        }
+        let term = e.text().trim().to_string();
+        if term.is_empty() {
             return;
         }
         let (tx, rx) = async_channel::bounded(1);
-        let term = term2.clone();
         std::thread::spawn(move || {
             let _ = tx.send_blocking(crate::packages::aur_search(&term));
         });
-        let (sh, found) = (sh2.clone(), found2.clone());
+        let (sh, found) = (sh2.clone(), f3.clone());
         glib::spawn_future_local(async move {
             if let Ok(hits) = rx.recv().await {
                 found.append(&grid(hits.iter().take(30).map(|h| aur_tile(&sh, h))));
             }
         });
     });
-    let on = crate::packages::aur_enabled();
-    let fill2 = fill.clone();
-    let sw = w::toggle(on, move |v| {
-        crate::packages::set_aur_enabled(v);
-        fill2(v);
-    });
-    let row = note_row(
-        "dialog-warning-symbolic",
-        "Include the AUR",
-        crate::packages::AUR_RISK,
-    );
-    let rows = [
-        row,
-        w::list_row("", "Search the AUR", "", Some(sw.upcast_ref())).upcast(),
-    ];
-    more.append(&w::section("Community Packages", &rows));
-    more.append(&found);
-    fill(on);
+    p.append(&entry);
+    p.append(&found);
+    p.append(&legend());
+    p
 }
 
-/// What reading a package found: the verdict, each sentence, and the graph when it was drawn.
+/// What reading a package found: its state, its flags, each sentence, and the graph if drawn.
 pub fn audit_section(a: &crate::packages::Audit) -> gtk::Box {
-    let mut rows: Vec<gtk::Widget> =
-        vec![w::list_row("help-about-symbolic", &a.heading, "", None).upcast()];
-    rows.extend(
-        a.findings
-            .iter()
-            .enumerate()
-            .map(|(i, f)| note_row("dialog-warning-symbolic", &format!("Finding {}", i + 1), f)),
-    );
+    use crate::packages::STATES;
+    let state = STATES.iter().find(|s| s.0 == a.state).unwrap_or(&STATES[3]);
+    let mut rows: Vec<gtk::Widget> = vec![note_row(state.1, state.0, state.2)];
+    rows.extend(a.flags.iter().map(|f| {
+        let times = if f.count > 1 {
+            format!(" Found {} times.", f.count)
+        } else {
+            String::new()
+        };
+        note_row(
+            severity_icon(&f.severity),
+            &f.title,
+            &format!("{}.{times}", f.severity),
+        )
+    }));
     let b = w::vbox(w::S2);
     b.append(&w::section("What the Check Found", &rows));
+    if !a.findings.is_empty() {
+        let paths: Vec<gtk::Widget> = a
+            .findings
+            .iter()
+            .map(|(t, f)| note_row("dialog-warning-symbolic", t, f))
+            .collect();
+        b.append(&w::section("Where It Was Found", &paths));
+    }
     if let Some(g) = &a.graph {
         let pic = gtk::Picture::for_filename(g);
         pic.set_content_fit(gtk::ContentFit::ScaleDown);
@@ -790,6 +840,18 @@ fn category(sh: &Rc<Shared>, c: Category) -> gtk::Box {
         p.append(&h);
     }
     p.append(&grid(store::in_category(c).map(|a| tile(sh, a))));
+    if c == Category::Develop {
+        let tools = store::TOOLCHAINS.iter().map(|(name, summary)| {
+            pkg_tile(
+                sh,
+                &store::PkgHit {
+                    name: (*name).into(),
+                    summary: (*summary).into(),
+                },
+            )
+        });
+        p.append(&shelf("SDKs and Toolchains", &grid(tools)));
+    }
     p
 }
 
@@ -952,7 +1014,6 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     };
     let flat_argv = wol_core::flatpak::search_argv(term);
     let term = term.to_owned();
-    let term2 = term.clone();
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
         // The package index answers in milliseconds; the commands below are the fallback.
@@ -980,7 +1041,6 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
         };
         if more.parent().is_some() {
             show_more(&sh, &more, empty.upcast_ref(), &pkgs, &flat);
-            aur_results(&sh, &more, &term2);
         }
     });
 }
@@ -1615,6 +1675,7 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
         "Updates",
         &updates(&sh),
     );
+    aw.source_item("package-x-generic-symbolic", "AUR", &aur_page(&sh));
     let results = w::vbox(w::S6);
     results.add_css_class("page");
     aw.hidden_page("Search", &results);

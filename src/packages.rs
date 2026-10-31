@@ -46,7 +46,7 @@ pub fn search(term: &str) -> Option<(Vec<PkgHit>, Vec<flatpak::Hit>)> {
 }
 
 /// What the App Store says about every AUR package, wherever one appears.
-pub const AUR_RISK: &str = "Built on this computer from a script a stranger wrote. Nobody at WolOS reviewed it, and no check can prove it is safe.";
+pub const AUR_RISK: &str = "Built on this computer from a script a stranger wrote. Nobody at WolOS reviewed it, and no check can vouch for it.";
 
 /// Packages only the AUR has, from one `wopkg::search` document.
 pub fn aur_hits(doc: &Value) -> Vec<PkgHit> {
@@ -96,28 +96,171 @@ pub fn set_aur_enabled(on: bool) {
     }
 }
 
-/// What reading a package found, in the words the App Store shows.
+/// One state for every package, in the same words everywhere: (name, icon, what it means).
+pub const STATES: [(&str, &str, &str); 4] = [
+    (
+        "No Law Broken",
+        "object-select-symbolic",
+        "The check found nothing against its laws. That is no promise about the package.",
+    ),
+    (
+        "Needs Review",
+        "dialog-warning-symbolic",
+        "At least one law was broken. Read what was found before you build it.",
+    ),
+    (
+        "Blocked",
+        "system-lock-screen-symbolic",
+        "A secret left the build, or the build did something it hid. wopkg does not install it.",
+    ),
+    (
+        "Not Checked",
+        "help-about-symbolic",
+        "The check did not run or could not answer, so nothing is known.",
+    ),
+];
+
+/// How much a flag says: (name, what it means).
+pub const SEVERITIES: [(&str, &str); 3] = [
+    ("High", "It runs or sends something it should not."),
+    (
+        "Medium",
+        "It reaches past its own files, or can't be tied to upstream.",
+    ),
+    (
+        "Low",
+        "Something is out of place or could not be read. Often harmless.",
+    ),
+];
+
+/// Every law as the flag people see: (title, severity, what it means). Titles match the analyser's.
+pub const FLAGS: [(&str, &str, &str); 14] = [
+    (
+        "Runs a Download Unchecked",
+        "High",
+        "Something fetched from the network runs with no checksum checking it first.",
+    ),
+    (
+        "Runs Hidden Code",
+        "High",
+        "Data is decoded or rebuilt, then run as code.",
+    ),
+    (
+        "Sends Secrets Out",
+        "High",
+        "A key, token or password file reaches the network.",
+    ),
+    (
+        "Reads Secrets",
+        "High",
+        "It opens SSH keys, browser profiles or other credentials.",
+    ),
+    (
+        "Uses the Network While Installing",
+        "High",
+        "An install script reaches the network as the administrator.",
+    ),
+    (
+        "Did What It Didn't Say",
+        "High",
+        "The build did something its files never mention.",
+    ),
+    (
+        "Writes Outside Its Folders",
+        "Medium",
+        "The build changes files outside the package and source folders.",
+    ),
+    (
+        "Changes Files It Doesn't Own",
+        "Medium",
+        "An install script changes a file the package does not declare.",
+    ),
+    (
+        "Starts Itself Again",
+        "Medium",
+        "It sets itself to run at login or boot without declaring it.",
+    ),
+    (
+        "Binary Not Tied to Upstream",
+        "Medium",
+        "A prebuilt binary has no checksum, or not the one upstream published.",
+    ),
+    (
+        "New Behaviour in This Version",
+        "Medium",
+        "This version does something the last one did not, with no explanation.",
+    ),
+    (
+        "Downloads From Another Site",
+        "Low",
+        "A source is not on the project's declared home.",
+    ),
+    (
+        "Runs Code That Can't Be Read",
+        "Low",
+        "Code is put together while running, so the check can't say what it does.",
+    ),
+    (
+        "Not Fully Read",
+        "Low",
+        "Part of the package could not be read, so the answer rests on less.",
+    ),
+];
+
+/// A law the package broke, and how many times.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AuditFlag {
+    pub title: String,
+    pub severity: String,
+    pub count: u64,
+}
+
+/// What `wopkg audit` said about a package, in the words the Store shows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Audit {
-    pub heading: String,
-    pub findings: Vec<String>,
-    /// The drawn graph, when there is one.
+    /// One of `STATES`.
+    pub state: String,
+    pub flags: Vec<AuditFlag>,
+    /// (flag, the exact path in one sentence).
+    pub findings: Vec<(String, String)>,
     pub graph: Option<String>,
 }
 
-/// wopkg's `audit --json` answer. Anything else is "not checked", never a clean result.
+fn capital(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
+}
+
+/// One document of `wopkg audit --json`. Anything else is not an answer.
 pub fn parse_audit(text: &str) -> Audit {
     let doc: Value = serde_json::from_str(text).unwrap_or_default();
-    let heading = match doc["verdict"].as_str() {
-        Some("pass") => "No law broken. That does not mean this package is safe.",
-        Some("flag" | "block") => "Needs review.",
-        _ => "Not checked.",
+    let state = match doc["verdict"].as_str() {
+        Some("pass") => STATES[0].0,
+        Some("flag") => STATES[1].0,
+        Some("block") => STATES[2].0,
+        _ => STATES[3].0,
     };
-    let findings = doc["findings"].as_array().into_iter().flatten();
+    let text_of = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_owned();
     Audit {
-        heading: heading.to_owned(),
-        findings: findings
-            .filter_map(|f| f["sentence"].as_str().map(str::to_owned))
+        state: state.to_owned(),
+        flags: doc["flags"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|f| AuditFlag {
+                title: text_of(f, "title"),
+                severity: capital(f["severity"].as_str().unwrap_or_default()),
+                count: f["count"].as_u64().unwrap_or(1),
+            })
+            .collect(),
+        findings: doc["findings"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|f| f["sentence"].is_string())
+            .map(|f| (text_of(f, "title"), text_of(f, "sentence")))
             .collect(),
         graph: doc["graph"].as_str().map(str::to_owned),
     }
@@ -241,21 +384,44 @@ mod tests {
     }
 
     #[test]
-    fn an_audit_never_reads_as_safe_and_a_bad_answer_is_not_checked() {
-        let a = parse_audit(r#"{"verdict":"pass","findings":[]}"#);
+    fn every_answer_gets_one_state_and_a_bad_answer_is_not_checked() {
         assert_eq!(
-            a.heading,
-            "No law broken. That does not mean this package is safe."
+            parse_audit(r#"{"verdict":"pass","findings":[]}"#).state,
+            "No Law Broken"
         );
         let a = parse_audit(
-            r#"{"verdict":"flag","findings":[{"sentence":"curl runs it."}],"graph":"/g.svg"}"#,
+            r#"{"verdict":"flag","graph":"/g.svg","flags":[{"title":"Reads Secrets","severity":"high","count":2}],"findings":[{"title":"Reads Secrets","sentence":"cat reads it."}]}"#,
         );
-        assert_eq!(a.heading, "Needs review.");
-        assert_eq!(a.findings, ["curl runs it."]);
+        assert_eq!(a.state, "Needs Review");
+        assert_eq!(
+            a.flags[0],
+            AuditFlag {
+                title: "Reads Secrets".into(),
+                severity: "High".into(),
+                count: 2
+            }
+        );
+        assert_eq!(a.findings[0].1, "cat reads it.");
         assert_eq!(a.graph.as_deref(), Some("/g.svg"));
-        for bad in ["", "nonsense", r#"{"verdict":"fine"}"#] {
-            assert_eq!(parse_audit(bad).heading, "Not checked.");
+        assert_eq!(parse_audit(r#"{"verdict":"block"}"#).state, "Blocked");
+        for bad in ["", "nope", r#"{"verdict":"fine"}"#] {
+            assert_eq!(parse_audit(bad).state, "Not Checked");
         }
+    }
+
+    #[test]
+    fn the_legend_names_every_flag_the_analyser_can_raise_and_never_says_safe() {
+        let laws = include_str!("../../aurlaws/src/laws.rs");
+        for (title, severity, _) in FLAGS {
+            assert!(laws.contains(&format!("\"{title}\"")), "{title}");
+            assert!(SEVERITIES.iter().any(|s| s.0 == severity));
+        }
+        let all = STATES
+            .iter()
+            .flat_map(|s| [s.0, s.2])
+            .chain(FLAGS.iter().map(|f| f.2))
+            .chain([AUR_RISK]);
+        assert!(all.into_iter().all(|t| !t.to_lowercase().contains("safe")));
     }
 
     #[test]
