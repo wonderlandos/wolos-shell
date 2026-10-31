@@ -1,28 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Kit window lights: hovering any of them shows the glyphs on all three, and all three act.
+//! The compositor draws the window buttons of Kit windows. The About panel is a layer surface, which
+//! gets no strip, so it keeps a close light of its own.
 
 const CSS: &str = include_str!("../src/kit/kit.css");
 const WIDGETS: &str = include_str!("../src/kit/widgets.rs");
+const PANELS: &str = include_str!("../src/ui/panels.rs");
 
 #[test]
-fn hovering_the_group_shows_every_glyph() {
-    assert!(CSS.contains("button.light image { -gtk-icon-size: 8px; color: transparent; }"));
+fn app_windows_draw_no_window_buttons() {
+    for s in ["traffic-lights", "w.minimize()", "w.maximize()", "w.unmaximize()"] {
+        assert!(!WIDGETS.contains(s), "{s}");
+    }
+}
+
+#[test]
+fn the_about_panel_keeps_its_close_light() {
+    assert!(PANELS.contains("traffic-lights"));
     assert!(CSS.contains(".traffic-lights:hover button.light image { color: rgba(0,0,0,0.55); }"));
     assert!(
         !CSS.contains("button.light:hover image"),
         "a per-button rule would show one glyph at a time"
     );
-}
-
-#[test]
-fn every_light_has_a_glyph_and_an_action() {
-    for icon in [
-        "window-close-symbolic",
-        "window-minimize-symbolic",
-        "window-maximize-symbolic",
-    ] {
-        assert!(WIDGETS.contains(icon), "{icon}");
-    }
-    assert!(WIDGETS.contains("w.close()") && WIDGETS.contains("w.minimize()"));
-    assert!(WIDGETS.contains("w.maximize()") && WIDGETS.contains("w.unmaximize()"));
 }

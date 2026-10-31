@@ -528,7 +528,8 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
 
 // ---- App scaffold ----
 
-/// HIG §1 AppWindow: 52px glass toolbar (traffic lights, title, actions, search), 220px sidebar, content, status bar.
+/// HIG §1 AppWindow: 52px glass toolbar (title, actions, search), 220px sidebar, content, status bar.
+/// The compositor draws the window buttons, in a strip above the toolbar.
 pub struct AppWindow {
     pub root: gtk::Box,
     pub actions: gtk::Box,
@@ -544,46 +545,6 @@ impl AppWindow {
         root.add_css_class("app-window");
         let bar = hbox(S2);
         bar.add_css_class("toolbar");
-        let lights = hbox(S2);
-        lights.add_css_class("traffic-lights");
-        for (c, tip, icon) in [
-            ("close", "Close", "window-close-symbolic"),
-            ("minimize", "Minimize", "window-minimize-symbolic"),
-            ("zoom", "Zoom", "window-maximize-symbolic"),
-        ] {
-            let b = gtk::Button::from_icon_name(icon);
-            b.add_css_class("light");
-            b.add_css_class(c);
-            b.set_tooltip_text(Some(tip));
-            b.set_valign(gtk::Align::Center);
-            if c == "close" {
-                b.connect_clicked(|b| {
-                    if let Some(w) = b.root().and_downcast::<gtk::Window>() {
-                        w.close();
-                    }
-                });
-            }
-            if c == "minimize" {
-                b.connect_clicked(|b| {
-                    if let Some(w) = b.root().and_downcast::<gtk::Window>() {
-                        w.minimize();
-                    }
-                });
-            }
-            if c == "zoom" {
-                b.connect_clicked(|b| {
-                    if let Some(w) = b.root().and_downcast::<gtk::Window>() {
-                        if w.is_maximized() {
-                            w.unmaximize();
-                        } else {
-                            w.maximize();
-                        }
-                    }
-                });
-            }
-            lights.append(&b);
-        }
-        bar.append(&lights);
         let title_l = label(title, "title");
         title_l.add_css_class("toolbar-title");
         bar.append(&title_l);
