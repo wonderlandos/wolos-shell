@@ -24,7 +24,6 @@ pub(crate) fn app_line(a: &AppStatus) -> String {
         AppState::Saving if a.saved > 0 => format!("Gave back {}", ms::size(a.saved)),
         AppState::Saving => "In the background".into(),
         AppState::Napping => format!("Paused · gave back {}", ms::size(a.saved)),
-        AppState::Released => "Needed its memory, so it keeps it for now".into(),
         AppState::Excluded => "Always keeps its memory".into(),
         AppState::Playing => "Playing sound, so it keeps its memory".into(),
         AppState::Game => "Games always keep their memory".into(),
@@ -185,7 +184,7 @@ mod tests {
     fn every_state_reads_as_a_sentence_without_jargon() {
         use AppState::*;
         for s in [
-            Active, Waiting, Saving, Napping, Released, Excluded, Playing, Game,
+            Active, Waiting, Saving, Napping, Excluded, Playing, Game,
         ] {
             let l = app_line(&app("x", s, 420_000_000));
             for jargon in ["cgroup", "zram", "swap", "reclaim", "memory.high"] {
