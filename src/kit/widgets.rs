@@ -118,15 +118,23 @@ fn svg_icon(path: std::path::PathBuf, size: i32) -> gtk::Image {
         img.set_paintable(Some(&t));
         return img;
     }
+    let load = move |p: &std::path::Path| {
+        gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(p, px, px, true)
+            .ok()
+            .map(|pb| gtk::gdk::Texture::for_pixbuf(&pb))
+    };
+    // A golden render can't wait for the thread: the icon would race the screenshot.
+    if std::env::var_os("WOL_FAKE_NOW").is_some() {
+        if let Some(t) = load(&key.0) {
+            img.set_paintable(Some(&t));
+            APP_ICONS.with_borrow_mut(|c| c.insert(key, t));
+        }
+        return img;
+    }
     let i2 = img.clone();
     glib::spawn_future_local(async move {
         let p = key.0.clone();
-        let r = gtk::gio::spawn_blocking(move || {
-            gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&p, px, px, true)
-                .ok()
-                .map(|pb| gtk::gdk::Texture::for_pixbuf(&pb))
-        })
-        .await;
+        let r = gtk::gio::spawn_blocking(move || load(&p)).await;
         if let Ok(Some(t)) = r {
             i2.set_paintable(Some(&t));
             APP_ICONS.with_borrow_mut(|c| c.insert(key, t));
