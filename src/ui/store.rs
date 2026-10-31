@@ -96,6 +96,8 @@ pub struct Store {
     show_package: Rc<dyn Fn(Option<PackageFile>)>,
     /// The details page: `None` reads the details off the UI thread first.
     show_details: Rc<dyn Fn(Subject, Option<Loaded>)>,
+    /// The AUR tab's lock.
+    pub aur: Rc<AurGate>,
 }
 
 impl Store {
@@ -640,31 +642,93 @@ fn severity_icon(level: &str) -> &'static str {
     }
 }
 
-/// The AUR's own page: apart from the catalogue, off until asked for, its risk before any name.
-fn aur_page(sh: &Rc<Shared>) -> gtk::Box {
+/// Why the AUR tab wants a password.
+const AUR_WHY: &str =
+    "The AUR holds packages nobody at WolOS reviewed. Enter your password to open it.";
+
+/// The AUR tab: the warning always, the packages only after wol-admind has checked a password.
+pub struct AurGate {
+    locked: gtk::Box,
+    open: gtk::Box,
+    asking: std::cell::Cell<bool>,
+}
+
+impl AurGate {
+    fn is_open(&self) -> bool {
+        self.open.is_visible()
+    }
+
+    /// wol-admind said yes. Lasts until this window closes.
+    pub fn show_open(&self) {
+        self.locked.set_visible(false);
+        self.open.set_visible(true);
+    }
+}
+
+/// Asks wol-admind, which checks the password every time. Anything but yes leaves the tab locked.
+fn ask_aur(sh: &Rc<Shared>, gate: &Rc<AurGate>) {
+    if gate.is_open() || gate.asking.replace(true) {
+        return;
+    }
+    say(&sh.status, "");
+    let was = sh.ctx.set_why(AUR_WHY);
+    let (ctx, st, gate) = (sh.ctx.clone(), sh.status.clone(), gate.clone());
+    sh.ctx.act(
+        Action::Admin(shared::admin::AdminRequest {
+            action: shared::admin::AdminAction::AurOpen,
+            args: vec![],
+        }),
+        Rc::new(move |r: Result<(), ActionError>| {
+            gate.asking.set(false);
+            ctx.set_why(&was);
+            match r {
+                Ok(()) => gate.show_open(),
+                // Cancel: the tab stays locked, and that is the whole answer.
+                Err(ActionError::Denied) => {}
+                Err(e) => say(&st, e.message()),
+            }
+        }),
+    );
+}
+
+/// The AUR's own page: apart from the catalogue and from search, its risk before any name.
+fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
     let p = w::page("AUR");
-    let on = crate::packages::aur_enabled();
-    let found = w::vbox(w::S2);
-    let entry = gtk::SearchEntry::new();
-    entry.set_placeholder_text(Some("Search the AUR"));
-    entry.set_visible(on);
-    let (e2, f2) = (entry.clone(), found.clone());
-    let sw = w::toggle(on, move |v| {
-        crate::packages::set_aur_enabled(v);
-        e2.set_visible(v);
-        while let Some(c) = f2.first_child() {
-            f2.remove(&c);
-        }
-    });
-    let rows = [
-        note_row(
+    p.append(&w::section(
+        "Before You Open",
+        &[note_row(
             "dialog-warning-symbolic",
             "Community Packages",
             crate::packages::AUR_RISK,
-        ),
-        w::list_row("", "Include the AUR", "", Some(sw.upcast_ref())).upcast(),
-    ];
-    p.append(&w::section("Before You Search", &rows));
+        )],
+    ));
+    let locked = w::vbox(w::S2);
+    locked.append(&w::label(
+        "The AUR stays locked until you enter your password.",
+        "secondary",
+    ));
+    let open = w::vbox(w::S2);
+    open.set_visible(false);
+    let gate = Rc::new(AurGate {
+        locked: locked.clone(),
+        open: open.clone(),
+        asking: Default::default(),
+    });
+    let (sh2, g2) = (sh.clone(), gate.clone());
+    let again = w::button("Enter Password", w::Kind::Default, move || {
+        ask_aur(&sh2, &g2)
+    });
+    again.set_halign(gtk::Align::Start);
+    locked.append(&again);
+    p.append(&locked);
+    // Previews have no package search and nothing to unlock.
+    if sh.env.pkg_search {
+        let (sh2, g2) = (sh.clone(), gate.clone());
+        p.connect_map(move |_| ask_aur(&sh2, &g2));
+    }
+    let found = w::vbox(w::S2);
+    let entry = gtk::SearchEntry::new();
+    entry.set_placeholder_text(Some("Search the AUR"));
     let (sh2, f3) = (sh.clone(), found.clone());
     entry.connect_search_changed(move |e| {
         while let Some(c) = f3.first_child() {
@@ -685,10 +749,11 @@ fn aur_page(sh: &Rc<Shared>) -> gtk::Box {
             }
         });
     });
-    p.append(&entry);
-    p.append(&found);
-    p.append(&legend());
-    p
+    open.append(&entry);
+    open.append(&found);
+    open.append(&legend());
+    p.append(&open);
+    (p, gate)
 }
 
 /// What reading a package found: its state, its flags, each sentence, and the graph if drawn.
@@ -1844,7 +1909,8 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
         "Updates",
         &updates(&sh),
     );
-    aw.source_item("package-x-generic-symbolic", "AUR", &aur_page(&sh));
+    let (aur, aur_gate) = aur_page(&sh);
+    aw.source_item("package-x-generic-symbolic", "AUR", &aur);
     let results = w::vbox(w::S6);
     results.add_css_class("page");
     aw.hidden_page("Search", &results);
@@ -1961,6 +2027,7 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
         status.connect_visible_notify(move |l| r.set_reveal_child(l.is_visible()));
     }
     Store {
+        aur: aur_gate,
         aw,
         search,
         show_results,

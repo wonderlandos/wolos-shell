@@ -72,30 +72,6 @@ pub fn aur_search(term: &str) -> Vec<PkgHit> {
     aur_hits(&wopkg::search(&ctx, term, 30))
 }
 
-/// The AUR stays out of search until the person asks for it.
-fn aur_choice() -> std::path::PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let base = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| format!("{home}/.config"));
-    std::path::Path::new(&base).join("wolos/store-aur")
-}
-
-pub fn aur_enabled() -> bool {
-    aur_choice().is_file()
-}
-
-/// Remember the choice. A failure leaves the safer answer in place.
-pub fn set_aur_enabled(on: bool) {
-    let p = aur_choice();
-    if on {
-        if let Some(d) = p.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        let _ = std::fs::write(p, "");
-    } else {
-        let _ = std::fs::remove_file(p);
-    }
-}
-
 /// Where a package comes from, in the same words as `wopkg info`.
 pub fn origin(kind: &str, repo: &str) -> String {
     match (kind, repo) {
@@ -493,6 +469,20 @@ pub fn present() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_aur_stays_out_of_normal_search() {
+        let doc = serde_json::json!({"results": [
+            {"name": "a", "summary": "A", "sources": [{"kind": "aur", "id": "a"}]},
+            {"name": "b", "summary": "B", "sources": [{"kind": "aur", "id": "b"}, {"kind": "pacman", "id": "b"}]},
+        ]});
+        let (pkgs, flat) = parse_hits(&doc);
+        assert_eq!(
+            pkgs.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
+        assert!(flat.is_empty());
+    }
 
     #[test]
     fn only_packages_nothing_else_has_are_aur_hits() {
