@@ -9,12 +9,21 @@ use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use wol_core::system::{Host, PosixHost};
+
+const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 
 /// The session, apart from the rules (fake in tests).
 pub trait Session {
     /// Text on the clipboard, at most `max` + 1 bytes; None when it holds no text.
     fn clipboard(&self, max: usize) -> Option<Vec<u8>>;
     fn set_clipboard(&self, text: &str) -> bool;
+    /// Volume and mute of the default output.
+    fn volume(&self) -> Option<(u8, bool)>;
+    /// (title, artist, player, playing).
+    fn now_playing(&self) -> Option<(String, String, String, bool)>;
+    fn set_volume(&self, percent: u8) -> bool;
+    fn set_muted(&self, muted: bool) -> bool;
     /// What the person picked; None when they cancelled. Blocks until then.
     fn panel(&self, save: bool, title: &str, name: &str) -> Option<PathBuf>;
 }
@@ -64,6 +73,26 @@ impl Session for Desktop {
         wrote && c.wait().is_ok_and(|s| s.success())
     }
 
+    fn volume(&self) -> Option<(u8, bool)> {
+        let t = PosixHost.run(&["wpctl", "get-volume", SINK])?;
+        wol_core::controls::parse_wpctl_volume(&t).map(|v| (v.percent, v.muted))
+    }
+
+    fn now_playing(&self) -> Option<(String, String, String, bool)> {
+        crate::widgets::media::now().map(|p| (p.title, p.artist, p.player, p.playing))
+    }
+
+    fn set_volume(&self, percent: u8) -> bool {
+        PosixHost
+            .run(&["wpctl", "set-volume", SINK, &format!("{percent}%")])
+            .is_some()
+    }
+
+    fn set_muted(&self, muted: bool) -> bool {
+        let m = if muted { "1" } else { "0" };
+        PosixHost.run(&["wpctl", "set-mute", SINK, m]).is_some()
+    }
+
     fn panel(&self, save: bool, title: &str, name: &str) -> Option<PathBuf> {
         let (title, name) = (title.to_owned(), name.to_owned());
         let (tx, rx) = std::sync::mpsc::channel();
@@ -73,6 +102,14 @@ impl Session for Desktop {
             })
         });
         rx.recv().ok().flatten()
+    }
+}
+
+fn done(ok: bool) -> Result<Option<Value>, String> {
+    if ok {
+        Ok(None)
+    } else {
+        Err("Sound is not available.".into())
     }
 }
 
@@ -90,6 +127,18 @@ pub fn answer(s: &dyn Session, ask: Ask) -> Result<Option<Value>, String> {
             Ok(Some(json!({ "text": text })))
         }
         Ask::Panel { .. } => Err("Panels are answered with a file.".into()),
+        Ask::AudioInfo => {
+            let (volume, muted) = s.volume().ok_or("Sound is not available.")?;
+            let mut v = json!({ "volume": volume, "muted": muted });
+            if let Some((title, artist, player, playing)) = s.now_playing() {
+                v["now_playing"] = json!({
+                    "title": title, "artist": artist, "player": player, "playing": playing
+                });
+            }
+            Ok(Some(v))
+        }
+        Ask::AudioSetVolume { percent } => done(s.set_volume(percent.min(100))),
+        Ask::AudioSetMuted { muted } => done(s.set_muted(muted)),
         Ask::ClipboardWrite { text } => {
             if s.set_clipboard(&text) {
                 Ok(None)
@@ -187,6 +236,7 @@ mod tests {
         set: RefCell<Vec<String>>,
         refuse: bool,
         pick: Option<PathBuf>,
+        sound: bool,
     }
 
     impl Session for Fake {
@@ -200,6 +250,38 @@ mod tests {
         fn panel(&self, _: bool, _: &str, _: &str) -> Option<PathBuf> {
             self.pick.clone()
         }
+        fn volume(&self) -> Option<(u8, bool)> {
+            self.sound.then_some((40, false))
+        }
+        fn now_playing(&self) -> Option<(String, String, String, bool)> {
+            self.sound
+                .then(|| ("Song".into(), "Band".into(), "Player".into(), true))
+        }
+        fn set_volume(&self, percent: u8) -> bool {
+            self.set.borrow_mut().push(format!("volume {percent}"));
+            self.sound
+        }
+        fn set_muted(&self, muted: bool) -> bool {
+            self.set.borrow_mut().push(format!("muted {muted}"));
+            self.sound
+        }
+    }
+
+    #[test]
+    fn audio_reads_and_sets() {
+        let f = Fake {
+            sound: true,
+            ..Fake::default()
+        };
+        let v = answer(&f, Ask::AudioInfo).unwrap().unwrap();
+        assert_eq!(v["volume"], 40);
+        assert_eq!(v["now_playing"]["title"], "Song");
+        assert_eq!(answer(&f, Ask::AudioSetVolume { percent: 200 }), Ok(None));
+        assert_eq!(answer(&f, Ask::AudioSetMuted { muted: true }), Ok(None));
+        assert_eq!(*f.set.borrow(), ["volume 100", "muted true"]);
+        let none = Fake::default();
+        assert!(answer(&none, Ask::AudioInfo).is_err());
+        assert!(answer(&none, Ask::AudioSetMuted { muted: false }).is_err());
     }
 
     #[test]

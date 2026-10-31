@@ -153,6 +153,11 @@ fn current(conn: &zbus::blocking::Connection) -> Option<Playing> {
     pick(&keys).map(|i| players[i].1.clone())
 }
 
+/// What is playing right now; None without a session bus or a player.
+pub fn now() -> Option<Playing> {
+    current(&zbus::blocking::Connection::session().ok()?)
+}
+
 /// Sends the current track now and after every player change, until the receiver is dropped.
 /// Ends quietly without a session bus (the widget then says nothing is playing).
 pub fn watch(tx: async_channel::Sender<Option<Playing>>) {
