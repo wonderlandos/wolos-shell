@@ -12,6 +12,8 @@ use std::process::{Command, Stdio};
 use wol_core::system::{Host, PosixHost};
 
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
+/// Characters of shared text the dialog shows.
+const MAX_PREVIEW: usize = 400;
 /// Rows a search hands an app.
 const MAX_FOUND: usize = 20;
 
@@ -20,6 +22,8 @@ pub trait Session {
     /// Text on the clipboard, at most `max` + 1 bytes; None when it holds no text.
     fn clipboard(&self, max: usize) -> Option<Vec<u8>>;
     fn set_clipboard(&self, text: &str) -> bool;
+    /// Where the person wants shared text to go; None when they cancelled. Blocks until then.
+    fn share(&self, title: &str, text: &str) -> Option<ShareTo>;
     /// Titles and kinds of the apps and Settings pages found. Never the rows of provider apps:
     /// those are the person's, for Spotlight alone.
     fn search(&self, text: &str) -> Vec<(String, String)>;
@@ -106,6 +110,30 @@ impl Session for Desktop {
         PosixHost.run(&["wpctl", "set-mute", SINK, m]).is_some()
     }
 
+    fn share(&self, title: &str, text: &str) -> Option<ShareTo> {
+        let (title, preview) = (title.to_owned(), preview(text));
+        let (tx, rx) = std::sync::mpsc::channel();
+        gtk::glib::MainContext::default().invoke(move || {
+            let d = gtk::AlertDialog::builder()
+                .modal(true)
+                .message(title.as_str())
+                .detail(preview.as_str())
+                .buttons(["Cancel", "Save\u{2026}", "Copy"])
+                .cancel_button(0)
+                .default_button(2)
+                .build();
+            let cancel = gtk::gio::Cancellable::NONE;
+            d.choose(None::<&gtk::Window>, cancel, move |r| {
+                let _ = tx.send(r.ok());
+            });
+        });
+        match rx.recv().ok().flatten() {
+            Some(1) => Some(ShareTo::File),
+            Some(2) => Some(ShareTo::Clipboard),
+            _ => None,
+        }
+    }
+
     fn panel(&self, save: bool, title: &str, name: &str) -> Option<PathBuf> {
         let (title, name) = (title.to_owned(), name.to_owned());
         let (tx, rx) = std::sync::mpsc::channel();
@@ -115,6 +143,43 @@ impl Session for Desktop {
             })
         });
         rx.recv().ok().flatten()
+    }
+}
+
+/// Where shared text goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShareTo {
+    Clipboard,
+    File,
+}
+
+/// The start of shared text, for the dialog.
+fn preview(text: &str) -> String {
+    let mut t: String = text.chars().take(MAX_PREVIEW).collect();
+    if t.len() < text.len() {
+        t.push('\u{2026}');
+    }
+    t
+}
+
+/// Send `text` where the person chose, as them.
+fn share(s: &dyn Session, title: &str, text: &str) -> Result<&'static str, String> {
+    match s.share(title, text) {
+        None => Ok("cancelled"),
+        Some(ShareTo::Clipboard) => s
+            .set_clipboard(text)
+            .then_some("copied")
+            .ok_or_else(|| "The clipboard could not be changed.".into()),
+        Some(ShareTo::File) => {
+            let name = format!("{}.txt", title.replace('/', "-"));
+            let Some(path) = s.panel(true, title, &name) else {
+                return Ok("cancelled");
+            };
+            open_pick(&path, true)
+                .and_then(|mut f| f.write_all(text.as_bytes()))
+                .map(|()| "saved")
+                .map_err(|_| "That file could not be saved.".into())
+        }
     }
 }
 
@@ -189,6 +254,10 @@ pub fn answer(s: &dyn Session, ask: Ask) -> Result<Option<Value>, String> {
             Ok(Some(json!({ "text": text })))
         }
         Ask::Panel { .. } => Err("Panels are answered with a file.".into()),
+        Ask::Share { title, text } => {
+            let done = share(s, &title, &text)?;
+            Ok(Some(json!({ "done": done })))
+        }
         Ask::Search { text } => {
             let rows: Vec<Value> = s
                 .search(&text)
@@ -307,6 +376,7 @@ mod tests {
         refuse: bool,
         pick: Option<PathBuf>,
         sound: bool,
+        share_to: Option<ShareTo>,
     }
 
     impl Session for Fake {
@@ -323,6 +393,9 @@ mod tests {
         fn volume(&self) -> Option<(u8, bool)> {
             self.sound.then_some((40, false))
         }
+        fn share(&self, _: &str, _: &str) -> Option<ShareTo> {
+            self.share_to
+        }
         fn search(&self, text: &str) -> Vec<(String, String)> {
             vec![(text.to_uppercase(), "Application".into())]
         }
@@ -338,6 +411,44 @@ mod tests {
             self.set.borrow_mut().push(format!("muted {muted}"));
             self.sound
         }
+    }
+
+    #[test]
+    fn sharing_goes_where_the_person_chose() {
+        let ask = || Ask::Share {
+            title: "A note".into(),
+            text: "text".into(),
+        };
+        let done = |v: &str| Ok(Some(json!({ "done": v })));
+        assert_eq!(answer(&Fake::default(), ask()), done("cancelled"));
+        let f = Fake {
+            share_to: Some(ShareTo::Clipboard),
+            ..Fake::default()
+        };
+        assert_eq!(answer(&f, ask()), done("copied"));
+        assert_eq!(*f.set.borrow(), ["text"]);
+
+        let dir = std::env::temp_dir().join(format!("wol-app-share-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        let to_file = |pick| Fake {
+            share_to: Some(ShareTo::File),
+            pick,
+            ..Fake::default()
+        };
+        assert_eq!(answer(&to_file(None), ask()), done("cancelled"));
+        assert_eq!(answer(&to_file(Some(file.clone())), ask()), done("saved"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "text");
+        assert!(answer(&to_file(Some(dir.join("no/a.txt"))), ask()).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_dialog_shows_the_start_of_long_text() {
+        assert_eq!(preview("short"), "short");
+        let p = preview(&"\u{e9}".repeat(MAX_PREVIEW + 1));
+        assert_eq!(p.chars().count(), MAX_PREVIEW + 1);
+        assert!(p.ends_with('\u{2026}'));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 19] = [
+pub(crate) const KINDS: [(&str, &str, &str); 20] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -102,6 +102,11 @@ pub(crate) const KINDS: [(&str, &str, &str); 19] = [
         "devices",
         "Connected Devices",
         "Can see the names of connected USB and Bluetooth devices.",
+    ),
+    (
+        "share",
+        "Sharing",
+        "Can offer text for you to copy or save. Nothing leaves until you choose.",
     ),
 ];
 
