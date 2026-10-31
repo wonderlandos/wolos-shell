@@ -21,7 +21,7 @@ fn settings_preference_switches_revert_on_failure() {
         // A bare switch whose handler writes a file can't show the write failed.
         for part in code.split("w::toggle(").skip(1) {
             let body = &part[..part.find("});").unwrap_or(part.len())];
-            for save in ["save_shell(", "focus::write("] {
+            for save in ["save_shell(", "focus::write(", "change("] {
                 assert!(
                     !body.contains(save),
                     "{}: a switch that calls {save} must be w::pending_toggle",
