@@ -7,7 +7,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 7] = [
+pub(crate) const KINDS: [(&str, &str, &str); 8] = [
     (
         "screen-capture",
         "Screen Recording",
@@ -42,6 +42,11 @@ pub(crate) const KINDS: [(&str, &str, &str); 7] = [
         "clipboard-write",
         "Change Clipboard",
         "Can replace what you copied.",
+    ),
+    (
+        "app-preferences",
+        "Preferences",
+        "Can keep its own preferences. No app can read another's.",
     ),
 ];
 
