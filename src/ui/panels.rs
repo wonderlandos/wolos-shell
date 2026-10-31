@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Wallpaper, OSD, clipboard, session menu, window switcher.
 use crate::kit::{
     self,

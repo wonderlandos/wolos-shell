@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Low battery, full disk and updates-ready notifications, checked with the menu bar poll.
 //! Battery levels come from `wol_core::power::policy` (20, 10, 5 %, sleep at 3 %), updates from
 //! `wol_core::update::check`; the sentences from [`crate::copy`].

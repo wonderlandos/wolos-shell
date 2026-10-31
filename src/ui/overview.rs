@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Overview surface: blurred wallpaper, desktops strip on top, the current desktop's
 //! windows scaled into a grid (live screencopy via grim; app icon until it arrives).
 use crate::hypr::Client;

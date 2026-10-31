@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! System Settings on the HIG AppWindow: a searchable sidebar of panes (System Settings order) and
 //! grouped Section cards. Every control applies for real or is not shown: theme contract
 //! (Appearance), desktop prefs applied live through one `hyprctl` batch and journaled (Desktop &

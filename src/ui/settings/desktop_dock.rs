@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Desktop & Dock: Dock and menu bar (shell prefs written to shell.json, applied with `reload`) and
 //! Windows (tiling through the managed Hyprland include, applied live by `Action::Desktop`).
 use super::*;

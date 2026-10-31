@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Calendar widget data: the month grid (weeks start Monday) and today's events parsed from the
 //! iCalendar text evolution-data-server returns (`eds.rs`). No calendar service, no events shown.
 

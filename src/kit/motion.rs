@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Reduce motion: one switch for every animation in every shell process. GTK's
 //! `gtk-enable-animations` turns off CSS animations and transitions (revealers, stacks, the Dock
 //! bounce); WolOS's own setting (Accessibility > Reduce motion, desktop prefs) drives it, and

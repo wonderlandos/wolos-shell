@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Memory Saver (Battery / Energy): apps you are not using give their memory back and get it back
 //! the moment you return; per-app exclusions; App Nap (off by default). The user's choices go to
 //! `wol_core::memsaver::Prefs` (wol-realtime forwards them to wold); what wold is doing comes from

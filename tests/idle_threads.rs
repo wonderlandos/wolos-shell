@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Live perf: wol-shell's zbus connection left a `blocking-1` pool thread waking every 500 ms
 //! forever (2 wakeups/s idle). Idle blocking threads must exit (vendored `blocking` patch).
 #![cfg(target_os = "linux")]

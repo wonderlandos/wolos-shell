@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Timer widget, pure side: Focus (25 min work, 5 min break, a long break every fourth),
 //! a countdown, or a stopwatch. Times are milliseconds from any monotonic origin; the desktop
 //! passes the clock in, so nothing here reads one.

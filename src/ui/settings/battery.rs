@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Battery (Energy on desktops): charge and health, the energy mode (Automatic, Low Power, High
 //! Power: wol-admind `power-mode`, no password for the person at the computer) and what closing the
 //! lid does, and Memory Saver. Rows whose hardware or verb is missing are not shown.

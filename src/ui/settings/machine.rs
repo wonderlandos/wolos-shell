@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! What the panes read from the machine, behind one trait: [`Live`] asks the system through
 //! `wol_core` readers (always off the UI thread, see `super::later`); [`Demo`] is a fixed laptop so
 //! golden renders and screenshots never depend on the build machine.

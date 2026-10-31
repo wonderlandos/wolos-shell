@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App Store (`wol-store`): macOS App Store layout on the kit AppWindow. Curated catalog from
 //! `wol_core::store`, `pacman -Ss` for the rest, installs through wol-admind `pkg-install` with the
 //! Authenticate sheet, updates from `wol update check`. `wol-store <file.wol>` (double-click) opens

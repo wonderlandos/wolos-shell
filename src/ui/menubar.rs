@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Menu bar: logo menu, frontmost app name, app menus, status icons, clock, Search, Control Center.
 use crate::kit::{self, widgets as w};
 use crate::perf::Changed;

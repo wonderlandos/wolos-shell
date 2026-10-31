@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-window-shot <hyprland window address>: one frame of that window via
 //! hyprland_toplevel_export_v1, written to stdout in `shell::winshot` format.
 use std::io::{Read, Seek, Write};

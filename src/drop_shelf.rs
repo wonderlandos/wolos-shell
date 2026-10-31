@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! The drop shelf: files dropped on the desktop wait here until they are dragged somewhere else.
 //! Paths only: nothing is copied or moved, so the shelf never touches a file.
 use std::path::{Path, PathBuf};

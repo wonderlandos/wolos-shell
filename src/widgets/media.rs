@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Music widget: what an MPRIS player (session bus) is playing, with play/pause/next/previous.
 //! Event-driven: a worker thread sleeps in the bus until a player changes; nothing polls.
 //! Album art is shown only from local files (`file://`); remote art URLs are never fetched.

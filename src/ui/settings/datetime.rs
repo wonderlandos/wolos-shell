@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! General > Date & Time: network time and the time zone (wol-admind `ntp`, `timezone`; the
 //! Authenticate sheet asks first). Controls whose verb this build lacks are not shown.
 use super::*;

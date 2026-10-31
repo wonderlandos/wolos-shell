@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Setup Assistant model (ADR 0004, ADR 0013): steps, choices, account draft and the flow that
 //! drives them. Pure; the UI (`ui::setup`) renders a [`Flow`] and runs its [`Job`]s.
 use crate::login::Verdict;

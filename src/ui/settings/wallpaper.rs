@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Wallpaper: Dynamic (day, dusk and night pictures following the clock), the shipped pictures and
 //! your own photo. The choice is one journaled line (`wolos/wallpaper`, same file as
 //! `wol wallpaper set`); the desktop follows it.

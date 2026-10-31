@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Force Quit Applications (⌥⌘Esc, macOS): open apps, most recent first; Force Quit ends every
 //! window of the chosen one (`killwindow`, same as the app menu's Force Quit). Kit only.
 use crate::appmenu::{self, Act};

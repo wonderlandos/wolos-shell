@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Keyboard shortcut sheet (⇧⌘/), pure side: the shortcuts in effect now, grouped like
 //! Settings > Keyboard > Shortcuts, as the sheet shows them. Only keys a person presses: no
 //! mouse drags or key releases, no hardware media keys, nothing turned off, tiling only while tiling is on.

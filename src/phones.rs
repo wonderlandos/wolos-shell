@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! iPhone attach: asks usbmuxd every few seconds which phones are plugged in and posts
 //! "iPhone connected" once per plug (the protocol and the diff are `wol_core::iphone`).
 use std::io::{Read, Write};

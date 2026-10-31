@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Assistants & Automation: whether AI helpers and scripts may use WolOS at all, what each kind of
 //! change needs, the helpers seen so far (audit log) and how to connect one
 //! (archicture/modules/automation.md). Nothing reaches the system while the switch is off.

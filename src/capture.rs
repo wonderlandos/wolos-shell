@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Screenshot toolbar (Super+Shift+5) model: what to capture, where it goes, the wol-screenshot argv.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

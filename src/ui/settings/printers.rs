@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Printers: CUPS queues (default, state), Add Printer from the devices CUPS finds (driverless IPP
 //! Everywhere), Set as Default and Remove (wol-admind `printer-add`, `printer-default`,
 //! `printer-remove`; the Authenticate sheet asks first).

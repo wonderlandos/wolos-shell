@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App notifications end to end (ADR 0020): a fake wold hands the shell a notification with a
 //! button; it becomes a banner on our notification server (private dbus-daemon); pressing the
 //! button sends `notification.answer` with wold's id back to wold.

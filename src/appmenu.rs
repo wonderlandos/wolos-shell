@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Menu bar app and Window menus: every item is a real action. Pure: frontmost window + clients +
 //! usable zone in, Hyprland dispatch batch out. `wol-app <verb>` runs them (menu clicks and keybinds).
 use crate::hypr::Client;

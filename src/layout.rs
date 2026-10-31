@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Layout check (port of IaraKit.Debug.LayoutCheck): pure rules over a measured widget tree.
 //! `kit::layout_tree` builds the tree from GTK allocations.
 

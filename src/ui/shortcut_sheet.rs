@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! ⇧⌘/: every keyboard shortcut in effect, on one glass sheet in columns (Kit parts only).
 //! Read each time it opens, so a shortcut changed in Settings shows at once. Esc closes it.
 use crate::kit::{data as d, pickers, widgets as w};

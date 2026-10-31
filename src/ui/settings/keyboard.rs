@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Keyboard: key repeat, input sources (desktop prefs, applied live) and the way into Keyboard Shortcuts.
 use super::*;
 

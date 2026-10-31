@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every password field (Setup, login window, lock screen, admin sheet, Control Center) has the
 //! eye button that shows what was typed: a hidden typo otherwise reads as "Incorrect password".
 use std::path::Path;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Lock screen (ext-session-lock, ADR 0022/0023) and login window (ADR 0024): clock, avatar, password.
 use crate::kit::{self, reveal, widgets as w};
 use crate::login::{self, Power, Verdict};

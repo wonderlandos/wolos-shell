@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! One timer for every widget on the desktop. Deadlines sit on wall-clock multiples of each period
 //! (a 60 s and a 300 s widget wake together on the 5-minute mark), entries due within `SLACK`
 //! run in the same wakeup, and nothing is armed while the desktop is hidden.

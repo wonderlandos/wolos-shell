@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App Store search through wopkg's local index (ADR 0021): milliseconds instead of running
 //! `pacman -Ss` and `flatpak search`. None when the index has not been built yet, so the caller
 //! falls back to the old commands.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Live (real GPU): the Control Center Screenshot/Record tiles spawned `wol capture <verb>` and the
 //! CLI answered "unknown command 'capture'". Every argv the Control Center spawns must resolve to a
 //! real command: a shell panel both the CLI and wol-shell accept, or a binary WolOS installs.

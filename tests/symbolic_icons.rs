@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Every symbolic icon name the shell requests ships in the WolOS theme (design/icons/symbolic, installed
 //! by design/icons/install.sh): no fallback to whatever system theme the image has. Symbolic SVGs are
 //! fill-only: GTK 4.20 (FreeBSD pkg) draws `stroke` icons as solid blobs (FreeBSD shots: black dot for

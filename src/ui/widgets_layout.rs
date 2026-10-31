@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Custom widgets: a package's layout tree mapped node by node onto Kit constructors
 //! (`kit::data`, `kit::widgets`), so a custom widget looks like it shipped with WolOS. Data that
 //! does not fit (missing paths, wrong types) renders empty, never panics; a package that does not

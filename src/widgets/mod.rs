@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Desktop widgets, pure side (ADR 0010, archicture/modules/widgets.md): grid placement, the
 //! coalesced refresh schedule, the layout file store, and each built-in's data (weather, calendar,
 //! music, batteries, system history). GTK lives in `ui/widgets*.rs`; parts in `kit::data`.

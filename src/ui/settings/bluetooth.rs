@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Bluetooth: the radio and paired devices (connect or disconnect with a click).
 use super::*;
 use crate::kit::controls::DeviceRow;

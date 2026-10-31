@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! General > Login Items: apps that open when you log in (desktop prefs `login_items`, written to
 //! the managed Hyprland include as `exec-once`; journaled).
 use super::*;

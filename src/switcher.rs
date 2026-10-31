@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App switcher (Super+Tab): Hyprland clients grouped by app class, most recently used first.
 use crate::hypr::Client;
 

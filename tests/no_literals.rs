@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! HIG §2: surfaces (src/ui, src/bin) use kit tokens only. No colours, no px, no numeric sizes/spacing.
 use std::path::Path;
 

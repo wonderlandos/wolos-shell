@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Work tied to a window's life: its timers and callbacks end with it. A surface that comes and
 //! goes with a display (wallpaper, menu bar) must not leave a minute tick or a reload hook behind
 //! each time, or a session that docks and undocks grows without bound.

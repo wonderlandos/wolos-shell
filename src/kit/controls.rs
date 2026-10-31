@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Control-surface components shared by Control Center, Settings and widgets: toggle tiles, detail
 //! pages, device rows (Wi-Fi networks, Bluetooth devices, audio outputs), slider modules, the Now
 //! Playing card and the battery gauge. Style: kit.css "Control surfaces" (tokens only).

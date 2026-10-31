@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Widgets: what is on the desktop (widgets.json, the desktop surface follows the file), adding a
 //! built-in widget at the first free spot, removing one, and Edit Widgets for arranging by hand.
 use super::*;

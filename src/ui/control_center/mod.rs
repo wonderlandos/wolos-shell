@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Control Center (macOS Sonoma layout). Every control goes through `System` (core backend via
 //! `Host`; root actions through wol-admind, which may open the Authenticate sheet, IaraOS ADR 0026).
 //! Built once as a resident wol-shell panel; refreshes only while visible. Optional modules follow

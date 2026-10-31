@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! org.freedesktop.Notifications on a private dbus-daemon: NotificationClosed reasons (spec: 1 expired, 2 dismissed, 3 CloseNotification).
 use shell::ui::notify::{Bus, CloseReason, Event};
 use std::collections::HashMap;

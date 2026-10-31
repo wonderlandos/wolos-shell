@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Transient panels (Control Center, Notification Center, clipboard, session menu): one at a
 //! time, and gone on a click outside, Esc, another app in front or a workspace switch.
 use crate::hypr;

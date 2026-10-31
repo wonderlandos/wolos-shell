@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! App switcher: glass strip of 64 px app icons, accent ring on the selection, its name below.
 //! Super+Tab opens/advances, Super+Shift+Tab goes back, releasing Super focuses (see `switcher::op`).
 use crate::kit::{surface::Spec, widgets as w};

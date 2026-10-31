@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! org.freedesktop.Notifications server (zbus) + banners (top right, 5 s) + Notification Center panel.
 use crate::kit::{
     surface::{Keyboard, Spec},

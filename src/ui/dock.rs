@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Dock: pinned apps, running dots from Hyprland clients, separator, the Downloads stack, Trash.
 use crate::apps;
 use crate::kit::{self, surface::Spec, widgets as w};

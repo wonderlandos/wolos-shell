@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Form components: the rows System Settings (and any app's preferences) are built from. Each row is a
 //! title (+ optional secondary subtitle) on the left and exactly one control on the right; put rows in a
 //! [`w::section`] card. Panes compose these and never build raw GTK widgets. Style: kit.css "Form rows".

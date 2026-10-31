@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! One CssProvider per process. Loaded once; reloaded only when the active theme file or dark preference changes.
 use crate::perf::Changed;
 use crate::theme;

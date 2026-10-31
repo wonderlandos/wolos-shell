@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Event sources on the GTK main loop (no threads, no polling): the shell socket and Hyprland's event socket.
 use super::{Panels, dock::Dock, panels::Osd};
 use crate::{hypr, protocol};

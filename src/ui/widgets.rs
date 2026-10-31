@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Desktop widgets (ADR 0010): a layer surface above the wallpaper and below windows, inside the
 //! menu bar and Dock zones. Cards sit on a snapping grid saved in `widgets.json`; Edit Widgets
 //! (desktop right-click, a card's menu, `wol shell show widgets`) raises the surface, shows remove

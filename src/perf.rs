@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Hot-path helpers: change detection (no widget update when equal) and TTL snapshots per topic.
 use std::time::{Duration, Instant};
 

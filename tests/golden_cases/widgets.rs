@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Desktop widget goldens (ADR 0010): every built-in at every size, a few empty states, the
 //! example custom package, the error and consent cards, and Edit Widgets with its gallery.
 use super::Case;

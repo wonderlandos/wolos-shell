@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Choosers for preferences panes: Looks previews and preset cards, colour wells, the storage usage
 //! bar, key caps, and file pickers. Drawn colours come from the active theme's tokens ([`Tokens`]),
 //! never literals; layout and style live in kit.css "Pickers".

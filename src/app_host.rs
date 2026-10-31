@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Kit host protocol (ADR 0020), one app connection: the app names itself first
 //! ([`ToHost::Hello`]), then shows, updates and closes its windows. Pure rules here; drawing is
 //! `ui::app_host`. Anything out of order ends the connection; nothing an app sends can reach

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! wol-screenshot contract with the shell: prints the saved path and exits, even though
 //! wl-copy leaves a clipboard daemon running. Live Hyprland: the daemon inherited stdout,
 //! so the shell waited forever for EOF and never showed the thumbnail.

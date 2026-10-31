@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! General > Sharing: the computer's name and Remote Login (wol-admind `hostname`, `remote-login`;
 //! the Authenticate sheet asks first). Controls whose verb this build lacks are not shown.
 use super::*;

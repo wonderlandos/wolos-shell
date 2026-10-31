@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Menu bar clock "Mon 26 Oct 14:05", lock clock "14:05" / "Monday, 26 October". No allocation: callers reuse a buffer.
 use std::fmt::Write;
 

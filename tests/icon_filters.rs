@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! No shipped icon uses an SVG `<filter>`: GTK, Qt, Firefox and the pixbuf loader clip the
 //! filter region and draw a grey box behind the icon. Depth is baked as plain shapes.
 

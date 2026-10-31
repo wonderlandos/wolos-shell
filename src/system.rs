@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! System data seam. Topics match IaraOS system-api.md: power, audio, network, brightness.
 //! [`CoreSystem`] is the real backend (`wol_core::controls`, Linux): a worker thread keeps cached
 //! snapshots, reads never fork or block, actions run off the UI thread through [`System::spawn`].

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Control Center: which optional modules show (shell.json, applied with `reload`). Modules whose
 //! hardware this computer lacks are not offered.
 use super::*;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! General: the way into About, Software Update, Storage, Login Items, Language & Region, Date &
 //! Time and Sharing (each a subpage with a back button).
 use super::*;

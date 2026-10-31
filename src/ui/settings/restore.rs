@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Restore: recent settings changes with Undo (`wol_core::journal`, same as `wol undo`), and restore
 //! points (ZFS boot environments) to start the system from an earlier state.
 use super::*;

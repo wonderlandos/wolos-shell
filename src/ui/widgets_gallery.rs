@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Edit Widgets gallery: every built-in and installed package, previewed in each size with sample
 //! data (sources never run here). Click a preview to put it on the desktop. Weather adds a city
 //! search (Open-Meteo geocoding, only what the user types is sent).

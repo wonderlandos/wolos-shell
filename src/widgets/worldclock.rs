@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! World Clock widget, pure side: the cities it offers and each city's wall time against this
 //! computer's. Offsets come from the system time zone database (`ui::widgets`); nothing here
 //! reads a clock.
