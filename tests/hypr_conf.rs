@@ -123,7 +123,7 @@ fn menu_shortcuts_are_bound_to_the_same_action() {
         n += 1;
     }
     assert_eq!(n, 4);
-    assert!(include_str!("../../../image/build-rust.sh").contains(" wol-app"));
+    assert!(include_str!("../../../tools/build-rust.sh").contains(" wol-app"));
 }
 
 /// Volume keys show the OSD right away (it waited for the 10 s status poll).

@@ -424,7 +424,7 @@ pub fn run_lock() -> glib::ExitCode {
             login::LockExit::Respawn(delay) => {
                 let st = out
                     .map(|o| o.status.to_string())
-                    .unwrap_or_else(|e| e.to_string());
+                    .unwrap_or_else(|e| format!("not started: {:?}", e.kind()));
                 let note = login::respawn_note(&st, started.elapsed(), attempt);
                 eprintln!("wol-lock: {note}");
                 // To the journal too: the next crash shows its cause (`journalctl -t wol-lock`).

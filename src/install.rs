@@ -407,7 +407,7 @@ mod tests {
     /// Every progress line the scripts print parses, in order, and the bar never goes back.
     #[test]
     fn the_scripts_speak_this_protocol() {
-        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../image/");
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../");
         let mut seen = Vec::new();
         for f in ["files/usr/lib/wolos/install-run"] {
             let text = std::fs::read_to_string(format!("{root}{f}")).unwrap();
@@ -515,7 +515,7 @@ mod tests {
         );
         let script = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../image/files/usr/lib/wolos/install-check"
+            "/../../files/usr/lib/wolos/install-check"
         );
         let text = std::fs::read_to_string(script).unwrap();
         for w in [

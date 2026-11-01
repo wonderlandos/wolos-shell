@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Absolute `/usr/local/share/...` paths in the shell name directories the image installs (image/build.sh
-//! or desktop/overlay). Installed-disk setup shot: no wallpaper behind Setup/lock, because they looked in
+//! Absolute `/usr/local/share/...` paths in the shell name directories the image installs (tools/build-rust.sh, wolos-system
+//! recipe or desktop/overlay). Installed-disk setup shot: no wallpaper behind Setup/lock, because they looked in
 //! `/usr/local/share/wol/wallpapers` while the image ships `/usr/local/share/wolos/wallpapers`.
 use std::path::{Path, PathBuf};
 
@@ -22,7 +22,14 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 #[test]
 fn share_paths_are_installed_by_the_image() {
     let r = root();
-    let build = std::fs::read_to_string(r.join("image/build.sh")).unwrap();
+    // What installs files now: tools/build-rust.sh here and the wolos-system recipe (wolos-pkgbuilds,
+    // next to wolos or $WOLOS_PKGBUILDS), which ships desktop/overlay and files/.
+    let pkgbuilds = std::env::var_os("WOLOS_PKGBUILDS")
+        .map_or_else(|| r.join("../wolos-pkgbuilds"), PathBuf::from);
+    let build = [r.join("tools/build-rust.sh"), pkgbuilds.join("wolos-system/PKGBUILD")]
+        .iter()
+        .map(|p| std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{}: {e}", p.display())))
+        .collect::<String>();
     let mut files = Vec::new();
     rs_files(&r.join("crates/shell/src"), &mut files);
     let mut bad = Vec::new();
