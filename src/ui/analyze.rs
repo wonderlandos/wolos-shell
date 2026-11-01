@@ -100,7 +100,7 @@ pub fn content(view: &View) -> (gtk::Widget, Option<gtk::Button>, gtk::Button) {
         }
         View::NotReady(full) => {
             let (title, body) = copy::analyze_offer(full);
-            b.append(&head("dialog-information-symbolic", &title, &body));
+            b.append(&head("help-about-symbolic", &title, &body));
             settings = Some(w::button("Open Settings", w::Kind::Primary, || {}));
             w::button("Cancel", w::Kind::Default, || {})
         }
