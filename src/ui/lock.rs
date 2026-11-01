@@ -403,6 +403,7 @@ pub fn run_lock() -> glib::ExitCode {
     }
     let mut attempt = 0;
     loop {
+        let started = std::time::Instant::now();
         let out = std::process::Command::new(&exe)
             .args(&ui_args)
             .env(login::LOCK_UI_ENV, "1")
@@ -424,11 +425,14 @@ pub fn run_lock() -> glib::ExitCode {
                 let st = out
                     .map(|o| o.status.to_string())
                     .unwrap_or_else(|e| e.to_string());
-                eprintln!(
-                    "wol-lock: lock screen ended without an unlock ({st}); starting a new one"
-                );
+                let note = login::respawn_note(&st, started.elapsed(), attempt);
+                eprintln!("wol-lock: {note}");
+                // To the journal too: the next crash shows its cause (`journalctl -t wol-lock`).
+                let _ = std::process::Command::new("logger")
+                    .args(["-t", "wol-lock", "-p", "user.warning", "--", &note])
+                    .status();
+                attempt = login::next_attempt(attempt, started.elapsed());
                 std::thread::sleep(delay);
-                attempt += 1;
             }
         }
     }
@@ -437,8 +441,11 @@ pub fn run_lock() -> glib::ExitCode {
 /// The lock screen itself. `startup`: fades in from the compositor's black, and the password
 /// typed here also opens the login keyring (nobody typed one at boot).
 fn run_lock_screen(startup: bool) -> glib::ExitCode {
+    // NON_UNIQUE: a hung earlier instance holding the bus name must not turn every new lock
+    // screen into a remote call that exits at once (the supervisor would respawn in vain).
     let app = gtk::Application::builder()
         .application_id("org.wolos.lock")
+        .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.connect_activate(move |app| {
         kit::style::install("");
@@ -524,7 +531,16 @@ fn lock_surface(app: &gtk::Application, win: &gtk::ApplicationWindow) -> Rc<dyn 
         };
         l.assign_window_to_monitor(&w, m);
     });
-    lock.lock();
+    // Refused or ended by the compositor: no lock surface will ever show. Exit non-zero so the
+    // supervisor starts a new one instead of waiting on a window nobody sees.
+    lock.connect_failed(|_| {
+        eprintln!("wol-lock: the compositor refused the session lock");
+        std::process::exit(1);
+    });
+    if !lock.lock() {
+        eprintln!("wol-lock: the session lock could not start");
+        std::process::exit(1);
+    }
     Rc::new(move || lock.unlock())
 }
 
