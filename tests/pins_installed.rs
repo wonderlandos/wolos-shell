@@ -25,11 +25,19 @@ fn repo(p: &str) -> PathBuf {
         .join(p)
 }
 
+/// A file of a sibling repo checked out next to wolos ($WOLOS_ISO / $WOLOS_PKGBUILDS override).
+fn sibling(var: &str, dir: &str, p: &str) -> PathBuf {
+    std::env::var_os(var)
+        .map_or_else(|| repo("..").join(dir), PathBuf::from)
+        .join(p)
+}
+
 fn packages() -> Vec<String> {
-    ["image/packages-base.txt", "desktop/packages.txt"]
+    // The installed system's lists live in wolos-iso (profile/).
+    ["profile/packages-base.txt", "profile/packages.desktop"]
         .iter()
         .flat_map(|f| {
-            std::fs::read_to_string(repo(f))
+            std::fs::read_to_string(sibling("WOLOS_ISO", "wolos-iso", f))
                 .unwrap_or_else(|e| panic!("{f}: {e}"))
                 .lines()
                 .filter_map(|l| l.split('#').next())
@@ -39,9 +47,9 @@ fn packages() -> Vec<String> {
         .collect()
 }
 
-/// WolOS binaries: installed by image/build-rust.sh or shipped in desktop/overlay/usr/bin.
+/// WolOS binaries: installed by tools/build-rust.sh or shipped in desktop/overlay/usr/bin.
 fn wolos_binary(program: &str) -> bool {
-    let build = std::fs::read_to_string(repo("image/build-rust.sh")).unwrap();
+    let build = std::fs::read_to_string(repo("tools/build-rust.sh")).unwrap();
     let listed = build
         .lines()
         .find(|l| l.trim_start().starts_with("for b in wold "))
