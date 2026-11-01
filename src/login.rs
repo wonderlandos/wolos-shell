@@ -248,8 +248,8 @@ pub fn authcheck_owned(password: String) -> Verdict {
 
 /// Printed by the lock screen on stdout right after a real unlock; nothing else ends the lock.
 pub const UNLOCKED: &str = "wol-lock: unlocked";
-/// Respawns before the supervisor gives up (the compositor still holds the session locked).
-pub const MAX_LOCK_RESPAWNS: u32 = 30;
+/// A lock screen that stayed up this long was healthy: the next crash starts the backoff over.
+pub const HEALTHY_LOCK: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// wol-lock supervisor (ADR 0012): what follows the end of a lock screen process.
 #[derive(Debug, PartialEq, Eq)]
@@ -259,13 +259,32 @@ pub enum LockExit {
 }
 
 /// A lock screen that ended without [`UNLOCKED`] crashed: Hyprland keeps the session locked
-/// (`misc:allow_session_lock_restore`) and a new one takes over, 100 ms .. 3 s apart.
+/// (`misc:allow_session_lock_restore`) and a new one takes over, 100 ms .. 3 s apart. Never gives
+/// up while the compositor lives: a supervisor that stopped left Hyprland's crash page for good.
 pub fn lock_exit(unlocked: bool, compositor_alive: bool, attempt: u32) -> LockExit {
-    if unlocked || !compositor_alive || attempt >= MAX_LOCK_RESPAWNS {
+    if unlocked || !compositor_alive {
         return LockExit::Done;
     }
     let ms = (100u64 << attempt.min(5)).min(3000);
     LockExit::Respawn(std::time::Duration::from_millis(ms))
+}
+
+/// The attempt after a lock screen that ran `ran`: back to 0 after a healthy one.
+pub fn next_attempt(attempt: u32, ran: std::time::Duration) -> u32 {
+    if ran >= HEALTHY_LOCK {
+        0
+    } else {
+        attempt.saturating_add(1)
+    }
+}
+
+/// Journal line for one lock screen that ended without an unlock (exit status or signal).
+pub fn respawn_note(status: &str, ran: std::time::Duration, attempt: u32) -> String {
+    format!(
+        "lock screen ended without an unlock ({status}) after {} ms; starting a new one (attempt {})",
+        ran.as_millis(),
+        attempt + 1
+    )
 }
 
 /// Set by the supervisor for the lock screen process it runs.
@@ -447,8 +466,23 @@ mod tests {
         assert_eq!(delays[0], LockExit::Respawn(Duration::from_millis(100)));
         assert_eq!(delays[1], LockExit::Respawn(Duration::from_millis(200)));
         assert_eq!(delays[7], LockExit::Respawn(Duration::from_secs(3)));
-        // Giving up never unlocks: the compositor keeps the session locked.
-        assert_eq!(lock_exit(false, true, MAX_LOCK_RESPAWNS), LockExit::Done);
+        // Never gives up while the compositor lives: the crash page would stay otherwise.
+        assert_eq!(
+            lock_exit(false, true, 10_000),
+            LockExit::Respawn(Duration::from_secs(3))
+        );
+        assert_eq!(next_attempt(4, Duration::from_millis(900)), 5);
+        assert_eq!(
+            next_attempt(4, HEALTHY_LOCK),
+            0,
+            "a healthy lock resets the backoff"
+        );
+        assert_eq!(next_attempt(u32::MAX, Duration::ZERO), u32::MAX);
+        assert_eq!(
+            respawn_note("signal: 11 (SIGSEGV)", Duration::from_millis(1234), 2),
+            "lock screen ended without an unlock (signal: 11 (SIGSEGV)) after 1234 ms; \
+starting a new one (attempt 3)"
+        );
         // Only the line the lock screen prints after a real unlock counts.
         assert!(reported_unlock(format!("x\n{UNLOCKED}\n").as_bytes()));
         assert!(!reported_unlock(b"wol-lock: unlocked-ish\n"));
