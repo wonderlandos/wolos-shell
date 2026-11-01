@@ -176,8 +176,17 @@ pub(crate) fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
     o.set_child(Some(&backdrop()));
     let scrim = w::vbox(0);
     scrim.add_css_class("lock-scrim");
-    scrim.append(content);
+    // The card keeps its size; a screen smaller than it (a VM window, 1366x768 at scale 2)
+    // scrolls instead of cutting off the foot with the buttons. Focus scrolls into view.
     content.set_vexpand(true);
+    let fit = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .vexpand(true)
+        .child(content)
+        .build();
+    fit.add_css_class("lock-fit");
+    scrim.append(&fit);
     o.add_overlay(&scrim);
     o.upcast()
 }
