@@ -73,6 +73,24 @@ fn zones() -> Vec<String> {
     .to_vec()
 }
 
+/// The first screen on 4:3, 1366x768 and a screen smaller than the card (1280x800 at scale 2):
+/// the card keeps its size and the screen scrolls, the buttons stay reachable.
+fn add_fit(v: &mut Vec<Case>) {
+    for (sw, sh) in [(1024, 768), (1366, 768), (1024, 600), (640, 400)] {
+        v.push(Case {
+            name: format!("installer-begin-{sw}x{sh}"),
+            size: (sw, sh),
+            class: "lock-window",
+            wallpaper: false,
+            build: Box::new(move || {
+                let i = Installer::new(&Hints::default(), true, true, zones(), Some(vec![]));
+                at(&i, "begin");
+                i.root.clone()
+            }),
+        });
+    }
+}
+
 fn at(i: &Rc<Installer>, page: &str) {
     let manual = |i: &Rc<Installer>| {
         i.with_flow(|f| {
@@ -200,4 +218,5 @@ pub fn add(v: &mut Vec<Case>) {
             });
         }
     }
+    add_fit(v);
 }
