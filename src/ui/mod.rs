@@ -120,6 +120,10 @@ pub fn run_shell() -> glib::ExitCode {
             let osd = panels::Osd::build(&app);
             menubar::poll_status(sys.clone());
             ipc::hypr_events(dock, panels.clone());
+            // Esc and the Super release come from wol-hypr; without it, bind them (audit3 R2A-10).
+            glib::spawn_future_local(async {
+                let _ = gtk::gio::spawn_blocking(crate::hypr::ensure_key_forwarding).await;
+            });
             let mut p = panels.borrow_mut();
             p.insert("osd", osd.window.clone());
             p.insert("clipboard", panels::clipboard(&app));
@@ -167,7 +171,7 @@ pub fn run_shell() -> glib::ExitCode {
 }
 
 /// `wol shell show menubar|dock` (⌃F2, ⌃F3) moves the keyboard into that bar, `hide` gives it
-/// back; `wol shell hide banners` (Esc) dismisses every notification banner.
+/// back; `wol shell hide banners` and `hide transient` (Esc) dismiss every notification banner.
 fn keyboard_handler(
     bar: Rc<dyn Fn(bool)>,
     dock: Rc<dyn Fn(bool)>,
@@ -180,6 +184,12 @@ fn keyboard_handler(
             ("menubar", Verb::Show | Verb::Toggle | Verb::Hide) => bar(take),
             ("dock", Verb::Show | Verb::Toggle | Verb::Hide) => dock(take),
             ("banners", Verb::Hide | Verb::Toggle) => dismiss(),
+            // Esc (`hide transient`, forwarded by wol-hypr, or the fallback bind without it) also
+            // dismisses the banners; not handled here, so the transient set still closes.
+            (transient::GROUP, Verb::Hide) => {
+                dismiss();
+                return false;
+            }
             _ => return false,
         }
         true
@@ -271,7 +281,18 @@ pub fn run_panel_app(
         kit::snapshot_on_map(&w, class);
         let w3 = w.clone();
         transient::close_outside(app, &w, Rc::new(move || w3.close()));
+        hide_shell_panels();
         w.present();
     });
     app.run_with_args::<&str>(&[])
+}
+
+/// A panel app opening closes the shell's own transient panels first (one thing open at a time,
+/// as a shell panel opening closes Search). Nothing happens without a running shell.
+fn hide_shell_panels() {
+    use std::io::Write;
+    let path = crate::protocol::socket_path(&kit::runtime_dir());
+    if let Ok(mut s) = std::os::unix::net::UnixStream::connect(path) {
+        let _ = s.write_all(format!("hide {}\n", transient::GROUP).as_bytes());
+    }
 }

@@ -7,6 +7,9 @@ use shared::login::{AVATAR_TONES, NewAccount};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
     Welcome,
+    /// This computer's Secure Boot key still waits for the firmware's key screen (the blue
+    /// screen the install said would come): what to do at the next restart. Shown only then.
+    KeyScreen,
     Language,
     Wifi,
     Account,
@@ -14,9 +17,10 @@ pub enum Step {
     Done,
 }
 
-/// Welcome, four questions, Done.
-pub const STEPS: [Step; 6] = [
+/// Welcome, the key screen when it is pending, four questions, Done.
+pub const STEPS: [Step; 7] = [
     Step::Welcome,
+    Step::KeyScreen,
     Step::Language,
     Step::Wifi,
     Step::Account,
@@ -28,6 +32,7 @@ impl Step {
     pub fn title(self) -> &'static str {
         match self {
             Step::Welcome => "Welcome",
+            Step::KeyScreen => "Finish Secure Boot Setup",
             Step::Language => "Language & Region",
             Step::Wifi => "Wi-Fi",
             Step::Account => "Create Your Account",
@@ -40,6 +45,9 @@ impl Step {
     pub fn subtitle(self) -> &'static str {
         match self {
             Step::Welcome => "Let's get you set up.",
+            Step::KeyScreen => {
+                "This computer hasn't accepted its WolOS key yet. At the next restart a blue screen asks once."
+            }
             Step::Language => "WolOS uses this language and keyboard. You can change them later.",
             Step::Wifi => "Choose a network to get online. You can skip this and join later.",
             Step::Account => "You'll use this name and password to sign in.",
@@ -52,6 +60,7 @@ impl Step {
     pub fn id(self) -> &'static str {
         match self {
             Step::Welcome => "welcome",
+            Step::KeyScreen => "key-screen",
             Step::Language => "language",
             Step::Wifi => "wifi",
             Step::Account => "account",
@@ -157,14 +166,70 @@ fn xkb_of_console(keymap: &str) -> Option<&'static str> {
     })
 }
 
-/// What the machine already knows: `LANG`, the time zone (`/etc/localtime` link) and the console
-/// keymap (`KEYMAP=` in `/etc/vconsole.conf`). Any of them may be missing.
+/// What the machine already knows: `LANG`, the time zone (`/etc/localtime` link), the console
+/// keymap (`KEYMAP=` in `/etc/vconsole.conf`) and the names `/etc/passwd` already has (the new
+/// system gets the same system users). Any of them may be missing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Hints {
     pub lang: Option<String>,
     pub zone: Option<String>,
     pub keymap: Option<String>,
+    pub users: Vec<String>,
 }
+
+/// Names of `/etc/passwd` lines.
+pub fn passwd_names(passwd: &str) -> Vec<String> {
+    passwd
+        .lines()
+        .filter_map(|l| l.split(':').next())
+        .filter(|n| !n.is_empty() && !n.starts_with('#'))
+        .map(String::from)
+        .collect()
+}
+
+/// System users the live image may lack but an installed WolOS or Arch has: never an account name.
+pub const RESERVED_NAMES: [&str; 40] = [
+    "live",
+    "wolos",
+    "_xguard",
+    "_wollogin",
+    "_wolinstall",
+    "alpm",
+    "avahi",
+    "brltty",
+    "colord",
+    "cups",
+    "dbus",
+    "dhcpcd",
+    "dnsmasq",
+    "flatpak",
+    "ftp",
+    "geoclue",
+    "git",
+    "greetd",
+    "http",
+    "lp",
+    "mail",
+    "nm-openvpn",
+    "nvidia-persistenced",
+    "openvpn",
+    "polkitd",
+    "rpc",
+    "rtkit",
+    "saned",
+    "seatd",
+    "systemd-coredump",
+    "systemd-journal-remote",
+    "systemd-network",
+    "systemd-oom",
+    "systemd-resolve",
+    "systemd-timesync",
+    "tor",
+    "tss",
+    "usbmux",
+    "uuidd",
+    "wheel",
+];
 
 impl Hints {
     /// Reads the hints on this machine (`root` = `/`).
@@ -185,6 +250,9 @@ impl Hints {
                     l.split_once("zoneinfo/").map(|(_, z)| z.to_string())
                 }),
             keymap,
+            users: file("etc/passwd")
+                .map(|p| passwd_names(&p))
+                .unwrap_or_default(),
         }
     }
 
@@ -283,6 +351,8 @@ pub enum Field {
     Password,
     Verify,
     Hint,
+    /// The computer's name (Install WolOS only).
+    Hostname,
 }
 
 /// Avatar text: initials, "?" before any input.
@@ -296,6 +366,10 @@ pub fn initials_or_placeholder(full: &str) -> String {
 pub struct Draft {
     pub language: usize,
     pub keyboard: usize,
+    /// The person picked the keyboard: a language change leaves it alone.
+    keyboard_chosen: bool,
+    /// Names this computer already has (`Hints::users`): not for the new account.
+    pub taken: Vec<String>,
     pub full_name: String,
     pub name: String,
     name_edited: bool,
@@ -316,15 +390,32 @@ impl Draft {
         Draft {
             language,
             keyboard: h.keyboard(language),
+            taken: h.users.clone(),
             ..Draft::default()
         }
     }
 
-    /// Picking a language also picks its keyboard.
+    /// Picking a language also picks its keyboard, unless the person already chose one.
     pub fn set_language(&mut self, i: usize) {
         self.language = i.min(LANGUAGES.len() - 1);
+        if self.keyboard_chosen {
+            return;
+        }
         let km = LANGUAGES[self.language].keymap;
         self.keyboard = KEYBOARDS.iter().position(|k| k.0 == km).unwrap_or(0);
+    }
+
+    /// The person picked a keyboard: it stays through language changes.
+    pub fn set_keyboard(&mut self, i: usize) {
+        self.keyboard = i.min(KEYBOARDS.len() - 1);
+        self.keyboard_chosen = true;
+    }
+
+    /// `name` belongs to a system user here or in the new system.
+    pub fn name_taken(&self, name: &str) -> bool {
+        RESERVED_NAMES.contains(&name)
+            || wol_core::settings::users::is_reserved(name)
+            || self.taken.iter().any(|t| t == name)
     }
 
     /// Derives the account name until the user edits it.
@@ -345,6 +436,10 @@ impl Draft {
         if self.full_name.trim().is_empty() {
             return Some((Field::FullName, "Enter your full name."));
         }
+        // A reserved or existing name says so; the core rules refuse reserved names as "name" too.
+        if self.name_taken(&self.name) {
+            return Some((Field::Name, crate::copy::INSTALL_NAME_TAKEN));
+        }
         let rules = wol_core::settings::users::validate_account(&self.account());
         if rules == Err("name") || self.name.is_empty() {
             return Some((
@@ -354,6 +449,16 @@ impl Draft {
         }
         if self.password.is_empty() {
             return Some((Field::Password, "Choose a password."));
+        }
+        if !wol_core::settings::users::is_valid_password(&self.password) {
+            return Some((
+                Field::Password,
+                if self.password.chars().count() < 8 {
+                    "Use at least 8 characters."
+                } else {
+                    "Use at most 128 characters, none of them control characters."
+                },
+            ));
         }
         if self.password != self.verify {
             return Some((Field::Verify, "Passwords don't match."));
@@ -453,6 +558,8 @@ pub struct Flow {
     pub wifi: Option<WifiPick>,
     wired: bool,
     created: bool,
+    /// The Secure Boot key waits for the firmware's key screen (`/run/wolos/mok-pending`).
+    key_pending: bool,
 }
 
 impl Flow {
@@ -463,11 +570,20 @@ impl Flow {
             wifi: None,
             wired,
             created: false,
+            key_pending: false,
         }
     }
 
+    /// The key screen page is shown (the key is still queued).
+    pub fn with_key_pending(mut self, on: bool) -> Flow {
+        self.key_pending = on;
+        self
+    }
+
     fn after(&self, s: Step) -> Option<Step> {
-        match s.next() {
+        let n = s.next();
+        match n {
+            Some(Step::KeyScreen) if !self.key_pending => self.after(Step::KeyScreen),
             Some(Step::Wifi) if self.wired => Step::Wifi.next(),
             n => n,
         }
@@ -475,6 +591,7 @@ impl Flow {
 
     fn before(&self, s: Step) -> Option<Step> {
         match s.prev() {
+            Some(Step::KeyScreen) if !self.key_pending => self.before(Step::KeyScreen),
             Some(Step::Wifi) if self.wired => Step::Wifi.prev(),
             p => p,
         }
@@ -599,6 +716,7 @@ mod tests {
             STEPS.map(Step::title),
             [
                 "Welcome",
+                "Finish Secure Boot Setup",
                 "Language & Region",
                 "Wi-Fi",
                 "Create Your Account",
@@ -606,13 +724,35 @@ mod tests {
                 "You're All Set",
             ]
         );
-        assert_eq!(Step::Welcome.next(), Some(Step::Language));
+        assert_eq!(Step::Welcome.next(), Some(Step::KeyScreen));
         assert_eq!(Step::Done.next(), None);
         assert_eq!(Step::Welcome.prev(), None);
         assert_eq!(Step::Wifi.prev(), Some(Step::Language));
         for s in STEPS {
-            assert!(crate::copy::lint(s.subtitle()).is_empty(), "{s:?}");
+            assert!(
+                crate::copy::lint(s.subtitle()).is_empty(),
+                "{s:?}: {:?}",
+                crate::copy::lint(s.subtitle())
+            );
         }
+    }
+
+    /// The key screen page shows only while the key is queued; Back skips it the same way.
+    #[test]
+    fn the_key_screen_page_comes_only_while_the_key_waits() {
+        let fake = FakeLogin::new(&[]);
+        let mut f = Flow::new(Draft::default(), true);
+        assert_eq!(
+            f.drive(&fake),
+            Next::Go(Step::Language),
+            "no key: straight on"
+        );
+        assert_eq!(f.back(), Some(Step::Welcome));
+        let mut f = Flow::new(Draft::default(), true).with_key_pending(true);
+        assert_eq!(f.drive(&fake), Next::Go(Step::KeyScreen));
+        assert_eq!(f.drive(&fake), Next::Go(Step::Language));
+        assert_eq!(f.back(), Some(Step::KeyScreen));
+        assert_eq!(f.back(), Some(Step::Welcome));
     }
 
     #[test]
@@ -624,6 +764,15 @@ mod tests {
         let mut d = Draft::default();
         d.set_language(pt);
         assert_eq!(KEYBOARDS[d.keyboard].0, "br");
+        // A keyboard the person chose is not reset by the language.
+        let intl = KEYBOARDS.iter().position(|k| k.0 == "us(intl)").unwrap();
+        d.set_keyboard(intl);
+        d.set_language(0);
+        assert_eq!(KEYBOARDS[d.keyboard].0, "us(intl)", "chosen keyboard stays");
+        let mut fresh = Draft::default();
+        fresh.set_language(pt);
+        fresh.set_language(0);
+        assert_eq!(KEYBOARDS[fresh.keyboard].0, "us", "a derived one follows");
         assert_eq!(LANGUAGES[0].locale, "en_US.UTF-8");
         assert!(
             LANGUAGES
@@ -650,6 +799,7 @@ mod tests {
             lang: lang.map(String::from),
             zone: zone.map(String::from),
             keymap: keymap.map(String::from),
+            users: Vec::new(),
         };
         let pick = |h: &Hints| {
             let d = Draft::detected(h);
@@ -693,11 +843,19 @@ mod tests {
             root.join("etc/localtime"),
         )
         .unwrap();
+        std::fs::write(
+            root.join("etc/passwd"),
+            "root:x:0:0::/root:/bin/sh\nlive:x:1000:1000::/home/live:/bin/sh\n\n",
+        )
+        .unwrap();
         let r = Hints::read(&root);
         assert_eq!(
             (r.zone.as_deref(), r.keymap.as_deref()),
             (Some("Europe/Madrid"), Some("de-latin1"))
         );
+        assert_eq!(r.users, ["root", "live"]);
+        let d = Draft::detected(&r);
+        assert!(d.name_taken("live") && d.name_taken("wolos") && !d.name_taken("alice"));
         assert_eq!(xkb_of_console("uk"), Some("gb"));
         assert_eq!(xkb_of_console("us-acentos"), Some("us(intl)"));
         let _ = std::fs::remove_dir_all(&root);
@@ -718,8 +876,22 @@ mod tests {
         assert_eq!(d.name, "alice", "edited account name stays");
         d.set_name("Alice!");
         assert_eq!(d.account_problem().map(|p| p.0), Some(Name));
+        d.set_name("live");
+        assert_eq!(
+            d.account_problem(),
+            Some((Name, crate::copy::INSTALL_NAME_TAKEN))
+        );
         d.set_name("alice");
         assert_eq!(d.account_problem(), Some((Password, "Choose a password.")));
+        d.password = "curious".into();
+        d.verify = "curious".into();
+        assert_eq!(
+            d.account_problem(),
+            Some((Password, "Use at least 8 characters.")),
+            "a weak password would become the disk's key"
+        );
+        d.password = "x".repeat(129);
+        assert_eq!(d.account_problem().map(|p| p.0), Some(Password));
         d.password = "curiouser".into();
         d.verify = "curiouserr".into();
         assert_eq!(

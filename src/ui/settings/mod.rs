@@ -278,28 +278,82 @@ pub fn search(query: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// The page `wol-settings [page]` asks for, under today's name; None for the window as it was.
+pub fn requested_page(args: &[String]) -> Option<&str> {
+    args.get(1).map(|p| canonical(p))
+}
+
+thread_local! {
+    /// The one Settings window's content, once built.
+    static WINDOW: RefCell<Option<Rc<w::AppWindow>>> = const { RefCell::new(None) };
+    /// A page asked for while the window was still being built.
+    static PENDING: RefCell<Option<String>> = const { RefCell::new(None) };
+    static BUILDING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// `wol-settings [page]`. One window: a launch while Settings runs reaches the running instance
+/// with its own arguments (`HANDLES_COMMAND_LINE`), which presents the window on that page (live:
+/// the Wi-Fi tile's "Wi-Fi Settings…" opened the pane of the first launch, or a second window).
 pub fn run() -> glib::ExitCode {
     let app = gtk::Application::builder()
         .application_id("org.wolos.settings")
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
-    app.connect_activate(|app| {
+    app.connect_command_line(|app, cmdline| {
+        let args: Vec<String> = cmdline
+            .arguments()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        present(app, requested_page(&args).map(str::to_owned));
+        glib::ExitCode::SUCCESS
+    });
+    app.run()
+}
+
+/// Shows the Settings window on `page` (built on the first call; host facts read off the UI
+/// thread, so a slow `hostname` never blanks the launch).
+fn present(app: &gtk::Application, page: Option<String>) {
+    if let Some(aw) = WINDOW.with_borrow(|w| w.clone()) {
+        if let Some(p) = &page {
+            aw.open(p);
+        }
+        if let Some(win) = app.active_window() {
+            win.present();
+        }
+        return;
+    }
+    if page.is_some() {
+        PENDING.set(page);
+    }
+    if BUILDING.replace(true) {
+        return;
+    }
+    let hold = app.hold();
+    let app = app.clone();
+    glib::spawn_future_local(async move {
+        let host = gio::spawn_blocking(Host::read)
+            .await
+            .unwrap_or_else(|_| Host::read());
         kit::style::install("");
         let win = gtk::ApplicationWindow::builder()
-            .application(app)
+            .application(&app)
             .title("System Settings")
             .default_width(w::APP_SIZE.0)
             .default_height(w::APP_SIZE.1)
             .decorated(false)
             .build();
-        let aw = content(crate::system::default_system(), &Host::read());
-        if let Some(p) = std::env::args().nth(1) {
-            aw.open(canonical(&p));
+        let aw = Rc::new(content(crate::system::default_system(), &host));
+        if let Some(p) = PENDING.take() {
+            aw.open(&p);
         }
         win.set_child(Some(&aw.root));
         kit::snapshot_on_map(&win, "settings");
         win.present();
+        WINDOW.set(Some(aw));
+        BUILDING.set(false);
+        drop(hold);
     });
-    app.run_with_args::<&str>(&[])
 }
 
 /// Host facts shown by the panes (injected so golden renders do not depend on the build machine).
@@ -1128,5 +1182,33 @@ mod tests {
         assert_eq!(canonical("lock & idle"), "Lock Screen");
         assert_eq!(canonical("Accounts"), "Users & Groups");
         assert_eq!(canonical("Wi-Fi"), "Wi-Fi");
+    }
+
+    /// Live: `wol-settings Wi-Fi` while Settings ran opened the first launch's page (the primary
+    /// instance read its own argv). The page comes from the launch's own arguments, under
+    /// today's name, and every alias lands on a page Settings has.
+    #[test]
+    fn a_launch_names_its_page_under_todays_name() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            requested_page(&v(&["wol-settings", "Lock & Idle"])),
+            Some("Lock Screen")
+        );
+        assert_eq!(
+            requested_page(&v(&["wol-settings", "Wi-Fi"])),
+            Some("Wi-Fi")
+        );
+        assert_eq!(
+            requested_page(&v(&["wol-settings", "About"])),
+            Some("About")
+        );
+        assert_eq!(requested_page(&v(&["wol-settings"])), None);
+        assert_eq!(requested_page(&[]), None);
+        for (old, new) in ALIASES {
+            assert!(
+                PAGES.contains(&new) || SUBPAGES.contains(&new),
+                "{old} -> {new}: not a page"
+            );
+        }
     }
 }

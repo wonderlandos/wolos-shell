@@ -2,7 +2,7 @@
 //! Wallpaper, OSD, clipboard, session menu, window switcher.
 use crate::kit::{
     self,
-    surface::{Keyboard, Spec},
+    surface::{Keyboard, Layer, Spec},
     widgets as w,
 };
 use gtk::{gdk, glib, prelude::*};
@@ -77,28 +77,44 @@ pub(super) fn panel(
     anchor: [bool; 4],
     child: &impl IsA<gtk::Widget>,
 ) -> gtk::Window {
-    let win = super::window(app, "panel", Spec::panel(ns, anchor, Keyboard::OnDemand));
-    crate::kit::surface::survive_output_loss(&win, Spec::panel(ns, anchor, Keyboard::OnDemand));
+    panel_on(
+        app,
+        class,
+        ns,
+        anchor,
+        Layer::Overlay,
+        Keyboard::OnDemand,
+        child,
+    )
+}
+
+/// [`panel`] on a chosen layer and keyboard mode. Top, like the banners (`Spec::banners`): only
+/// a fullscreen window mapped after it covers it; Overlay: nothing does.
+pub(super) fn panel_on(
+    app: &gtk::Application,
+    class: &str,
+    ns: &'static str,
+    anchor: [bool; 4],
+    layer: Layer,
+    keyboard: Keyboard,
+    child: &impl IsA<gtk::Widget>,
+) -> gtk::Window {
+    let spec = Spec {
+        layer,
+        ..Spec::panel(ns, anchor, keyboard)
+    };
+    let win = super::window(app, "panel", spec);
+    crate::kit::surface::survive_output_loss(&win, spec);
     win.add_css_class(class);
     win.set_child(Some(child));
-    let keys = gtk::EventControllerKey::new();
     let w2 = win.clone();
-    keys.connect_key_pressed(move |_, k, _, _| {
-        if k == gdk::Key::Escape {
-            w2.set_visible(false);
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
-    win.add_controller(keys);
+    kit::surface::on_escape(&win, move || w2.set_visible(false));
     win.upcast()
 }
 
 /// About <App> card: close light, 64 px icon, name, app id. Glass, centred (HIG panel).
 pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
     let g = w::glass_panel(w::S6);
-    g.add_css_class("about-app");
     g.set_size_request(w::ABOUT_WIDTH, -1);
     let close = gtk::Button::new();
     for c in ["light", "close"] {
@@ -133,8 +149,31 @@ pub fn about(app: &gtk::Application, name: &str, icon: &str, class: &str) -> gtk
         &about_card(name, icon, class),
     );
     win.connect_hide(|w| w.destroy());
+    // One at a time, and closed like the transient panels: another app in front, a press on the
+    // Dock, a menu or a panel opening (audit2 A2-15; it stayed until Esc or its close light).
+    if let Some(old) = ABOUT.with_borrow(|a| a.upgrade()) {
+        old.set_visible(false);
+    }
+    ABOUT.with_borrow_mut(|a| a.set(Some(&win)));
+    if !ABOUT_CLOSES.replace(true) {
+        super::transient::also_close(Rc::new(|| {
+            if let Some(w) = ABOUT.with_borrow(|a| a.upgrade()) {
+                w.set_visible(false);
+            }
+        }));
+    }
     win
 }
+
+thread_local! {
+    /// The About panel on screen (destroyed on hide).
+    static ABOUT: RefCell<glib::WeakRef<gtk::Window>> = Default::default();
+    /// Its closer is in the transient set (added once, not per About).
+    static ABOUT_CLOSES: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The volume OSD never takes the keyboard (each volume key took it from the app in front).
+pub const OSD_KEYBOARD: Keyboard = Keyboard::None;
 
 pub struct Osd {
     pub window: gtk::Window,
@@ -155,7 +194,17 @@ impl Osd {
         row.append(&icon);
         row.append(&bar);
         g.append(&row);
-        let window = panel(app, "osd", "wol-panel-osd", [false, true, false, false], &g);
+        // Top layer (kit::surface::Spec::banners), shown over full screen too (macOS HUD). No
+        // keyboard: an on-demand layer takes the keys from the app on map.
+        let window = panel_on(
+            app,
+            "osd",
+            "wol-panel-osd",
+            [false, true, false, false],
+            Layer::Top,
+            OSD_KEYBOARD,
+            &g,
+        );
         Rc::new(Osd {
             window,
             icon,
@@ -164,7 +213,8 @@ impl Osd {
         })
     }
 
-    /// Shows for 1.5 s; a newer show extends it.
+    /// Shows for 1.5 s; a newer show extends it. Also over a window in full screen, like the
+    /// macOS volume HUD (brief; banners are the ones held, `notify::held`).
     pub fn show(self: &Rc<Self>, icon: &str, level: u8) {
         self.icon.set_icon_name(Some(icon));
         self.bar.set_fraction(level as f64 / 100.0);
@@ -205,7 +255,13 @@ pub fn clipboard(app: &gtk::Application) -> gtk::Window {
             for e in h.iter() {
                 let row = w::list_button("edit-paste-symbolic", &crate::clipboard::preview(e), "");
                 let e = e.clone();
-                row.connect_clicked(move |b| b.display().clipboard().set_text(&e));
+                // A pick copies and closes, like a menu item (audit2 A2-15).
+                row.connect_clicked(move |b| {
+                    b.display().clipboard().set_text(&e);
+                    if let Some(win) = b.root().and_downcast::<gtk::Window>() {
+                        win.set_visible(false);
+                    }
+                });
                 list.append(&row);
             }
         })
@@ -218,17 +274,20 @@ pub fn clipboard(app: &gtk::Application) -> gtk::Window {
     g.append(&head);
     g.append(&scroll);
     render();
-    let cb = gdk::Display::default().expect("display").clipboard();
-    cb.connect_changed(move |cb| {
-        let (history, render) = (history.clone(), render.clone());
-        cb.read_text_async(gio_none(), move |r| {
-            if let Ok(Some(t)) = r
-                && crate::clipboard::push(&mut history.borrow_mut(), &t)
-            {
-                render();
-            }
+    // No display (the shell lost its compositor): the panel shows, nothing is recorded (audit2
+    // A2-17: this was an `expect`).
+    if let Some(d) = gdk::Display::default() {
+        d.clipboard().connect_changed(move |cb| {
+            let (history, render) = (history.clone(), render.clone());
+            cb.read_text_async(gio_none(), move |r| {
+                if let Ok(Some(t)) = r
+                    && crate::clipboard::push(&mut history.borrow_mut(), &t)
+                {
+                    render();
+                }
+            });
         });
-    });
+    }
     panel(app, "clipboard", "wol-panel-clipboard", [false; 4], &g)
 }
 
@@ -413,8 +472,33 @@ impl Default for SessionMenu {
     }
 }
 
+thread_local! {
+    /// The shell's session menu, for [`ask_session`].
+    static SESSION: RefCell<Option<Rc<SessionMenu>>> = const { RefCell::new(None) };
+}
+
+/// The question a `wol shell show <target>` opens the session panel on: `session-logout` ->
+/// `logout`, `session-shutdown` -> `shutdown` (the WolOS menu's Log Out… and Shut Down…).
+pub fn session_action(target: &str) -> Option<&'static str> {
+    Some(match target {
+        "session-logout" => "logout",
+        "session-shutdown" => "shutdown",
+        _ => return None,
+    })
+}
+
+/// The session panel asks `action`'s question (countdown running); nothing without a panel.
+pub fn ask_session(action: &'static str) {
+    SESSION.with_borrow(|s| {
+        if let Some(m) = s {
+            m.ask(action);
+        }
+    });
+}
+
 pub fn session(app: &gtk::Application) -> gtk::Window {
-    let menu = SessionMenu::new();
+    let menu = Rc::new(SessionMenu::new());
+    SESSION.set(Some(menu.clone()));
     let win = panel(app, "session", "wol-panel-session", [false; 4], &menu.root);
     // Hidden (Esc, toggled away, clicked outside): the countdown stops and the icons come back.
     win.connect_visible_notify(move |win| {
@@ -427,6 +511,57 @@ pub fn session(app: &gtk::Application) -> gtk::Window {
 
 #[cfg(test)]
 mod tests {
+    /// Log Out… and Shut Down… in the WolOS menu ran the same `toggle session`: each now opens
+    /// the panel on its own question, through a target the CLI accepts.
+    #[test]
+    fn the_wolos_menu_opens_the_session_panel_on_its_question() {
+        use super::session_action;
+        assert_eq!(session_action("session-logout"), Some("logout"));
+        assert_eq!(session_action("session-shutdown"), Some("shutdown"));
+        assert_eq!(session_action("session"), None, "the plain panel");
+        for t in ["session-logout", "session-shutdown"] {
+            assert!(
+                shared::shell::PANELS.contains(&t),
+                "{t}: the wol CLI rejects it"
+            );
+            let action = session_action(t).unwrap();
+            assert!(
+                crate::clipboard::needs_confirm(action),
+                "{action} asks first"
+            );
+            assert!(crate::clipboard::session_command(action).is_some());
+        }
+    }
+
+    /// Audit2 A2-15/A2-17: About ignored everything but Esc and its close light, a clipboard pick
+    /// left the panel open, and the clipboard panel panicked without a display.
+    #[test]
+    fn about_and_clipboard_close_like_menus_and_never_panic() {
+        let src = include_str!("panels.rs");
+        let span = |from: &str, to: &str| {
+            let a = src.find(from).unwrap();
+            &src[a..a + src[a..].find(to).unwrap()]
+        };
+        let about = span("pub fn about(", "pub struct Osd");
+        assert!(
+            about.contains("transient::also_close"),
+            "About closes with the set"
+        );
+        assert!(
+            about.contains("old.set_visible(false)"),
+            "one About at a time"
+        );
+        let clip = span("pub fn clipboard(", "fn gio_none");
+        assert!(
+            clip.contains("win.set_visible(false)"),
+            "a pick closes the panel"
+        );
+        assert!(
+            !clip.contains(concat!(".expect", "(")),
+            "no expect on the display"
+        );
+    }
+
     /// `wol wallpaper set` and Settings save the choice; the desktop showed one hard-coded picture.
     #[test]
     fn desktop_follows_the_saved_wallpaper() {

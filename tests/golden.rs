@@ -494,9 +494,9 @@ fn cases() -> Vec<Case> {
                 };
                 let clients = vec![
                     c("0x1", "foot", "~/src/wolos — fish", 1, [900, 560]),
-                    c("0x2", "wol-files", "Documents", 1, [1100, 700]),
+                    c("0x2", "org.gnome.Nautilus", "Documents", 1, [1100, 700]),
                     c("0x3", "helium", "WolOS — The friendly BSD", 1, [1280, 760]),
-                    c("0x4", "wol-mail", "Inbox", 1, [800, 600]),
+                    c("0x4", "org.gnome.Geary", "Inbox", 1, [800, 600]),
                     c("0x5", "wol-music", "Music", 2, [800, 600]),
                     c("0x6", "wol-notes", "Notes", 3, [800, 600]),
                 ];
@@ -928,7 +928,7 @@ fn cases() -> Vec<Case> {
                         flatpaks: vec![],
                     },
                 );
-                s.aw.content.set_visible_child_name("AUR");
+                s.aw.open("AUR");
                 s.aw.root.clone().upcast()
             }),
         });
@@ -948,7 +948,7 @@ fn cases() -> Vec<Case> {
                     },
                 );
                 s.aur.show_open();
-                s.aw.content.set_visible_child_name("AUR");
+                s.aw.open("AUR");
                 s.aw.root.clone().upcast()
             }),
         });
@@ -999,6 +999,22 @@ fn cases() -> Vec<Case> {
             });
         }
     }
+    // Audit2 A2-4: a narrow Settings window brings its sidebar back from the toolbar toggle.
+    v.push(Case {
+        name: "settings-sidebar-narrow".into(),
+        size: w::APP_NARROW,
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let a =
+                ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+            a.open("General");
+            // After the narrow layout is applied on realize.
+            let t = a.sidebar_toggle.clone();
+            a.root.connect_map(move |_| t.emit_clicked());
+            a.root.clone().upcast()
+        }),
+    });
     // Session menu and the Restart / Shut Down / Log Out question (60 s countdown).
     v.push(Case {
         name: "session".into(),
@@ -1478,6 +1494,79 @@ fn a_stalled_page_fade_settles() {
     win.destroy();
 }
 
+/// Audit2 A2-4: below 640 px the sidebar collapsed with no way back. The toolbar toggle shows it in
+/// place of the content, picking a row returns to the content, and widening the window brings the
+/// two-pane layout back.
+fn a_narrow_window_can_bring_the_sidebar_back() {
+    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+    let (aw, ah) = w::APP_NARROW;
+    let win = gtk::Window::builder()
+        .decorated(false)
+        .default_width(aw)
+        .default_height(ah)
+        .build();
+    win.set_child(Some(&a.root));
+    win.present();
+    pump(300);
+    let side = a
+        .sidebar
+        .parent()
+        .and_then(|v| v.parent())
+        .expect("sidebar scroller");
+    assert!(
+        a.sidebar_toggle.is_visible(),
+        "narrow: the toolbar offers the sidebar"
+    );
+    assert!(
+        a.sidebar_toggle.is_focusable(),
+        "the toggle takes the keyboard"
+    );
+    assert!(
+        !side.is_visible() && a.content.is_visible(),
+        "narrow starts on the content"
+    );
+    a.sidebar_toggle.emit_clicked();
+    assert!(
+        side.is_visible() && !a.content.is_visible(),
+        "the toggle shows the sidebar"
+    );
+    assert!(
+        a.sidebar_toggle.is_visible(),
+        "the sidebar alone still offers the way back to the page"
+    );
+    a.sidebar_toggle.emit_clicked();
+    assert!(
+        !side.is_visible() && a.content.is_visible(),
+        "the toggle goes back to the content"
+    );
+    a.sidebar_toggle.emit_clicked();
+    assert!(side.is_visible(), "and shows the sidebar again");
+    let mut i = 0;
+    let row = loop {
+        let r = a.sidebar.row_at_index(i).expect("a Sound row");
+        if r.widget_name() == "Sound" {
+            break r;
+        }
+        i += 1;
+    };
+    a.sidebar.select_row(Some(&row));
+    row.emit_activate();
+    assert!(
+        !side.is_visible() && a.content.is_visible(),
+        "picking a row shows its page"
+    );
+    assert_eq!(a.content.visible_child_name().as_deref(), Some("Sound"));
+    assert!(a.sidebar_toggle.is_visible());
+    win.set_default_size(900, 600);
+    pump(300);
+    assert!(
+        side.is_visible() && a.content.is_visible(),
+        "wide: both panes"
+    );
+    assert!(!a.sidebar_toggle.is_visible(), "wide: no toggle");
+    win.destroy();
+}
+
 fn find_type<T: IsA<gtk::Widget>>(w: &gtk::Widget, out: &mut Vec<T>) {
     if let Some(t) = w.downcast_ref::<T>() {
         out.push(t.clone());
@@ -1634,7 +1723,21 @@ fn control_center_cases() -> Vec<Case> {
     ]
 }
 
+/// Let focus and any focus-ring transition finish: an idle round, then two frame-clock frames.
+fn settle(win: &gtk::Window) {
+    while glib::MainContext::default().iteration(false) {}
+    if let Some(fc) = win.frame_clock() {
+        let start = fc.frame_counter();
+        let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        while fc.frame_counter() < start + 2 && std::time::Instant::now() < until {
+            win.queue_draw();
+            pump(16);
+        }
+    }
+}
+
 fn render(win: &gtk::Window) -> gdk::Texture {
+    settle(win);
     let (wd, ht) = (win.width(), win.height());
     let p = gtk::WidgetPaintable::new(Some(win));
     let mut node = None;
@@ -1874,11 +1977,12 @@ fn main() {
     );
     let sock = Path::new(&std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()))
         .join(format!("broadway{}.socket", n + 1));
+    // gtk::init races broadwayd start-up: wait (up to 5 s) until its socket accepts a connection.
     for _ in 0..100 {
-        if sock.exists() {
+        if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
     let cfg = std::env::temp_dir().join(format!("wol-golden-{}", std::process::id()));
     unsafe {
@@ -1915,6 +2019,10 @@ fn main() {
         });
     }
     gtk::init().expect("gtk init");
+    // goldens must not depend on the caret blink phase
+    if let Some(s) = gtk::Settings::default() {
+        s.set_gtk_cursor_blink(false);
+    }
     // Product symbolic icons (installed into the WolOS theme on the image).
     gtk::IconTheme::for_display(&gdk::Display::default().unwrap()).add_search_path(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1922,6 +2030,7 @@ fn main() {
     ));
     effects_page_answers_after_it_is_built();
     a_stalled_page_fade_settles();
+    a_narrow_window_can_bring_the_sidebar_back();
     displays_coming_and_going_leave_nothing_behind();
     a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     return_belongs_to_the_button_with_the_keyboard_ring();

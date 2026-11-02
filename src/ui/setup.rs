@@ -67,10 +67,16 @@ impl Setup {
     pub fn with(sys: &dyn System, hints: &Hints) -> Rc<Setup> {
         let net = sys.network();
         let pager = a::pager();
+        // The install queued this computer's key and the blue screen has not been answered yet.
+        let key_pending = std::env::var_os("WOL_FAKE_NOW").is_none()
+            && std::path::Path::new(crate::install::MOK_PENDING).exists();
         let s = Rc::new(Setup {
             root: super::lock::screen(&pager),
             pager,
-            flow: RefCell::new(Flow::new(Draft::detected(hints), net.online && !net.wifi)),
+            flow: RefCell::new(
+                Flow::new(Draft::detected(hints), net.online && !net.wifi)
+                    .with_key_pending(key_pending),
+            ),
             cards: Default::default(),
             editors: Default::default(),
             caps: Default::default(),
@@ -83,6 +89,7 @@ impl Setup {
         s.pager.add_named(&s.welcome(), Some(Step::Welcome.id()));
         for st in &STEPS[1..] {
             let card = match st {
+                Step::KeyScreen => s.key_screen(),
                 Step::Language => s.language(),
                 Step::Wifi => s.wifi(sys),
                 Step::Account => s.account(),
@@ -291,7 +298,7 @@ impl Setup {
                 return;
             };
             let i = (dd.selected() as usize).min(KEYBOARDS.len() - 1);
-            s.flow.borrow_mut().draft.keyboard = i;
+            s.flow.borrow_mut().draft.set_keyboard(i);
             if std::env::var_os("WOL_FAKE_NOW").is_none() {
                 kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
             }
@@ -525,6 +532,7 @@ impl Setup {
                         Field::Password => d.password = t.clone(),
                         Field::Verify => d.verify = t.clone(),
                         Field::Hint => d.hint = t.clone(),
+                        Field::Hostname => {}
                     }
                     d.name.clone()
                 };
@@ -649,6 +657,29 @@ impl Setup {
         };
         let id = wol_core::theme::accent::theme_id(variant, d.accent());
         kit::style::apply(&crate::theme::resolve(id.as_deref(), dark), "");
+    }
+
+    /// What to do on the firmware's blue key screen at the next restart: the steps, numbered, and
+    /// the password in large type. The same words the installer's Done page showed.
+    fn key_screen(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S2);
+        for (i, step) in wol_core::boot::key_screen_steps().iter().enumerate() {
+            let l = a::wrapped(&format!("{}. {step}", i + 1), "assistant-subtitle");
+            l.set_xalign(0.0);
+            l.set_justify(gtk::Justification::Left);
+            l.set_halign(gtk::Align::Start);
+            body.append(&l);
+        }
+        body.append(&w::centered(wol_core::boot::MOK_PASSWORD, "large-title"));
+        body.append(&a::caption(
+            "You can also start this later from System Settings > Privacy & Security.",
+        ));
+        Card::moment(
+            "keyhole",
+            Step::KeyScreen.title(),
+            Step::KeyScreen.subtitle(),
+            &body,
+        )
     }
 
     /// No Back: the account exists once this page shows.

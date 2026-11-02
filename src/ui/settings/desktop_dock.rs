@@ -41,11 +41,6 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&w::section(
         "",
         &[
-            t(
-                "Show recent applications in Dock",
-                |p| p.dock_show_recents,
-                |p, v| p.dock_show_recents = v,
-            ),
             dock_slider(
                 "Size",
                 (f64::from(TILE_SIZE.0), f64::from(TILE_SIZE.1), 4.0),
@@ -63,15 +58,6 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 &status,
                 |p| f64::from(p.autohide_delay_ms()),
                 |p, v| p.dock_autohide_delay_ms = v as u32,
-            ),
-            dock_slider(
-                "Minimize effect speed",
-                (10.0, 200.0, 5.0),
-                ("Slow", "Fast"),
-                &cur,
-                &status,
-                |p| f64::from(p.dock_minimize_speed_pct),
-                |p, v| p.dock_minimize_speed_pct = v as u8,
             ),
         ],
     ));
@@ -180,7 +166,7 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
         &[
             form::pending_toggle_row(
                 "Tile windows",
-                "New windows fill the screen side by side instead of floating.",
+                crate::copy::DOCK_TILE_HINT,
                 d.tiling,
                 move |on, done| {
                     let (m, a, g, pic) = (m.clone(), a.clone(), g.clone(), pic.clone());
@@ -208,7 +194,7 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
         "",
         &[form::button_row(
             "Tiling shortcuts",
-            "Move, resize and focus tiled windows from the keyboard.",
+            crate::copy::DOCK_TILING_SHORTCUTS_HINT,
             "Show…",
             move || {
                 env.shortcut_group.set(Some(Group::Tiling));
@@ -225,15 +211,28 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
 fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
     let holder = w::vbox(0);
     fn fill(holder: &gtk::Box, desk: &Rc<Desk>, status: &gtk::Label) {
+        if desk.get().float_apps.is_empty() {
+            fill_with(holder, desk, status, &[]);
+            return;
+        }
+        let (h, dk, st) = (holder.clone(), desk.clone(), status.clone());
+        // Every .desktop file, for the apps' names: the shared list, read off the UI thread
+        // (R2A-21, R2A-24).
+        glib::spawn_future_local(async move {
+            let entries = crate::ui::ipc::installed().await;
+            fill_with(&h, &dk, &st, &entries)
+        });
+    }
+    fn fill_with(
+        holder: &gtk::Box,
+        desk: &Rc<Desk>,
+        status: &gtk::Label,
+        entries: &[crate::desktop::Entry],
+    ) {
         while let Some(c) = holder.first_child() {
             holder.remove(&c);
         }
         let apps = desk.get().float_apps;
-        let entries = if apps.is_empty() {
-            Vec::new()
-        } else {
-            crate::desktop::load_all()
-        };
         let mut rows: Vec<gtk::Widget> = apps
             .iter()
             .map(|class| {
@@ -242,7 +241,7 @@ fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
                     dk.set(&st, |p| p.float_apps.retain(|x| *x != c));
                     fill(&h, &dk, &st);
                 });
-                let name = app_name(&entries, class);
+                let name = app_name(entries, class);
                 let sub = if name == *class { "" } else { class.as_str() };
                 form::row(&name, sub, &remove)
             })
@@ -251,36 +250,43 @@ fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
         let add = w::button("Add App…", w::Kind::Default, || {});
         add.connect_clicked(move |b| {
             let taken = dk.get().float_apps;
-            let entries = crate::desktop::load_all();
-            let mut open: Vec<String> = crate::hypr::clients()
-                .into_iter()
-                .map(|c| c.class)
-                .filter(|c| wol_core::hyprprefs::is_valid_class(c) && !taken.contains(c))
-                .collect();
-            open.sort();
-            open.dedup();
-            let named: Vec<(String, String)> = open
-                .into_iter()
-                .map(|c| (app_name(&entries, &c), c))
-                .collect();
-            let items: Vec<w::MenuItem> = if named.is_empty() {
-                vec![("Open the app first, then add it here", Box::new(|| {}))]
-            } else {
-                named
-                    .iter()
-                    .map(|(name, c)| {
-                        let (h, dk, st, c) = (h.clone(), dk.clone(), st.clone(), c.clone());
-                        let act: Box<dyn Fn()> = Box::new(move || {
-                            dk.set(&st, |p| p.float_apps.push(c.clone()));
-                            fill(&h, &dk, &st);
-                        });
-                        (name.as_str(), act)
-                    })
-                    .collect()
-            };
-            let m = w::menu(items);
-            m.set_parent(b);
-            m.popup();
+            let (h, dk, st, b) = (h.clone(), dk.clone(), st.clone(), b.clone());
+            // Hyprland's client list and every .desktop file: off the UI thread.
+            off_thread(
+                move || {
+                    let entries = crate::desktop::load_all();
+                    let mut open: Vec<String> = crate::hypr::clients()
+                        .into_iter()
+                        .map(|c| c.class)
+                        .filter(|c| wol_core::hyprprefs::is_valid_class(c) && !taken.contains(c))
+                        .collect();
+                    open.sort();
+                    open.dedup();
+                    open.into_iter()
+                        .map(|c| (app_name(&entries, &c), c))
+                        .collect::<Vec<(String, String)>>()
+                },
+                move |named| {
+                    let items: Vec<w::MenuItem> = if named.is_empty() {
+                        vec![(crate::copy::DOCK_ADD_APP_EMPTY, Box::new(|| {}))]
+                    } else {
+                        named
+                            .iter()
+                            .map(|(name, c)| {
+                                let (h, dk, st, c) = (h.clone(), dk.clone(), st.clone(), c.clone());
+                                let act: Box<dyn Fn()> = Box::new(move || {
+                                    dk.set(&st, |p| p.float_apps.push(c.clone()));
+                                    fill(&h, &dk, &st);
+                                });
+                                (name.as_str(), act)
+                            })
+                            .collect()
+                    };
+                    let m = w::menu(items);
+                    m.set_parent(&b);
+                    m.popup();
+                },
+            );
         });
         let hint = if rows.is_empty() {
             "No apps keep floating"

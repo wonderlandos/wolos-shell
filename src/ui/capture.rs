@@ -177,18 +177,15 @@ pub fn thumbnail(texture: &gdk::Texture, path: &std::path::Path) -> gtk::Widget 
     frame.upcast()
 }
 
-/// Focused window as "x,y wxh" for Window mode.
+/// Focused window as "x,y wxh" for Window mode. Asks Hyprland: call it off the GTK thread.
 fn active_window() -> Option<String> {
-    let j = crate::hypr::request("j/activewindow")?;
-    let v: serde_json::Value = serde_json::from_str(&j).ok()?;
-    let n = |k: &str, i: usize| v[k][i].as_i64();
-    Some(format!(
-        "{},{} {}x{}",
-        n("at", 0)?,
-        n("at", 1)?,
-        n("size", 0)?,
-        n("size", 1)?
-    ))
+    let c = crate::hypr::active_window()?;
+    Some(geometry(&c))
+}
+
+/// `grim -g` geometry of a client.
+fn geometry(c: &crate::hypr::Client) -> String {
+    format!("{},{} {}x{}", c.at[0], c.at[1], c.size[0], c.size[1])
 }
 
 /// Shell command handler for [`RECORD`]: show/toggle opens the toolbar in Record Entire Screen mode.
@@ -226,29 +223,23 @@ pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
     });
     let w2 = win.clone();
     bar.close.connect_clicked(move |_| w2.set_visible(false));
-    let keys = gtk::EventControllerKey::new();
     let w2 = win.clone();
-    keys.connect_key_pressed(move |_, k, _, _| {
-        if k == gdk::Key::Escape {
-            w2.set_visible(false);
-            return glib::Propagation::Stop;
-        }
-        glib::Propagation::Proceed
-    });
-    win.add_controller(keys);
+    crate::kit::surface::on_escape(&win, move || w2.set_visible(false));
     let (mode, opts, w2) = (bar.mode.clone(), bar.options.clone(), win.clone());
     let shown = Rc::new(Cell::new(0u32));
     bar.capture.connect_clicked(move |_| {
-        let geom = (mode.get() == Mode::Window).then(active_window).flatten();
+        let (m, o) = (mode.get(), opts.get());
         let home = std::env::var("HOME").unwrap_or_default();
-        let argv = capture::argv(mode.get(), opts.get(), geom.as_deref(), &home);
         // Hide first so the toolbar (and a previous thumbnail) is not in the shot.
         w2.set_visible(false);
         thumb_win.set_visible(false);
         let (tw, shown) = (thumb_win.clone(), shown.clone());
         glib::spawn_future_local(async move {
             glib::timeout_future(capture::SETTLE).await;
+            // Hyprland and the capture tool both off the GTK thread (R2A-21).
             let out = gio::spawn_blocking(move || {
+                let geom = (m == Mode::Window).then(active_window).flatten();
+                let argv = capture::argv(m, o, geom.as_deref(), &home);
                 std::process::Command::new(&argv[0])
                     .args(&argv[1..])
                     .env("WOL_SCREENSHOT_QUIET", "1")
@@ -274,4 +265,17 @@ pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
         });
     });
     (win.upcast(), record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_mode_captures_the_client_box() {
+        let mut c = crate::hypr::Client::new("0x1", "foot", "~");
+        c.at = [10, 40];
+        c.size = [800, 600];
+        assert_eq!(geometry(&c), "10,40 800x600");
+    }
 }

@@ -8,8 +8,7 @@
 use shared::events::Event;
 use shared::portal::{Answer, Call};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -97,6 +96,9 @@ pub(crate) fn wold_socket() -> PathBuf {
         .unwrap_or_else(|| shared::jobs::SOCKET.into())
 }
 
+/// Longest answer line wold sends to one call.
+const ANSWER_MAX: usize = 64 * 1024;
+
 /// One call to wold.
 pub(crate) fn call(wold: &Path, c: &Call) -> Answer {
     call_with(wold, c, None)
@@ -105,15 +107,19 @@ pub(crate) fn call(wold: &Path, c: &Call) -> Answer {
 /// One call to wold, with an open file attached.
 pub(crate) fn call_with(wold: &Path, c: &Call, file: Option<&std::fs::File>) -> Answer {
     let ask = || -> std::io::Result<Answer> {
-        let mut s = UnixStream::connect(wold)?;
+        let mut s = shared::jobs::connect(wold)?;
         s.set_read_timeout(Some(Duration::from_secs(5)))?;
         let line = format!("call {}\n", c.encode());
         match file {
             Some(f) => shared::sys::send_with_fd(&s, line.as_bytes(), std::os::fd::AsFd::as_fd(f))?,
             None => s.write_all(line.as_bytes())?,
         }
-        let mut line = String::new();
-        BufReader::new(&s).take(64 * 1024).read_line(&mut line)?;
+        // STANDARDS 7.1 "Line protocols" (R2C-18): one bounded answer line.
+        let mut r = shared::bounded::BoundedLineReader::new(&s, ANSWER_MAX, ANSWER_MAX as u64 + 1);
+        let line = r
+            .read_line_str()
+            .map_err(std::io::Error::other)?
+            .unwrap_or_default();
         Ok(Answer::parse(&line))
     };
     // Only logged: the person sees nothing of a lost answer.
@@ -169,11 +175,21 @@ pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
             }
         });
     }
-    let mut s = UnixStream::connect(wold)?;
+    let mut s = shared::jobs::connect(wold)?;
     s.write_all(b"subscribe account\n")?;
+    // A write that wold does not take within the client timeout ends the bridge (it restarts).
+    s.set_write_timeout(Some(shared::bounded::CLIENT_TIMEOUT))?;
     let uid = shared::sys::euid();
-    let mut r = BufReader::new(s);
-    while let Some(line) = crate::app_host::read_line(&mut r) {
+    // STANDARDS 7.1 "Line protocols" (R2C-18): every event line is bounded. The subscription has
+    // no idle timeout: wold sends nothing while nothing happens, and a dropped subscription would
+    // miss the next ask; the total is unbounded for the same reason (a session lasts days).
+    let mut r = shared::bounded::BoundedLineReader::new(s, crate::app_host::MAX_LINE, u64::MAX);
+    loop {
+        let line = match r.read_line_str() {
+            Ok(Some(l)) => l,
+            Ok(None) => break,
+            Err(e) => return Err(e.into()),
+        };
         let Some(event) = Event::parse(&line) else {
             continue;
         };

@@ -13,6 +13,12 @@ pub const DISKS: &str = "/usr/lib/wolos/install-disks";
 /// Facts about one disk before anything is written (`size`, `os`, `boot`, `refuse` lines).
 pub const CHECK: &str = "/usr/lib/wolos/install-check";
 
+// The pages' sentences live in `copy::installer` (R2B-20); these names stay for the callers.
+pub use crate::copy::installer::{
+    SECURE_BOOT_TEXT, SECURE_BOOT_TITLE, TIPS, doing, erase_warning, refusal_text, remaining_text,
+    stopped_text,
+};
+
 /// What `install-check <disk>` found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Check {
@@ -20,6 +26,10 @@ pub struct Check {
     pub others: Vec<String>,
     /// A firmware setting must change first: as it stands the installed WolOS would not start.
     pub secure_boot: bool,
+    /// The protection tier `wol boot detect` named (`own-keys`, `mok`, `off`, `firmware`).
+    pub tier: Option<String>,
+    /// A BitLocker volume is on the disk (`bitlocker yes`, said with `os Windows`; R2B-9).
+    pub bitlocker: bool,
     pub refused: Option<String>,
 }
 
@@ -28,24 +38,16 @@ pub fn parse_check(out: &str) -> Check {
     for line in out.lines() {
         match line.split_once(' ') {
             Some(("os", name)) => c.others.push(name.to_string()),
-            Some(("boot", "firmware")) => c.secure_boot = true,
+            Some(("boot", tier)) => {
+                c.secure_boot |= tier == "firmware";
+                c.tier = Some(tier.trim().to_string());
+            }
+            Some(("bitlocker", yes)) => c.bitlocker = yes.trim() == "yes",
             Some(("refuse", why)) => c.refused = Some(why.to_string()),
             _ => {}
         }
     }
     c
-}
-
-/// The erase warning names what will be lost: "This disk has Windows on it. Erasing removes it."
-pub fn erase_warning(others: &[String]) -> String {
-    match others {
-        [] => "Everything on this disk will be erased.".to_string(),
-        [one] => format!("This disk has {one} on it. Erasing removes it."),
-        [rest @ .., last] => format!(
-            "This disk has {} and {last} on it. Erasing removes them.",
-            rest.join(", ")
-        ),
-    }
 }
 
 /// `install-check <disk>` as the app runs it: through sudo where the live image allows it (the
@@ -57,27 +59,6 @@ pub fn check_command(disk: &str, sudo: bool) -> Vec<String> {
         [CHECK, disk].map(String::from).to_vec()
     }
 }
-
-/// Why the app won't erase `title` (`refuse` reason from `install-check`); None: it may.
-/// `in-use` is not a refusal here: install-run lets go of the disk's mounts first.
-pub fn refusal_text(why: &str, title: &str) -> Option<String> {
-    match why {
-        "in-use" => None,
-        "too-small" => Some(format!(
-            "“{title}” is too small. WolOS needs at least 16 GB."
-        )),
-        _ => Some(format!(
-            "“{title}” can't be erased: it's the disk WolOS started from, or it's gone. Choose another disk."
-        )),
-    }
-}
-
-/// Sheet shown when this computer trusts only Windows at startup: honest, no jargon beyond the
-/// setting's own name. Every other case installs, and the last page says what comes next.
-pub const SECURE_BOOT_TITLE: &str = "Change One Startup Setting First";
-pub const SECURE_BOOT_TEXT: &str = "This computer's Secure Boot only trusts Windows, so WolOS \
-can’t start yet. Restart, open your computer's startup settings (often F2, F10, F12 or Delete), \
-allow third-party certificates or clear the Secure Boot keys, then install again.";
 
 /// Why the screen stays on and the machine awake (idle inhibitors show it).
 pub const AWAKE_REASON: &str = "Installing WolOS";
@@ -157,13 +138,15 @@ pub const BOOT_NOTE: &str = "/run/wolos/boot-note";
 pub const PLAN_FILE: &str = "plan.json";
 pub const DISK_PASSWORD: &str = "disk-password";
 pub const ACCOUNT_PASSWORD: &str = "account-password";
-pub const RECOVERY_KEY: &str = "recovery-key";
 
-/// Writes the plan and its passwords (0600). Newlines end a password: refused by the fields' length
-/// only in the sense that none can be typed.
+/// Writes the plan and its passwords (0600). `extras` are keys next to the plan's own in the same
+/// file (`hostname`, `autologin`, `swap`): `wol install info` reads them by name, so a plan written
+/// before they existed still runs. Newlines end a password: refused by the fields' length only in
+/// the sense that none can be typed.
 pub fn write_plan(
     dir: &std::path::Path,
     plan: &wol_core::install::plan::Plan,
+    extras: &[(&str, serde_json::Value)],
     disk_password: &str,
     account_password: &str,
 ) -> std::io::Result<std::path::PathBuf> {
@@ -179,7 +162,13 @@ pub fn write_plan(
             .open(dir.join(name))?
             .write_all(text.as_bytes())
     };
-    let json = serde_json::to_string(plan).map_err(std::io::Error::other)?;
+    let mut v = serde_json::to_value(plan).map_err(std::io::Error::other)?;
+    if let Some(o) = v.as_object_mut() {
+        for (k, x) in extras {
+            o.insert((*k).to_string(), x.clone());
+        }
+    }
+    let json = serde_json::to_string(&v).map_err(std::io::Error::other)?;
     put(PLAN_FILE, &json)?;
     put(ACCOUNT_PASSWORD, account_password)?;
     if !disk_password.is_empty() {
@@ -200,17 +189,26 @@ pub fn restart_command() -> Vec<String> {
 pub enum Stage {
     /// Checking the disk.
     Prepare,
-    /// The partitions.
+    /// The partitions (5).
     Disk,
-    /// The system files are copied (no progress of their own).
+    /// The system files are copied (15; no progress of their own).
     Files,
-    /// Boot loader on the EFI partition.
-    Boot,
-    /// Language, time zone and the account.
+    /// This computer's Secure Boot keys (40).
+    Keys,
+    /// The disk is encrypted and the key enrolled (45).
+    Encrypt,
+    /// The first start's files (70).
+    Initramfs,
+    /// Language and keyboard of the new system (68; `wol install settings`, before the first
+    /// start's files, which carry the console keymap).
     Settings,
-    /// Apps from the local repository.
+    /// The disk key is sealed to this computer (92).
+    Seal,
+    /// Boot loader on the EFI partition (95).
+    Boot,
+    /// Apps from the local repository (older scripts).
     Packages,
-    /// WolOS settings, unmount.
+    /// WolOS settings, unmount (older scripts).
     Finish,
     Done,
     Failed,
@@ -222,25 +220,32 @@ impl Stage {
             "prepare" => Stage::Prepare,
             "disk" => Stage::Disk,
             "files" => Stage::Files,
-            "boot" => Stage::Boot,
+            "keys" => Stage::Keys,
+            "encrypt" => Stage::Encrypt,
+            "initramfs" => Stage::Initramfs,
             "settings" => Stage::Settings,
+            "seal" => Stage::Seal,
+            "boot" => Stage::Boot,
             "packages" => Stage::Packages,
             "finish" => Stage::Finish,
             "done" => Stage::Done,
-            "failed" => Stage::Failed,
+            "failed" | "fail" => Stage::Failed,
             _ => return None,
         })
     }
 }
 
-/// One progress line: `wolos-install: <stage> <percent> <message>`.
+/// One progress line: `wolos-install: <stage> <percent> <message>`, or the last line of a run that
+/// stopped: `wolos-install: fail <stage> <message>` (the stage it stopped in, the tool's own words).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Report {
     pub stage: Stage,
     /// 0-100, never backwards within a run (except `failed`, which says 0).
     pub percent: u8,
-    /// For the log; the page says `doing(stage)`.
+    /// For the log and the Failed page's status line; the progress page says `doing(stage)`.
     pub message: String,
+    /// `fail <stage>`: where it stopped. None for every other line.
+    pub at: Option<Stage>,
 }
 
 impl Report {
@@ -249,6 +254,7 @@ impl Report {
             stage,
             percent,
             message: String::new(),
+            at: None,
         }
     }
 }
@@ -258,33 +264,46 @@ pub fn parse_line(line: &str) -> Option<Report> {
     let rest = &line[line.find(MARK)? + MARK.len()..];
     let rest = rest.trim_end_matches(['\r', '\n']);
     let (stage, rest) = rest.split_once(' ')?;
+    if stage == "fail" {
+        let (at, message) = rest.split_once(' ').unwrap_or((rest, ""));
+        return Some(Report {
+            stage: Stage::Failed,
+            percent: 0,
+            message: message.trim().to_string(),
+            at: Stage::parse(at),
+        });
+    }
     let (percent, message) = rest.split_once(' ').unwrap_or((rest, ""));
     let percent: u8 = percent.parse().ok().filter(|p| *p <= 100)?;
     Some(Report {
         stage: Stage::parse(stage)?,
         percent,
         message: message.trim().to_string(),
+        at: None,
     })
 }
 
-/// Where `files` starts and ends (the boot loader step's percent): the bar creeps between them
-/// while the system files are copied, and never past the end.
-const FILES_START: f64 = 0.05;
-const FILES_END: f64 = 0.21;
-/// Copying the system files: about this long.
-const FILES_SECS: f64 = 120.0;
+/// Stages that take long and report nothing while they work: (stage, where it starts, where the
+/// next stage starts, about how long it takes). The bar creeps from the start toward the end,
+/// never past 90 % of the way, so the next report always moves it forward.
+const CREEP: [(Stage, f64, f64, f64); 3] = [
+    (Stage::Files, 0.15, 0.40, 120.0),
+    (Stage::Encrypt, 0.45, 0.70, 90.0),
+    (Stage::Initramfs, 0.70, 0.90, 60.0),
+];
 
 /// Bar position for `r`, `secs` after its stage began.
 pub fn fraction(r: &Report, secs: f64) -> f64 {
     let at = f64::from(r.percent) / 100.0;
-    match r.stage {
-        Stage::Files => {
-            let creep =
-                FILES_START + (FILES_END - FILES_START) * 0.9 * (secs / FILES_SECS).min(1.0);
+    if r.stage == Stage::Failed {
+        return 0.0;
+    }
+    match CREEP.iter().find(|(s, ..)| *s == r.stage) {
+        Some((_, start, end, took)) => {
+            let creep = start + (end - start) * 0.9 * (secs / took).min(1.0);
             at.max(creep)
         }
-        Stage::Failed => 0.0,
-        _ => at,
+        None => at,
     }
 }
 
@@ -294,44 +313,162 @@ pub fn seconds_left(start: (f64, f64), now: (f64, f64)) -> Option<f64> {
     (moved >= 0.05 && took > 0.0).then(|| (1.0 - now.0) * took / moved)
 }
 
-/// The line under the bar.
-pub fn remaining_text(secs: Option<f64>) -> String {
-    match secs {
-        None => "Estimating time remaining…".into(),
-        Some(s) if s < 60.0 => "Less than a minute remaining".into(),
-        Some(s) => {
-            let m = (s / 60.0).round().max(1.0) as u64;
-            if m == 1 {
-                "About a minute remaining".into()
+/// The refusal in a Failed line from install-run (`... (refuse Word): ...` or
+/// `refuse Word("part")`): the word and the partition it names. None: no refusal in it.
+pub fn refused_word(message: &str) -> Option<(&str, Option<&str>)> {
+    let (_, rest) = message.split_once("refuse ")?;
+    let end = rest
+        .find(|c: char| !c.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    let (word, tail) = rest.split_at(end);
+    if !word.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return None;
+    }
+    let part = tail
+        .strip_prefix("(\"")
+        .and_then(|t| t.split_once("\")"))
+        .map(|(p, _)| p);
+    Some((word, part))
+}
+
+/// What the last install-run left for the app, from a folder only root can write (audit3 R2B-1):
+/// `install-check --result` prints the recovery key once (and deletes it), then the log.
+pub fn result_command() -> Vec<String> {
+    ["sudo", "-n", CHECK, "--result"].map(String::from).to_vec()
+}
+
+/// [`result_command`]'s answer: the recovery key (`recovery-key <key>`; None: no key was made or
+/// it was already handed out) and everything the tools printed (`log <line>` each), for Details.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RunResult {
+    pub key: Option<String>,
+    pub log: String,
+}
+
+pub fn parse_result(out: &str) -> RunResult {
+    let mut r = RunResult::default();
+    for line in out.lines() {
+        if let Some(k) = line.strip_prefix("recovery-key ") {
+            r.key = Some(k.trim().to_string()).filter(|k| !k.is_empty());
+        } else if let Some(l) = line.strip_prefix("log ") {
+            r.log.push_str(l);
+            r.log.push('\n');
+        } else if line == "log" {
+            r.log.push('\n');
+        }
+    }
+    r
+}
+
+/// The last `lines` lines of a log, for the Details view.
+pub fn log_tail(text: &str, lines: usize) -> String {
+    let all: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let from = all.len().saturating_sub(lines);
+    all[from..].join("\n")
+}
+
+/// `wol encrypt decide auto`: the one check for a usable security chip (TPM2), the same one
+/// install-run makes. Prints `tpm2` when the disk can be unlocked by the chip.
+pub fn tpm_command() -> Vec<String> {
+    ["wol", "encrypt", "decide", "auto"]
+        .map(String::from)
+        .to_vec()
+}
+
+/// What `decide auto` said: a security chip the install can use.
+pub fn tpm_from_decide(out: &str) -> bool {
+    out.trim() == "tpm2"
+}
+
+/// Written by boot-enroll while this computer's key waits for the firmware's key screen.
+pub const MOK_PENDING: &str = "/run/wolos/mok-pending";
+
+/// The Done page needs the key screen card: the key is queued, or the startup note says the blue
+/// screen comes (`wol boot note` says so for the mok tier).
+pub fn key_screen_needed(note: Option<&str>, pending: bool) -> bool {
+    pending || note.is_some_and(|n| n.contains("blue screen"))
+}
+
+/// What the Done page says under its subtitle: the startup note's first line, and for a computer
+/// that now trusts only its own keys, that the install media will not start on it any more.
+pub fn done_notes(note: Option<&str>) -> Vec<String> {
+    let mut v = Vec::new();
+    let Some(first) = note.and_then(|n| n.lines().next()).map(str::trim) else {
+        return v;
+    };
+    if !first.is_empty() {
+        v.push(first.to_string());
+    }
+    if first.contains("own WolOS keys") && !first.contains("install media") {
+        v.push(crate::copy::INSTALL_OWN_KEYS_MEDIA.to_string());
+    }
+    v
+}
+
+/// What the recovery key is saved as on a USB stick.
+pub const RECOVERY_FILE: &str = "WolOS recovery key.txt";
+
+/// Where removable disks are mounted on the live image.
+pub const MEDIA_ROOTS: [&str; 2] = ["/run/media", "/media"];
+
+/// Mounted removable disks under `roots`: `/run/media/<user>/<disk>` and `/media/<disk>`.
+pub fn media_dirs(roots: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for root in roots {
+        let Ok(rd) = std::fs::read_dir(root) else {
+            continue;
+        };
+        for e in rd.flatten().filter(|e| e.path().is_dir()) {
+            let p = e.path();
+            if root.ends_with("run/media") {
+                // One level down: per-user directories.
+                if let Ok(inner) = std::fs::read_dir(&p) {
+                    out.extend(inner.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+                }
             } else {
-                format!("About {m} minutes remaining")
+                out.push(p);
             }
         }
     }
+    out.sort();
+    out
 }
 
-/// What the page says the installer is doing.
-pub fn doing(stage: Stage) -> &'static str {
-    match stage {
-        Stage::Prepare | Stage::Disk => "Preparing the disk…",
-        Stage::Files => "Copying system files…",
-        Stage::Boot => "Installing the startup files…",
-        Stage::Settings => "Saving settings…",
-        Stage::Packages => "Installing apps…",
-        Stage::Finish => "Finishing up…",
-        Stage::Done => "Done",
-        Stage::Failed => "",
+/// Writes the recovery key as a small text file on `dir` (a USB stick).
+pub fn save_key(dir: &std::path::Path, key: &str) -> std::io::Result<std::path::PathBuf> {
+    let p = dir.join(RECOVERY_FILE);
+    std::fs::write(
+        &p,
+        format!(
+            "WolOS recovery key\n\n{key}\n\n{}\n",
+            crate::copy::INSTALL_RECOVERY_NOTE
+        ),
+    )?;
+    Ok(p)
+}
+
+/// Computer name: the one rule `wol install info` and Settings > Sharing use
+/// ([`wol_core::settings::hostname::is_valid`]), so the app never offers a name the backend
+/// replaces with the default (R2B-18).
+pub fn is_valid_hostname(h: &str) -> bool {
+    wol_core::settings::hostname::is_valid(h)
+}
+
+/// The computer name to suggest: the account name, "-wolos".
+pub fn hostname_for(account: &str) -> String {
+    if account.is_empty() {
+        "wolos".into()
+    } else {
+        format!("{account}-wolos")
     }
 }
 
-/// Failed page subtitle, by the stage the install stopped in.
-pub fn stopped_text(at: Stage) -> &'static str {
-    match at {
-        Stage::Prepare | Stage::Disk => {
-            "The disk couldn't be prepared. Check that it's connected, then try again or choose another disk."
-        }
-        _ => "The installation stopped before it finished. Try again, or choose another disk.",
-    }
+/// Seconds each tip stays.
+pub const TIP_SECS: f64 = 12.0;
+
+/// The tip to show `secs` after the install began.
+pub fn tip_at(secs: f64) -> &'static str {
+    TIPS[((secs.max(0.0) / TIP_SECS) as usize) % TIPS.len()]
 }
 
 #[cfg(test)]
@@ -356,7 +493,12 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("wolos-plan-{}", std::process::id()));
         let plan = wol_core::install::plan::Plan::default();
-        let f = write_plan(&dir, &plan, "disk pw", "account pw").unwrap();
+        let extras = [
+            ("hostname", serde_json::json!("alice-wolos")),
+            ("autologin", serde_json::json!(true)),
+            ("swap", serde_json::json!("swapfile:4")),
+        ];
+        let f = write_plan(&dir, &plan, &extras, "disk pw", "account pw").unwrap();
         let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&dir), 0o700);
         assert_eq!(mode(&f), 0o600);
@@ -365,8 +507,18 @@ mod tests {
             std::fs::read_to_string(dir.join(ACCOUNT_PASSWORD)).unwrap(),
             "account pw"
         );
+        // The extras sit next to the plan's own keys, and the plan still reads as a Plan.
+        let text = std::fs::read_to_string(&f).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["hostname"], "alice-wolos");
+        assert_eq!(v["autologin"], true);
+        assert_eq!(v["swap"], "swapfile:4");
+        assert_eq!(
+            serde_json::from_str::<wol_core::install::plan::Plan>(&text).unwrap(),
+            plan
+        );
         // A second run starts clean; no disk password leaves no file behind.
-        write_plan(&dir, &plan, "", "account pw").unwrap();
+        write_plan(&dir, &plan, &[], "", "account pw").unwrap();
         assert!(!dir.join(DISK_PASSWORD).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -378,8 +530,32 @@ mod tests {
             Some(Report {
                 stage: Stage::Prepare,
                 percent: 0,
-                message: "Preparing to install on ada0".into()
+                message: "Preparing to install on ada0".into(),
+                at: None,
             })
+        );
+        // The new stages, in the order install-run says them.
+        for (word, stage, pct) in [
+            ("keys", Stage::Keys, 40),
+            ("encrypt", Stage::Encrypt, 45),
+            ("initramfs", Stage::Initramfs, 70),
+            ("settings", Stage::Settings, 90),
+            ("seal", Stage::Seal, 92),
+            ("boot", Stage::Boot, 95),
+        ] {
+            let r = parse_line(&format!("{MARK}{word} {pct} x")).unwrap();
+            assert_eq!((r.stage, r.percent), (stage, pct), "{word}");
+        }
+        // The last line of a run that stopped: the stage and the tool's own words.
+        let f = parse_line("wolos-install: fail encrypt cryptsetup: Cannot format device").unwrap();
+        assert_eq!(
+            (f.stage, f.percent, f.at),
+            (Stage::Failed, 0, Some(Stage::Encrypt))
+        );
+        assert_eq!(f.message, "cryptsetup: Cannot format device");
+        assert_eq!(
+            parse_line("wolos-install: fail disk").map(|r| r.at),
+            Some(Some(Stage::Disk))
         );
         let p = parse_line("\x1b[2J\x1b[Hwolos-install: packages 53 Installing apps (30 of 74)\r")
             .unwrap();
@@ -411,10 +587,22 @@ mod tests {
         let mut seen = Vec::new();
         for f in ["files/usr/lib/wolos/install-run"] {
             let text = std::fs::read_to_string(format!("{root}{f}")).unwrap();
+            // Comments may use the word "say"; statements are what is checked.
+            let text: String = text
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .map(|l| format!("{l}\n"))
+                .collect();
             // echo/printf lines ("%d" is a percent) and install-run's `say <stage> <percent> ...`.
             let printed = text.match_indices(MARK).map(|(i, _)| &text[i..]);
             let said = text
                 .match_indices("say ")
+                .filter(|(i, _)| {
+                    !text[..*i]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+                })
                 .map(|(i, _)| &text[i + "say ".len()..]);
             for (line, from_say) in printed.map(|l| (l, false)).chain(said.map(|l| (l, true))) {
                 let line = line
@@ -440,30 +628,184 @@ mod tests {
             Stage::Files,
             Stage::Boot,
             Stage::Settings,
-            Stage::Finish,
-            Stage::Failed,
+            Stage::Done,
         ] {
             assert!(seen.contains(&s), "no script reports {s:?}");
         }
-        // (report, seconds since its stage began), as the page samples them.
+        // A stop is one `fail <stage> <message>` line with the stage it happened in.
+        let text =
+            std::fs::read_to_string(format!("{root}files/usr/lib/wolos/install-run")).unwrap();
+        assert!(
+            text.contains("say fail \"$stage\""),
+            "install-run reports a stop as `fail <stage> <message>`"
+        );
+        // (report, seconds since its stage began), as the page samples them: install-run's
+        // stages disk 5, files 15, keys 40, encrypt 45, initramfs 70, settings 90, seal 92,
+        // boot 95, done 100.
         let order = [
             (Report::new(Stage::Prepare, 0), 0.0),
-            (Report::new(Stage::Disk, 2), 9.0),
-            (Report::new(Stage::Files, 5), 0.0),
-            (Report::new(Stage::Files, 5), 30.0),
-            (Report::new(Stage::Files, 6), 30.0),
-            (Report::new(Stage::Files, 6), 600.0),
-            (Report::new(Stage::Boot, 22), 0.0),
-            (Report::new(Stage::Settings, 24), 0.0),
-            (Report::new(Stage::Packages, 25), 0.0),
-            (Report::new(Stage::Packages, 95), 300.0),
-            (Report::new(Stage::Finish, 95), 0.0),
-            (Report::new(Stage::Finish, 97), 5.0),
+            (Report::new(Stage::Disk, 5), 9.0),
+            (Report::new(Stage::Files, 15), 0.0),
+            (Report::new(Stage::Files, 15), 30.0),
+            (Report::new(Stage::Files, 16), 30.0),
+            (Report::new(Stage::Files, 16), 600.0),
+            (Report::new(Stage::Keys, 40), 0.0),
+            (Report::new(Stage::Encrypt, 45), 0.0),
+            (Report::new(Stage::Encrypt, 45), 400.0),
+            (Report::new(Stage::Initramfs, 70), 0.0),
+            (Report::new(Stage::Initramfs, 70), 300.0),
+            (Report::new(Stage::Settings, 90), 0.0),
+            (Report::new(Stage::Seal, 92), 0.0),
+            (Report::new(Stage::Boot, 95), 0.0),
             (Report::new(Stage::Done, 100), 0.0),
         ];
         let bar: Vec<f64> = order.iter().map(|(r, t)| fraction(r, *t)).collect();
         assert!(bar.windows(2).all(|w| w[0] <= w[1]), "{bar:?}");
         assert_eq!(*bar.last().unwrap(), 1.0);
+        // Files creeps while the copy says nothing, and never reaches the next stage.
+        assert!(fraction(&Report::new(Stage::Files, 15), 60.0) > 0.15);
+        assert!(fraction(&Report::new(Stage::Files, 15), 1e6) < 0.40);
+        assert_eq!(fraction(&Report::new(Stage::Failed, 0), 50.0), 0.0);
+        // The older scripts' words still parse.
+        for w in ["packages 50 x", "finish 98 x", "failed 0 x"] {
+            assert!(parse_line(&format!("{MARK}{w}")).is_some(), "{w}");
+        }
+    }
+
+    #[test]
+    fn the_failed_page_has_the_real_words_and_the_log() {
+        let log = "a\n\nb\nc\nd\n";
+        assert_eq!(log_tail(log, 2), "c\nd");
+        assert_eq!(log_tail(log, 10), "a\nb\nc\nd");
+        assert_eq!(log_tail("", 3), "");
+        for s in [
+            Stage::Prepare,
+            Stage::Files,
+            Stage::Keys,
+            Stage::Encrypt,
+            Stage::Initramfs,
+            Stage::Seal,
+            Stage::Boot,
+            Stage::Settings,
+            Stage::Packages,
+        ] {
+            assert!(!doing(s).is_empty(), "{s:?}");
+            let l = crate::copy::lint(stopped_text(s));
+            assert!(l.is_empty(), "{s:?}: {l:?}");
+        }
+        assert!(stopped_text(Stage::Encrypt).contains("encrypted"));
+    }
+
+    #[test]
+    fn the_security_chip_check_is_the_one_install_run_makes() {
+        assert_eq!(tpm_command().join(" "), "wol encrypt decide auto");
+        assert!(tpm_from_decide("tpm2\n"));
+        assert!(!tpm_from_decide("passphrase\n"));
+        assert!(!tpm_from_decide("off"));
+        assert!(!tpm_from_decide(""));
+    }
+
+    #[test]
+    fn a_refusal_is_read_from_the_failed_line() {
+        let m = "the disk is not what the plan was made for (refuse WeakPassword): see the log";
+        assert_eq!(refused_word(m), Some(("WeakPassword", None)));
+        let m = "the disk is not what the plan was made for (refuse Mounted(\"u3\"))";
+        assert_eq!(refused_word(m), Some(("Mounted", Some("u3"))));
+        assert_eq!(refused_word("sfdisk: cannot open /dev/nvme0n1"), None);
+        assert_eq!(
+            refused_word("refuse bios"),
+            None,
+            "install-check's own words"
+        );
+    }
+
+    #[test]
+    fn the_done_page_knows_about_the_key_screen_and_own_keys() {
+        let mok = format!(
+            "{}\n{}",
+            wol_core::boot::note(wol_core::boot::Tier::Mok),
+            wol_core::boot::key_screen_steps().join("\n")
+        );
+        assert!(key_screen_needed(Some(&mok), false));
+        assert!(key_screen_needed(None, true));
+        let own = wol_core::boot::note(wol_core::boot::Tier::OwnKeys);
+        assert!(!key_screen_needed(Some(own), false));
+        let notes = done_notes(Some(own));
+        assert!(
+            notes.iter().any(|n| n.contains("install media")),
+            "says the media will not start: {notes:?}"
+        );
+        let short = "Secure Boot: this computer will trust only its own WolOS keys.";
+        let notes = done_notes(Some(short));
+        assert_eq!(notes.len(), 2, "an older note gets the sentence: {notes:?}");
+        assert!(notes[1].contains("install media"), "{notes:?}");
+        assert_eq!(done_notes(Some(&mok)).len(), 1, "the steps go on the card");
+        assert!(done_notes(None).is_empty());
+        assert!(done_notes(Some("  \n")).is_empty());
+        assert_eq!(MOK_PENDING, "/run/wolos/mok-pending");
+        for s in wol_core::boot::key_screen_steps() {
+            assert!(s.contains(wol_core::boot::MOK_PASSWORD) || !s.contains("password"));
+        }
+    }
+
+    #[test]
+    fn the_recovery_key_can_go_on_a_usb_stick() {
+        let root = std::env::temp_dir().join(format!("wolos-media-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let run_media = root.join("run/media");
+        let media = root.join("media");
+        std::fs::create_dir_all(run_media.join("alice/STICK")).unwrap();
+        std::fs::create_dir_all(media.join("OTHER")).unwrap();
+        std::fs::write(media.join("a-file"), "").unwrap();
+        let dirs = media_dirs(&[run_media.clone(), media.clone()]);
+        assert_eq!(
+            dirs,
+            [media.join("OTHER"), run_media.join("alice/STICK")],
+            "{dirs:?}"
+        );
+        assert!(media_dirs(&[root.join("nowhere")]).is_empty());
+        let f = save_key(&dirs[1], "ABCDE-FGHIJ").unwrap();
+        assert_eq!(f.file_name().unwrap().to_str().unwrap(), RECOVERY_FILE);
+        let text = std::fs::read_to_string(&f).unwrap();
+        assert!(text.contains("ABCDE-FGHIJ") && text.contains("Write this key down"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn computer_names_follow_the_backends_rule() {
+        for ok in ["wolos", "alice-wolos", "pc1", "4-x", &"x".repeat(63)] {
+            assert!(is_valid_hostname(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "-wolos",
+            "wolos-",
+            "al ice",
+            "alice_pc",
+            "a..b",
+            "a.b-c.d",
+            "Alice-PC",
+            "café",
+            &"x".repeat(64),
+        ] {
+            assert!(!is_valid_hostname(bad), "{bad}");
+        }
+        assert_eq!(hostname_for("alice"), "alice-wolos");
+        assert_eq!(hostname_for(""), "wolos");
+        assert!(is_valid_hostname(&hostname_for("aliceliddell")));
+    }
+
+    #[test]
+    fn tips_rotate_and_read_well() {
+        assert_eq!(tip_at(0.0), TIPS[0]);
+        assert_eq!(tip_at(TIP_SECS - 0.1), TIPS[0]);
+        assert_eq!(tip_at(TIP_SECS), TIPS[1]);
+        assert_eq!(tip_at(TIP_SECS * TIPS.len() as f64), TIPS[0], "wraps");
+        assert_eq!(tip_at(-5.0), TIPS[0]);
+        for t in TIPS {
+            let l = crate::copy::lint(t);
+            assert!(l.is_empty(), "{t}: {l:?}");
+        }
     }
 
     #[test]
@@ -491,12 +833,37 @@ mod tests {
         }
     }
 
+    /// R2B-1: the key and the log come from `install-check --result`, in the shape it prints.
+    #[test]
+    fn the_result_is_read_from_install_check() {
+        let r = parse_result("recovery-key ABCDE-FGHIJ\nlog + sfdisk /dev/vda\nlog\nlog done\n");
+        assert_eq!(r.key.as_deref(), Some("ABCDE-FGHIJ"));
+        assert_eq!(r.log, "+ sfdisk /dev/vda\n\ndone\n");
+        assert_eq!(parse_result("log x\n").key, None, "handed out once");
+        assert_eq!(result_command()[..3], ["sudo", "-n", CHECK]);
+        assert_eq!(result_command()[3], "--result");
+        let script = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../files/usr/lib/wolos/install-check"
+        );
+        let text = std::fs::read_to_string(script).unwrap();
+        for w in ["--result", "'recovery-key %s\\n'", "'s/^/log /'"] {
+            assert!(text.contains(w), "install-check --result speaks {w}");
+        }
+    }
+
     #[test]
     fn check_names_other_systems_in_the_warning() {
         let c = parse_check("size 500000000000\nos Windows\nos Linux\nboot firmware\n");
         assert!(!parse_check("boot mok\n").secure_boot, "those just install");
         assert_eq!(c.others, ["Windows", "Linux"]);
         assert!(c.secure_boot && c.refused.is_none());
+        assert_eq!(c.tier.as_deref(), Some("firmware"));
+        assert!(!c.bitlocker);
+        let b = parse_check("os Windows\nbitlocker yes\nboot own-keys\n");
+        assert!(b.bitlocker && !b.secure_boot, "R2B-9");
+        assert!(!parse_check("os Windows\nbitlocker no\n").bitlocker);
+        assert_eq!(b.tier.as_deref(), Some("own-keys"));
         assert_eq!(
             erase_warning(&c.others[..1]),
             "This disk has Windows on it. Erasing removes it."
@@ -519,13 +886,23 @@ mod tests {
         );
         let text = std::fs::read_to_string(script).unwrap();
         for w in [
-            "\"os \" names[i]",
+            "wol install facts",
+            "(size|os|bitlocker)",
             "echo \"boot ",
             "refuse too-small",
-            "Windows Linux macOS FreeBSD",
         ] {
             assert!(text.contains(w), "install-check speaks {w}");
         }
+        // The facts lines come from core's disk model (R2B-16): read in the shape it prints them.
+        let facts = wol_core::install::disk::Facts {
+            bytes: 500_000_000_000,
+            systems: vec!["Windows", "Linux"],
+            bitlocker: true,
+            ..Default::default()
+        };
+        let c = parse_check(&facts.lines());
+        assert_eq!(c.others, ["Windows", "Linux"]);
+        assert!(c.bitlocker, "{}", facts.lines());
     }
 
     #[test]
@@ -552,6 +929,12 @@ mod tests {
             assert!(!doing(s).is_empty());
             let l = crate::copy::lint(stopped_text(s));
             assert!(l.is_empty(), "{s:?}: {l:?}");
+        }
+        for s in [Stage::Disk, Stage::Boot, Stage::Done] {
+            assert!(
+                !CREEP.iter().any(|c| c.0 == s),
+                "{s:?} reports its own percent"
+            );
         }
     }
 }

@@ -271,6 +271,12 @@ label.avatar-s { font-size: 13px; }
 label.avatar-l { font-size: 22px; }
 label.avatar-xl { font-size: 22px; }
 
+/* ---- Inactive windows (macOS): an app window's chrome steps back while another window has the keys.
+   GTK sets :backdrop on an unfocused toplevel; shell layers (menu bar, Dock, panels) never carry it. ---- */
+window.app:backdrop .toolbar, window.app:backdrop .app-menubar { background: color-mix(in srgb, var(--glass) 60%, transparent); }
+window.app:backdrop .toolbar label, window.app:backdrop .app-menubar label, window.app:backdrop label.title { color: var(--dim); }
+window.app:backdrop .toolbar image, window.app:backdrop .app-menubar image { opacity: 0.6; }
+
 /* ---- Settings additions (appended) ---- */
 .dock-shelf.flat button.dock-tile:hover { margin-top: 0; margin-bottom: 0; }
 .dock-hotzone { min-height: 4px; }

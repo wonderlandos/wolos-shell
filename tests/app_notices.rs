@@ -46,6 +46,7 @@ fn a_wold_notification_becomes_a_banner_and_its_button_answers() {
         for conn in l.incoming().flatten() {
             let calls_tx = calls_tx.clone();
             std::thread::spawn(move || {
+                shared::jobs::greet(&conn).unwrap();
                 let mut line = String::new();
                 BufReader::new(&conn).read_line(&mut line).unwrap();
                 let mut w = &conn;
@@ -134,6 +135,7 @@ fn replacing_updates_the_banner_and_withdrawing_closes_it() {
     let uid = shared::sys::euid();
     std::thread::spawn(move || {
         let conn = l.incoming().next().unwrap().unwrap();
+        shared::jobs::greet(&conn).unwrap();
         let mut line = String::new();
         BufReader::new(&conn).read_line(&mut line).unwrap();
         let note = |body: &str, replace| Event::Notification {

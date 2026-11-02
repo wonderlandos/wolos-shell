@@ -253,15 +253,9 @@ impl Counter {
 /// The notification when `ended` ran out in `mode`: (summary, body).
 pub fn finished(mode: Mode, ended: Phase) -> (String, String) {
     let (a, b) = match (mode, ended) {
-        (Mode::Focus, Phase::Work) => (
-            "Time for a break",
-            "Step away for a few minutes. Start the break when you are ready.",
-        ),
-        (Mode::Focus, _) => (
-            "Break is over",
-            "Start the next focus session when you are ready.",
-        ),
-        _ => ("Timer done", "Your countdown has finished."),
+        (Mode::Focus, Phase::Work) => crate::copy::TIMER_BREAK,
+        (Mode::Focus, _) => crate::copy::TIMER_BREAK_OVER,
+        _ => crate::copy::TIMER_DONE,
     };
     (a.into(), b.into())
 }

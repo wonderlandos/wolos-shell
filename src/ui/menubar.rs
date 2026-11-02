@@ -87,13 +87,34 @@ fn actions(rows: Vec<appmenu::Row>, name: &str, class: &str) -> Vec<w::MenuRow> 
         .collect()
 }
 
-/// About <App>: icon and name from the dock pin or installed .desktop entry.
+/// About <App>: icon and name from the dock pin or installed .desktop entry (parsed off the UI
+/// thread: every .desktop file on each click stalled the bar).
 fn about(name: &str, class: &str) {
     let Some(app) = gtk::gio::Application::default().and_downcast::<gtk::Application>() else {
         return;
     };
-    let icon = crate::apps::icon_for(class, crate::apps::here(), &crate::desktop::load_all());
-    super::panels::about(&app, name, &icon, class).present();
+    let (name, class) = (name.to_string(), class.to_string());
+    glib::spawn_future_local(async move {
+        let installed = super::ipc::installed().await;
+        let icon = crate::apps::icon_for(&class, crate::apps::here(), &installed);
+        super::panels::about(&app, &name, &icon, &class).present();
+    });
+}
+
+/// The Control Center page a status icon opens (audit2 A2-14: all four opened the main page).
+/// Battery has no page of its own: the main page shows it.
+pub fn status_page(tip: &str) -> &'static str {
+    match tip {
+        "Wi-Fi" => "wifi",
+        "Sound" => "sound",
+        "Focus" => "focus",
+        _ => "main",
+    }
+}
+
+/// Shell target for a status icon: `control-center:<page>` ([`super::ipc::cc_page`]).
+fn status_target(tip: &str) -> String {
+    format!("control-center:{}", status_page(tip))
 }
 
 /// WolOS menu (the logo), macOS Apple menu order. Empty title = separator.
@@ -104,8 +125,8 @@ pub const LOGO_MENU: &[(&str, &[&str])] = &[
     ("App Store…", &["wol-store"]),
     ("", &[]),
     ("Lock Screen", &["wol-lock"]),
-    ("Log Out…", &["wol", "shell", "toggle", "session"]),
-    ("Shut Down…", &["wol", "shell", "toggle", "session"]),
+    ("Log Out…", &["wol", "shell", "show", "session-logout"]),
+    ("Shut Down…", &["wol", "shell", "show", "session-shutdown"]),
 ];
 
 fn run(argv: &'static [&'static str]) -> Box<dyn Fn()> {
@@ -144,32 +165,22 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     let battery_box = w::hbox(w::S1);
     battery_box.append(&percent);
     battery_box.append(&battery);
-    for (img, tip, argv) in [
-        (
-            focus.upcast_ref::<gtk::Widget>(),
-            "Focus",
-            &["wol", "shell", "toggle", "control-center"][..],
-        ),
-        (
-            battery_box.upcast_ref::<gtk::Widget>(),
-            "Battery",
-            &["wol", "shell", "toggle", "control-center"][..],
-        ),
-        (
-            network.upcast_ref(),
-            "Wi-Fi",
-            &["wol", "shell", "toggle", "control-center"][..],
-        ),
-        (
-            volume.upcast_ref(),
-            "Sound",
-            &["wol", "shell", "toggle", "control-center"][..],
-        ),
+    for (img, tip) in [
+        (focus.upcast_ref::<gtk::Widget>(), "Focus"),
+        (battery_box.upcast_ref::<gtk::Widget>(), "Battery"),
+        (network.upcast_ref(), "Wi-Fi"),
+        (volume.upcast_ref(), "Sound"),
     ] {
         let b = w::menubar_item(img);
         b.set_tooltip_text(Some(tip));
-        let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
-        b.connect_clicked(move |_| kit::spawn(&argv));
+        // In process (the bar is part of wol-shell): the Control Center on the icon's page.
+        let target = status_target(tip);
+        b.connect_clicked(move |_| {
+            super::ipc::local(crate::protocol::Command {
+                verb: crate::protocol::Verb::Toggle,
+                target: target.clone(),
+            })
+        });
         root.append(&b);
     }
     for (icon, tip, argv) in [
@@ -485,7 +496,7 @@ mod hover_tests {
 
 #[cfg(test)]
 mod logo_tests {
-    use super::LOGO_MENU;
+    use super::{LOGO_MENU, status_page, status_target};
 
     #[test]
     fn logo_menu_opens_the_app_store_after_system_settings() {
@@ -496,5 +507,45 @@ mod logo_tests {
         assert_eq!(titles[0], "About This Computer");
         // Separators run nothing; every other row runs a program.
         assert!(LOGO_MENU.iter().all(|(t, a)| t.is_empty() == a.is_empty()));
+    }
+
+    /// Audit2 A2-14: Wi-Fi, Sound and Focus open their own Control Center page.
+    #[test]
+    fn status_icons_open_their_control_center_page() {
+        use crate::ui::control_center::PAGES;
+        for (tip, page) in [
+            ("Wi-Fi", "wifi"),
+            ("Sound", "sound"),
+            ("Focus", "focus"),
+            ("Battery", "main"),
+        ] {
+            assert_eq!(status_page(tip), page, "{tip}");
+            assert!(PAGES.contains(&page), "{page}");
+            assert_eq!(
+                crate::ui::ipc::cc_page(&status_target(tip)),
+                Some(page),
+                "{tip}"
+            );
+        }
+    }
+
+    /// Live: Log Out… and Shut Down… both toggled the plain session panel. Each opens it on its
+    /// own question, through a shell target the CLI and wol-shell both know.
+    #[test]
+    fn log_out_and_shut_down_ask_their_own_question() {
+        let argv = |title: &str| LOGO_MENU.iter().find(|r| r.0 == title).unwrap().1;
+        let (out, down) = (argv("Log Out…"), argv("Shut Down…"));
+        assert_ne!(out, down);
+        for a in [out, down] {
+            let [wol, shell, verb, target] = a else {
+                panic!("{a:?}: wol shell <verb> <target>")
+            };
+            assert_eq!((*wol, *shell, *verb), ("wol", "shell", "show"));
+            assert!(shared::shell::PANELS.contains(target), "{target}");
+            assert!(
+                crate::ui::panels::session_action(target).is_some(),
+                "{target}"
+            );
+        }
     }
 }

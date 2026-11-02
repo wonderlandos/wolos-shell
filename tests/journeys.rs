@@ -279,6 +279,9 @@ fn j1_the_installer_ends_on_a_plan_or_a_sentence() {
         n = f.advance();
         if let Next::Stay(_, why) = &n {
             friendly("installer", why);
+            // Encrypted by password when there is no security chip: the disk password first.
+            f.disk_password = "white rabbit".into();
+            f.disk_verify = "white rabbit".into();
             f.draft.set_full_name("Alice Liddell");
             f.draft.password = "curiouser".into();
             f.draft.verify = "curiouser".into();
@@ -290,6 +293,11 @@ fn j1_the_installer_ends_on_a_plan_or_a_sentence() {
     assert_eq!(n, Next::Install);
     let plan = f.plan().unwrap();
     assert!(plan.layout.wipe);
+    assert_eq!(
+        plan.protect,
+        wol_core::install::plan::Protect::Password,
+        "encrypted by default"
+    );
     assert_eq!(
         (plan.zone.as_str(), plan.locale.as_str()),
         ("America/New_York", "en_US.UTF-8")

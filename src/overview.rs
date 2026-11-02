@@ -45,12 +45,15 @@ pub fn grid(sizes: &[(i32, i32)], area: Rect, gap: f64) -> Vec<Rect> {
         .unwrap_or_default()
 }
 
-/// Desktops to show: workspace ids with windows plus the current one, ascending, positive only.
+/// Desktops to show, ascending, positive only: always 1..=[`crate::appmenu::DESKTOPS`] (macOS
+/// shows every Space, empty ones too; ⌃⌥1..4 and Move to Desktop name them), plus any other
+/// workspace with windows and the current one.
 pub fn desktops(clients: &[Client], current: i64) -> Vec<i64> {
     let mut v: Vec<i64> = clients
         .iter()
         .map(|c| c.workspace.id)
         .chain([current])
+        .chain(1..=i64::from(crate::appmenu::DESKTOPS))
         .filter(|&id| id > 0)
         .collect();
     v.sort_unstable();
@@ -130,7 +133,8 @@ mod tests {
             c.workspace.id = ws;
             c
         };
-        assert_eq!(desktops(&[c(3), c(1), c(3), c(-99)], 2), [1, 2, 3]);
-        assert_eq!(desktops(&[], 1), [1]);
+        assert_eq!(desktops(&[c(3), c(1), c(3), c(-99)], 2), [1, 2, 3, 4]);
+        assert_eq!(desktops(&[], 1), [1, 2, 3, 4], "empty desktops show too");
+        assert_eq!(desktops(&[c(6)], 5), [1, 2, 3, 4, 5, 6]);
     }
 }

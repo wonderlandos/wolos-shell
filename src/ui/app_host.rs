@@ -16,6 +16,9 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+/// App connections hosted at once (one `wol-kit-host` process each).
+const MAX_HOSTS: usize = 64;
+
 /// The host binary: next to the running shell, else on PATH.
 fn host_binary() -> PathBuf {
     std::env::current_exe()
@@ -67,11 +70,18 @@ pub fn listen() {
     };
     let me = shared::sys::euid();
     let host = host_binary();
+    // One host process per connection: a looping app could otherwise start hosts until the
+    // account runs out of processes (audit A17).
+    let quota = shared::bounded::Quota::new(MAX_HOSTS, MAX_HOSTS);
     std::thread::spawn(move || {
         for conn in l.incoming().flatten() {
             if shared::sys::peer(&conn).map(|p| p.uid) != Some(me) {
                 continue;
             }
+            let Some(slot) = quota.admit(me) else {
+                eprintln!("wol-shell: Kit host: too many app connections, one refused");
+                continue;
+            };
             let fd: OwnedFd = conn.into();
             match std::process::Command::new(&host)
                 .stdin(fd)
@@ -79,7 +89,10 @@ pub fn listen() {
                 .spawn()
             {
                 Ok(mut child) => {
-                    std::thread::spawn(move || child.wait());
+                    std::thread::spawn(move || {
+                        let _ = child.wait();
+                        drop(slot);
+                    });
                 }
                 Err(e) => eprintln!("wol-shell: Kit host: {}: {e}", host.display()),
             }
@@ -99,8 +112,16 @@ pub fn run_host() -> glib::ExitCode {
     // SAFETY: fd 0 is ours (the shell passed the connection as stdin) and nothing else uses it.
     let conn = unsafe { UnixStream::from_raw_fd(0) };
     let mut session = Session::default();
-    let mut reader = BufReader::new(conn.try_clone().expect("clone app connection"));
+    // Not a socket on stdin (started by hand): nothing to host.
+    let Ok(reader) = conn.try_clone() else {
+        return glib::ExitCode::FAILURE;
+    };
+    // The hello must come within the client timeout; after it an app may idle as long as it is
+    // open (each line stays bounded by `read_line`).
+    let _ = reader.set_read_timeout(Some(shared::bounded::CLIENT_TIMEOUT));
+    let mut reader = BufReader::new(reader);
     let first = read_line(&mut reader).and_then(|l| ToHost::parse(&l));
+    let _ = reader.get_ref().set_read_timeout(None);
     let Some(Ok(_)) = first.map(|m| session.on(m)) else {
         return glib::ExitCode::FAILURE;
     };
@@ -122,14 +143,15 @@ pub fn run_host() -> glib::ExitCode {
         }
     });
     let session = Rc::new(RefCell::new(session));
+    let conn = Rc::new(conn);
     app.connect_activate(move |app| {
         kit::style::install("");
         let hold = app.hold();
         let wins: Rc<RefCell<HashMap<u32, Win>>> = Default::default();
         let send = {
-            let conn = conn.try_clone().expect("clone app connection");
+            let conn = conn.clone();
             Rc::new(move |e: FromHost| {
-                let _ = (&conn).write_all(e.to_line().as_bytes());
+                let _ = (&*conn).write_all(e.to_line().as_bytes());
             })
         };
         let (app, rx, session) = (app.clone(), rx.clone(), session.clone());

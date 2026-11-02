@@ -26,10 +26,13 @@ fn share_paths_are_installed_by_the_image() {
     // next to wolos or $WOLOS_PKGBUILDS), which ships desktop/overlay and files/.
     let pkgbuilds = std::env::var_os("WOLOS_PKGBUILDS")
         .map_or_else(|| r.join("../wolos-pkgbuilds"), PathBuf::from);
-    let build = [r.join("tools/build-rust.sh"), pkgbuilds.join("wolos-system/PKGBUILD")]
-        .iter()
-        .map(|p| std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{}: {e}", p.display())))
-        .collect::<String>();
+    let build = [
+        r.join("tools/build-rust.sh"),
+        pkgbuilds.join("wolos-system/PKGBUILD"),
+    ]
+    .iter()
+    .map(|p| std::fs::read_to_string(p).unwrap_or_else(|e| panic!("{}: {e}", p.display())))
+    .collect::<String>();
     let mut files = Vec::new();
     rs_files(&r.join("crates/shell/src"), &mut files);
     let mut bad = Vec::new();

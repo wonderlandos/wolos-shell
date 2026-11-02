@@ -47,9 +47,14 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         if members.is_empty() {
             continue;
         }
+        let names = row_names(members.iter().map(|s| s.name.as_str()));
         let rows: Vec<gtk::Widget> = members
             .into_iter()
-            .map(|s| shortcut_row(keys, s, &recorders, &sync, &status))
+            .zip(names)
+            .map(|(s, name)| {
+                let s = Shortcut { name, ..s.clone() };
+                shortcut_row(keys, &s, &recorders, &sync, &status)
+            })
             .collect();
         let sec = w::section(g.title(), &rows);
         if g == Group::Tiling {
@@ -109,6 +114,23 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&restore);
     p.append(&status);
     p
+}
+
+/// Row titles in a group: a second key for the same action (⌃↑ and ⌘↑ both Overview) is its
+/// "(alternate)", so the list never shows one name twice (audit2 A2-12).
+fn row_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
+    let mut seen: Vec<&str> = Vec::new();
+    names
+        .map(|n| {
+            let again = seen.contains(&n);
+            seen.push(n);
+            if again {
+                format!("{n} (alternate)")
+            } else {
+                n.to_string()
+            }
+        })
+        .collect()
 }
 
 /// One shortcut: name, recorder, a reset button while changed, and a swap offer on conflict.
@@ -312,4 +334,18 @@ fn fill_custom(
     ));
     holder.append(&w::section("Custom Shortcuts", &rows));
     holder.append(&problem);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::row_names;
+
+    #[test]
+    fn a_second_key_for_the_same_action_is_its_alternate() {
+        let got = row_names(["Overview", "Overview", "Move left a space"].into_iter());
+        assert_eq!(
+            got,
+            ["Overview", "Overview (alternate)", "Move left a space"]
+        );
+    }
 }

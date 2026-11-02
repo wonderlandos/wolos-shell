@@ -12,7 +12,12 @@ use shared::widgets::Size;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
-use wol_lua::{Change, Library, Services};
+use wol_lua::{Change, Deadlines, Library, Services};
+
+/// Scripts run on the GTK thread, so each entry point has a wall-clock limit (R2C-3): 50 ms per
+/// render, 200 ms per click and per load. A widget that runs out is stopped and shows the
+/// "took too long" card until its file changes.
+const DEADLINES: Deadlines = Deadlines::DEFAULT;
 
 /// One file's last render.
 #[derive(Clone, Debug, PartialEq)]
@@ -30,8 +35,10 @@ pub struct Lua {
 
 impl Lua {
     pub fn new(dir: PathBuf, services: Rc<dyn Services>) -> Lua {
+        let mut lib = Library::new(dir, services);
+        lib.set_deadlines(DEADLINES);
         Lua {
-            lib: Library::new(dir, services),
+            lib,
             shown: HashMap::new(),
         }
     }
@@ -195,6 +202,35 @@ mod tests {
         assert_eq!(l.poll(), ["clock"]);
         assert!(matches!(l.content("clock"), Some(Content::Error { .. })));
         assert_eq!(l.content("nope"), None);
+        let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// R2C-3: a loop of capped C calls stops at the render deadline, and the card stays stopped
+    /// (the timer's next render does not run the script again) until the file changes.
+    #[test]
+    fn a_slow_widget_is_stopped_at_the_deadline_and_stays_stopped() {
+        let d = dir("slow");
+        std::fs::write(
+            d.join("slow.lua"),
+            "return wol.widget { name = 'Slow', render = function() local t = {} while true do table.move(t, 1, 2^20 - 1, 2) end; end }",
+        )
+        .unwrap();
+        let mut l = Lua::new(d.clone(), Rc::new(Fixed));
+        let start = std::time::Instant::now();
+        assert_eq!(l.poll(), ["slow"]);
+        assert!(
+            start.elapsed() < 2 * DEADLINES.render,
+            "{:?}",
+            start.elapsed()
+        );
+        let Some(Content::Error { details, .. }) = l.content("slow") else {
+            panic!("{:?}", l.content("slow"))
+        };
+        assert_eq!(details, [wol_lua::TOO_LONG]);
+        let again = std::time::Instant::now();
+        l.render("slow");
+        assert!(again.elapsed() < std::time::Duration::from_millis(5));
+        assert!(matches!(l.content("slow"), Some(Content::Error { .. })));
         let _ = std::fs::remove_dir_all(d);
     }
 }

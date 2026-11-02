@@ -77,6 +77,8 @@ pub enum Event {
     Close(u32),
     /// Esc (`wol shell hide banners`): every banner on screen leaves, dismissed.
     DismissAll,
+    /// A banner held while a window was in full screen, shown now (already in the center).
+    Replay(Note),
 }
 
 /// Horizontal travel (px) that swipes a banner away: a drag toward the screen edge, or a
@@ -274,6 +276,42 @@ pub fn quiet(n: &Note, focus: crate::focus::Focus) -> bool {
     focus.active() && !n.critical
 }
 
+/// Whether `n`'s banner waits (audit3 R2A-9): the active workspace is in real full screen (a
+/// game, a video) and the note is not critical. A banner mapped then draws over the game and
+/// stops its direct scanout; the note is in Notification Center already and its banner shows
+/// when full screen ends. A zoomed window holds nothing.
+pub fn held(mode: crate::hypr::Fullscreen, n: &Note) -> bool {
+    mode.holds_banners() && !n.critical
+}
+
+/// Most banners kept for after full screen (the oldest go; they stay in the center).
+pub const HELD_MAX: usize = 8;
+
+/// The banners [`held`] back, oldest first, replayed when full screen ends.
+#[derive(Default)]
+pub struct Held {
+    notes: Vec<Note>,
+}
+
+impl Held {
+    pub fn hold(&mut self, n: Note) {
+        self.notes.retain(|x| x.id != n.id);
+        self.notes.push(n);
+        if self.notes.len() > HELD_MAX {
+            self.notes.remove(0);
+        }
+    }
+
+    /// The app withdrew note `id`: it never shows.
+    pub fn forget(&mut self, id: u32) {
+        self.notes.retain(|x| x.id != id);
+    }
+
+    pub fn take(&mut self) -> Vec<Note> {
+        std::mem::take(&mut self.notes)
+    }
+}
+
 /// Where a new banner goes, given the banners on screen as (app, stacked count), top first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
@@ -306,6 +344,81 @@ fn card(n: &Note) -> gtk::Box {
         },
         1,
     )
+}
+
+/// Notes the Notification Center keeps; older ones fall off the bottom (audit2 A2-8: the list
+/// grew for the whole session).
+pub const CENTER_MAX: usize = 50;
+
+/// Notification Center rows by note id, newest first, at most [`CENTER_MAX`]. `T` is the row
+/// widget (a plain value in tests).
+#[derive(Debug)]
+pub struct Center<T> {
+    rows: Vec<(u32, T)>,
+}
+
+impl<T> Default for Center<T> {
+    fn default() -> Self {
+        Center { rows: Vec::new() }
+    }
+}
+
+impl<T> Center<T> {
+    /// Puts note `id` on top. Returns the rows to take off the list: the note it replaces
+    /// (`replaces_id`) and the oldest beyond [`CENTER_MAX`].
+    pub fn push(&mut self, id: u32, row: T) -> Vec<T> {
+        let mut gone: Vec<T> = self.remove(id).into_iter().collect();
+        self.rows.insert(0, (id, row));
+        while self.rows.len() > CENTER_MAX {
+            if let Some((_, r)) = self.rows.pop() {
+                gone.push(r);
+            }
+        }
+        gone
+    }
+
+    /// Note `id` was answered or withdrawn by its app: its row, to take off the list.
+    pub fn remove(&mut self, id: u32) -> Option<T> {
+        let i = self.rows.iter().position(|(x, _)| *x == id)?;
+        Some(self.rows.remove(i).1)
+    }
+
+    /// Clear: every row.
+    pub fn clear(&mut self) -> Vec<T> {
+        self.rows.drain(..).map(|(_, r)| r).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+}
+
+/// The Notification Center's content: title, Clear, and the list `rows` fills (no golden yet).
+pub fn center_panel(rows: Rc<RefCell<Center<gtk::Box>>>) -> (gtk::Box, gtk::Box) {
+    let list = w::vbox(0);
+    let g = w::glass_panel(w::S2);
+    let head = w::hbox(w::S2);
+    head.append(&w::label("Notifications", "title"));
+    head.append(&w::spacer());
+    let l2 = list.clone();
+    head.append(&w::button("Clear", w::Kind::Default, move || {
+        for r in rows.borrow_mut().clear() {
+            l2.remove(&r);
+        }
+    }));
+    g.append(&head);
+    g.append(
+        &gtk::ScrolledWindow::builder()
+            .child(&list)
+            .vexpand(true)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build(),
+    );
+    (g, list)
 }
 
 /// The `image-path` hint (older `image_path`) when it names a picture file: the thumbnail.
@@ -431,6 +544,18 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
             let _ = tx.try_send(Event::DismissAll);
         })
     };
+    // Held while full screen; replayed (in order) when it ends.
+    let held_back: Rc<RefCell<Held>> = Default::default();
+    {
+        let (held_back, tx) = (held_back.clone(), tx.clone());
+        crate::hypr::on_fullscreen_change(move |mode| {
+            if !mode.holds_banners() {
+                for n in held_back.borrow_mut().take() {
+                    let _ = tx.try_send(Event::Replay(n));
+                }
+            }
+        });
+    }
     let bus: Rc<std::cell::OnceCell<Bus>> = Default::default();
     let b2 = bus.clone();
     glib::spawn_future_local(async move {
@@ -463,39 +588,26 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
         }
     };
 
-    let banners = super::window(
-        app,
-        "banners",
-        Spec::panel(
-            "wol-panel-banners",
-            [true, false, false, true],
-            Keyboard::None,
-        ),
-    );
+    // Top layer (kit::surface::Spec::banners); held while a window is in full screen ([`held`]).
+    let banners = super::window(app, "banners", Spec::banners());
     let stack = w::vbox(0);
-    crate::kit::surface::survive_output_loss(
-        &banners,
-        Spec::panel(
-            "wol-panel-banners",
-            [true, false, false, true],
-            Keyboard::None,
-        ),
-    );
+    crate::kit::surface::survive_output_loss(&banners, Spec::banners());
     stack.add_css_class("banner-stack");
     // Width first: a Fill-height stack would ask the 2-line bodies for width-for-height and widen.
     stack.set_valign(gtk::Align::Start);
     stack.set_halign(gtk::Align::End);
     banners.set_child(Some(&stack));
-    let center_list = w::vbox(0);
-    let g = w::glass_panel(w::S2);
-    g.append(&w::label("Notifications", "title"));
-    g.append(
-        &gtk::ScrolledWindow::builder()
-            .child(&center_list)
-            .vexpand(true)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build(),
-    );
+    let rows: Rc<RefCell<Center<gtk::Box>>> = Default::default();
+    let (g, center_list) = center_panel(rows.clone());
+    // Takes note `id`'s row off the Notification Center (answered, or withdrawn by its app).
+    let unlist = {
+        let (rows, center_list) = (rows.clone(), center_list.clone());
+        move |id: u32| {
+            if let Some(r) = rows.borrow_mut().remove(id) {
+                center_list.remove(&r);
+            }
+        }
+    };
     let center = super::window(
         app,
         "panel",
@@ -559,7 +671,12 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
         };
         // Answers note `id`'s group: `key` goes to `id` (ActionInvoked), the rest are dismissed.
         let answer: Rc<Answer> = {
-            let (groups, drop_group, closed) = (groups.clone(), drop_group.clone(), closed.clone());
+            let (groups, drop_group, closed, unlist) = (
+                groups.clone(),
+                drop_group.clone(),
+                closed.clone(),
+                unlist.clone(),
+            );
             Rc::new(move |id, key| {
                 let rev = groups
                     .borrow()
@@ -569,7 +686,11 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 let Some(rev) = rev else { return };
                 for i in drop_group(&rev) {
                     match key {
-                        Some(k) if i == id => invoke(i, k.to_string()),
+                        Some(k) if i == id => {
+                            // Answered: not left in the center as if unread.
+                            unlist(i);
+                            invoke(i, k.to_string())
+                        }
                         _ => closed(i, CloseReason::Dismissed),
                     }
                 }
@@ -580,8 +701,9 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
             Rc::new(move |k: &str| a(id, Some(k)))
         };
         while let Ok(ev) = rx.recv().await {
-            let n = match ev {
-                Event::Show(n) => n,
+            let (n, fresh) = match ev {
+                Event::Show(n) => (n, true),
+                Event::Replay(n) => (n, false),
                 Event::DismissAll => {
                     let all: Vec<gtk::Revealer> =
                         groups.borrow().iter().map(|g| g.rev.clone()).collect();
@@ -593,6 +715,9 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                     continue;
                 }
                 Event::Close(id) => {
+                    // The app withdrew it (`CloseNotification`): gone from the center too.
+                    unlist(id);
+                    held_back.borrow_mut().forget(id);
                     let rev = {
                         let mut g = groups.borrow_mut();
                         let Some(gr) = g.iter_mut().find(|x| x.ids.contains(&id)) else {
@@ -607,8 +732,18 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                     continue;
                 }
             };
-            center_list.prepend(&card(&n));
+            if fresh {
+                let row = card(&n);
+                for gone in rows.borrow_mut().push(n.id, row.clone()) {
+                    center_list.remove(&gone);
+                }
+                center_list.prepend(&row);
+            }
             if quiet(&n, crate::focus::read()) {
+                continue;
+            }
+            if held(crate::hypr::fullscreen_state(), &n) {
+                held_back.borrow_mut().hold(n);
                 continue;
             }
             let generation = next_gen.get().wrapping_add(1);
@@ -831,5 +966,57 @@ mod tests {
         assert!(quiet(&n(false, -1), Focus::Until(9)));
         assert!(!quiet(&n(true, -1), Focus::On));
         assert!(!quiet(&n(false, -1), Focus::Off));
+    }
+
+    /// Audit3 R2A-9: over a game in full screen banners wait (critical ones still show); a
+    /// zoomed window holds nothing; held ones replay in order, withdrawn ones never.
+    #[test]
+    fn banners_wait_while_a_window_is_in_full_screen() {
+        use crate::hypr::Fullscreen;
+        assert!(held(Fullscreen::Full, &n(false, -1)));
+        assert!(
+            !held(Fullscreen::Full, &n(true, -1)),
+            "critical still shows"
+        );
+        assert!(!held(Fullscreen::Maximized, &n(false, -1)));
+        assert!(!held(Fullscreen::None, &n(false, -1)));
+        let note = |id| Note { id, ..n(false, -1) };
+        let mut h = Held::default();
+        for id in 1..=3 {
+            h.hold(note(id));
+        }
+        h.hold(note(2));
+        h.forget(1);
+        let ids: Vec<u32> = h.take().iter().map(|n| n.id).collect();
+        assert_eq!(
+            ids,
+            [3, 2],
+            "replaced notes move to the end, withdrawn ones go"
+        );
+        assert!(h.take().is_empty());
+        for id in 0..(HELD_MAX as u32 + 3) {
+            h.hold(note(id));
+        }
+        let kept = h.take();
+        assert_eq!(kept.len(), HELD_MAX);
+        assert_eq!(kept[0].id, 3, "the oldest go");
+    }
+
+    /// Audit2 A2-8: the Notification Center kept every note of the session, had no Clear, and
+    /// kept answered or withdrawn notes as if unread.
+    #[test]
+    fn the_center_is_capped_cleared_and_drops_answered_notes() {
+        let mut c: Center<u32> = Center::default();
+        for id in 1..=CENTER_MAX as u32 {
+            assert!(c.push(id, id).is_empty());
+        }
+        assert_eq!(c.push(1000, 1000), [1], "the oldest falls off");
+        assert_eq!(c.len(), CENTER_MAX);
+        assert_eq!(c.push(1000, 1001), [1000], "replaces_id: the old row goes");
+        assert_eq!(c.len(), CENTER_MAX);
+        assert_eq!(c.remove(7), Some(7), "answered or withdrawn");
+        assert_eq!(c.remove(7), None);
+        assert_eq!(c.clear().len(), CENTER_MAX - 1);
+        assert!(c.is_empty());
     }
 }

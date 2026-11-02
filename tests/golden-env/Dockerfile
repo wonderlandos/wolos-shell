@@ -3,7 +3,7 @@
 # GTK 4.24.1, libadwaita 1.10.0, cairo 1.18.6, pango 1.58.2, Xvfb 21.1.25. Fonts matter as much:
 # kit.css asks for Inter first, and the goldens were made without it, so the UI renders in
 # Cantarell and keycaps in DejaVu Sans. Do not add Inter here. gimp is only there for its app\n# icon (the flatpak-consent goldens show GIMP). Run it with ./run.sh.
-FROM archlinux:base
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413
 ARG SNAPSHOT=2026/10/30
 RUN printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$SNAPSHOT" > /etc/pacman.d/mirrorlist \
  && pacman -Syyuu --noconfirm --disable-sandbox \

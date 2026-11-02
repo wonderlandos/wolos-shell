@@ -103,8 +103,9 @@ pub fn exec_argv(exec: &str) -> Vec<String> {
     out
 }
 
-/// XDG data dirs, first id wins, sorted by name.
-pub fn load_all() -> Vec<Entry> {
+/// XDG data dirs, first id wins, sorted by name. Reads every `.desktop` file: never on the GTK
+/// thread (`tests/main_thread.rs`); panels share `ui::ipc::installed()`. Crate-only (R2A-24).
+pub(crate) fn load_all() -> Vec<Entry> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Ok(h) = std::env::var("XDG_DATA_HOME") {
         dirs.push(h.into());

@@ -1320,13 +1320,17 @@ pub fn approve(
     if !req.is_admin() {
         return Err(ActionError::Unavailable);
     }
+    // Audit S7: system packages from wold (ADR 0021) too. The typed password is always checked:
+    // a warm session cache (FRESH_PASSWORD's Cached rows) would otherwise accept any text.
     c.revoke();
     let r = match req {
+        R::Packages { verb, names } => packages(c, verb, names, password),
         R::Wifi { on } => c.set_wifi(*on, password),
         R::WifiJoin { ssid, password: p } => c.wifi_join(ssid, p.as_deref(), password),
         R::Bluetooth { on } => c.set_bluetooth(*on, password),
         R::BootEnvironment { name } => c.boot_environment(name, password),
-        R::Change { .. } => unreachable!("refused above"),
+        // Refused above; answer Unavailable rather than panic.
+        R::Change { .. } => Err(wol_core::controls::ControlError::Unavailable),
     };
     c.revoke();
     // No password means no approval: the sheet asks again instead of reporting "unavailable".
@@ -1334,6 +1338,31 @@ pub fn approve(
         ActionError::NeedsAuth => ActionError::Denied,
         e => e,
     })
+}
+
+/// One wol-admind request per package name. `update` with names installs or upgrades each one
+/// (`-S --needed`, as an install: audit S2); without names, everything. `update-holding` is the
+/// full update that leaves `names` (the person's pins) where they are.
+fn packages(
+    c: &Controls,
+    verb: &str,
+    names: &[String],
+    password: &str,
+) -> Result<(), wol_core::controls::ControlError> {
+    use wol_core::controls::ControlError;
+    match (verb, names.is_empty()) {
+        ("install" | "update", false) => names.iter().try_for_each(|n| c.pkg_install(n, password)),
+        ("remove", false) => names.iter().try_for_each(|n| c.pkg_remove(n, password)),
+        ("update", true) => c.pkg_upgrade(password),
+        ("update-holding", false) => c.admin_request(
+            &shared::admin::AdminRequest {
+                action: shared::admin::AdminAction::PkgUpgrade,
+                args: names.to_vec(),
+            },
+            password,
+        ),
+        _ => Err(ControlError::Invalid),
+    }
 }
 
 /// What an undo touched follows it: other apps restyle, shell prefs and Hyprland reload.
@@ -1455,6 +1484,61 @@ mod tests {
                 "revoke "
             ]
         );
+    }
+
+    /// Audit S7: wold's package sheet checks the typed password even while the session's
+    /// authorization is still cached (wol-admind would otherwise accept any text), and the
+    /// update verbs map to the wol-admind requests that keep holds (audit S2).
+    #[test]
+    fn package_sheets_check_the_password_even_with_a_warm_cache() {
+        use shared::admin::{AdminAction, AdminReply};
+        use shared::shell::ApprovalRequest as R;
+        let warm = Arc::new(Mutex::new(true));
+        let sent = Arc::new(Mutex::new(Vec::<String>::new()));
+        let (cache, log) = (warm.clone(), sent.clone());
+        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::linux()));
+        c.admin = Arc::new(move |req, pw| {
+            let mut cached = cache.lock().unwrap();
+            if req.action == AdminAction::Revoke {
+                *cached = false;
+                return Some(AdminReply::Ok);
+            }
+            log.lock()
+                .unwrap()
+                .push(format!("{} {}", req.action.name(), req.args.join(" ")));
+            // wol-admind: a cached authorization allows; otherwise only the right password.
+            Some(if *cached || pw == "good" {
+                *cached = true;
+                AdminReply::Ok
+            } else {
+                AdminReply::Denied
+            })
+        });
+        let install = R::Packages {
+            verb: "install".into(),
+            names: vec!["gimp".into()],
+        };
+        assert_eq!(
+            approve(&c, &install, "junk"),
+            Err(ActionError::Denied),
+            "a warm cache does not make junk a password"
+        );
+        assert!(!*warm.lock().unwrap(), "and nothing is left cached");
+        assert_eq!(approve(&c, &install, "good"), Ok(()));
+        assert!(!*warm.lock().unwrap(), "revoked after, too");
+        let update = R::Packages {
+            verb: "update".into(),
+            names: vec!["firefox".into()],
+        };
+        let holding = R::Packages {
+            verb: "update-holding".into(),
+            names: vec!["firefox".into(), "gimp".into()],
+        };
+        assert_eq!(approve(&c, &update, "good"), Ok(()));
+        assert_eq!(approve(&c, &holding, "good"), Ok(()));
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent[sent.len() - 2], "pkg-install firefox", "{sent:?}");
+        assert_eq!(sent[sent.len() - 1], "pkg-upgrade firefox gimp", "{sent:?}");
     }
 
     #[test]

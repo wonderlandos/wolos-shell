@@ -6,7 +6,11 @@
 //! run here (wol-admind), never in the helper. One sheet on screen, [`MAX_WAITING`] behind it,
 //! more get Busy; each request is denied [`APPROVAL_TIMEOUT_SECS`] after it arrived. The answer
 //! goes back on the request's connection and the requester writes the audit record (this side
-//! only logs an administrator change it ran when the requester is gone).
+//! only logs an administrator change it ran when the requester is gone). wold's own sheets (system
+//! packages, ADR 0021) arrive as a `SessionAsk` on the shell's wold subscription
+//! (`crate::app_session::set_sheet`), never on the socket (audit S1). A same-account requester is
+//! named by the executable the kernel reports; the name it gives itself is only a second line
+//! (audit S18).
 use crate::kit::{surface, widgets as w};
 use crate::system::{ActionError, System};
 use gtk::{gio, glib, prelude::*};
@@ -50,6 +54,10 @@ impl<T> Queue<T> {
     pub fn front_id(&self) -> Option<u64> {
         self.items.front().map(|i| i.0)
     }
+    /// How the request on screen is answered.
+    pub fn front_item(&self) -> Option<&T> {
+        self.items.front().map(|i| &i.2)
+    }
     /// Requests behind the one on screen.
     pub fn waiting(&self) -> usize {
         self.items.len().saturating_sub(1)
@@ -64,18 +72,66 @@ impl<T> Queue<T> {
     }
 }
 
-/// `script:backup` -> `backup`; MCP clients by their own name.
+/// Executables that may put a sheet on screen (`approve` on wol-shell.sock): wold only, as root.
+pub const APPROVERS: &[&str] = &["/usr/bin/wold", "/usr/lib/wolos/wold"];
+
+/// Who may send `approve`: the peer the kernel reports (uid, executable from /proc/<pid>/exe),
+/// never what the message says (audit A23). Root wold may ask anything; the shell's own account
+/// (`wol mcp`, `WOL_HELPER` scripts) may ask only user-level consent ([`ApprovalRequest::Change`]);
+/// administrator requests from anyone but wold are refused.
+pub fn may_approve(peer_uid: u32, own_uid: u32, peer_exe: &str, request: &ApprovalRequest) -> bool {
+    let wold = peer_uid == 0 && APPROVERS.contains(&peer_exe);
+    wold || (peer_uid == own_uid && !request.is_admin())
+}
+
+/// `script:backup` -> `backup`; an executable path (set by wold from the kernel) -> its file name;
+/// MCP clients by their own name.
 fn display_name(helper: &str) -> &str {
+    if helper.starts_with('/') {
+        return helper.rsplit('/').next().unwrap_or(helper);
+    }
     helper.strip_prefix("script:").unwrap_or(helper)
 }
 
-/// The sheet's title: who asks, for what.
-pub fn title(a: &Approval) -> String {
-    format!(
-        "“{}” wants to {}.",
-        display_name(&a.helper),
-        a.request.describe()
-    )
+/// Text from a requester or a file name made safe to show (R2C-12): control characters (C0, DEL,
+/// C1) and the bidirectional marks, embeddings, overrides and isolates that could reorder a title
+/// are dropped.
+pub fn plain(s: &str) -> String {
+    s.chars()
+        .filter(|c| {
+            !c.is_control()
+                && !matches!(
+                    *c,
+                    '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+                )
+        })
+        .collect()
+}
+
+/// The sheet's title: who asks, for what. An executable path is shown in full after the name,
+/// so a look-alike name cannot hide where the program lives. `exe` is the requester's executable
+/// as the kernel reported it (same-account requesters, audit S18): it names the requester, not
+/// the `helper` text the requester chose.
+pub fn title(a: &Approval, exe: Option<&str>) -> String {
+    let path = exe.or_else(|| a.helper.starts_with('/').then_some(a.helper.as_str()));
+    let what = plain(&a.request.describe());
+    match path {
+        Some(p) => format!(
+            "“{}” ({}) wants to {what}.",
+            plain(display_name(p)),
+            plain(p)
+        ),
+        None => format!("“{}” wants to {what}.", plain(display_name(&a.helper))),
+    }
+}
+
+/// The name a same-account requester gave itself, as a second line under the title; None when
+/// the title already names it that way (or the requester is wold, which names the app itself).
+pub fn self_named(a: &Approval, exe: Option<&str>) -> Option<String> {
+    let exe = exe?;
+    let said = display_name(&a.helper);
+    (a.helper != exe && said != display_name(exe))
+        .then(|| format!("It calls itself “{}”.", plain(said)))
 }
 
 /// The line under the title: what the choices mean, and how many more wait.
@@ -106,11 +162,17 @@ pub fn detail(a: &Approval, waiting: usize) -> String {
 /// Shows (true) or hides the surface holding the approvals.
 type ShowFn = Box<dyn Fn(bool)>;
 
+/// How a queued request is answered, and who the kernel says asked (same-account requesters).
+pub struct Pending {
+    tx: async_channel::Sender<Answer>,
+    exe: Option<String>,
+}
+
 pub struct Approvals {
     pub root: gtk::Box,
     sheet: w::AuthSheet,
     sys: Rc<dyn System>,
-    queue: RefCell<Queue<async_channel::Sender<Answer>>>,
+    queue: RefCell<Queue<Pending>>,
     /// The administrator change on screen is running (wol-admind): its result answers it, not the
     /// timeout.
     running: Cell<bool>,
@@ -158,11 +220,20 @@ impl Approvals {
 
     /// Queues `a`; it shows now when nothing else is on screen. The receiver yields the answer.
     pub fn ask(self: &Rc<Self>, a: Approval) -> async_channel::Receiver<Answer> {
+        self.ask_from(a, None)
+    }
+
+    /// [`Approvals::ask`] for a requester whose executable the kernel reported as `exe`.
+    pub fn ask_from(
+        self: &Rc<Self>,
+        a: Approval,
+        exe: Option<String>,
+    ) -> async_channel::Receiver<Answer> {
         let (tx, rx) = async_channel::bounded(1);
-        let pushed = self.queue.borrow_mut().push(a, tx);
+        let pushed = self.queue.borrow_mut().push(a, Pending { tx, exe });
         match pushed {
-            Err((_, tx)) => {
-                let _ = tx.try_send(Answer::Busy);
+            Err((_, p)) => {
+                let _ = p.tx.try_send(Answer::Busy);
             }
             Ok(id) => {
                 let weak = Rc::downgrade(self);
@@ -182,8 +253,8 @@ impl Approvals {
             return;
         }
         let gone = self.queue.borrow_mut().remove(id);
-        if let Some((_, _, tx)) = gone {
-            let _ = tx.try_send(Answer::TimedOut);
+        if let Some((_, _, p)) = gone {
+            let _ = p.tx.try_send(Answer::TimedOut);
             self.show_front();
         }
     }
@@ -198,12 +269,17 @@ impl Approvals {
             return;
         };
         let waiting = q.waiting();
+        let exe = q.front_item().and_then(|p| p.exe.clone());
         drop(q);
         let fresh = self.shown.replace(id) != id;
         let s = &self.sheet;
         let admin = a.request.is_admin();
-        s.title.set_label(&title(&a));
-        s.why.set_label(&detail(&a, waiting));
+        s.title.set_label(&title(&a, exe.as_deref()));
+        let why = match self_named(&a, exe.as_deref()) {
+            Some(said) => format!("{said} {}", detail(&a, waiting)),
+            None => detail(&a, waiting),
+        };
+        s.why.set_label(&why);
         s.icon.set_icon_name(Some(if admin {
             "system-lock-screen-symbolic"
         } else {
@@ -244,8 +320,8 @@ impl Approvals {
     fn answer(&self, ans: Answer) {
         self.running.set(false);
         let done = self.queue.borrow_mut().pop_front();
-        if let Some((_, tx)) = done {
-            let _ = tx.try_send(ans);
+        if let Some((_, p)) = done {
+            let _ = p.tx.try_send(ans);
         }
         self.show_front();
     }
@@ -369,27 +445,56 @@ pub fn handler(app: &gtk::Application, sys: Rc<dyn System>) -> super::ipc::Appro
             win.set_visible(false);
         }
     }));
-    Rc::new(move |json: String, conn: gio::SocketConnection| {
-        let Some(a) = Approval::parse(&json) else {
-            eprintln!("wol-shell: bad approval request");
-            return;
-        };
-        let rx = ap.ask(a.clone());
-        glib::spawn_future_local(async move {
-            let ans = rx.recv().await.unwrap_or(Answer::Deny);
-            let out = conn.output_stream();
-            if let Err(e) = out
-                .write_all_future(ans.line().into_bytes(), glib::Priority::DEFAULT)
-                .await
-            {
-                eprintln!("wol-shell: approval answer: {}", e.1);
-                if ans == Answer::Done {
-                    log(&a, Outcome::Approved, "ran after the helper had gone");
+    wold_sheets(&ap);
+    Rc::new(
+        move |json: String, conn: gio::SocketConnection, exe: Option<String>| {
+            let Some(a) = Approval::parse(&json) else {
+                eprintln!("wol-shell: bad approval request");
+                return;
+            };
+            // The requester as the kernel reported it at accept (ui::ipc pins it, R2C-12).
+            let rx = ap.ask_from(a.clone(), exe);
+            glib::spawn_future_local(async move {
+                let ans = rx.recv().await.unwrap_or(Answer::Deny);
+                let out = conn.output_stream();
+                if let Err(e) = out
+                    .write_all_future(ans.line().into_bytes(), glib::Priority::DEFAULT)
+                    .await
+                {
+                    eprintln!("wol-shell: approval answer: {}", e.1);
+                    if ans == Answer::Done {
+                        log(&a, Outcome::Approved, "ran after the helper had gone");
+                    }
                 }
-            }
-            let _ = conn.close_future(glib::Priority::DEFAULT).await;
-        });
-    })
+                let _ = conn.close_future(glib::Priority::DEFAULT).await;
+            });
+        },
+    )
+}
+
+/// wold's sheets (audit S1): the wold subscription thread hands each `Ask::Approval` here through
+/// `crate::app_session::set_sheet` and blocks until the person answered (or the sheet timed out).
+fn wold_sheets(ap: &Rc<Approvals>) {
+    type Asked = (Approval, async_channel::Sender<Answer>);
+    let (tx, rx) = async_channel::bounded::<Asked>(MAX_WAITING + 1);
+    crate::app_session::set_sheet(Box::new(move |a| {
+        let (back, answer) = async_channel::bounded(1);
+        match tx.try_send((a, back)) {
+            Ok(()) => answer.recv_blocking().ok(),
+            Err(async_channel::TrySendError::Full(_)) => Some(Answer::Busy),
+            Err(async_channel::TrySendError::Closed(_)) => None,
+        }
+    }));
+    let ap = ap.clone();
+    glib::spawn_future_local(async move {
+        while let Ok((a, back)) = rx.recv().await {
+            let answer = ap.ask(a);
+            glib::spawn_future_local(async move {
+                let ans = answer.recv().await.unwrap_or(Answer::Deny);
+                let _ = back.send(ans).await;
+            });
+        }
+    });
 }
 
 /// The sheet as it asks for `a` (goldens, previews).
@@ -436,13 +541,66 @@ mod tests {
     }
 
     #[test]
+    fn only_wold_as_root_may_ask_and_the_sheet_shows_the_executable() {
+        let admin = shared::shell::ApprovalRequest::Packages {
+            verb: "install".into(),
+            names: vec!["gimp".into()],
+        };
+        let consent = shared::shell::ApprovalRequest::Change {
+            capability: "appearance".into(),
+            what: "switch to Dark appearance".into(),
+        };
+        for r in [&admin, &consent] {
+            assert!(
+                may_approve(0, 1000, "/usr/bin/wold", r),
+                "wold asks anything"
+            );
+            assert!(
+                !may_approve(0, 1000, "/usr/bin/python3", r),
+                "root, but not wold"
+            );
+            assert!(
+                !may_approve(1001, 1000, "/usr/bin/wol", r),
+                "another account"
+            );
+        }
+        assert!(
+            may_approve(1000, 1000, "/usr/bin/wol", &consent),
+            "helper consent sheets"
+        );
+        assert!(
+            !may_approve(1000, 1000, "/usr/bin/wold", &admin),
+            "admin only from root wold"
+        );
+        assert!(!may_approve(
+            1000,
+            1000,
+            "/usr/bin/wol",
+            &shared::shell::ApprovalRequest::Wifi { on: false }
+        ));
+        let a = Approval {
+            helper: "/usr/bin/wopkg".into(),
+            tool: "wopkg packages-install".into(),
+            request: shared::shell::ApprovalRequest::Packages {
+                verb: "install".into(),
+                names: vec!["gimp".into()],
+            },
+        };
+        assert_eq!(
+            title(&a, None),
+            "“wopkg” (/usr/bin/wopkg) wants to install gimp for every account."
+        );
+        assert_eq!(detail(&a, 0), "Enter your password to allow this.");
+    }
+
+    #[test]
     fn sheet_text_names_the_helper_and_the_change() {
         assert_eq!(
-            title(&change("Claude Desktop")),
+            title(&change("Claude Desktop"), None),
             "“Claude Desktop” wants to switch to Dark appearance."
         );
         assert_eq!(
-            title(&change("script:backup")),
+            title(&change("script:backup"), None),
             "“backup” wants to switch to Dark appearance."
         );
         assert_eq!(
@@ -453,7 +611,7 @@ mod tests {
             request: R::Wifi { on: false },
             ..change("Claude")
         };
-        assert_eq!(title(&admin), "“Claude” wants to turn Wi-Fi off.");
+        assert_eq!(title(&admin, None), "“Claude” wants to turn Wi-Fi off.");
         assert_eq!(detail(&admin, 0), "Enter your password to allow this.");
         assert_eq!(
             detail(&admin, 2),
@@ -463,5 +621,52 @@ mod tests {
             detail(&admin, 1),
             "Enter your password to allow this. 1 more request is waiting."
         );
+    }
+
+    /// Audit S18: a same-account requester cannot pick the name the sheet leads with. The title
+    /// names the executable the kernel reported; the chosen name is only a second line.
+    #[test]
+    fn a_same_account_requester_is_named_by_its_executable() {
+        let a = change("Claude Desktop");
+        let exe = Some("/home/a/.local/bin/evil");
+        assert_eq!(
+            title(&a, exe),
+            "“evil” (/home/a/.local/bin/evil) wants to switch to Dark appearance."
+        );
+        assert_eq!(
+            self_named(&a, exe).as_deref(),
+            Some("It calls itself “Claude Desktop”.")
+        );
+        assert_eq!(
+            self_named(&a, None),
+            None,
+            "wold's sheets name the app already"
+        );
+        assert_eq!(
+            self_named(&change("/usr/bin/wol"), Some("/usr/bin/wol")),
+            None,
+            "nothing to add when the names agree"
+        );
+    }
+
+    /// R2C-12: a path or a name with bidi overrides or control characters cannot reorder the
+    /// title or break it over lines.
+    #[test]
+    fn the_title_shows_no_bidi_or_control_characters() {
+        let a = change("/home/a/\u{202E}gpj.exe");
+        let t = title(&a, None);
+        assert!(!t.contains('\u{202E}'), "{t}");
+        assert!(t.contains("/home/a/gpj.exe"), "{t}");
+        let named = change("Claude\u{2066}\n\u{1b}[31m");
+        let t = title(&named, Some("/usr/bin/wol\u{200F}"));
+        assert!(
+            !t.chars().any(|c| c.is_control()
+                || ('\u{2066}'..='\u{2069}').contains(&c)
+                || c == '\u{200F}'),
+            "{t:?}"
+        );
+        let s = self_named(&named, Some("/usr/bin/wol")).unwrap();
+        assert!(!s.chars().any(char::is_control), "{s:?}");
+        assert_eq!(plain("a\u{202A}b\u{85}c"), "abc");
     }
 }

@@ -254,6 +254,7 @@ pub fn answer(s: &dyn Session, ask: Ask) -> Result<Option<Value>, String> {
             Ok(Some(json!({ "text": text })))
         }
         Ask::Panel { .. } => Err("Panels are answered with a file.".into()),
+        Ask::Approval { .. } => Err("Approvals are answered on the approval sheet.".into()),
         Ask::Share { title, text } => {
             let done = share(s, &title, &text)?;
             Ok(Some(json!({ "done": done })))
@@ -348,9 +349,41 @@ pub fn panel_reply(
     }
 }
 
+/// Shows wold's approval sheet and blocks until the person answers it (set by
+/// `ui::approval::handler`, which owns the GTK sheet). None when no sheet can be shown.
+pub type SheetFn = dyn Fn(shared::shell::Approval) -> Option<shared::shell::Answer> + Send + Sync;
+
+static SHEET: std::sync::OnceLock<Box<SheetFn>> = std::sync::OnceLock::new();
+
+/// Where wold's approval asks go (audit S1): the sheet of this session. Set once, by the UI.
+pub fn set_sheet(f: Box<SheetFn>) {
+    let _ = SHEET.set(f);
+}
+
+/// The answer to wold's approval ask `id`: the sheet's answer as data, or why nobody could answer.
+pub fn approval_reply(sheet: Option<&SheetFn>, id: u32, a: shared::shell::Approval) -> Call {
+    let answer = sheet.and_then(|f| f(a));
+    match answer.and_then(|x| serde_json::to_value(x).ok()) {
+        Some(data) => Call::SessionAnswer {
+            id,
+            error: None,
+            data: Some(data),
+        },
+        None => Call::SessionAnswer {
+            id,
+            error: Some("No approval sheet can be shown.".into()),
+            data: None,
+        },
+    }
+}
+
 fn reply(wold: &Path, s: &dyn Session, id: u32, ask: Ask) {
     let (call, file) = match ask {
         Ask::Panel { save, title, name } => panel_reply(s, id, save, &title, &name),
+        Ask::Approval { approval } => (
+            approval_reply(SHEET.get().map(|b| &**b), id, approval),
+            None,
+        ),
         ask => (reply_of(s, id, ask), None),
     };
     let a = crate::app_notices::call_with(wold, &call, file.as_ref());
@@ -359,9 +392,53 @@ fn reply(wold: &Path, s: &dyn Session, id: u32, ask: Ask) {
     }
 }
 
-/// Answer `ask` on its own thread, so a slow one holds up nothing else.
+/// Answers being worked on at once; more are refused at once (R2C-18: a flood of asks never
+/// becomes a flood of threads). Above wold's own per-account cap (8 asks).
+pub const ANSWERS_IN_FLIGHT: usize = 16;
+
+static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A place among [`ANSWERS_IN_FLIGHT`]; dropping it frees it.
+struct Busy;
+
+impl Busy {
+    fn take() -> Option<Self> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let mut n = IN_FLIGHT.load(SeqCst);
+        loop {
+            if n >= ANSWERS_IN_FLIGHT {
+                return None;
+            }
+            match IN_FLIGHT.compare_exchange_weak(n, n + 1, SeqCst, SeqCst) {
+                Ok(_) => return Some(Busy),
+                Err(now) => n = now,
+            }
+        }
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Answer `ask` on its own thread, so a slow one holds up nothing else. Past
+/// [`ANSWERS_IN_FLIGHT`] the ask is answered "busy" right away.
 pub fn answer_later(wold: PathBuf, id: u32, ask: Ask) {
-    std::thread::spawn(move || reply(&wold, &Desktop, id, ask));
+    let Some(slot) = Busy::take() else {
+        let call = Call::SessionAnswer {
+            id,
+            error: Some(crate::copy::DESKTOP_BUSY.into()),
+            data: None,
+        };
+        let _ = crate::app_notices::call(&wold, &call);
+        return;
+    };
+    std::thread::spawn(move || {
+        let _slot = slot;
+        reply(&wold, &Desktop, id, ask)
+    });
 }
 
 #[cfg(test)]
@@ -411,6 +488,32 @@ mod tests {
             self.set.borrow_mut().push(format!("muted {muted}"));
             self.sound
         }
+    }
+
+    /// Audit S1: wold's approval ask is answered with what the person chose on the sheet; with
+    /// no sheet, an error (wold then treats it as nobody answering).
+    #[test]
+    fn approval_asks_answer_with_the_sheet() {
+        use shared::shell::{Answer, Approval, ApprovalRequest};
+        let a = Approval {
+            helper: "/usr/bin/wopkg".into(),
+            tool: "wopkg packages-update".into(),
+            request: ApprovalRequest::Change {
+                capability: "packages-update".into(),
+                what: "undo the last system update".into(),
+            },
+        };
+        let deny: &SheetFn = &|_| Some(Answer::Deny);
+        let Call::SessionAnswer { id, error, data } = approval_reply(Some(deny), 7, a.clone())
+        else {
+            panic!()
+        };
+        assert_eq!((id, error), (7, None));
+        assert_eq!(data, Some(json!({ "answer": "deny" })));
+        let Call::SessionAnswer { error, data, .. } = approval_reply(None, 7, a) else {
+            panic!()
+        };
+        assert!(error.is_some() && data.is_none());
     }
 
     #[test]
@@ -573,5 +676,15 @@ mod tests {
         assert!(error.is_some() && data.is_none());
         let c = reply_of(&holding(Some(b"short")), 1, Ask::ClipboardRead);
         assert!(c.validate().is_ok() && c.encode().len() < MAX_LINE);
+    }
+
+    /// R2C-18: answers in flight are capped; a freed place is taken again.
+    #[test]
+    fn answers_in_flight_are_capped() {
+        let held: Vec<Busy> = (0..ANSWERS_IN_FLIGHT).map_while(|_| Busy::take()).collect();
+        assert_eq!(held.len(), ANSWERS_IN_FLIGHT);
+        assert!(Busy::take().is_none());
+        drop(held);
+        assert!(Busy::take().is_some());
     }
 }

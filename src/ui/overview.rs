@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Overview surface: blurred wallpaper, desktops strip on top, the current desktop's
 //! windows scaled into a grid (live screencopy via grim; app icon until it arrives).
-use crate::hypr::Client;
+use crate::hypr::{Client, Dispatch};
 use crate::kit::{
     surface::{Keyboard, Spec},
     widgets as w,
@@ -18,13 +18,13 @@ pub struct Window<'a> {
 /// Height reserved for the desktops strip; windows fill the rest.
 const STRIP: f64 = (w::OVERVIEW_DESKTOP.1 + 2 * w::S6 + w::S4) as f64;
 
-/// The whole overview at `size`. `on_pick` gets "focuswindow address:X" or "workspace N".
+/// The whole overview at `size`. `on_pick` gets the window's focus or the desktop's switch.
 pub fn content(
     size: (i32, i32),
     desktops: &[i64],
     current: i64,
     windows: Vec<Window>,
-    on_pick: impl Fn(String) + Clone + 'static,
+    on_pick: impl Fn(Dispatch) + Clone + 'static,
 ) -> (gtk::Widget, Vec<(String, gtk::Picture)>) {
     let root = gtk::Overlay::new();
     root.add_css_class("overview");
@@ -51,7 +51,7 @@ pub fn content(
         let b = gtk::Button::builder().child(&tile).build();
         b.add_css_class("overview-desktop-button");
         let pick = on_pick.clone();
-        b.connect_clicked(move |_| pick(format!("workspace {id}")));
+        b.connect_clicked(move |_| pick(Dispatch::Workspace(id.to_string())));
         d.append(&b);
         let cap = w::centered(&format!("Desktop {id}"), "overview-caption");
         cap.set_halign(gtk::Align::Center);
@@ -63,14 +63,7 @@ pub fn content(
     let fixed = gtk::Fixed::new();
     fixed.set_vexpand(true);
     col.append(&fixed);
-    let (sw, sh) = (size.0 as f64, size.1 as f64);
-    let pad = w::S8 as f64 * 2.0;
-    let area = Rect {
-        x: pad,
-        y: 0.0,
-        w: sw - 2.0 * pad,
-        h: sh - STRIP - pad - w::OVERVIEW_TITLE as f64 - w::S6 as f64,
-    };
+    let area = window_area(size);
     let sizes: Vec<(i32, i32)> = windows
         .iter()
         .map(|c| (c.client.size[0], c.client.size[1]))
@@ -108,7 +101,7 @@ pub fn content(
             .build();
         b.add_css_class("overview-window-button");
         let (pick, addr) = (on_pick.clone(), win.client.address.clone());
-        b.connect_clicked(move |_| pick(format!("focuswindow address:{addr}")));
+        b.connect_clicked(move |_| pick(Dispatch::FocusWindow(format!("address:{addr}"))));
         card.append(&b);
         let t = w::centered(
             &crate::clipboard::preview(&win.client.title),
@@ -126,82 +119,137 @@ pub fn content(
     (root.upcast(), pics)
 }
 
+/// Where the window cards go on a screen of `size`: below the strip, inside the padding. Never
+/// negative (a 0x0 size before the first allocation made every card's size request invalid).
+fn window_area(size: (i32, i32)) -> Rect {
+    let (sw, sh) = (f64::from(size.0), f64::from(size.1));
+    let pad = w::S8 as f64 * 2.0;
+    Rect {
+        x: pad,
+        y: 0.0,
+        w: (sw - 2.0 * pad).max(0.0),
+        h: (sh - STRIP - pad - w::OVERVIEW_TITLE as f64 - w::S6 as f64).max(0.0),
+    }
+}
+
+/// On demand, not exclusive: with an exclusive layer mapped Hyprland refuses `focuswindow`, so a
+/// card click only closed Overview (audit2 A2-3; the switcher learnt it live, `ui::switcher::SPEC`).
+pub const SPEC: Spec = Spec::panel("wol-panel-overview", [true; 4], Keyboard::OnDemand);
+
+/// What a pick does, in order: the dispatch first (focus works while the layer is mapped on
+/// demand), then Overview hides; Hyprland's refocus on unmap then lands on the picked window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Step {
+    Dispatch(Dispatch),
+    Hide,
+}
+
+/// The steps for `what` (a window's focus or a desktop's switch).
+pub fn pick(what: Dispatch) -> [Step; 2] {
+    [Step::Dispatch(what), Step::Hide]
+}
+
+/// Clients and the active desktop (`.socket.sock`; run off the UI thread).
+fn read_state() -> (Vec<Client>, i64) {
+    let clients = crate::hypr::clients();
+    let current = crate::hypr::active_workspace().unwrap_or(1);
+    (clients, current)
+}
+
 /// The layer surface; rebuilt from Hyprland state on every show.
 pub fn build(app: &gtk::Application) -> gtk::Window {
-    let win = super::window(
-        app,
-        "panel",
-        Spec::panel("wol-panel-overview", [true; 4], Keyboard::Exclusive),
-    );
-    crate::kit::surface::survive_output_loss(
-        &win,
-        Spec::panel("wol-panel-overview", [true; 4], Keyboard::Exclusive),
-    );
+    let win = super::window(app, "panel", SPEC);
+    crate::kit::surface::survive_output_loss(&win, SPEC);
     win.add_css_class("overview-window-surface");
-    let keys = gtk::EventControllerKey::new();
     let w2 = win.clone();
-    keys.connect_key_pressed(move |_, k, _, _| {
-        if k == gdk::Key::Escape {
-            w2.set_visible(false);
-            return glib::Propagation::Stop;
-        }
-        glib::Propagation::Proceed
+    crate::kit::surface::on_escape(&win, move || w2.set_visible(false));
+    // Which show a Hyprland answer belongs to (a quick close and reopen must not fill twice).
+    let shows = std::rc::Rc::new(std::cell::Cell::new(0u32));
+    win.connect_show(move |win| {
+        // The backdrop at once (never the last open's cards), the windows once Hyprland answered.
+        win.set_child(Some(
+            &content(screen(win.upcast_ref()), &[], 1, vec![], |_| {}).0,
+        ));
+        let show = shows.get().wrapping_add(1);
+        shows.set(show);
+        let (win, shows) = (win.clone(), shows.clone());
+        glib::spawn_future_local(async move {
+            let Ok((clients, current)) = gtk::gio::spawn_blocking(read_state).await else {
+                return;
+            };
+            if win.is_visible() && shows.get() == show {
+                fill(win.upcast_ref(), &clients, current);
+            }
+        });
     });
-    win.add_controller(keys);
-    win.connect_show(|win| {
-        let clients = crate::hypr::clients();
-        let current = crate::hypr::request("j/activeworkspace")
-            .and_then(|j| serde_json::from_str::<serde_json::Value>(&j).ok())
-            .and_then(|v| v["id"].as_i64())
-            .unwrap_or(1);
-        let size = win
-            .surface()
-            .and_then(|s| WidgetExt::display(win).monitor_at_surface(&s))
-            .map(|m| (m.geometry().width(), m.geometry().height()))
-            .unwrap_or((win.width(), win.height()));
-        let here: Vec<Window> = clients
-            .iter()
-            .filter(|c| c.workspace.id == current)
-            .map(|client| Window {
-                client,
-                thumb: None,
-            })
-            .collect();
-        let w2 = win.clone();
-        let (child, pics) = content(
-            size,
-            &overview::desktops(&clients, current),
-            current,
-            here,
-            move |d| {
-                w2.set_visible(false);
-                let _ = crate::hypr::request(&format!("dispatch {d}"));
-            },
-        );
-        win.set_child(Some(&child));
-        // Each window's own contents (covered or not) via hyprland_toplevel_export_v1.
-        for (addr, pic) in pics {
+    win.upcast()
+}
+
+/// Screen size for the grid: the display the surface is on, else the first display (audit2 A2-2:
+/// the first open after login had no output yet), else the window's own size.
+fn screen(win: &gtk::Window) -> (i32, i32) {
+    crate::kit::surface::screen_of(win).unwrap_or((win.width(), win.height()))
+}
+
+/// The desktops strip and the current desktop's windows, then their live thumbnails.
+fn fill(win: &gtk::Window, clients: &[Client], current: i64) {
+    let here: Vec<Window> = clients
+        .iter()
+        .filter(|c| c.workspace.id == current)
+        .map(|client| Window {
+            client,
+            thumb: None,
+        })
+        .collect();
+    let w2 = win.clone();
+    // One pick per open (audit3 R2A-3): a second click during the first's dispatch would send
+    // a second dispatch and a second hide.
+    let picking = std::rc::Rc::new(std::cell::Cell::new(false));
+    let (child, pics) = content(
+        screen(win),
+        &overview::desktops(clients, current),
+        current,
+        here,
+        move |d| {
+            if picking.replace(true) {
+                return;
+            }
+            let w2 = w2.clone();
             glib::spawn_future_local(async move {
-                let out = gtk::gio::spawn_blocking(move || {
-                    std::process::Command::new("wol-window-shot")
-                        .arg(&addr)
-                        .output()
-                        .ok()
-                        .filter(|o| o.status.success())
-                        .map(|o| o.stdout)
-                })
-                .await;
-                let Ok(Some(bytes)) = out else { return };
-                if let Some(t) = texture(&bytes) {
-                    pic.set_paintable(Some(&t));
-                    if let Some(icon) = pic.next_sibling() {
-                        icon.set_visible(false);
+                for step in pick(d) {
+                    match step {
+                        Step::Dispatch(req) => {
+                            let _ =
+                                gtk::gio::spawn_blocking(move || crate::hypr::dispatch(&req)).await;
+                        }
+                        Step::Hide => w2.set_visible(false),
                     }
                 }
             });
-        }
-    });
-    win.upcast()
+        },
+    );
+    win.set_child(Some(&child));
+    // Each window's own contents (covered or not) via hyprland_toplevel_export_v1.
+    for (addr, pic) in pics {
+        glib::spawn_future_local(async move {
+            let out = gtk::gio::spawn_blocking(move || {
+                std::process::Command::new("wol-window-shot")
+                    .arg(&addr)
+                    .output()
+                    .ok()
+                    .filter(|o| o.status.success())
+                    .map(|o| o.stdout)
+            })
+            .await;
+            let Ok(Some(bytes)) = out else { return };
+            if let Some(t) = texture(&bytes) {
+                pic.set_paintable(Some(&t));
+                if let Some(icon) = pic.next_sibling() {
+                    icon.set_visible(false);
+                }
+            }
+        });
+    }
 }
 
 /// `wol-window-shot` output -> texture.
@@ -215,10 +263,37 @@ fn texture(bytes: &[u8]) -> Option<gdk::MemoryTexture> {
         Layout::Rgbx => gdk::MemoryFormat::R8g8b8x8,
     };
     Some(gdk::MemoryTexture::new(
-        f.width as i32,
-        f.height as i32,
+        i32::try_from(f.width).ok()?,
+        i32::try_from(f.height).ok()?,
         format,
-        &glib::Bytes::from(&px[..(f.stride * f.height) as usize]),
+        // In usize: the u32 product of another process's header overflowed (audit3 R2A-20);
+        // `decode` checked the length in u64.
+        &glib::Bytes::from(px.get(..f.stride as usize * f.height as usize)?),
         f.stride as usize,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit2 A2-3: an exclusive Overview made Hyprland refuse the card's `focuswindow`; the
+    /// dispatch also ran before the unmap was flushed. On demand, focus first, then hide.
+    #[test]
+    fn overview_takes_the_keyboard_on_demand_and_focuses_before_hiding() {
+        assert_eq!(SPEC.keyboard, Keyboard::OnDemand);
+        assert_eq!(SPEC.namespace, "wol-panel-overview");
+        let focus = Dispatch::FocusWindow("address:0x1".into());
+        assert_eq!(pick(focus.clone()), [Step::Dispatch(focus), Step::Hide]);
+    }
+
+    /// Audit2 A2-2: the first open after login had a 0x0 surface on no output, so the card area
+    /// was negative and no card showed (the display choice: `kit::surface::pick_screen`).
+    #[test]
+    fn the_first_open_sizes_from_a_display_and_never_goes_negative() {
+        let a = window_area((0, 0));
+        assert!(a.w >= 0.0 && a.h >= 0.0, "{a:?}");
+        let a = window_area((1920, 1080));
+        assert!(a.w > 0.0 && a.h > 0.0, "{a:?}");
+    }
 }

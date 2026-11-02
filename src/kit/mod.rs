@@ -55,12 +55,18 @@ pub const FAKE_NOW: crate::clock::Stamp = crate::clock::Stamp {
     second: 0,
 };
 
-/// Local wall clock as pure-logic fields.
+/// Local wall clock as pure-logic fields. Without a usable local time zone (a broken TZ
+/// database), UTC from the system clock: the bar never panics over the clock.
 pub fn now() -> crate::clock::Stamp {
     if std::env::var_os("WOL_FAKE_NOW").is_some() {
         return FAKE_NOW;
     }
-    let t = glib::DateTime::now_local().expect("local time");
+    let Ok(t) = glib::DateTime::now_local() else {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        return utc_stamp(secs);
+    };
     crate::clock::Stamp {
         weekday: t.day_of_week() as u8,
         day: t.day_of_month() as u8,
@@ -68,6 +74,29 @@ pub fn now() -> crate::clock::Stamp {
         hour: t.hour() as u8,
         minute: t.minute() as u8,
         second: t.second() as u8,
+    }
+}
+
+/// UTC fields of a Unix time (civil-from-days, Howard Hinnant).
+pub fn utc_stamp(secs: i64) -> crate::clock::Stamp {
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    crate::clock::Stamp {
+        // 1970-01-01 was a Thursday; `weekday` 1 = Monday.
+        weekday: ((days + 3).rem_euclid(7) + 1) as u8,
+        day: day as u8,
+        month: month as u8,
+        hour: (rem / 3_600) as u8,
+        minute: (rem % 3_600 / 60) as u8,
+        second: (rem % 60) as u8,
     }
 }
 
@@ -153,6 +182,26 @@ pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static
             }
         });
     });
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+
+    /// The bar's clock must never panic: without a local zone the UTC fallback is a real calendar.
+    #[test]
+    fn utc_fallback_is_a_real_calendar() {
+        let e = utc_stamp(0);
+        assert_eq!(
+            (e.weekday, e.day, e.month, e.hour, e.minute, e.second),
+            (4, 1, 1, 0, 0, 0),
+            "Thursday 1 January 1970"
+        );
+        // Mon 26 Oct 2026 14:05:00 UTC (the golden time).
+        assert_eq!(utc_stamp(1_793_023_500), FAKE_NOW);
+        let leap = utc_stamp(951_782_400); // Tue 29 Feb 2000 00:00:00
+        assert_eq!((leap.day, leap.month, leap.weekday), (29, 2, 2));
+    }
 }
 
 #[cfg(test)]
