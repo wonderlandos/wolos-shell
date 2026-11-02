@@ -124,6 +124,20 @@ impl Spec {
             keyboard,
         }
     }
+    /// Notification banners: top right, never take the keyboard. On the Top layer, not Overlay,
+    /// so a zoomed window's menu bar band stays theirs. Hyprland draws a Top layer mapped after a
+    /// window went full screen above it, so the shell holds banners while the active workspace
+    /// is in full screen and shows them after (`ui::notify::held`, audit3 R2A-9), as macOS does.
+    pub const fn banners() -> Self {
+        Spec {
+            layer: Layer::Top,
+            ..Self::panel(
+                "wol-panel-banners",
+                [true, false, false, true],
+                Keyboard::None,
+            )
+        }
+    }
 }
 
 /// What a shell surface does when the compositor closes it because its display went away.
@@ -269,6 +283,130 @@ pub fn set_exclusive(w: &impl IsA<gtk::Window>, on: bool) {
 #[cfg(not(feature = "layer-shell"))]
 pub fn set_exclusive(_w: &impl IsA<gtk::Window>, _on: bool) {}
 
+/// Reserve exactly `px` of screen space (0 releases it). The Dock uses this instead of the
+/// automatic zone: its layer window is taller than the shelf (hot zone, lift room above the
+/// tiles), and reserving all of it left a band between zoomed windows and the shelf.
+#[cfg(feature = "layer-shell")]
+pub fn set_exclusive_px(w: &impl IsA<gtk::Window>, px: i32) {
+    use gtk4_layer_shell::LayerShell;
+    if gtk4_layer_shell::is_supported() {
+        w.set_exclusive_zone(px.max(0));
+    }
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn set_exclusive_px(_w: &impl IsA<gtk::Window>, _px: i32) {}
+
+/// The one Esc handler (audit3 R2A-22): a key controller on `w` that runs `f` on Esc and stops
+/// the key there; every other key goes on. Text fields that use Esc to cancel an edit keep their
+/// own handler (`kit::form`).
+pub fn on_escape(w: &impl IsA<gtk::Widget>, f: impl Fn() + 'static) {
+    let keys = gtk::EventControllerKey::new();
+    keys.connect_key_pressed(move |_, k, _, _| {
+        if k == gtk::gdk::Key::Escape {
+            f();
+            gtk::glib::Propagation::Stop
+        } else {
+            gtk::glib::Propagation::Proceed
+        }
+    });
+    w.add_controller(keys);
+}
+
+/// Which screen size to use: the display under the surface, else the first display; a display
+/// that reports 0×0 (headless at start, an output being unplugged) does not count. None when
+/// neither is known; the caller picks its own fallback (audit2 A2-2, A2-11; audit3 R2A-22).
+pub fn pick_screen(
+    on_surface: Option<(i32, i32)>,
+    first: Option<(i32, i32)>,
+) -> Option<(i32, i32)> {
+    let real = |s: &(i32, i32)| s.0 > 0 && s.1 > 0;
+    on_surface.filter(real).or(first.filter(real))
+}
+
+/// The one screen-geometry lookup (audit3 R2A-22): the logical size (width, height) of the
+/// display `w` is on, or of the first display before `w` has a surface. None without a display.
+pub fn screen_of(w: &impl IsA<gtk::Widget>) -> Option<(i32, i32)> {
+    let size = |m: gtk::gdk::Monitor| (m.geometry().width(), m.geometry().height());
+    let d = w.as_ref().display();
+    let on_surface = monitor_of(w.as_ref()).map(size);
+    let first = d
+        .monitors()
+        .item(0)
+        .and_downcast::<gtk::gdk::Monitor>()
+        .map(size);
+    pick_screen(on_surface, first)
+}
+
+/// Whether a reservation on display `theirs` counts for a panel on display `ours`: the same
+/// display, or either one not known yet (then it counts, the safe side: the panel ends higher).
+pub fn same_display<T: PartialEq>(theirs: Option<T>, ours: Option<T>) -> bool {
+    match (theirs, ours) {
+        (Some(a), Some(b)) => a == b,
+        _ => true,
+    }
+}
+
+/// The display a widget's surface is on, None before it has one.
+fn monitor_of(w: &gtk::Widget) -> Option<gtk::gdk::Monitor> {
+    let d = w.display();
+    w.native()
+        .and_then(|n| n.surface())
+        .and_then(|s| d.monitor_at_surface(&s))
+}
+
+/// [`reserved_bottom`] for the display `on` is on only: a Dock on another display does not
+/// shorten a panel here (audit3 R2A-4).
+#[cfg(feature = "layer-shell")]
+pub fn reserved_bottom_on(on: &impl IsA<gtk::Widget>) -> i32 {
+    use gtk4_layer_shell::{Edge, LayerShell};
+    if !gtk4_layer_shell::is_supported() {
+        return 0;
+    }
+    let ours = monitor_of(on.as_ref());
+    let tops = gtk::Window::list_toplevels();
+    (0..tops.n_items())
+        .filter_map(|i| tops.item(i).and_downcast::<gtk::Window>())
+        .filter(|w| {
+            w.is_layer_window() && w.is_mapped() && w.anchor(Edge::Bottom) && !w.anchor(Edge::Top)
+        })
+        .filter(|w| {
+            let theirs = LayerShell::monitor(w).or_else(|| monitor_of(w.upcast_ref()));
+            same_display(theirs, ours.clone())
+        })
+        .map(|w| w.exclusive_zone().max(0))
+        .sum()
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn reserved_bottom_on(_on: &impl IsA<gtk::Widget>) -> i32 {
+    0
+}
+
+/// Pixels this process's layer surfaces reserve at the bottom of the screen (the Dock's shelf,
+/// [`set_exclusive_px`]): mapped layers anchored to the bottom edge and not the top, summed.
+/// 0 without layer-shell or when nothing reserves (Dock autohide).
+#[cfg(feature = "layer-shell")]
+pub fn reserved_bottom() -> i32 {
+    use gtk4_layer_shell::{Edge, LayerShell};
+    if !gtk4_layer_shell::is_supported() {
+        return 0;
+    }
+    let tops = gtk::Window::list_toplevels();
+    (0..tops.n_items())
+        .filter_map(|i| tops.item(i).and_downcast::<gtk::Window>())
+        .filter(|w| {
+            w.is_layer_window() && w.is_mapped() && w.anchor(Edge::Bottom) && !w.anchor(Edge::Top)
+        })
+        .map(|w| w.exclusive_zone().max(0))
+        .sum()
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn reserved_bottom() -> i32 {
+    0
+}
+
 /// Move a surface between layers and keyboard modes at runtime (Edit Widgets).
 #[cfg(feature = "layer-shell")]
 pub fn set_layer(w: &impl IsA<gtk::Window>, layer: Layer, keyboard: Keyboard) {
@@ -338,17 +476,8 @@ pub fn keyboard_access(
             }
         })
     };
-    let keys = gtk::EventControllerKey::new();
     let a = access.clone();
-    keys.connect_key_pressed(move |_, k, _, _| {
-        if k == gtk::gdk::Key::Escape {
-            a(false);
-            gtk::glib::Propagation::Stop
-        } else {
-            gtk::glib::Propagation::Proceed
-        }
-    });
-    win.add_controller(keys);
+    on_escape(&win, move || a(false));
     access
 }
 
@@ -392,6 +521,31 @@ pub fn terminal_clipboard_keys(win: &impl IsA<gtk::Window>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R2A-22 (was overview `screen_size`, A2-2): the display under the surface wins, a 0×0 one
+    /// falls through to the first display, and nothing known is None.
+    /// R2A-4: the Dock on display 1 does not shorten a panel on display 2; unknown counts.
+    #[test]
+    fn a_reservation_counts_on_its_own_display_only() {
+        assert!(same_display(Some(1), Some(1)));
+        assert!(!same_display(Some(1), Some(2)));
+        assert!(same_display(None, Some(2)));
+        assert!(same_display(Some(1), None::<i32>));
+    }
+
+    #[test]
+    fn the_screen_is_the_real_display_under_the_surface() {
+        assert_eq!(
+            pick_screen(Some((1280, 800)), Some((1920, 1080))),
+            Some((1280, 800))
+        );
+        assert_eq!(
+            pick_screen(Some((0, 0)), Some((1920, 1080))),
+            Some((1920, 1080))
+        );
+        assert_eq!(pick_screen(None, Some((0, 0))), None);
+        assert_eq!(pick_screen(None, None), None);
+    }
 
     /// J13: the menu bar and the Dock never take the keyboard by themselves (typing stays in the
     /// app), and ⌃F2/⌃F3 must take it at once: Exclusive, the only mode Hyprland focuses on change.
@@ -465,6 +619,39 @@ mod tests {
         ] {
             assert_eq!(s.on_output_lost(), OutputLost::Hide, "{}", s.namespace);
         }
+    }
+
+    /// Audit3 R2A-9: the layer alone did not keep banners off a fullscreen game (a Top layer
+    /// mapped after the game went full screen draws above it). They are held while the active
+    /// workspace is in full screen, critical ones excepted; a zoomed window holds nothing.
+    #[test]
+    fn banners_are_held_while_a_window_is_in_full_screen() {
+        use crate::hypr::Fullscreen;
+        let note = |critical| crate::ui::notify::Note {
+            id: 1,
+            app: String::new(),
+            icon: String::new(),
+            summary: String::new(),
+            body: String::new(),
+            critical,
+            timeout_ms: -1,
+            image: String::new(),
+            actions: vec![],
+        };
+        assert!(crate::ui::notify::held(Fullscreen::Full, &note(false)));
+        assert!(!crate::ui::notify::held(Fullscreen::Full, &note(true)));
+        assert!(!crate::ui::notify::held(
+            Fullscreen::Maximized,
+            &note(false)
+        ));
+        let b = Spec::banners();
+        assert_eq!(b.layer, Layer::Top);
+        assert_eq!(b.namespace, "wol-panel-banners");
+        assert_eq!(b.anchor, [true, false, false, true]);
+        assert_eq!(b.keyboard, Keyboard::None);
+        assert!(!b.exclusive);
+        assert_eq!(b.zone(), Zone::Respect);
+        assert_eq!(b.on_output_lost(), OutputLost::Hide);
     }
 
     /// Live Hyprland: the wallpaper stopped at the menu bar and dock zones (black strips).

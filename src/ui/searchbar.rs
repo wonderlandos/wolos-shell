@@ -52,6 +52,15 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
 /// Seconds between two listings of `$HOME` by the shell (Search also lists it when stale).
 const RELIST_SECS: u32 = 3600;
 
+/// Keystrokes closer than this are one question to the apps (a worker thread per keystroke before).
+pub const PROVIDER_DEBOUNCE_MS: u64 = 80;
+
+/// Whether an answer from the apps is still for what is typed: no newer keystroke was asked
+/// (`asked` is the newest) and the field still says the same.
+pub fn still_wanted(asked: u64, newest: u64, asked_text: &str, text_now: &str) -> bool {
+    asked == newest && asked_text == text_now
+}
+
 /// wol-shell: lists `$HOME` for Search at login and every hour, off the main thread.
 pub fn keep_file_index() {
     let list = || {
@@ -166,12 +175,10 @@ pub fn run() -> glib::ExitCode {
             {
                 let render = render.clone();
                 glib::spawn_future_local(async move {
-                    if let Ok(v) =
-                        gtk::gio::spawn_blocking(|| index(crate::desktop::load_all())).await
-                    {
-                        *items.borrow_mut() = v;
-                        render();
-                    }
+                    // The shared list (read off the UI thread once, `ipc::installed`).
+                    let apps = super::ipc::installed().await;
+                    *items.borrow_mut() = index(apps.as_ref().clone());
+                    render();
                 });
             }
             // File names: the saved list at once, a fresh one after when it is old.
@@ -219,7 +226,7 @@ pub fn content(
     bar.add_css_class("searchbar-bar");
     bar.append(&w::icon("system-search-symbolic", w::ICON_M));
     let entry = gtk::Text::builder()
-        .placeholder_text("Search Search")
+        .placeholder_text("Search")
         .hexpand(true)
         .valign(gtk::Align::Center)
         .build();
@@ -340,24 +347,38 @@ pub fn content(
         })
     };
     {
+        // Debounced, newest wins: the apps hear one question per pause in typing, and only an
+        // answer to what is still typed is shown.
         let late = late.clone();
+        let asked = Rc::new(Cell::new(0u64));
         entry.connect_changed(move |e| {
             let q = e.text().to_string();
             if q.trim().is_empty() {
                 return;
             }
-            let (e, late, apps) = (e.clone(), late.clone(), apps.clone());
-            glib::spawn_future_local(async move {
-                let asked = q.clone();
-                let rows =
-                    gtk::gio::spawn_blocking(move || crate::app_session::provider_rows(&asked));
-                let Ok(rows) = rows.await else { return };
-                if rows.is_empty() || e.text().as_str() != q {
-                    return;
-                }
-                *apps.borrow_mut() = (q, provided(rows));
-                late();
-            });
+            let n = asked.get().wrapping_add(1);
+            asked.set(n);
+            let (e, late, apps, asked) = (e.clone(), late.clone(), apps.clone(), asked.clone());
+            glib::timeout_add_local_once(
+                std::time::Duration::from_millis(PROVIDER_DEBOUNCE_MS),
+                move || {
+                    if asked.get() != n {
+                        return;
+                    }
+                    glib::spawn_future_local(async move {
+                        let typed = q.clone();
+                        let rows = gtk::gio::spawn_blocking(move || {
+                            crate::app_session::provider_rows(&typed)
+                        });
+                        let Ok(rows) = rows.await else { return };
+                        if rows.is_empty() || !still_wanted(n, asked.get(), &q, &e.text()) {
+                            return;
+                        }
+                        *apps.borrow_mut() = (q, provided(rows));
+                        late();
+                    });
+                },
+            );
         });
     }
     {
@@ -411,6 +432,18 @@ mod tests {
         assert_eq!(hover_select(0, 3, 5), Some(3));
         assert_eq!(hover_select(3, 3, 5), None);
         assert_eq!(hover_select(0, 7, 5), None);
+    }
+
+    /// A thread per keystroke asked the apps for every letter typed; now one question per pause,
+    /// and a late answer to older text is dropped.
+    #[test]
+    fn apps_are_asked_once_per_pause_and_old_answers_are_dropped() {
+        assert!(still_wanted(3, 3, "ter", "ter"));
+        assert!(
+            !still_wanted(2, 3, "te", "ter"),
+            "a newer keystroke was asked"
+        );
+        assert!(!still_wanted(3, 3, "ter", "term"), "the field moved on");
     }
 
     #[test]

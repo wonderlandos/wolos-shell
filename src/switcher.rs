@@ -32,10 +32,13 @@ pub fn apps(clients: &[Client], installed: &[crate::desktop::Entry]) -> Vec<App>
     out
 }
 
-/// Apps for the strip from a raw `j/clients` reply. Fails closed: None (switcher stays hidden)
-/// when the compositor did not answer, the reply is unreadable, or no app window is open.
-pub fn to_show(reply: Option<&str>, installed: &[crate::desktop::Entry]) -> Option<Vec<App>> {
-    let a = apps(&crate::hypr::parse_clients(reply?), installed);
+/// Apps for the strip from `j/clients` (`hypr::read_clients`). Fails closed: None (switcher stays
+/// hidden) when the compositor did not answer, the reply is unreadable, or no app window is open.
+pub fn to_show(
+    clients: Option<&[Client]>,
+    installed: &[crate::desktop::Entry],
+) -> Option<Vec<App>> {
+    let a = apps(clients?, installed);
     (!a.is_empty()).then_some(a)
 }
 
@@ -79,13 +82,16 @@ pub enum Step {
     Focus(String),
 }
 
-/// Hide first: Hyprland hands focus back to the previous window when a keyboard-exclusive
-/// layer unmaps, which would undo a focus sent before the hide.
+/// Focus first, then hide. The strip holds the keyboard on demand (`ui::switcher::SPEC`), so
+/// `focuswindow` works while it is mapped; Hyprland's refocus when the layer unmaps goes to the
+/// window focused last (`refocusLastWindow`), which is now the selection. An exclusive layer
+/// refused the focus and brought the old window forward first (60 ms, two activations).
 pub fn commit(selected: Option<&App>) -> Vec<Step> {
-    let mut v = vec![Step::Hide];
+    let mut v = Vec::new();
     if let Some(a) = selected {
         v.push(Step::Focus(format!("address:{}", a.address)));
     }
+    v.push(Step::Hide);
     v
 }
 
@@ -161,7 +167,12 @@ mod tests {
             (Some("[]"), false),       // nothing open: no "No open windows" pill
             (Some(one), true),
         ] {
-            assert_eq!(to_show(reply, &[]).is_some(), opens, "{reply:?}");
+            let clients = reply.map(crate::hypr::parse_clients);
+            assert_eq!(
+                to_show(clients.as_deref(), &[]).is_some(),
+                opens,
+                "{reply:?}"
+            );
         }
     }
 
@@ -178,9 +189,10 @@ mod tests {
         assert_eq!(Cycle::open(3).prev().prev().index, 2);
     }
 
-    /// Live Hyprland 0.56: releasing Super left the old window focused.
+    /// Live Hyprland 0.56: releasing Super left the old window focused (exclusive layer), then
+    /// the hide-first order showed the old window for 60 ms before the selection.
     #[test]
-    fn commit_hides_before_focusing() {
+    fn commit_focuses_then_hides() {
         let a = App {
             class: "foot".into(),
             name: "Terminal".into(),
@@ -189,7 +201,7 @@ mod tests {
         };
         assert_eq!(
             commit(Some(&a)),
-            [Step::Hide, Step::Focus("address:0x1".into())]
+            [Step::Focus("address:0x1".into()), Step::Hide]
         );
         assert_eq!(commit(None), [Step::Hide]);
     }

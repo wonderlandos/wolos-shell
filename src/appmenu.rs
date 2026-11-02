@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Menu bar app and Window menus: every item is a real action. Pure: frontmost window + clients +
 //! usable zone in, Hyprland dispatch batch out. `wol-app <verb>` runs them (menu clicks and keybinds).
-use crate::hypr::Client;
+use crate::hypr::{Client, Dispatch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Act {
@@ -180,9 +180,16 @@ pub fn send(c: Cmd, class: &str) -> Handoff {
 /// `sendshortcut` over the socket is a press and release, so the app sees one tap, never a held key.
 pub fn key_batch(c: Cmd, class: &str, address: &str, panel: bool) -> Option<String> {
     match send(c, class) {
-        Handoff::Keys(m, k) => Some(format!("dispatch sendshortcut {m}, {k},")),
+        Handoff::Keys(m, k) => Some(
+            Dispatch::SendShortcut {
+                mods: m.into(),
+                key: k.into(),
+                window: String::new(),
+            }
+            .to_request(),
+        ),
         Handoff::CloseWindow if !panel && !address.is_empty() => {
-            Some(format!("dispatch closewindow address:{address}"))
+            Some(Dispatch::CloseWindow(format!("address:{address}")).to_request())
         }
         _ => None,
     }
@@ -209,7 +216,7 @@ pub fn panel_has_keys(namespaces: &[String]) -> bool {
 /// Menu row: label ("" = separator), shortcut shown right-aligned, action.
 pub type Row = (String, Option<&'static str>, Option<Act>);
 
-/// Desktops offered by "Move to Desktop N" (Ctrl+1..4 switch to them).
+/// Desktops offered by "Move to Desktop N" (Ctrl+Alt+1..4 switch to them).
 pub const DESKTOPS: u8 = 4;
 /// Title bar hyprbars draws on windows without client decorations (realtime titlebar::HEIGHT).
 pub const BAR: i32 = 28;
@@ -312,12 +319,13 @@ pub fn batch(
     zone: (i32, i32, i32, i32),
 ) -> Option<String> {
     let at = &front.address;
+    let win = |c: &Client| format!("address:{}", c.address);
+    let front_win = win(front);
     let hide = |c: &&Client| c.workspace.name != HIDDEN;
-    let hide_cmd = |c: &Client| {
-        format!(
-            "dispatch movetoworkspacesilent {HIDDEN},address:{}",
-            c.address
-        )
+    let hide_cmd = |c: &Client| Dispatch::MoveToWorkspace {
+        workspace: HIDDEN.into(),
+        window: win(c),
+        silent: true,
     };
     let bar = if front.tags.iter().any(|t| t == CSD_TAG) {
         0
@@ -325,9 +333,13 @@ pub fn batch(
         BAR
     };
     let (zx, zy, zw, zh) = zone;
-    let cmds: Vec<String> = match a {
+    let cmds: Vec<Dispatch> = match a {
         Act::About => return None,
-        Act::Settings => vec![format!("dispatch sendshortcut CTRL, comma, address:{at}")],
+        Act::Settings => vec![Dispatch::SendShortcut {
+            mods: "CTRL".into(),
+            key: "comma".into(),
+            window: front_win,
+        }],
         Act::Hide => clients
             .iter()
             .filter(|c| c.class == front.class)
@@ -343,37 +355,57 @@ pub fn batch(
         Act::Quit => clients
             .iter()
             .filter(|c| c.class == front.class)
-            .map(|c| format!("dispatch closewindow address:{}", c.address))
+            .map(|c| Dispatch::CloseWindow(win(c)))
             .collect(),
         Act::ForceQuit => clients
             .iter()
             .filter(|c| c.class == front.class)
-            .map(|c| format!("dispatch killwindow address:{}", c.address))
+            .map(|c| Dispatch::KillWindow(win(c)))
             .collect(),
         Act::Minimise => vec![hide_cmd(front)],
-        Act::Zoom => vec!["dispatch fullscreen 1".into()],
+        // Zoom does nothing to a window in real full screen (macOS greys it out): the toggling
+        // `fullscreen 1` dropped it to its floating box instead (audit3 R2A-13).
+        Act::Zoom if front.fullscreen == 2 => return None,
+        // `fullscreenstate` acts on the focused window: name the front window first, so a menu
+        // click (the menu bar had the pointer) or a stale focus never zooms some other window.
+        // Internal mode 1 (maximised), the client's mode left alone; the same mode again unzooms.
+        Act::Zoom => vec![
+            Dispatch::FocusWindow(front_win),
+            Dispatch::FullscreenState {
+                internal: 1,
+                client: -1,
+            },
+        ],
         Act::Fill => vec![
-            format!("dispatch setfloating address:{at}"),
-            format!(
-                "dispatch resizewindowpixel exact {zw} {},address:{at}",
-                zh - bar
-            ),
-            format!(
-                "dispatch movewindowpixel exact {zx} {},address:{at}",
-                zy + bar
-            ),
+            Dispatch::SetFloating(front_win.clone()),
+            Dispatch::ResizeExact {
+                w: zw,
+                h: zh - bar,
+                window: front_win.clone(),
+            },
+            Dispatch::MoveExact {
+                x: zx,
+                y: zy + bar,
+                window: front_win,
+            },
         ],
         Act::Centre => {
             let (w, h) = (front.size[0], front.size[1] + bar);
             let (x, y) = (zx + (zw - w) / 2, zy + (zh - h).max(0) / 2 + bar);
-            vec![format!(
-                "dispatch movewindowpixel exact {x} {y},address:{at}"
-            )]
+            vec![Dispatch::MoveExact {
+                x,
+                y,
+                window: front_win,
+            }]
         }
-        Act::ToDesktop(n) => vec![format!("dispatch movetoworkspace {n},address:{at}")],
+        Act::ToDesktop(n) => vec![Dispatch::MoveToWorkspace {
+            workspace: n.to_string(),
+            window: front_win,
+            silent: false,
+        }],
         Act::Key(c) => return key_batch(c, &front.class, at, false),
     };
-    (!cmds.is_empty()).then(|| format!("[[BATCH]]{}", cmds.join(";")))
+    crate::hypr::batch(&cmds)
 }
 
 #[cfg(test)]
@@ -489,7 +521,19 @@ mod tests {
             b(Act::Minimise),
             "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa"
         );
-        assert_eq!(b(Act::Zoom), "[[BATCH]]dispatch fullscreen 1");
+        // Zoom names its window: `fullscreenstate` alone acts on whatever is focused. An
+        // explicit internal mode, not the `fullscreen 1` toggle (audit3 R2A-13).
+        assert_eq!(
+            b(Act::Zoom),
+            "[[BATCH]]dispatch focuswindow address:0xa;dispatch fullscreenstate 1 -1"
+        );
+        let mut full = front.clone();
+        full.fullscreen = 2;
+        assert_eq!(
+            batch(Act::Zoom, &full, &all, ZONE),
+            None,
+            "a window in full screen does not zoom"
+        );
         assert_eq!(
             b(Act::ToDesktop(2)),
             "[[BATCH]]dispatch movetoworkspace 2,address:0xa"

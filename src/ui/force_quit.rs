@@ -12,6 +12,10 @@ use std::rc::Rc;
 pub const TITLE: &str = "Force Quit Applications";
 pub const HINT: &str = "If an app doesn't respond for a while, choose it and click Force Quit.";
 pub const EMPTY: &str = "No apps are open.";
+/// Exclusive (audit3 R2A-11): an on-demand layer gets no keyboard over a pointer-locked game, so
+/// the list had no arrows, Return or Esc there. Force Quit never asks Hyprland to focus a window
+/// (the reason the switcher and Overview are on demand), it only ends them.
+pub const KEYBOARD: crate::kit::surface::Keyboard = crate::kit::surface::Keyboard::Exclusive;
 /// Apps listed before the list scrolls.
 const ROWS: usize = 6;
 /// Time for the windows to go before the list is read again.
@@ -159,23 +163,36 @@ impl Picker {
 
 /// Resident panel: the list is read each time it opens; Esc closes it.
 pub fn build(app: &gtk::Application) -> gtk::Window {
+    // Hyprland and the .desktop files are read off the UI thread (audit2 A2-10).
     let refresh = |p: &Rc<Picker>| {
-        let installed = crate::desktop::load_all();
-        p.set_apps(&crate::switcher::apps(&crate::hypr::clients(), &installed));
+        let p = p.clone();
+        glib::spawn_future_local(async move {
+            let clients = gtk::gio::spawn_blocking(crate::hypr::clients)
+                .await
+                .unwrap_or_default();
+            let installed = super::ipc::installed().await;
+            p.set_apps(&crate::switcher::apps(&clients, &installed));
+        });
     };
     let picker = Picker::new(move |p, a| {
-        let clients = crate::hypr::clients();
-        if let Some(b) = batch(a, &clients) {
-            crate::hypr::request(&b);
-        }
-        let p = p.clone();
-        glib::timeout_add_local_once(SETTLE, move || refresh(&p));
+        let (p, a) = (p.clone(), a.clone());
+        glib::spawn_future_local(async move {
+            let _ = gtk::gio::spawn_blocking(move || {
+                if let Some(b) = batch(&a, &crate::hypr::clients()) {
+                    crate::hypr::request(&b);
+                }
+            })
+            .await;
+            glib::timeout_add_local_once(SETTLE, move || refresh(&p));
+        });
     });
-    let win = super::panels::panel(
+    let win = super::panels::panel_on(
         app,
         "force-quit",
         "wol-panel-force-quit",
         [false; 4],
+        crate::kit::surface::Layer::Overlay,
+        KEYBOARD,
         &picker.root,
     );
     win.connect_show(move |_| {
@@ -188,6 +205,15 @@ pub fn build(app: &gtk::Application) -> gtk::Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn force_quit_takes_the_keyboard_even_from_a_game() {
+        assert_eq!(KEYBOARD, crate::kit::surface::Keyboard::Exclusive);
+        assert!(
+            super::super::transient::ALSO_ESC.contains(&"force-quit"),
+            "Esc closes it even when the keys are elsewhere"
+        );
+    }
 
     #[test]
     fn force_quit_ends_every_window_of_the_chosen_app() {

@@ -3,14 +3,17 @@
 //! Live Hyprland 0.56: `match:namespace wol-shell` matched nothing (namespaces are wol-menubar, ...),
 //! so the dock and menu bar had no blur; `ignore_alpha 0` then blurred their transparent margins.
 const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+/// The compositor plugin that forwards Esc and the Super release (audit3 R2A-10).
+const PLUGIN: &str = include_str!("../../../plugins/wol-hypr/main.cpp");
 
+/// Every shell glass surface (ui::searchbar, ui::control_center are `wol-panel-*` too).
 const GLASS: [&str; 6] = [
     "wol-menubar",
     "wol-dock",
     "wol-panel-switcher",
     "wol-panel-banners",
-    "wol-search",
-    "wol-control-center",
+    "wol-panel-searchbar",
+    "wol-panel-controlcenter",
 ];
 
 /// Supports the anchored alternation the conf uses: `^(a|b|c-.*)$`.
@@ -237,7 +240,8 @@ fn every_command_shortcut_reaches_the_app_as_ctrl() {
 }
 
 /// macOS system shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
-/// ⌥⌘Esc (Force Quit), ⌃F2 (menu bar), ⌃F3 (Dock), and Esc (non-consuming) dismisses banners.
+/// ⌥⌘Esc (Force Quit), ⌃F2 (menu bar), ⌃F3 (Dock). Esc (closes panels, dismisses banners) is
+/// forwarded by wol-hypr, not bound (`no_process_per_escape_or_super_release`).
 #[test]
 fn system_shortcuts_are_the_mac_ones() {
     use wol_core::shortcuts::{Combo, parse};
@@ -254,9 +258,6 @@ fn system_shortcuts_are_the_mac_ones() {
         ("SUPER ALT", "Escape", "", "wol shell toggle force-quit"),
         ("CTRL", "F2", "", "wol shell show menubar"),
         ("CTRL", "F3", "", "wol shell show dock"),
-        ("", "Escape", "n", "wol shell hide banners"),
-        // Esc closes Control Center, Notification Center, ... even while an app has the keys.
-        ("", "Escape", "n", "wol shell hide transient"),
     ] {
         let c = Combo::parse(mods, key).unwrap();
         assert!(
@@ -268,4 +269,131 @@ fn system_shortcuts_are_the_mac_ones() {
             c.label()
         );
     }
+}
+
+/// Audit3 R2A-10 (after audit2 A2-13): no `wol` process per Esc press or per Super release. Every
+/// Esc and every Super release in every app, games included, forked `wol`; the wol-hypr plugin
+/// forwards them to the shell socket instead, only while a shell layer is on screen.
+#[test]
+fn no_process_per_escape_or_super_release() {
+    use wol_core::shortcuts::{Combo, parse};
+    let esc = Combo::parse("", "Escape").unwrap();
+    for b in parse(CONF) {
+        assert!(
+            !(b.combo.same(&esc) && b.dispatcher == "exec"),
+            "plain Esc runs {}",
+            b.args
+        );
+        assert!(
+            !(b.flags.contains('r') && b.dispatcher == "exec" && b.combo.key.starts_with("SUPER_")),
+            "a Super release runs {}",
+            b.args
+        );
+    }
+    for needle in [
+        "case KEY_ESC:",
+        r#"tellShell("hide transient\n")"#,
+        r#"tellShell("hide switcher\n")"#,
+        "/wol-shell.sock",
+        r#"starts_with("wol-panel-")"#,
+        "m_events.input.keyboard.key.listen",
+        "m_events.layer.opened.listen",
+        "m_events.layer.closed.listen",
+    ] {
+        assert!(PLUGIN.contains(needle), "wol-hypr forwards: {needle}");
+    }
+    assert_eq!(
+        shell::protocol::socket_path("/run/user/1")
+            .file_name()
+            .and_then(|n| n.to_str()),
+        Some("wol-shell.sock"),
+        "the socket the plugin writes to"
+    );
+}
+
+/// Audit2 A2-6: every transient shell panel has a way in, a shortcut or a menu-bar launcher
+/// (the clipboard history had none: only `wol shell toggle clipboard` from a terminal).
+#[test]
+fn every_transient_panel_can_be_opened() {
+    let binds = wol_core::shortcuts::parse(CONF);
+    let menubar = include_str!("../src/ui/menubar.rs");
+    for p in shell::ui::transient::PANELS {
+        let bound = binds.iter().any(|b| {
+            b.dispatcher == "exec"
+                && (b.args == format!("wol shell toggle {p}")
+                    || b.args == format!("wol shell show {p}"))
+        });
+        let launcher = menubar.contains(&format!("\"{p}\""));
+        assert!(
+            bound || launcher,
+            "{p}: no shortcut and no menu-bar launcher"
+        );
+    }
+    let clip = wol_core::shortcuts::Combo::parse("SUPER SHIFT", "V").unwrap();
+    assert!(
+        binds
+            .iter()
+            .any(|b| b.combo.same(&clip) && b.args == "wol shell toggle clipboard"),
+        "⇧⌘V opens the clipboard history"
+    );
+}
+
+/// Audit2 A2-9: plain ⌃ + letter, digit or ←/→ is the app's key (Ctrl+1..9 browser tabs,
+/// Ctrl+arrows word-wise cursor; Super is ⌘ here). Spaces are ⌃⌥←/→ and ⌃⌥1..4 (⌃⌘arrows resize in
+/// tiling.conf). ⌃↑ stays the macOS Overview key and ⌃F2/⌃F3 the macOS bar keys.
+#[test]
+fn plain_ctrl_keys_belong_to_the_app() {
+    use wol_core::shortcuts::{CTRL, Combo, parse};
+    let binds = parse(CONF);
+    for b in &binds {
+        let k = b.combo.key.as_str();
+        let app_key = (k.len() == 1 && k.as_bytes()[0].is_ascii_alphanumeric())
+            || k.eq_ignore_ascii_case("Left")
+            || k.eq_ignore_ascii_case("Right");
+        assert!(
+            !(b.combo.mods == CTRL && app_key),
+            "{}: plain Ctrl shortcut taken from apps ({} {})",
+            b.combo.label(),
+            b.dispatcher,
+            b.args
+        );
+    }
+    for (key, arg) in [
+        ("Left", "e-1"),
+        ("Right", "e+1"),
+        ("1", "1"),
+        ("2", "2"),
+        ("3", "3"),
+        ("4", "4"),
+    ] {
+        let c = Combo::parse("CTRL ALT", key).unwrap();
+        assert!(
+            binds
+                .iter()
+                .any(|b| b.combo.same(&c) && b.dispatcher == "workspace" && b.args == arg),
+            "{} should switch to space {arg}",
+            c.label()
+        );
+    }
+}
+
+/// Audit2 A2-16, audit3 R2A-10: releasing either Super key finishes ⌘Tab, also when the strip is
+/// not on screen yet (a quick tap: a Tab was seen since Super went down). wol-hypr forwards it.
+#[test]
+fn releasing_either_super_finishes_switching() {
+    for needle in [
+        "case KEY_LEFTMETA:",
+        "case KEY_RIGHTMETA:",
+        "g_switching || shellLayerMapped(\"wol-panel-switcher\")",
+        "case KEY_TAB:",
+    ] {
+        assert!(PLUGIN.contains(needle), "wol-hypr: {needle}");
+    }
+    // ⌘Tab itself stays a bind (one process per deliberate switch).
+    let tab = wol_core::shortcuts::Combo::parse("SUPER", "Tab").unwrap();
+    assert!(
+        wol_core::shortcuts::parse(CONF)
+            .iter()
+            .any(|b| b.combo.same(&tab) && b.args == "wol shell show switcher")
+    );
 }

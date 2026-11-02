@@ -9,7 +9,11 @@ use wol_core::theme::accent;
 
 /// Installs the theme + `extra` CSS and watches `$XDG_CONFIG_HOME/wol/theme` (inotify/kqueue via GIO, no polling).
 pub fn install(extra: &'static str) {
-    let display = gdk::Display::default().expect("display");
+    // No display (lost before the theme loads): nothing to style; GTK reports it itself.
+    let Some(display) = gdk::Display::default() else {
+        eprintln!("wol-shell: no display, theme not installed");
+        return;
+    };
     let provider = gtk::CssProvider::new();
     gtk::style_context_add_provider_for_display(
         &display,
@@ -196,7 +200,10 @@ thread_local! { static FIXED: std::cell::OnceCell<gtk::CssProvider> = const { st
 
 /// Loads one theme, no file watch (golden renders).
 pub fn apply(t: &theme::Theme, extra: &str) {
-    let display = gdk::Display::default().expect("display");
+    let Some(display) = gdk::Display::default() else {
+        eprintln!("wol-shell: no display, theme not applied");
+        return;
+    };
     FIXED.with(|c| {
         let p = c.get_or_init(|| {
             let p = gtk::CssProvider::new();

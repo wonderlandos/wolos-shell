@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! For the VM tests (`image/vm/test-installer.sh`): walks the installer's steps as a person would,
+//! For the VM tests (`wolos-iso/tests/test-installer.sh`): walks the installer's steps as a person would,
 //! on a real disk's probe, and writes the plan the app would.
 //! `install_scenario <scenario> <probe.json> <plan dir>`; prints the summary.
 use shell::install::flow::{Flow, Found, Method, Next, Row, Step, Use, manual_lines};
@@ -92,6 +92,13 @@ fn main() {
         }
         "manual" => manual(&mut f, Fs::Btrfs),
         "manual-ext4" => manual(&mut f, Fs::Ext4),
+        "replace" => {
+            f.method = Method::Replace;
+            must(&mut f, Step::Replace);
+            let old = part_labelled(&f, "linuxroot");
+            f.replace = Some(old);
+            must(&mut f, Step::Protect);
+        }
         s => panic!("no scenario {s}"),
     }
     f.protect = match scenario {
@@ -115,5 +122,12 @@ fn main() {
     } else {
         String::new()
     };
-    write_plan(dir, &f.plan().unwrap(), &pw, &f.draft.password).unwrap();
+    write_plan(
+        dir,
+        &f.plan().unwrap(),
+        &f.plan_extras(),
+        &pw,
+        &f.draft.password,
+    )
+    .unwrap();
 }

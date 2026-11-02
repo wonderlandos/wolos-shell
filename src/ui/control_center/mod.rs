@@ -28,26 +28,71 @@ pub const SPAWNS: &[&[&str]] = &[SCREENSHOT, RECORD, WIFI_SETTINGS, SOUND_SETTIN
 const SCREENSHOT: &[&str] = &["wol", "shell", "show", "screenshot"];
 /// Record tile: the capture toolbar in Record Entire Screen mode.
 const RECORD: &[&str] = &["wol", "shell", "show", crate::ui::capture::RECORD];
-const WIFI_SETTINGS: &[&str] = &["wol-settings", "Network"];
-const SOUND_SETTINGS: &[&str] = &["wol-settings", "Sound"];
+/// "Wi-Fi Settings…" on the Wi-Fi page: the Wi-Fi pane (live it opened Network, the wired one).
+pub const WIFI_SETTINGS: &[&str] = &["wol-settings", "Wi-Fi"];
+/// "Sound Settings…" on the Sound page.
+pub const SOUND_SETTINGS: &[&str] = &["wol-settings", "Sound"];
 
 /// Stack page names.
 pub const PAGES: [&str; 5] = ["main", "wifi", "bluetooth", "sound", "focus"];
+
+thread_local! {
+    /// The page the next show opens (set by [`request_page`], taken once by the show handler).
+    static NEXT_PAGE: Cell<Option<&'static str>> = const { Cell::new(None) };
+}
+
+/// The next time the panel shows, open `page` (one of [`PAGES`]) instead of the main page (audit2
+/// A2-14: the menu bar's Wi-Fi, Sound and Focus icons). An unknown name is ignored: main opens.
+pub fn request_page(page: &str) {
+    NEXT_PAGE.set(PAGES.into_iter().find(|p| *p == page));
+}
+
+/// The page a show opens: the requested one once, else main.
+fn take_page() -> &'static str {
+    NEXT_PAGE.take().unwrap_or("main")
+}
+
+/// A request made for a show that never came (output lost) does not open a later one on its
+/// page: dropped on every hide (audit3 R2A-2).
+fn forget_page() {
+    NEXT_PAGE.set(None);
+}
+
+/// The panel's page stack (the one with every [`PAGES`] child) inside `win`.
+fn pages_of(win: &gtk::Window) -> Option<gtk::Stack> {
+    let mut todo = vec![win.child()?];
+    while let Some(w) = todo.pop() {
+        if let Some(s) = w.downcast_ref::<gtk::Stack>()
+            && PAGES.iter().all(|p| s.child_by_name(p).is_some())
+        {
+            return Some(s.clone());
+        }
+        let mut c = w.first_child();
+        while let Some(x) = c {
+            c = x.next_sibling();
+            todo.push(x);
+        }
+    }
+    None
+}
+
+/// The page the open panel shows (None before it is built).
+pub fn current_page(win: &gtk::Window) -> Option<String> {
+    pages_of(win)?.visible_child_name().map(|n| n.to_string())
+}
+
+/// The open panel slides to `page` (a status icon clicked while it is open, audit3 R2A-2).
+pub fn switch_page(win: &gtk::Window, page: &str) {
+    if let (Some(s), Some(p)) = (pages_of(win), PAGES.into_iter().find(|p| *p == page)) {
+        s.set_visible_child_name(p);
+    }
+}
 
 fn spec() -> Spec {
     Spec::panel(
         "wol-panel-controlcenter",
         [true, false, false, true],
         Keyboard::OnDemand,
-    )
-}
-
-pub fn run() -> glib::ExitCode {
-    super::run_panel_app(
-        "org.wolos.controlcenter",
-        "controlcenter",
-        spec(),
-        |_, sys| content(sys),
     )
 }
 
@@ -72,50 +117,55 @@ pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
     {
         let (running, cc) = (running.clone(), cc.clone());
         win.connect_show(move |win| {
-            show_page_now(&cc.ui.pages, "main");
+            show_page_now(&cc.ui.pages, take_page());
             cc.sync();
-            fit(&cc.ui.scroll, screen_height(win));
+            fit(&cc.ui.scroll, win);
             *running.borrow_mut() = follow(&sys, cc.clone());
         });
+    }
+    {
+        // On show the surface may not exist yet (then `screen_height` falls back to the first
+        // display); mapped, the panel knows the display it is on.
+        let cc = cc.clone();
+        win.connect_map(move |win| fit(&cc.ui.scroll, win));
     }
     win.connect_hide(move |_| {
         if let Some(h) = running.borrow_mut().take() {
             h.abort();
         }
+        forget_page();
     });
-    let keys = gtk::EventControllerKey::new();
     let w2 = win.clone();
-    keys.connect_key_pressed(move |_, k, _, _| {
-        if k == gtk::gdk::Key::Escape {
-            w2.set_visible(false);
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
-        }
-    });
-    win.add_controller(keys);
+    kit::surface::on_escape(&win, move || w2.set_visible(false));
     win.upcast()
 }
 
 /// Screen height the panel may not use: menu bar, glass margins and padding.
-const CHROME: i32 = 28 + 2 * 24 + 2 * w::INSET + 2 * 8;
+const CHROME: i32 = w::MENUBAR_HEIGHT + 2 * 24 + 2 * w::INSET + 2 * 8;
 
-/// Scrolls the main page only when its modules are taller than the screen allows.
-fn fit(scroll: &gtk::ScrolledWindow, screen: Option<i32>) {
-    cap_scroller(scroll, w::CONTROL_CENTER_WIDTH, screen.map(|h| h - CHROME));
+/// Tallest the main page's scroller may be on a `screen` px tall display whose bottom `dock` px
+/// are reserved (the Dock's shelf): the panel ends above the Dock (audit2 A2-11, it drew over the
+/// shelf on 768 px screens with every module on).
+fn cap(screen: i32, dock: i32) -> i32 {
+    screen - CHROME - dock.max(0)
+}
+
+/// Scrolls the main page only when its modules are taller than the screen allows. Only a Dock on
+/// the panel's own display counts (audit3 R2A-4: a second display without one scrolled early).
+fn fit(scroll: &gtk::ScrolledWindow, win: &impl IsA<gtk::Widget>) {
+    let (screen, dock) = (screen_height(win), kit::surface::reserved_bottom_on(win));
+    cap_scroller(
+        scroll,
+        w::CONTROL_CENTER_WIDTH,
+        screen.map(|h| cap(h, dock)),
+    );
 }
 
 fn screen_height(win: &impl IsA<gtk::Widget>) -> Option<i32> {
-    let d = win.display();
-    let m = win
-        .native()
-        .and_then(|n| n.surface())
-        .and_then(|s| d.monitor_at_surface(&s))
-        .or_else(|| d.monitors().item(0).and_downcast::<gtk::gdk::Monitor>())?;
-    Some(m.geometry().height())
+    kit::surface::screen_of(win).map(|s| s.1)
 }
 
-/// Control Center app content: follows the snapshot for the life of the process.
+/// Control Center content on its own (golden renders): follows the snapshot while the widget lives.
 pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
     content_with(sys, super::ipc::shell_prefs().control_center, "main")
 }
@@ -129,7 +179,13 @@ pub fn content_with(sys: Rc<dyn System>, prefs: ControlCenterPrefs, page: &str) 
     if page == "wifi:other" {
         cc.pages.other_network();
     }
-    std::mem::forget(follow(&sys, cc.clone()));
+    // The watcher goes with the widget (no leaked task).
+    let watching = RefCell::new(follow(&sys, cc.clone()));
+    cc.root.connect_destroy(move |_| {
+        if let Some(h) = watching.borrow_mut().take() {
+            h.abort();
+        }
+    });
     cc.root.clone()
 }
 
@@ -324,7 +380,6 @@ fn focus_label(f: Focus) -> String {
 
 fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let panel = w::glass_panel(w::S2);
-    panel.add_css_class("control-center");
     panel.set_width_request(w::CONTROL_CENTER_WIDTH);
     panel.set_valign(gtk::Align::Start);
     let pages = page_stack();
@@ -692,6 +747,37 @@ impl ControlCenter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit2 A2-14: a requested page opens once; the next show is main again.
+    #[test]
+    fn a_requested_page_opens_once() {
+        request_page("wifi");
+        assert_eq!(take_page(), "wifi");
+        assert_eq!(take_page(), "main");
+        request_page("nowhere");
+        assert_eq!(take_page(), "main", "unknown pages fall back to main");
+        request_page("sound");
+        forget_page();
+        assert_eq!(take_page(), "main", "a hide drops a request no show took");
+    }
+
+    /// Audit2 A2-11: on 1366x768 with every module on the panel crossed the Dock (768 - 76).
+    /// The scroller's cap plus the menu bar and the glass margins ends above the shelf.
+    #[test]
+    fn the_panel_ends_above_the_dock() {
+        let (screen, dock) = (768, 76);
+        assert!(cap(screen, dock) + w::MENUBAR_HEIGHT + 2 * 24 <= screen - dock);
+        assert_eq!(
+            cap(screen, 0) - cap(screen, dock),
+            dock,
+            "autohide frees the space"
+        );
+        assert_eq!(
+            cap(screen, -1),
+            cap(screen, 0),
+            "a bad zone reserves nothing"
+        );
+    }
 
     /// UX review: the Dark Mode tile switched to the plain dark theme, dropping the accent and
     /// leaving Auto on in Settings. It sets the appearance explicitly and keeps the accent.

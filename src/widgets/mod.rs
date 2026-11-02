@@ -49,31 +49,6 @@ impl Now {
     }
 }
 
-/// Hyprland events after which the active workspace may have gained or lost a fullscreen window.
-pub fn fullscreen_may_change(event_line: &str) -> bool {
-    let name = event_line.split(">>").next().unwrap_or("");
-    matches!(
-        name,
-        "fullscreen"
-            | "workspace"
-            | "workspacev2"
-            | "focusedmon"
-            | "focusedmonv2"
-            | "activespecial"
-            | "closewindow"
-            | "movewindow"
-            | "movewindowv2"
-    )
-}
-
-/// `hyprctl -j activeworkspace` -> whether a fullscreen window covers the desktop.
-pub fn has_fullscreen(json: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(json)
-        .ok()
-        .and_then(|v| v["hasfullscreen"].as_bool())
-        .unwrap_or(false)
-}
-
 pub fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -132,25 +107,6 @@ pub fn uptime(secs: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fullscreen_pauses_follow_hyprland() {
-        for (line, want) in [
-            ("fullscreen>>1", true),
-            ("workspacev2>>2,2", true),
-            ("closewindow>>55d0", true),
-            ("activewindow>>foot,~", false),
-            ("openlayer>>wol-desktop", false),
-            ("garbage", false),
-        ] {
-            assert_eq!(fullscreen_may_change(line), want, "{line}");
-        }
-        assert!(has_fullscreen(
-            r#"{"id":1,"hasfullscreen":true,"windows":2}"#
-        ));
-        assert!(!has_fullscreen(r#"{"id":1,"hasfullscreen":false}"#));
-        assert!(!has_fullscreen("not json"));
-    }
 
     #[test]
     fn history_keeps_the_last_samples() {

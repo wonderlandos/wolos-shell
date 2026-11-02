@@ -23,6 +23,9 @@ pub const ICON_L: i32 = 48;
 pub const ICON_XL: i32 = 64;
 /// Shell metrics.
 pub const DOCK_TILE: i32 = 56;
+/// Menu bar strip height. kit.css (`.menubar-strip`) and the desktop hyprland.conf (hyprbars
+/// `bar_height`) carry the same number; tests/css_classes.rs keeps them together.
+pub const MENUBAR_HEIGHT: i32 = 28;
 pub const CONTROL_CENTER_WIDTH: i32 = 320;
 pub const SEARCHBAR_WIDTH: i32 = 680;
 pub const PANEL_TOP: i32 = 160;
@@ -537,6 +540,18 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
 
 // ---- App scaffold ----
 
+/// The narrow-window sidebar toggle's icon and tooltip: "Show Sidebar" (back arrow) over the
+/// content, "Hide Sidebar" (forward arrow, back to the page) while the sidebar fills the window.
+fn toggle_face(t: &gtk::Button, sidebar_shown: bool) {
+    let (name, tip) = if sidebar_shown {
+        ("go-next-symbolic", "Hide Sidebar")
+    } else {
+        ("go-previous-symbolic", "Show Sidebar")
+    };
+    t.set_child(Some(&icon(name, ICON)));
+    t.set_tooltip_text(Some(tip));
+}
+
 /// HIG §1 AppWindow: 36px glass toolbar (actions, search), 220px sidebar, content, status bar.
 /// The compositor draws the window buttons and the title, in a 28px strip above the toolbar.
 pub struct AppWindow {
@@ -545,6 +560,11 @@ pub struct AppWindow {
     pub sidebar: gtk::ListBox,
     pub content: gtk::Stack,
     pub status: gtk::Label,
+    /// Toolbar start, shown only while the window is narrower than [`NARROW`]: brings the
+    /// collapsed sidebar back in place of the content (picking a row returns to the content).
+    pub sidebar_toggle: gtk::Button,
+    /// Narrow only: true shows the sidebar alone, false goes back to the content (no-op when wide).
+    show_sidebar: Rc<dyn Fn(bool)>,
 }
 
 impl AppWindow {
@@ -553,6 +573,11 @@ impl AppWindow {
         root.add_css_class("app-window");
         let bar = hbox(S2);
         bar.add_css_class("toolbar");
+        let sidebar_toggle = icon_button("go-previous-symbolic", "Show Sidebar", || {});
+        sidebar_toggle.set_visible(false);
+        if with_sidebar {
+            bar.append(&sidebar_toggle);
+        }
         bar.append(&spacer());
         let actions = hbox(S2);
         bar.append(&actions);
@@ -570,7 +595,6 @@ impl AppWindow {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .propagate_natural_width(true)
             .build();
-        side.add_css_class("sidebar-scroll");
         if with_sidebar {
             // Shown on realize when the window is wide enough; hidden first so a narrow
             // window's minimum size never includes it.
@@ -585,27 +609,110 @@ impl AppWindow {
         content.add_css_class("content");
         body.append(&content);
         root.append(&body);
+        // Selecting a source row shows its page (once; a handler per row ran every one per click).
+        {
+            let st = content.clone();
+            sidebar.connect_row_selected(move |_, sel| {
+                if let Some(s) = sel
+                    && s.widget_name() != ""
+                {
+                    st.set_visible_child_name(&s.widget_name());
+                }
+            });
+        }
         let status = label("", "secondary");
         status.add_css_class("status-bar");
         if with_status {
             root.append(&status);
         }
-        // Narrow windows hide the sidebar (HIG: collapsible); content keeps the full width.
+        // Narrow windows collapse the sidebar (HIG: collapsible): the content keeps the full width
+        // and the toolbar's toggle shows the sidebar in its place, like a collapsed split view.
+        // Driven by the surface's live width, so a user resize below NARROW collapses it too.
+        let mut show_sidebar: Rc<dyn Fn(bool)> = Rc::new(|_| {});
         if with_sidebar {
-            let sb = side.clone();
+            let narrow = Rc::new(Cell::new(false));
+            // Weak: the closures hang off these widgets' own signals.
+            let panes = {
+                let (sb, ct, tg) = (
+                    side.downgrade(),
+                    content.downgrade(),
+                    sidebar_toggle.downgrade(),
+                );
+                move || Some((sb.upgrade()?, ct.upgrade()?, tg.upgrade()?))
+            };
+            let fit = {
+                let (panes, narrow) = (panes.clone(), narrow.clone());
+                Rc::new(move |width: i32| {
+                    let Some((sb, ct, tg)) = panes() else { return };
+                    let n = width < NARROW;
+                    // Already laid out for this width (narrow keeps whichever pane the user chose).
+                    if n == narrow.get() && (n || sb.is_visible()) {
+                        return;
+                    }
+                    narrow.set(n);
+                    sb.set_hexpand(n);
+                    sb.set_visible(!n);
+                    ct.set_visible(true);
+                    tg.set_visible(n);
+                    toggle_face(&tg, false);
+                })
+            };
+            // Narrow only: show the sidebar alone, or go back to the content.
+            let collapse = {
+                let (panes, narrow) = (panes.clone(), narrow.clone());
+                Rc::new(move |show_sidebar: bool| {
+                    let Some((sb, ct, tg)) = panes() else { return };
+                    if !narrow.get() {
+                        return;
+                    }
+                    sb.set_visible(show_sidebar);
+                    ct.set_visible(!show_sidebar);
+                    // The toggle stays in both states: it is the way back to the content too.
+                    toggle_face(&tg, show_sidebar);
+                })
+            };
+            show_sidebar = collapse.clone();
+            {
+                let (c, sb) = (collapse.clone(), side.downgrade());
+                sidebar_toggle.connect_clicked(move |_| {
+                    let shown = sb.upgrade().is_some_and(|s| s.is_visible());
+                    c(!shown)
+                });
+            }
+            {
+                let c = collapse.clone();
+                sidebar.connect_row_activated(move |_, _| c(false));
+            }
+            {
+                // A page opened from elsewhere (search, `open`, IPC) shows; arrowing through the
+                // rows (focus inside the sidebar) does not leave it.
+                let (c, sb) = (collapse.clone(), side.downgrade());
+                content.connect_visible_child_notify(move |_| {
+                    let Some(sb) = sb.upgrade() else { return };
+                    if sb.is_visible() && !sb.state_flags().contains(gtk::StateFlags::FOCUS_WITHIN)
+                    {
+                        c(false);
+                    }
+                });
+            }
             root.connect_realize(move |r| {
                 let Some(win) = r.root().and_downcast::<gtk::Window>() else {
                     return;
                 };
-                let fit = |w: &gtk::Window, sb: &gtk::ScrolledWindow| {
-                    let on = w.default_width() >= NARROW;
-                    if sb.is_visible() != on {
-                        sb.set_visible(on);
-                    }
-                };
-                fit(&win, &sb);
-                let sb = sb.clone();
-                win.connect_default_width_notify(move |w| fit(w, &sb));
+                fit(win.default_width());
+                {
+                    let fit = fit.clone();
+                    win.connect_default_width_notify(move |w| fit(w.default_width()));
+                }
+                // The surface reports the size the compositor gave it (a user resize).
+                if let Some(s) = win.surface() {
+                    let fit = fit.clone();
+                    s.connect_width_notify(move |s| {
+                        if s.width() > 0 {
+                            fit(s.width());
+                        }
+                    });
+                }
             });
         }
         AppWindow {
@@ -614,6 +721,8 @@ impl AppWindow {
             sidebar,
             content,
             status,
+            sidebar_toggle,
+            show_sidebar,
         }
     }
 
@@ -640,19 +749,10 @@ impl AppWindow {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
         self.content.add_named(&scroll, Some(title));
-        let content = self.content.clone();
         if self.sidebar.selected_row().is_none() {
             self.sidebar.select_row(Some(&r));
-            content.set_visible_child_name(title);
+            self.content.set_visible_child_name(title);
         }
-        let st = self.content.clone();
-        self.sidebar.connect_row_selected(move |_, sel| {
-            if let Some(s) = sel
-                && s.widget_name() != ""
-            {
-                st.set_visible_child_name(&s.widget_name());
-            }
-        });
     }
 
     pub fn select(&self, title: &str) {
@@ -1238,7 +1338,6 @@ pub fn progress() -> gtk::ProgressBar {
     let p = gtk::ProgressBar::new();
     p.set_hexpand(true);
     p.set_valign(gtk::Align::Center);
-    p.add_css_class("progress");
     p
 }
 
@@ -1540,6 +1639,9 @@ impl AppWindow {
             .build();
         r.add_css_class("sidebar-search");
         self.sidebar.prepend(&r);
+        // Narrow: Return shows what the search opened (typing keeps the field on screen).
+        let show = self.show_sidebar.clone();
+        s.connect_activate(move |_| show(false));
         s
     }
 

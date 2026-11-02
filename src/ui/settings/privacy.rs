@@ -208,6 +208,32 @@ struct Facts {
     security: Option<security::Status>,
     malware: Option<wol_core::malware::Status>,
     encrypted: Option<bool>,
+    /// `wol boot status`: Secure Boot and this computer's key. None where `wol` is not here.
+    boot: Option<wol_core::boot::Status>,
+    /// The key still waits for the firmware's key screen (boot-enroll's mark).
+    key_pending: bool,
+}
+
+/// `wol boot status` as JSON, off the UI thread.
+fn boot_status() -> Option<wol_core::boot::Status> {
+    let out = wol_core::system::run_with_timeout(
+        &["wol", "boot", "status"],
+        wol_core::system::RUN_TIMEOUT,
+    )?;
+    serde_json::from_str(out.trim()).ok()
+}
+
+/// The Startup security row's words: `wol boot status`'s summary, and that the key screen is
+/// still to come when it is.
+pub(crate) fn startup_security_text(s: &wol_core::boot::Status, key_pending: bool) -> String {
+    if key_pending {
+        format!(
+            "{}. This computer's key is queued: a blue screen asks once at the next restart.",
+            s.summary()
+        )
+    } else {
+        s.summary()
+    }
 }
 
 /// What a grant for one peer app or one device allows.
@@ -324,6 +350,23 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     }
     if let Some(enc) = f.encrypted {
         rows.push(info("Disk encryption", if enc { "On" } else { "Off" }));
+    }
+    if let Some(b) = &f.boot {
+        let text = startup_security_text(b, f.key_pending);
+        // Finish Secure Boot setup: `wol boot enroll` through wol-admind (the key is queued as
+        // root). Without the verb the row still says where things stand.
+        match admin("boot-enroll", &[]).filter(|_| f.key_pending) {
+            Some(a) => {
+                let (ctx, st) = (e.ctx.clone(), status.clone());
+                rows.push(form::button_row(
+                    "Startup security",
+                    &text,
+                    "Finish Secure Boot Setup",
+                    move || ctx.act_say(a.clone(), &st),
+                ));
+            }
+            None => rows.push(info("Startup security", &text)),
+        }
     }
     if !rows.is_empty() {
         into.append(&w::section("Security", &rows));
@@ -444,6 +487,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             security: m.security(),
             malware: m.malware(),
             encrypted: m.storage().and_then(|s| s.encrypted),
+            boot: boot_status(),
+            key_pending: std::path::Path::new(crate::install::MOK_PENDING).exists(),
         },
         move |into, f| render(&e2, into, f, &status),
     );

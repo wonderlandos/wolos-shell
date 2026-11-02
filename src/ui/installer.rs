@@ -5,7 +5,7 @@
 //! Try, in a session that holds nothing else.
 use crate::copy;
 use crate::install::flow::{
-    self, DiskTitle, FILE_SYSTEMS, Flow, Found, Method, Next, Row, STEPS, Step, USES, Use,
+    self, DiskTitle, FILE_SYSTEMS, Flow, Found, Method, Next, Row, STEPS, SWAPS, Step, USES, Use,
 };
 use crate::install::{self, Check, Report, Stage};
 use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList, DiskBar, Seg, Tone};
@@ -17,12 +17,15 @@ use std::io::BufRead;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
+use wol_core::boot::{MOK_PASSWORD, key_screen_steps};
 use wol_core::install::disk::Disk;
 use wol_core::install::plan::Protect;
 use wol_core::region::zone_label;
 
 /// Rows the zone search builds at once: the list is for choosing, the search for finding.
 const ZONE_ROWS: usize = 60;
+/// Lines of the install log the Failed page's Details show.
+const LOG_LINES: usize = 40;
 
 /// What the install process reports to the page.
 enum Event {
@@ -64,6 +67,10 @@ pub struct Installer {
     method_list: gtk::Box,
     method_warn: gtk::Box,
     method_warning: gtk::Label,
+    /// The swap choice under the method list (not for Manual).
+    swap_row: gtk::Box,
+    swap: RefCell<Option<gtk::DropDown>>,
+    replace_list: gtk::Box,
     along_bar: DiskBar,
     along_warn: gtk::Box,
     along_warning: gtk::Label,
@@ -82,14 +89,39 @@ pub struct Installer {
     summary_warning: gtk::Box,
     summary_text: gtk::Label,
     progress: a::Progress,
+    /// A tip under the bar, changing every [`install::TIP_SECS`].
+    tip: gtk::Label,
     recovery: gtk::Box,
     recovery_key: gtk::Label,
-    boot_note: gtk::Label,
+    /// "I wrote the key down": Restart waits for it.
+    ack: RefCell<Option<gtk::Switch>>,
+    /// What the startup setup had to say (one or two lines).
+    done_notes: gtk::Box,
+    /// The Secure Boot sheet's BitLocker lines (R2B-9), filled when the sheet shows.
+    secure_boot_notes: gtk::Box,
+    /// The firmware's key screen comes after the restart: the steps, and the password in large type.
+    key_screen: gtk::Box,
+    /// The install log's tail on the Failed page, behind Details.
+    failed_details: gtk::Box,
+    failed_log: gtk::Box,
+    /// A refused plan's sentence, full width over the buttons (the foot's status is too narrow).
+    failed_refusal: gtk::Label,
+    /// The key-unread page's Details: the log and why the key was not read.
+    unread_details: gtk::Box,
+    unread_log: gtk::Box,
     /// Last report and when its stage began; first package sample for the time estimate.
     report: RefCell<(Report, Instant)>,
     sample: Cell<Option<(f64, Instant)>>,
+    /// When the install began (the tips' clock).
+    began: Cell<Option<Instant>>,
     /// Disks were looked at. Golden renders hand theirs in.
     probed: Cell<bool>,
+    /// How disks are looked at, off the main thread ([`system_disks`]; tests hand in their own).
+    probe: Cell<fn() -> Vec<Found>>,
+    /// With the security chip the account password also opens the disk: said on the Protect
+    /// and Account pages while the chip is chosen.
+    protect_tpm_note: gtk::Label,
+    account_tpm_note: gtk::Label,
     /// Idle sleep and screen-off held off while installing (`run` sets how).
     awake: RefCell<install::Awake>,
     keep_awake: RefCell<Option<KeepAwake>>,
@@ -100,6 +132,15 @@ fn replace_child(holder: &gtk::Box, child: &impl IsA<gtk::Widget>) {
         holder.remove(&c);
     }
     holder.append(child);
+}
+
+/// `notes` as wrapped lines in `b`, hidden when there are none (Done, Secure Boot sheet).
+fn fill_notes(b: &gtk::Box, notes: &[impl AsRef<str>]) {
+    replace_child(b, &a::blank());
+    for n in notes {
+        b.append(&a::wrapped(n.as_ref(), "assistant-subtitle"));
+    }
+    b.set_visible(!notes.is_empty());
 }
 
 fn holder() -> gtk::Box {
@@ -132,11 +173,26 @@ impl Installer {
         ));
         recovery.append(&recovery_key);
         recovery.set_visible(false);
-        let done_body = w::vbox(w::S2);
-        let boot_note = a::wrapped("", "assistant-subtitle");
-        boot_note.set_visible(false);
-        done_body.append(&boot_note);
+        let done_notes = w::vbox(w::S1);
+        let secure_boot_notes = w::vbox(w::S1);
+        secure_boot_notes.set_visible(false);
+        let key_screen = w::vbox(w::S2);
+        key_screen.set_visible(false);
+        let done_body = w::vbox(w::S4);
+        done_body.append(&done_notes);
+        done_body.append(&key_screen);
         done_body.append(&recovery);
+        let failed_log = w::vbox(0);
+        let failed_details = w::vbox(0);
+        failed_details.append(&failed_log);
+        failed_details.set_visible(false);
+        let failed_refusal = a::wrapped("", "assistant-status");
+        failed_refusal.add_css_class("problem");
+        failed_refusal.set_visible(false);
+        let unread_log = w::vbox(0);
+        let unread_details = w::vbox(0);
+        unread_details.append(&unread_log);
+        unread_details.set_visible(false);
         let mut flow = Flow::new(hints, boot, tpm);
         let probed = disks.is_some();
         if let Some(d) = disks {
@@ -155,6 +211,9 @@ impl Installer {
             method_list,
             method_warn,
             method_warning,
+            swap_row: w::vbox(w::S2),
+            swap: Default::default(),
+            replace_list: holder(),
             along_bar: DiskBar::new(),
             along_warn,
             along_warning,
@@ -172,12 +231,25 @@ impl Installer {
             summary_warning,
             summary_text,
             progress: a::Progress::new(),
+            tip: a::wrapped("", "assistant-subtitle"),
             recovery,
             recovery_key,
-            boot_note,
+            ack: Default::default(),
+            done_notes,
+            secure_boot_notes,
+            key_screen,
+            failed_details,
+            failed_log,
+            failed_refusal,
+            unread_details,
+            unread_log,
             report: RefCell::new((Report::new(Stage::Prepare, 0), Instant::now())),
             sample: Cell::new(None),
+            began: Cell::new(None),
             probed: Cell::new(probed),
+            probe: Cell::new(system_disks),
+            protect_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
+            account_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
             awake: RefCell::new(install::Awake::default()),
             keep_awake: RefCell::new(None),
         });
@@ -188,6 +260,7 @@ impl Installer {
                 Step::Zone => s.zone(),
                 Step::Disk => s.simple(st, &s.disk_list, "drive-harddisk-symbolic"),
                 Step::Method => s.method(),
+                Step::Replace => s.replace(),
                 Step::Alongside => s.alongside(),
                 Step::Manual => s.manual(),
                 Step::Edit => s.edit_page(),
@@ -197,6 +270,7 @@ impl Installer {
                 Step::SecureBoot => s.secure_boot(),
                 Step::Installing => s.installing(),
                 Step::Done => s.done(&done_body),
+                Step::KeyUnread => s.key_unread(),
                 _ => s.failed(),
             };
             s.wire(st, &card);
@@ -211,6 +285,11 @@ impl Installer {
     /// Changes the flow directly (goldens, tests).
     pub fn with_flow(&self, f: impl FnOnce(&mut Flow)) {
         f(&mut self.flow.borrow_mut());
+    }
+
+    /// Looks at disks with `f` instead of the system's tools (goldens, tests).
+    pub fn set_probe(&self, f: fn() -> Vec<Found>) {
+        self.probe.set(f);
     }
 
     /// Shows `step` at once (goldens, tests).
@@ -257,7 +336,7 @@ impl Installer {
         });
         card.back.set_visible(!matches!(
             step,
-            Step::Begin | Step::Done | Step::Failed | Step::Installing
+            Step::Begin | Step::Done | Step::Failed | Step::Installing | Step::KeyUnread
         ));
     }
 
@@ -276,16 +355,23 @@ impl Installer {
             Step::Zone => self.fill_zones(""),
             Step::Disk => self.enter_disks(),
             Step::Method => self.fill_method(),
+            Step::Replace => self.fill_replace(),
             Step::Alongside => self.fill_alongside(),
             Step::Manual => self.fill_manual(),
             Step::Edit => self.fill_edit(),
             Step::Protect => self.fill_protect(),
             Step::Account => {
+                let tpm = self.flow.borrow().protect == Protect::Tpm;
+                self.account_tpm_note.set_visible(tpm);
                 if let Some((_, e)) = self.editors.borrow().first() {
                     e.grab_focus();
                 }
             }
             Step::Summary => self.fill_summary(),
+            Step::SecureBoot => {
+                let notes = self.flow.borrow().bitlocker_notes(false);
+                fill_notes(&self.secure_boot_notes, &notes);
+            }
             _ => {}
         }
         self.pager.set_visible_child_name(step.id());
@@ -314,21 +400,91 @@ impl Installer {
         );
     }
 
-    /// Failed page, stopped during `at`.
-    pub fn show_failed(self: &Rc<Self>, at: Stage) {
-        self.with_card(Step::Failed, |c| {
-            c.subtitle.set_label(install::stopped_text(at))
-        });
-        self.flow.borrow_mut().jump(Step::Failed);
-        self.show(Step::Failed);
+    /// Failed page, stopped during `at`: a plain sentence for the stage, the tool's own words
+    /// (`message`) on the status line. The log behind Details follows when the run has ended
+    /// ([`Self::set_failed_log`]).
+    pub fn show_failed(self: &Rc<Self>, at: Stage, message: &str) {
+        self.show_failed_with(at, message, "");
     }
 
-    /// Done page; a recovery key shows here once, and what the startup setup has to say.
-    pub fn show_done(self: &Rc<Self>, key: Option<&str>, note: Option<&str>) {
-        self.boot_note.set_visible(note.is_some());
-        self.boot_note.set_label(note.unwrap_or_default());
+    /// The Failed page's Details: the tail of `log`.
+    fn set_failed_log(&self, log: &str) {
+        let tail = install::log_tail(log, LOG_LINES);
+        let lines: Vec<String> = tail.lines().map(String::from).collect();
+        replace_child(&self.failed_log, &a::lines(&lines));
+    }
+
+    /// [`Self::show_failed`] with the log given (goldens).
+    pub fn show_failed_with(self: &Rc<Self>, at: Stage, message: &str, log: &str) {
+        self.set_failed_log(log);
+        self.failed_details.set_visible(false);
+        self.flow.borrow_mut().jump(Step::Failed);
+        self.show(Step::Failed);
+        // A plan `wol install check` refused: its sentence; the tool's words stay in Details.
+        let refused = install::refused_word(message).and_then(|(word, part)| {
+            let f = self.flow.borrow();
+            let d = f.disk().cloned().unwrap_or_default();
+            copy::install_check_refusal(word, part, &d)
+        });
+        // Refused: nothing was written, and the subtitle says so instead of a stage's failure.
+        self.failed_refusal
+            .set_label(refused.as_deref().unwrap_or_default());
+        self.failed_refusal.set_visible(refused.is_some());
+        self.with_card(Step::Failed, |c| {
+            c.subtitle.set_label(if refused.is_some() {
+                copy::installer::REFUSED_STOPPED
+            } else {
+                install::stopped_text(at)
+            });
+            c.say(
+                if refused.is_some() {
+                    ""
+                } else {
+                    message.trim()
+                },
+                true,
+            );
+        });
+    }
+
+    /// Shows or hides the Failed page's log (goldens; the Details button does the same).
+    pub fn toggle_details(&self) {
+        self.failed_details
+            .set_visible(!self.failed_details.is_visible());
+        self.unread_details
+            .set_visible(!self.unread_details.is_visible());
+    }
+
+    /// The install worked and encrypted the disk, but no recovery key came back: no Restart, and
+    /// the reason is logged and put under Details with the install log.
+    pub fn show_key_unread(self: &Rc<Self>, reason: &str, log: &str) {
+        eprintln!("wol-installer: recovery key not read: {reason}");
+        let tail = install::log_tail(&format!("{log}\n{reason}"), LOG_LINES);
+        let lines: Vec<String> = tail.lines().map(String::from).collect();
+        replace_child(&self.unread_log, &a::lines(&lines));
+        self.unread_details.set_visible(false);
+        self.with_card(Step::KeyUnread, |c| c.set_busy(false));
+        self.flow.borrow_mut().jump(Step::KeyUnread);
+        self.show(Step::KeyUnread);
+    }
+
+    /// Done page; a recovery key shows here once (Restart waits until it is acknowledged), what
+    /// the startup setup has to say, and the firmware's key screen steps when it comes.
+    pub fn show_done(self: &Rc<Self>, key: Option<&str>, note: Option<&str>, key_screen: bool) {
+        let mut notes = install::done_notes(note);
+        {
+            let f = self.flow.borrow();
+            notes.extend(f.windows_start());
+            notes.extend(f.bitlocker_notes(true).into_iter().map(String::from));
+        }
+        fill_notes(&self.done_notes, &notes);
+        self.key_screen.set_visible(key_screen);
         self.recovery.set_visible(key.is_some());
         self.recovery_key.set_label(key.unwrap_or_default());
+        if let Some(ack) = &*self.ack.borrow() {
+            ack.set_active(false);
+        }
+        self.with_card(Step::Done, |c| c.next.set_sensitive(key.is_none()));
         self.flow.borrow_mut().jump(Step::Done);
         self.show(Step::Done);
     }
@@ -341,12 +497,24 @@ impl Installer {
     pub fn next(self: &Rc<Self>) {
         let step = self.flow.borrow().step;
         match step {
-            Step::Done => return kit::spawn(&install::restart_command()),
+            Step::Done => {
+                let acked = self
+                    .ack
+                    .borrow()
+                    .as_ref()
+                    .is_none_or(|a| !self.recovery.is_visible() || a.is_active());
+                if acked {
+                    kit::spawn(&install::restart_command());
+                }
+                return;
+            }
             Step::Installing => return,
+            // Read the key again; Restart only comes with it (Done).
+            Step::KeyUnread => return self.read_result(None),
             Step::Failed => {
-                // The disk may be anything now: look again, and start from it.
+                // The disk may be anything now: look again, and start from it; Back still works.
                 self.probed.set(false);
-                self.flow.borrow_mut().jump(Step::Disk);
+                self.flow.borrow_mut().restart();
                 return self.show(Step::Disk);
             }
             _ => {}
@@ -432,7 +600,10 @@ impl Installer {
                 s.flow.borrow_mut().set_language(i);
                 let k = s.flow.borrow().draft.keyboard;
                 if let Some(dd) = &*s.keyboard.borrow() {
+                    // The page moves the list: not the person's pick (R2B-8).
+                    s.filling.set(true);
                     dd.set_selected(k as u32);
+                    s.filling.set(false);
                 }
             }
         });
@@ -445,12 +616,19 @@ impl Installer {
                 return;
             };
             let i = (dd.selected() as usize).min(KEYBOARDS.len() - 1);
-            s.flow.borrow_mut().draft.keyboard = i;
+            // The language list sets this one inside `filling`: everything else is the person's
+            // pick, the suggested layout included, so only then do languages stop moving it (B8).
+            let by_person = !s.filling.get();
+            s.flow.borrow_mut().keyboard_shown(i, by_person);
             if std::env::var_os("WOL_FAKE_NOW").is_none() {
                 kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
             }
         });
         body.append(&a::form_row("Keyboard", &kb));
+        // Somewhere to see that the keys type what they say, before any password does.
+        let test = w::text_field("Type here to try the keyboard");
+        test.add_css_class("assistant-field");
+        body.append(&a::form_row("Try it", &test));
         *self.keyboard.borrow_mut() = Some(kb);
         Card::new(
             Art::Icon("preferences-desktop-locale-symbolic"),
@@ -493,8 +671,8 @@ impl Installer {
                 &self.zone_list,
                 &w::empty_state(
                     "system-search-symbolic",
-                    "No matching place",
-                    "Try the name of a big city near you.",
+                    copy::installer::NO_PLACE.0,
+                    copy::installer::NO_PLACE.1,
                     None,
                 ),
             );
@@ -521,16 +699,19 @@ impl Installer {
     }
 
     /// The disk page: the disks at once when known, else a look at them off the main thread.
+    /// No disk yet: every visit looks again (the target may have been plugged in since).
     fn enter_disks(self: &Rc<Self>) {
-        if self.probed.get() {
+        if self.probed.get() && !self.flow.borrow().disks.is_empty() {
             return self.fill_disks();
         }
-        replace_child(&self.disk_list, &a::waiting("Looking at your disks…"));
+        replace_child(
+            &self.disk_list,
+            &a::waiting(copy::installer::LOOKING_AT_DISKS),
+        );
         let me = Rc::downgrade(self);
+        let probe = self.probe.get();
         glib::spawn_future_local(async move {
-            let found = gtk::gio::spawn_blocking(system_disks)
-                .await
-                .unwrap_or_default();
+            let found = gtk::gio::spawn_blocking(probe).await.unwrap_or_default();
             if let Some(s) = me.upgrade() {
                 s.probed.set(true);
                 s.flow.borrow_mut().set_disks(found);
@@ -548,20 +729,27 @@ impl Installer {
                 .map(|d| Choice {
                     icon: Some("drive-harddisk-symbolic".into()),
                     title: d.disk.title_text(),
-                    detail: install::size_text(d.disk.bytes),
+                    detail: flow::disk_detail(&d.disk),
                     trail: None,
                 })
                 .collect();
             (rows, f.chosen)
         };
         if rows.is_empty() {
+            let me = Rc::downgrade(self);
+            let again = w::button("Look Again", w::Kind::Default, move || {
+                if let Some(s) = me.upgrade() {
+                    s.probed.set(false);
+                    s.enter_disks();
+                }
+            });
             replace_child(
                 &self.disk_list,
                 &w::empty_state(
                     "drive-harddisk-symbolic",
-                    "No disk found",
-                    "Connect the disk you want to install on, then open Install WolOS again.",
-                    None,
+                    copy::installer::NO_DISK.0,
+                    copy::installer::NO_DISK.1,
+                    Some(again),
                 ),
             );
             return;
@@ -578,6 +766,18 @@ impl Installer {
     fn method(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S4);
         body.append(&self.method_list);
+        let names: Vec<&str> = SWAPS.iter().map(|s| s.1).collect();
+        let swap = w::dropdown(&names, 0);
+        let me = Rc::downgrade(self);
+        swap.connect_selected_notify(move |dd| {
+            if let Some(s) = me.upgrade() {
+                let i = (dd.selected() as usize).min(SWAPS.len() - 1);
+                s.flow.borrow_mut().swap = SWAPS[i].0;
+            }
+        });
+        self.swap_row.append(&a::form_row("Swap", &swap));
+        *self.swap.borrow_mut() = Some(swap);
+        body.append(&self.swap_row);
         body.append(&self.method_warn);
         Card::new(
             Art::Icon("drive-multidisk-symbolic"),
@@ -587,9 +787,16 @@ impl Installer {
         )
     }
 
+    /// The methods in the order the page lists them.
+    const METHODS: [Method; 4] = [
+        Method::Alongside,
+        Method::Replace,
+        Method::Erase,
+        Method::Manual,
+    ];
+
     fn fill_method(self: &Rc<Self>) {
-        const ORDER: [Method; 3] = [Method::Alongside, Method::Erase, Method::Manual];
-        let (rows, selected): (Vec<Choice>, _) = {
+        let (rows, selected, swap): (Vec<Choice>, _, _) = {
             let f = self.flow.borrow();
             let row = |title: String, detail: &str| Choice {
                 icon: None,
@@ -600,28 +807,80 @@ impl Installer {
             (
                 vec![
                     row(f.alongside_title(), "Keeps what's there"),
+                    row(
+                        Step::Replace.title().into(),
+                        "Erases one partition, keeps the rest",
+                    ),
                     row("Erase Disk".into(), "Starts clean"),
                     row("Manual".into(), "For experts"),
                 ],
-                ORDER.iter().position(|m| *m == f.method),
+                Self::METHODS.iter().position(|m| *m == f.method),
+                SWAPS
+                    .iter()
+                    .position(|s| std::mem::discriminant(&s.0) == std::mem::discriminant(&f.swap))
+                    .unwrap_or(0),
             )
         };
         let me = Rc::downgrade(self);
         let list = ChoiceList::new(rows, selected, move |i| {
             if let Some(s) = me.upgrade() {
-                s.flow.borrow_mut().method = ORDER[i];
+                s.flow.borrow_mut().method = Self::METHODS[i];
                 s.say_method();
             }
         });
         replace_child(&self.method_list, &list.root);
+        if let Some(dd) = &*self.swap.borrow() {
+            dd.set_selected(swap as u32);
+        }
         self.say_method();
     }
 
     fn say_method(&self) {
-        let warn = self.flow.borrow().method_warning();
+        let (warn, manual) = {
+            let f = self.flow.borrow();
+            (f.method_warning(), f.method == Method::Manual)
+        };
         self.method_warn.set_visible(warn.is_some());
         self.method_warning
             .set_label(warn.as_deref().unwrap_or_default());
+        // Manual has its own Swap use on the edit page.
+        self.swap_row.set_visible(!manual);
+    }
+
+    fn replace(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S2);
+        body.append(&self.replace_list);
+        Card::new(
+            Art::Icon("drive-harddisk-symbolic"),
+            Step::Replace.title(),
+            Step::Replace.subtitle(),
+            &body,
+        )
+    }
+
+    fn fill_replace(self: &Rc<Self>) {
+        let (cands, chosen) = {
+            let f = self.flow.borrow();
+            (f.replace_candidates(), f.replace.clone())
+        };
+        let selected = chosen.and_then(|u| cands.iter().position(|c| c.0 == u));
+        let rows = cands
+            .iter()
+            .map(|(_, title, detail)| Choice {
+                icon: None,
+                title: title.clone(),
+                detail: detail.clone(),
+                trail: None,
+            })
+            .collect();
+        let uuids: Vec<String> = cands.iter().map(|c| c.0.clone()).collect();
+        let me = Rc::downgrade(self);
+        let list = ChoiceList::new(rows, selected, move |i| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().replace = Some(uuids[i].clone());
+            }
+        });
+        replace_child(&self.replace_list, &list.root);
     }
 
     fn alongside(self: &Rc<Self>) -> Card {
@@ -903,9 +1162,13 @@ impl Installer {
                 let k = s.protect_rows.borrow()[i];
                 s.flow.borrow_mut().protect = k;
                 s.disk_pw_rows.set_visible(k == Protect::Password);
+                s.protect_tpm_note.set_visible(k == Protect::Tpm);
             }
         });
         body.append(&list.root);
+        self.protect_tpm_note.set_xalign(0.0);
+        self.protect_tpm_note.set_visible(chosen == Protect::Tpm);
+        body.append(&self.protect_tpm_note);
         *self.protect_list.borrow_mut() = Some(list);
         let pw = w::password_field("At least 8 characters");
         let verify = w::password_field("Type it again");
@@ -948,6 +1211,7 @@ impl Installer {
             l.select(i);
         }
         self.disk_pw_rows.set_visible(chosen == Protect::Password);
+        self.protect_tpm_note.set_visible(chosen == Protect::Tpm);
     }
 
     fn account(self: &Rc<Self>) -> Card {
@@ -997,11 +1261,39 @@ impl Installer {
         field.append(&caps);
         body.append(&a::form_row("Password", &field));
         body.append(&a::form_row("Verify", &verify));
+        self.account_tpm_note.set_xalign(0.0);
+        body.append(&self.account_tpm_note);
+        // The computer's name follows the account name until typed.
+        let host = w::text_field(&install::hostname_for(""));
+        host.add_css_class("assistant-field");
+        let (me, h) = (Rc::downgrade(self), host.clone());
+        name.connect_changed(move |_| {
+            if let Some(s) = me.upgrade() {
+                let f = s.flow.borrow();
+                h.set_placeholder_text(Some(&install::hostname_for(&f.draft.name)));
+            }
+        });
+        let me = Rc::downgrade(self);
+        host.connect_changed(move |e| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().set_hostname(&e.text());
+            }
+        });
+        body.append(&a::form_row("Computer name", &host));
+        let me = Rc::downgrade(self);
+        let auto = w::toggle(false, move |on| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().autologin = on;
+            }
+        });
+        auto.set_halign(gtk::Align::Start);
+        body.append(&a::form_row("Log in automatically", &auto));
         *self.editors.borrow_mut() = vec![
             (Field::FullName, full.upcast()),
             (Field::Name, name.upcast()),
             (Field::Password, pw.upcast()),
             (Field::Verify, verify.upcast()),
+            (Field::Hostname, host.upcast()),
         ];
         Card::new(
             Art::Icon("avatar-default-symbolic"),
@@ -1039,7 +1331,7 @@ impl Installer {
             "keyhole",
             Step::SecureBoot.title(),
             Step::SecureBoot.subtitle(),
-            &a::blank(),
+            &self.secure_boot_notes,
         );
         c.next.set_label("Install Anyway");
         c.add_action(&w::button("Restart", w::Kind::Default, || {
@@ -1049,32 +1341,131 @@ impl Installer {
     }
 
     fn installing(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S4);
+        body.append(&self.progress.root);
+        self.tip.set_label(install::tip_at(0.0));
+        body.append(&self.tip);
         let c = Card::moment(
             "pocket-watch",
             Step::Installing.title(),
             Step::Installing.subtitle(),
-            &self.progress.root,
+            &body,
         );
         c.without_foot();
         c
     }
 
     fn done(self: &Rc<Self>, body: &gtk::Box) -> Card {
+        // The key screen: numbered steps, the password in large type, the media first.
+        self.key_screen
+            .append(&a::caption(copy::INSTALL_KEY_SCREEN_TITLE));
+        for (i, step) in key_screen_steps().iter().enumerate() {
+            let l = a::wrapped(&format!("{}. {step}", i + 1), "assistant-subtitle");
+            l.set_xalign(0.0);
+            l.set_justify(gtk::Justification::Left);
+            l.set_halign(gtk::Align::Start);
+            self.key_screen.append(&l);
+        }
+        self.key_screen
+            .append(&w::centered(MOK_PASSWORD, "large-title"));
+        self.key_screen.append(&a::wrapped(
+            copy::INSTALL_KEY_SCREEN_MEDIA,
+            "assistant-subtitle",
+        ));
+        // The recovery key: acknowledged before Restart, or saved on a USB stick.
+        let me = Rc::downgrade(self);
+        let ack = w::toggle(false, move |on| {
+            if let Some(s) = me.upgrade() {
+                s.with_card(Step::Done, |c| c.next.set_sensitive(on));
+            }
+        });
+        ack.set_halign(gtk::Align::Start);
+        self.recovery
+            .append(&a::form_row(copy::INSTALL_KEY_ACK, &ack));
+        *self.ack.borrow_mut() = Some(ack);
+        let me = Rc::downgrade(self);
+        let save = w::button("Save to USB", w::Kind::Default, move || {
+            if let Some(s) = me.upgrade() {
+                s.save_key_to_usb();
+            }
+        });
+        save.set_halign(gtk::Align::Center);
+        self.recovery.append(&save);
         let c = Card::moment("keyhole", Step::Done.title(), Step::Done.subtitle(), body);
         c.next.set_label("Restart");
+        if !self.flow.borrow().boot {
+            // From the live desktop: the person may go on trying WolOS and restart later.
+            c.add_action(&w::button("Restart Later", w::Kind::Default, || {
+                reveal::exit_faded()
+            }));
+        }
         c
     }
 
+    /// The recovery key onto the first USB stick that is mounted; the foot says how it went.
+    fn save_key_to_usb(self: &Rc<Self>) {
+        let roots: Vec<PathBuf> = install::MEDIA_ROOTS.iter().map(PathBuf::from).collect();
+        let key = self.recovery_key.label().to_string();
+        let said = match install::media_dirs(&roots).first() {
+            None => (copy::INSTALL_NO_USB.to_string(), true),
+            Some(dir) => match install::save_key(dir, &key) {
+                Ok(_) => {
+                    let name = dir
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    if let Some(ack) = &*self.ack.borrow() {
+                        ack.set_active(true);
+                    }
+                    (copy::install_key_saved(&name), false)
+                }
+                Err(e) => {
+                    eprintln!("wol-installer: recovery key not saved: {e}");
+                    (copy::INSTALL_KEY_NOT_SAVED.to_string(), true)
+                }
+            },
+        };
+        self.with_card(Step::Done, |c| c.say(&said.0, said.1));
+    }
+
     fn failed(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S4);
+        body.append(&self.failed_refusal);
+        body.append(&self.failed_details);
         let c = Card::moment(
             "teacup",
             Step::Failed.title(),
             install::stopped_text(Stage::Finish),
-            &a::blank(),
+            &body,
         );
         c.next.set_label("Try Again");
         c.add_action(&w::button("Restart", w::Kind::Default, || {
             kit::spawn(&install::restart_command())
+        }));
+        let me = Rc::downgrade(self);
+        c.add_action(&w::button("Details", w::Kind::Plain, move || {
+            if let Some(s) = me.upgrade() {
+                s.toggle_details();
+            }
+        }));
+        c
+    }
+
+    /// Installed, but the recovery key could not be read: Try Again reads it again, Details shows
+    /// why. No Restart here.
+    fn key_unread(self: &Rc<Self>) -> Card {
+        let c = Card::moment(
+            "teacup",
+            Step::KeyUnread.title(),
+            Step::KeyUnread.subtitle(),
+            &self.unread_details,
+        );
+        c.next.set_label("Try Again");
+        let me = Rc::downgrade(self);
+        c.add_action(&w::button("Details", w::Kind::Plain, move || {
+            if let Some(s) = me.upgrade() {
+                s.toggle_details();
+            }
         }));
         c
     }
@@ -1096,11 +1487,12 @@ impl Installer {
             } else {
                 ""
             };
-            f.plan()
-                .map(|p| install::write_plan(&dir, &p, disk_pw, &f.draft.password))
+            f.plan().map(|p| {
+                install::write_plan(&dir, &p, &f.plan_extras(), disk_pw, &f.draft.password)
+            })
         };
         let Some(Ok(plan)) = written else {
-            return self.show_failed(Stage::Prepare);
+            return self.show_failed(Stage::Prepare, "");
         };
         let argv = install::install_command(&plan);
         eprintln!("wol-installer: {}", argv.join(" "));
@@ -1111,7 +1503,7 @@ impl Installer {
             .stderr(std::process::Stdio::inherit())
             .spawn();
         let Ok(mut child) = child else {
-            return self.show_failed(Stage::Prepare);
+            return self.show_failed(Stage::Prepare, "");
         };
         let out = child.stdout.take();
         let (tx, rx) = std::sync::mpsc::channel::<Event>();
@@ -1129,6 +1521,7 @@ impl Installer {
         });
         *self.report.borrow_mut() = (Report::new(Stage::Prepare, 0), Instant::now());
         self.sample.set(None);
+        self.began.set(Some(Instant::now()));
         self.show_progress(&Report::new(Stage::Prepare, 0), None);
         let me = Rc::downgrade(self);
         glib::timeout_add_local(Duration::from_millis(250), move || {
@@ -1138,8 +1531,8 @@ impl Installer {
             while let Ok(e) = rx.try_recv() {
                 match e {
                     Event::Report(r) if r.stage == Stage::Failed => {
-                        let at = s.report.borrow().0.stage;
-                        s.show_failed(at);
+                        let at = r.at.unwrap_or(s.report.borrow().0.stage);
+                        s.show_failed(at, &r.message);
                     }
                     Event::Report(r) => {
                         // The bar's clock runs per stage (Files creeps from when it began).
@@ -1152,11 +1545,23 @@ impl Installer {
                         *cur = (r, since);
                     }
                     Event::Exit(ok) => {
-                        if ok {
-                            s.finish(&dir);
-                        } else if s.flow.borrow().step != Step::Failed {
+                        if !ok && s.flow.borrow().step != Step::Failed {
                             let at = s.report.borrow().0.stage;
-                            s.show_failed(at);
+                            s.show_failed(at, "");
+                        }
+                        // The key and the log, from root's folder, off the main thread (R2B-1).
+                        if ok {
+                            s.read_result(Some(dir.clone()));
+                        } else {
+                            let me = Rc::downgrade(&s);
+                            glib::spawn_future_local(async move {
+                                let (out, _) = gtk::gio::spawn_blocking(read_result)
+                                    .await
+                                    .unwrap_or_default();
+                                if let Some(s) = me.upgrade() {
+                                    s.set_failed_log(&install::parse_result(&out).log);
+                                }
+                            });
                         }
                         return glib::ControlFlow::Break;
                     }
@@ -1167,14 +1572,42 @@ impl Installer {
         });
     }
 
-    /// The recovery key shows once; the plan and its files go.
-    fn finish(self: &Rc<Self>, dir: &std::path::Path) {
-        let key = std::fs::read_to_string(dir.join(install::RECOVERY_KEY)).ok();
-        let _ = std::fs::remove_dir_all(dir);
+    /// After a finished install (`dir`: the plan, removed) or Try Again on the key-unread page:
+    /// `install-check --result` off the main thread, then Done, or the key-unread page when the
+    /// plan encrypted the disk and no key came back.
+    fn read_result(self: &Rc<Self>, dir: Option<PathBuf>) {
+        self.with_card(Step::KeyUnread, |c| c.set_busy(true));
+        let me = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let (out, why) = gtk::gio::spawn_blocking(read_result)
+                .await
+                .unwrap_or_else(|_| (String::new(), Some("the reading thread stopped".into())));
+            let Some(s) = me.upgrade() else {
+                return;
+            };
+            if let Some(d) = dir {
+                let _ = std::fs::remove_dir_all(d);
+            }
+            let r = install::parse_result(&out);
+            if s.flow.borrow().key_unread(r.key.as_deref()) {
+                let why =
+                    why.unwrap_or_else(|| "install-check --result gave no recovery key".into());
+                return s.show_key_unread(&why, &r.log);
+            }
+            s.with_card(Step::KeyUnread, |c| c.set_busy(false));
+            s.finish(r.key.as_deref());
+        });
+    }
+
+    /// The recovery key (from `install-check --result`) shows once.
+    fn finish(self: &Rc<Self>, key: Option<&str>) {
         let note = std::fs::read_to_string(install::BOOT_NOTE).ok();
+        let note = note.as_deref().map(str::trim).filter(|n| !n.is_empty());
+        let pending = std::path::Path::new(install::MOK_PENDING).exists();
         self.show_done(
-            key.as_deref().map(str::trim),
-            note.as_deref().map(str::trim).filter(|n| !n.is_empty()),
+            key.map(str::trim),
+            note,
+            install::key_screen_needed(note, pending),
         );
     }
 
@@ -1201,6 +1634,12 @@ impl Installer {
                 install::remaining_text(left)
             ),
         );
+        if let Some(b) = self.began.get() {
+            let tip = install::tip_at(b.elapsed().as_secs_f64());
+            if self.tip.label() != tip {
+                self.tip.set_label(tip);
+            }
+        }
     }
 }
 
@@ -1265,6 +1704,32 @@ fn try_wolos() {
     reveal::exit_faded();
 }
 
+/// `install-check --result`'s output, and why it may hold no key: it could not run, or it
+/// exited non-zero (sudo refused, ...), with what it said on stderr.
+fn read_result() -> (String, Option<String>) {
+    let argv = install::result_command();
+    match std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .output()
+    {
+        Err(e) => {
+            eprintln!("wol-installer: {}: {e}", argv.join(" "));
+            (
+                String::new(),
+                Some(format!("could not run {}", argv.join(" "))),
+            )
+        }
+        Ok(o) => {
+            let out = String::from_utf8_lossy(&o.stdout).into_owned();
+            let why = (!o.status.success()).then(|| {
+                let err = String::from_utf8_lossy(&o.stderr);
+                format!("{}: {} {}", argv.join(" "), o.status, err.trim())
+            });
+            (out, why)
+        }
+    }
+}
+
 fn output(argv: &[String]) -> String {
     std::process::Command::new(&argv[0])
         .args(&argv[1..])
@@ -1300,8 +1765,15 @@ pub fn run() -> glib::ExitCode {
     let boot = std::env::args().any(|a| a == "--boot");
     a::run("org.wolos.installer", "installer", move |win| {
         let hints = Hints::read(std::path::Path::new("/"));
-        let tpm = std::path::Path::new("/sys/class/tpm/tpm0").exists();
+        // The same check install-run makes: a chip that exists but can't be used is no chip.
+        let tpm = install::tpm_from_decide(&output(&install::tpm_command()));
         let s = Installer::new(&hints, boot, tpm, system_zones(), None);
+        if let Some(mem) = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|t| flow::meminfo_bytes(&t))
+        {
+            s.with_flow(|f| f.set_memory(mem));
+        }
         // Over the live desktop: shown at once, no fade from black.
         let shown = reveal::Reveal::new(&s.root, false);
         win.set_child(Some(&shown.root));

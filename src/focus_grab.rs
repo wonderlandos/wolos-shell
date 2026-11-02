@@ -46,6 +46,55 @@ pub fn whitelist<T: Clone>(open: &[T], keep: &[T]) -> Vec<T> {
     open.iter().chain(keep).cloned().collect()
 }
 
+/// How [`FocusGrab::set`] moves from the surfaces it `held` to the ones `wanted`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Plan<T> {
+    /// Same set (or nothing held and nothing wanted): no request at all.
+    Keep,
+    /// Nothing wanted any more: destroy the grab.
+    Release,
+    /// A grab is live: add and remove on it, also when another panel takes over. Never destroys
+    /// it, so Hyprland never refocuses the app behind (which closed the panel). The new panel has
+    /// the keyboard from its own map (an on-demand layer takes focus), not from the grab's order.
+    Adjust { add: Vec<T>, remove: Vec<T> },
+    /// No grab yet: a fresh one with `wanted`.
+    Recreate,
+}
+
+/// Live (lead, v0.12): Control Center closed itself on open. Every sync destroyed and recreated
+/// the grab; Hyprland gave the keyboard back to the app behind, `activewindow` fired and the shell
+/// read it as "another app in front". The plan keeps a grab alive while its panel is open.
+pub fn plan<T: PartialEq + Clone>(held: &[T], wanted: &[T]) -> Plan<T> {
+    if wanted.is_empty() {
+        return if held.is_empty() {
+            Plan::Keep
+        } else {
+            Plan::Release
+        };
+    }
+    if held == wanted {
+        return Plan::Keep;
+    }
+    // Audit3 R2A-1: recreating the grab for a panel switch destroyed it (Hyprland refocused the
+    // window under the pointer) and the new grab, made before the new panel mapped, did not
+    // accept it, so its map cleared the grab: either way the new panel closed itself.
+    if held.is_empty() {
+        return Plan::Recreate;
+    }
+    Plan::Adjust {
+        add: wanted
+            .iter()
+            .filter(|s| !held.contains(s))
+            .cloned()
+            .collect(),
+        remove: held
+            .iter()
+            .filter(|s| !wanted.contains(s))
+            .cloned()
+            .collect(),
+    }
+}
+
 struct State {
     cleared: Rc<Cell<bool>>,
 }
@@ -95,6 +144,8 @@ pub struct FocusGrab {
     state: RefCell<State>,
     manager: Manager,
     grab: RefCell<Option<Grab>>,
+    /// The surfaces the live grab whitelists, in order (first = keyboard).
+    held: RefCell<Vec<WlSurface>>,
     cleared: Rc<Cell<bool>>,
     on_cleared: Rc<dyn Fn()>,
 }
@@ -141,6 +192,7 @@ impl FocusGrab {
             state: RefCell::new(state),
             manager,
             grab: RefCell::new(None),
+            held: RefCell::new(Vec::new()),
             cleared,
             on_cleared,
         });
@@ -184,31 +236,57 @@ impl FocusGrab {
         let _ = q.dispatch_pending(&mut self.state.borrow_mut());
         drop(q);
         if self.cleared.replace(false) {
-            self.grab.replace(None).inspect(|g| g.destroy());
+            self.release();
             let _ = self.conn.flush();
             (self.on_cleared)();
         }
     }
 
-    /// Grabs with these windows whitelisted; empty releases the grab.
-    pub fn set(&self, windows: &[gtk::Window]) {
-        if let Some(g) = self.grab.replace(None) {
-            g.destroy();
-        }
-        let surfaces: Vec<WlSurface> = windows
+    fn release(&self) {
+        self.held.borrow_mut().clear();
+        self.grab.replace(None).inspect(|g| g.destroy());
+    }
+
+    /// Grabs with these windows whitelisted (the mapped ones); empty releases the grab.
+    /// Idempotent: the same set again sends nothing, a changed set adjusts the live grab, and a
+    /// grab is only made when none is live (see [`plan`]). True when this call destroyed a grab:
+    /// Hyprland then hands the keyboard to a window, which is not "another app in front"
+    /// (`transient::Dismisser::expect_refocus`).
+    pub fn set(&self, windows: &[gtk::Window]) -> bool {
+        let wanted: Vec<WlSurface> = windows
             .iter()
             .filter(|w| w.is_mapped())
             .filter_map(|w| surface_of(&self.conn, w))
             .collect();
-        if !surfaces.is_empty() {
-            let g = self.manager.create_grab(&self.queue.borrow().handle(), ());
-            for s in &surfaces {
-                g.add_surface(s);
+        // A local: the borrow of `held` must end before `release` writes it.
+        let p = plan(&self.held.borrow(), &wanted);
+        let destroyed = matches!(p, Plan::Release);
+        match p {
+            Plan::Keep => return false,
+            Plan::Release => self.release(),
+            Plan::Adjust { add, remove } => {
+                if let Some(g) = &*self.grab.borrow() {
+                    for s in &remove {
+                        g.remove_surface(s);
+                    }
+                    for s in &add {
+                        g.add_surface(s);
+                    }
+                    g.commit();
+                }
             }
-            g.commit();
-            self.grab.replace(Some(g));
+            Plan::Recreate => {
+                let g = self.manager.create_grab(&self.queue.borrow().handle(), ());
+                for s in &wanted {
+                    g.add_surface(s);
+                }
+                g.commit();
+                self.grab.replace(Some(g));
+            }
         }
+        *self.held.borrow_mut() = wanted;
         let _ = self.conn.flush();
+        destroyed
     }
 }
 
@@ -223,5 +301,61 @@ mod tests {
             "nothing open: no grab"
         );
         assert_eq!(whitelist(&[9], &[1, 2]), [9, 1, 2]);
+    }
+
+    /// Opening the Control Center synced the grab twice (visible, then mapped); the second sync
+    /// destroyed and recreated it, Hyprland refocused the app behind and the panel closed itself.
+    #[test]
+    fn syncing_the_same_surfaces_again_touches_nothing() {
+        let panel_and_bars = [9, 1, 2];
+        assert_eq!(plan(&panel_and_bars, &panel_and_bars), Plan::<u8>::Keep);
+        assert_eq!(
+            plan::<u8>(&[], &[]),
+            Plan::Keep,
+            "nothing open, nothing held"
+        );
+    }
+
+    #[test]
+    fn a_grab_is_created_once_adjusted_while_open_and_released_on_close() {
+        assert_eq!(plan::<u8>(&[], &[9, 1, 2]), Plan::Recreate, "first open");
+        assert_eq!(
+            plan(&[9, 1, 2], &[9, 1, 2, 3]),
+            Plan::Adjust {
+                add: vec![3],
+                remove: vec![]
+            },
+            "a display (menu bar) plugged in while open"
+        );
+        assert_eq!(
+            plan(&[9, 1, 2], &[9, 2]),
+            Plan::Adjust {
+                add: vec![],
+                remove: vec![1]
+            }
+        );
+        assert_eq!(plan(&[9, 1, 2], &[]), Plan::<u8>::Release, "panel closed");
+    }
+
+    /// Audit3 R2A-1: another panel takes over (Control Center -> Notification Center). The live
+    /// grab swaps the panels; destroying it refocused the window under the pointer and the new
+    /// panel closed itself.
+    #[test]
+    fn switching_panels_adjusts_the_live_grab() {
+        assert_eq!(
+            plan(&[9, 1, 2], &[8, 1, 2]),
+            Plan::Adjust {
+                add: vec![8],
+                remove: vec![9]
+            }
+        );
+        assert_eq!(
+            plan(&[9, 1, 2], &[1, 2, 8]),
+            Plan::Adjust {
+                add: vec![8],
+                remove: vec![9]
+            },
+            "order does not matter"
+        );
     }
 }

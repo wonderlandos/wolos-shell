@@ -44,12 +44,49 @@ fn every_control_center_spawn_is_a_real_command() {
                 );
             }
             ["wol", sub, ..] => panic!("{argv:?}: only `wol shell` is spawned, not `wol {sub}`"),
-            ["wol-settings", page] => assert!(
-                shell::ui::settings::PAGES.contains(page),
-                "{argv:?}: Settings has no page '{page}'"
-            ),
+            ["wol-settings", page] => {
+                assert!(
+                    shell::ui::settings::PAGES.contains(page),
+                    "{argv:?}: Settings has no page '{page}'"
+                );
+                assert_eq!(
+                    shell::ui::settings::canonical(page),
+                    *page,
+                    "{argv:?}: an old page name"
+                );
+            }
             [prog, ..] => assert!(installed(prog), "{argv:?}: {prog} is not installed"),
             [] => panic!("empty argv"),
         }
+    }
+}
+
+/// Live (lead, v0.12): "Wi-Fi Settings…" on the Wi-Fi page opened Network (the wired pane).
+/// Each "… Settings…" link opens the pane it is named after.
+#[test]
+fn settings_links_open_the_pane_they_are_named_after() {
+    assert_eq!(
+        shell::ui::control_center::WIFI_SETTINGS,
+        ["wol-settings", "Wi-Fi"]
+    );
+    assert_eq!(
+        shell::ui::control_center::SOUND_SETTINGS,
+        ["wol-settings", "Sound"]
+    );
+}
+
+/// The Control Center is a resident wol-shell panel (`wol shell toggle control-center`); the
+/// separate `wol-control-center` process (a second, leaking copy) is gone, and nothing spawns it.
+#[test]
+fn the_control_center_is_the_shells_panel_not_a_process() {
+    assert!(
+        !Path::new(ROOT)
+            .join("crates/shell/src/bin/wol-control-center.rs")
+            .exists(),
+        "wol-control-center binary is back"
+    );
+    assert!(SHELL_UI.contains("p.insert(\"control-center\""));
+    for argv in shell::ui::control_center::SPAWNS {
+        assert_ne!(argv.first(), Some(&"wol-control-center"), "{argv:?}");
     }
 }

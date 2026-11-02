@@ -6,6 +6,8 @@ use shell::install::{Check, Report, Stage};
 use shell::setup::{Field, Hints};
 use shell::ui::installer::Installer;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use wol_core::install::disk::{DATA_TYPE, Disk, ESP_TYPE, MIB, Part, Table};
 use wol_core::install::layout::{Fs, New};
 use wol_core::install::plan::Protect;
@@ -45,6 +47,60 @@ fn dual() -> Disk {
         last: 1000 * GB / 512 - 34,
         parts: vec![esp, win, home],
     }
+}
+
+/// Windows' own startup partition, too small to share: WolOS gets its own and Windows leaves
+/// its menu (the Summary and Done pages say how Windows starts).
+fn dual_small_esp() -> Disk {
+    let mut d = dual();
+    d.parts[0].free_bytes = Some(60 * MIB);
+    d
+}
+
+/// How often the disk page looked at disks (B7: every visit while none was found).
+static PROBES: AtomicUsize = AtomicUsize::new(0);
+
+fn no_disks() -> Vec<Found> {
+    PROBES.fetch_add(1, Ordering::SeqCst);
+    Vec::new()
+}
+
+/// Runs the main loop until `done`, at most two seconds.
+fn pump_until(done: impl Fn() -> bool) {
+    let until = Instant::now() + Duration::from_secs(2);
+    while !done() && Instant::now() < until {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for _ in 0..20 {
+        while gtk::glib::MainContext::default().iteration(false) {}
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// No disk found: the page looks again on every visit and offers Look Again.
+fn add_empty(v: &mut Vec<Case>) {
+    v.push(Case {
+        name: "installer-disk-empty-1280".into(),
+        size: (1280, 800),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| {
+            let i = Installer::new(&Hints::default(), true, true, zones(), Some(vec![]));
+            i.set_probe(no_disks);
+            let before = PROBES.load(Ordering::SeqCst);
+            i.jump(Step::Disk);
+            pump_until(|| PROBES.load(Ordering::SeqCst) > before);
+            i.jump(Step::Disk);
+            pump_until(|| PROBES.load(Ordering::SeqCst) > before + 1);
+            assert_eq!(
+                PROBES.load(Ordering::SeqCst),
+                before + 2,
+                "every visit to an empty disk page looks again"
+            );
+            i.root.clone()
+        }),
+    });
 }
 
 fn blank() -> Disk {
@@ -113,6 +169,13 @@ fn at(i: &Rc<Installer>, page: &str) {
             i.with_flow(|f| f.method = Method::Erase);
             i.jump(Step::Method)
         }
+        "replace" => {
+            i.with_flow(|f| {
+                f.method = Method::Replace;
+                f.replace = Some("u3".into());
+            });
+            i.jump(Step::Replace)
+        }
         "alongside" => i.jump(Step::Alongside),
         "manual" => {
             manual(i);
@@ -137,15 +200,27 @@ fn at(i: &Rc<Installer>, page: &str) {
             i.with_flow(|f| f.protect = Protect::Password);
             i.jump(Step::Protect)
         }
+        "protect-off" => {
+            i.with_flow(|f| f.protect = Protect::Off);
+            i.jump(Step::Protect)
+        }
         "account" => {
             i.jump(Step::Account);
             i.type_into(Field::FullName, "Alice Liddell");
         }
         "summary-alongside" => i.jump(Step::Summary),
+        "summary-windows" => i.jump(Step::Summary),
         "summary-erase" => {
             i.with_flow(|f| {
                 f.method = Method::Erase;
                 f.protect = Protect::Tpm;
+            });
+            i.jump(Step::Summary)
+        }
+        "summary-unencrypted" => {
+            i.with_flow(|f| {
+                f.method = Method::Erase;
+                f.protect = Protect::Off;
             });
             i.jump(Step::Summary)
         }
@@ -154,40 +229,102 @@ fn at(i: &Rc<Installer>, page: &str) {
             i.jump(Step::Summary)
         }
         "secure-boot" => i.jump(Step::SecureBoot),
-        "installing" => i.show_progress(&Report::new(Stage::Files, 53), Some(200.0)),
-        "done" => i.show_done(None, None),
+        // R2B-9: a Windows with BitLocker stays and this install changes the Secure Boot keys.
+        "summary-bitlocker" | "secure-boot-bitlocker" => {
+            i.with_flow(|f| {
+                f.method = Method::Replace;
+                f.replace = Some("u3".into());
+                f.disks[0].disk.parts[1].fstype = "BitLocker".into();
+                f.disks[0].check.tier = Some(
+                    if page == "summary-bitlocker" {
+                        "own-keys"
+                    } else {
+                        "firmware"
+                    }
+                    .into(),
+                );
+            });
+            i.jump(if page == "summary-bitlocker" {
+                Step::Summary
+            } else {
+                Step::SecureBoot
+            })
+        }
+        "installing" => i.show_progress(&Report::new(Stage::Encrypt, 45), Some(200.0)),
+        "done" => i.show_done(None, None, false),
+        "done-windows" => i.show_done(None, None, false),
         "done-key" => i.show_done(
             Some("ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z2345-67ABC-DEFGH"),
-            None,
+            Some(wol_core::boot::note(wol_core::boot::Tier::Off)),
+            false,
         ),
-        _ => i.show_failed(Stage::Disk),
+        "done-key-screen" => i.show_done(
+            None,
+            Some(wol_core::boot::note(wol_core::boot::Tier::Mok)),
+            true,
+        ),
+        "failed-refused" => i.show_failed_with(
+            Stage::Prepare,
+            "the disk is not what the plan was made for (refuse UntypablePassword)",
+            "+ wol install check /run/wolos/plan/plan.json
+refuse UntypablePassword
+",
+        ),
+        "key-unread" => {
+            i.show_key_unread(
+                "sudo -n /usr/lib/wolos/install-check --result: exit status: 1 sudo: a password is required",
+                "+ wol encrypt enroll /dev/nvme0n1p4
+",
+            );
+            i.toggle_details();
+        }
+        "failed-details" => {
+            i.show_failed_with(
+                Stage::Encrypt,
+                "cryptsetup: Cannot format device /dev/nvme0n1p4, it is in use",
+                "+ cryptsetup luksFormat /dev/nvme0n1p4\nDevice /dev/nvme0n1p4 is in use. Cannot proceed with format operation.\n",
+            );
+            i.toggle_details();
+        }
+        _ => i.show_failed_with(Stage::Disk, "sfdisk: cannot open /dev/nvme0n1", ""),
     }
 }
 
 pub fn add(v: &mut Vec<Case>) {
-    const PAGES: [&str; 22] = [
+    const PAGES: [&str; 33] = [
         "begin",
         "language",
         "zone",
         "disk",
         "method",
         "method-erase",
+        "replace",
         "alongside",
         "manual",
         "edit",
         "edit-new",
         "protect",
         "protect-password",
+        "protect-off",
         "account",
         "summary-alongside",
+        "summary-windows",
         "summary-erase",
+        "summary-unencrypted",
         "summary-manual",
+        "summary-bitlocker",
         "secure-boot",
+        "secure-boot-bitlocker",
         "installing",
         "done",
+        "done-windows",
         "done-key",
+        "done-key-screen",
         "failed",
+        "failed-details",
+        "failed-refused",
         "failed-erase",
+        "key-unread",
     ];
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
         for page in PAGES {
@@ -201,12 +338,17 @@ pub fn add(v: &mut Vec<Case>) {
                         disk,
                         check: Check::default(),
                     };
+                    let first = if page.ends_with("-windows") {
+                        dual_small_esp()
+                    } else {
+                        dual()
+                    };
                     let i = Installer::new(
                         &Hints::default(),
                         true,
                         true,
                         zones(),
-                        Some(vec![found(dual()), found(blank())]),
+                        Some(vec![found(first), found(blank())]),
                     );
                     i.with_flow(|f| {
                         f.pick_disk(0);
@@ -219,4 +361,5 @@ pub fn add(v: &mut Vec<Case>) {
         }
     }
     add_fit(v);
+    add_empty(v);
 }

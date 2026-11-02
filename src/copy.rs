@@ -9,6 +9,10 @@ use wol_core::install::layout::Refusal;
 use wol_core::install::plan::Change;
 use wol_core::journal::UndoError;
 
+/// The Install app's sentences (audit3 R2B-20): its pages hold none of their own.
+#[path = "copy_installer.rs"]
+pub mod installer;
+
 /// Fragments a user must never read (case-insensitive, at a word start), and what to do instead.
 pub const BANNED: [(&str, &str); 37] = [
     ("failed", "say what happened and what to do"),
@@ -104,6 +108,57 @@ pub const INSTALL_BLANK: &str =
 pub const INSTALL_RECOVERY_NOTE: &str = "Write this key down and keep it safe. It opens your disk if your password or security chip stops working.";
 pub const INSTALL_POINT_OF_NO_RETURN: &str =
     "Back up anything you need first. These changes can't be undone.";
+/// Don't Encrypt was chosen: said once more over the Install button.
+pub const INSTALL_UNENCRYPTED: &str =
+    "Your files won't be encrypted. Anyone who takes the disk can read them.";
+/// The disk password is typed before any desktop exists, on a plain keyboard map.
+pub const INSTALL_PASSPHRASE_ASCII: &str = "Use letters, digits and common symbols only. Accented letters can't be typed before WolOS starts.";
+/// An account name a system user already has on this computer.
+pub const INSTALL_NAME_TAKEN: &str = "That name is already used on this computer. Choose another.";
+/// Own keys: the firmware now trusts only this computer's keys and Microsoft's.
+pub const INSTALL_OWN_KEYS_MEDIA: &str = "The install media is not signed with those keys, so it will no longer start on this computer. Remove it when the screen goes dark.";
+/// The Done page's key screen card.
+pub const INSTALL_KEY_SCREEN_TITLE: &str = "One blue screen after restart";
+/// The live system runs from the stick until the screen goes dark: never pulled before Restart.
+pub const INSTALL_KEY_SCREEN_MEDIA: &str =
+    "When the screen goes dark after you click Restart, remove the USB stick or detach the ISO.";
+/// The Done page's subtitle: the medium comes out only once the live system has stopped.
+pub const INSTALL_RESTART: &str = "Click Restart to start using WolOS. When the screen goes dark, remove the USB stick or detach the ISO.";
+/// A new startup partition next to Windows': its menu lists WolOS only (systemd-boot cannot
+/// reach another partition), so Windows starts from the firmware's startup menu.
+pub const INSTALL_WINDOWS_START: &str = "To start Windows, open your computer's startup menu while it starts, often with F12, F9 or Esc.";
+/// Security Chip: the account password opens the disk when the chip can't, on a plain keymap.
+pub const INSTALL_TPM_FALLBACK: &str = "If the chip can't open the disk, your account password does. Use letters, digits and common symbols only.";
+/// The recovery key must be acknowledged before Restart.
+pub const INSTALL_KEY_ACK: &str = "I wrote the key down or saved it";
+/// Save to USB: nothing to save on.
+pub const INSTALL_NO_USB: &str = "No USB stick was found. Plug one in and try again.";
+/// Save to USB: written.
+pub fn install_key_saved(where_: &str) -> String {
+    format!("The key was saved on “{where_}”. Keep that disk safe.")
+}
+/// Save to USB: not written.
+pub const INSTALL_KEY_NOT_SAVED: &str = "The key couldn't be saved there. Try another USB stick.";
+/// Replace: no partition on the disk can hold WolOS.
+pub const INSTALL_NOTHING_TO_REPLACE: &str =
+    "No partition on this disk is big enough to take over. Use Erase Disk or Manual.";
+/// Summary line: the person asked to sign in without a password.
+pub const INSTALL_AUTOLOGIN: &str = "Sign in automatically when the computer starts.";
+
+/// Summary line for the swap choice; None: no swap, nothing to say.
+pub fn install_swap(s: crate::install::flow::Swap) -> Option<String> {
+    use crate::install::flow::Swap;
+    match s {
+        Swap::Zram => Some("Use compressed memory as swap.".into()),
+        Swap::Swapfile(gib) => Some(format!("Add a swap file of {gib} GB.")),
+        Swap::None => None,
+    }
+}
+
+/// Summary line for the computer's name.
+pub fn install_hostname(name: &str) -> String {
+    format!("Name this computer “{name}”.")
+}
 
 /// What a mount is for, in plain words.
 pub fn install_use(mount: &str) -> String {
@@ -175,6 +230,12 @@ pub fn install_refusal(r: &Refusal, d: &InstallDisk) -> String {
         Refusal::EspInUse => {
             "Another system starts from that partition, so it can't be erased.".into()
         }
+        Refusal::EspHasWolos(id) => format!(
+            "{} already starts another WolOS. Add a new startup partition instead.",
+            named(id)
+        ),
+        // Windows is hibernated (Fast Startup): its sentence says how to shut it down fully.
+        Refusal::WindowsNotShutDown(_) => install_blocked(Blocked::NotShutDown).into(),
         Refusal::NotAnEsp(id) => format!(
             "{} can't hold the startup files. Choose another or add a new one.",
             named(id)
@@ -188,6 +249,54 @@ pub fn install_refusal(r: &Refusal, d: &InstallDisk) -> String {
             named(id)
         ),
     }
+}
+
+/// What `wol install check` refuses a plan with, besides a layout [`Refusal`] (controller
+/// `plan_problem`, core `plan::unlock_problem`), as the Failed page says it.
+pub fn install_plan_refusal(word: &str) -> Option<&'static str> {
+    Some(match word {
+        "BadSettings" => {
+            "The language, keyboard or time zone can't be used. Try again and choose them once more."
+        }
+        "BadName" => {
+            "Use lowercase letters and digits for the account name, starting with a letter."
+        }
+        "ReservedName" => INSTALL_NAME_TAKEN,
+        "WeakPassword" => "Choose an account password of at least 8 characters, then try again.",
+        "UntypablePassword" => INSTALL_TPM_FALLBACK,
+        _ => return None,
+    })
+}
+
+/// A refusal word of `wol install check` (`Word` or `Word("part")`, see
+/// [`crate::install::refused_word`]) as one sentence; None: a word this app does not know.
+pub fn install_check_refusal(word: &str, part: Option<&str>, d: &InstallDisk) -> Option<String> {
+    if let Some(t) = install_plan_refusal(word) {
+        return Some(t.to_string());
+    }
+    let id = || part.unwrap_or_default().to_string();
+    let r = match word {
+        "DiskChanged" => Refusal::DiskChanged,
+        "NotGpt" => Refusal::NotGpt,
+        "TooSmall" => Refusal::TooSmall,
+        "UnknownPartition" => Refusal::UnknownPartition,
+        "Conflict" => Refusal::Conflict(id()),
+        "Mounted" => Refusal::Mounted(id()),
+        "CantResize" => Refusal::CantResize(id()),
+        "NoRoom" => Refusal::NoRoom,
+        "NoRoot" => Refusal::NoRoot,
+        "NoEsp" => Refusal::NoEsp,
+        "RootMustFormat" => Refusal::RootMustFormat,
+        "EspInUse" => Refusal::EspInUse,
+        "EspHasWolos" => Refusal::EspHasWolos(id()),
+        "WindowsNotShutDown" => Refusal::WindowsNotShutDown(id()),
+        "NotAnEsp" => Refusal::NotAnEsp(id()),
+        "BadMount" => Refusal::BadMount(id()),
+        "DuplicateMount" => Refusal::DuplicateMount(id()),
+        "BadFilesystem" => Refusal::BadFilesystem(id()),
+        _ => return None,
+    };
+    Some(install_refusal(&r, d))
 }
 
 /// One line of the summary.
@@ -209,8 +318,13 @@ pub fn install_change(c: &Change) -> String {
         Change::Resize { name, from, to } => {
             format!("Grow {name} from {} to {}.", size(*from), size(*to))
         }
-        Change::Format { name, mount } => {
-            format!("Erase {name} and use it for {}.", install_for(mount))
+        Change::Format {
+            name,
+            mount,
+            encrypted,
+        } => {
+            let lock = if *encrypted { ", encrypted" } else { "" };
+            format!("Erase {name} and use it for {}{lock}.", install_for(mount))
         }
         Change::New {
             bytes,
@@ -221,7 +335,11 @@ pub fn install_change(c: &Change) -> String {
             format!("Add {} for {}{lock}.", size(*bytes), install_for(mount))
         }
         Change::ReuseEsp => "Add WolOS to the startup partition that's already there.".into(),
-        Change::Keep { name, mount } => {
+        Change::Keep { name, mount, plain } if *plain => format!(
+            "Keep {name} as it is, for {}. It stays unencrypted.",
+            install_for(mount)
+        ),
+        Change::Keep { name, mount, .. } => {
             format!("Keep {name} as it is, for {}.", install_for(mount))
         }
         Change::Untouched { name } => format!("{name} stays as it is."),
@@ -476,6 +594,18 @@ pub fn malware_found(file: &str, name: &str) -> (String, String) {
     )
 }
 
+/// A download the malware check could not look at yet (the guard's `unchecked` answer, audit S4):
+/// refused for now, not remembered, so opening it again asks again. Not a finding: says so.
+pub fn malware_unchecked(file: &str) -> (String, String) {
+    let shown: String = file.chars().take(48).collect();
+    (
+        "Not Checked Yet".into(),
+        format!(
+            "WolOS could not check “{shown}” yet, so it did not open. Try opening it again in a moment."
+        ),
+    )
+}
+
 /// The malware check's status line.
 pub fn malware_state(s: &wol_core::malware::Status) -> String {
     match (s.on, s.signatures_age_days) {
@@ -562,4 +692,67 @@ pub fn session_confirm(action: &str, secs: u32) -> Option<(&'static str, String,
         format!("If you do nothing, {what} automatically in {secs} {unit}."),
         button,
     ))
+}
+
+// ---- Dock, Desktop & Dock settings, desktop widgets (audit3 R2A-19) ----
+
+/// The Downloads stack with nothing in the folder.
+pub const DOCK_DOWNLOADS_EMPTY: &str = "Nothing downloaded yet.";
+/// Settings > Desktop & Dock, Tile windows.
+pub const DOCK_TILE_HINT: &str = "New windows fill the screen side by side instead of floating.";
+/// Settings > Desktop & Dock, Tiling shortcuts.
+pub const DOCK_TILING_SHORTCUTS_HINT: &str =
+    "Move, resize and focus tiled windows from the keyboard.";
+/// Keep floating > Add App with no window open to pick.
+pub const DOCK_ADD_APP_EMPTY: &str = "Open the app first, then add it here.";
+/// Edit Widgets: the desktop grid has no free spot of that size.
+pub const WIDGET_NO_ROOM: &str = "No room. Remove a widget or pick a smaller size.";
+/// An app's question (clipboard, file, sound) refused because too many are being answered at
+/// once (`app_session::ANSWERS_IN_FLIGHT`).
+pub const DESKTOP_BUSY: &str = "The desktop is busy. Try again.";
+/// Timer widget notifications: (summary, body).
+pub const TIMER_BREAK: (&str, &str) = (
+    "Time for a break",
+    "Step away for a few minutes. Start the break when you are ready.",
+);
+pub const TIMER_BREAK_OVER: (&str, &str) = (
+    "Break is over",
+    "Start the next focus session when you are ready.",
+);
+pub const TIMER_DONE: (&str, &str) = ("Timer done", "Your countdown has finished.");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// R2A-19: the Dock, Desktop & Dock and widget sentences pass the lint.
+    #[test]
+    fn dock_and_widget_sentences_pass_the_lint() {
+        for s in [
+            DOCK_DOWNLOADS_EMPTY,
+            DOCK_TILE_HINT,
+            DOCK_TILING_SHORTCUTS_HINT,
+            DOCK_ADD_APP_EMPTY,
+            WIDGET_NO_ROOM,
+            TIMER_BREAK.1,
+            TIMER_BREAK_OVER.1,
+            TIMER_DONE.1,
+        ] {
+            assert!(lint(s).is_empty(), "{s}: {:?}", lint(s));
+        }
+    }
+
+    #[test]
+    fn an_unchecked_file_reads_differently_from_a_finding() {
+        let (title, body) = malware_unchecked("setup.AppImage");
+        let (found_title, found_body) = malware_found("setup.AppImage", "Eicar-Test");
+        assert_ne!(title, found_title);
+        assert!(!body.contains("malware"), "{body}");
+        assert!(body.contains("again in a moment"), "{body}");
+        assert!(lint(&body).is_empty(), "{body}: {:?}", lint(&body));
+        assert!(lint(&found_body).is_empty());
+        let long = "a".repeat(80);
+        assert!(malware_unchecked(&long).1.contains(&"a".repeat(48)));
+        assert!(!malware_unchecked(&long).1.contains(&"a".repeat(49)));
+    }
 }

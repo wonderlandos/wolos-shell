@@ -567,7 +567,7 @@ impl Board {
         let id = {
             let mut st = self.st.borrow_mut();
             let Some((col, row)) = st.grid.free_spot(&shown, None, size, (0, 0)) else {
-                return Err("No room. Remove a widget or pick a smaller size.".into());
+                return Err(crate::copy::WIDGET_NO_ROOM.into());
             };
             let id = st.desk.new_id(&kind);
             let mut options = Options::default();
@@ -1571,41 +1571,17 @@ impl Live {
         }
     }
 
+    /// Pauses the widgets while a window covers the desktop (maximized or full screen). The
+    /// state comes from the shell's one Hyprland event reader (`ui::ipc::hypr_events`, read off
+    /// the GTK thread): no private `.socket2.sock` reader, no request here (R2A-14, R2A-17).
     fn watch_fullscreen(self: &Rc<Self>) {
-        let Some(path) = crate::hypr::socket(".socket2.sock") else {
-            return;
-        };
-        let check = {
-            let me = Rc::downgrade(self);
-            move || {
-                if let Some(l) = me.upgrade() {
-                    let full = crate::hypr::request("j/activeworkspace")
-                        .is_some_and(|j| wd::has_fullscreen(&j));
-                    l.set_paused(full);
-                }
-            }
-        };
-        check();
-        let alive = Rc::downgrade(self);
-        glib::spawn_future_local(async move {
-            let Ok(conn) = gio::SocketClient::new()
-                .connect_future(&gio::UnixSocketAddress::new(&path))
-                .await
-            else {
-                return;
-            };
-            let input = gio::DataInputStream::new(&conn.input_stream());
-            while let Ok(Some(line)) = input
-                .read_line_utf8_future(glib::Priority::DEFAULT_IDLE)
-                .await
-            {
-                // A display's desktop unplugged: its watch ends with it.
-                if alive.strong_count() == 0 {
-                    break;
-                }
-                if wd::fullscreen_may_change(&line) {
-                    check();
-                }
+        use crate::hypr::Fullscreen;
+        self.set_paused(crate::hypr::fullscreen_state() != Fullscreen::None);
+        let me = Rc::downgrade(self);
+        crate::hypr::on_fullscreen_change(move |mode| {
+            // A display's desktop unplugged: its hook does nothing from then on.
+            if let Some(l) = me.upgrade() {
+                l.set_paused(mode != Fullscreen::None);
             }
         });
     }

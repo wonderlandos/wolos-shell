@@ -35,7 +35,7 @@ pub fn stack_grid(items: &[Item], dir: &str, done: Rc<dyn Fn()>) -> gtk::Box {
     b.add_css_class("downloads-stack");
     b.append(&w::label("Downloads", "title"));
     if items.is_empty() {
-        b.append(&w::label("Nothing downloaded yet.", "secondary"));
+        b.append(&w::label(crate::copy::DOCK_DOWNLOADS_EMPTY, "secondary"));
     }
     let grid = w::wrap_row(w::S2, 4);
     for i in items {
@@ -124,6 +124,79 @@ fn watch_downloads(dir: &str, items: Rc<RefCell<Vec<Item>>>) -> Option<gio::File
 /// Seconds a launched icon bounces at most when no window shows up.
 pub const LAUNCH_TIMEOUT_SECS: u32 = 15;
 
+/// What a click on a pinned app does (macOS): a running app comes forward, anything else launches.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Click {
+    Launch,
+    /// `focuswindow` argument naming the app's windows by class (minimised ones come back to the
+    /// current desktop: fork patch 0008).
+    Focus(String),
+}
+
+pub fn click(p: &apps::Pin, running: bool) -> Click {
+    if running {
+        Click::Focus(focus_target(p))
+    } else {
+        Click::Launch
+    }
+}
+
+/// Hyprland window regex (RE2) for the pin's classes, the app-id and its program, matched
+/// case-insensitively like `apps::is_running` (app-ids are mixed case, Xwayland classes vary).
+pub fn focus_target(p: &apps::Pin) -> String {
+    let escape = |s: &str| -> String {
+        s.chars()
+            .flat_map(|c| {
+                if ".+*?()[]{}|^$\\".contains(c) {
+                    vec!['\\', c]
+                } else {
+                    vec![c]
+                }
+            })
+            .collect()
+    };
+    let mut alts = vec![escape(p.id)];
+    if let Some(prog) = p.exec.first().map(|e| e.rsplit('/').next().unwrap_or(e))
+        && !prog.eq_ignore_ascii_case(p.id)
+    {
+        alts.push(escape(prog));
+    }
+    format!("class:^(?i)({})$", alts.join("|"))
+}
+
+/// A tile click: a running app comes forward; otherwise it launches and the icon bounces until
+/// its first window ([`launched`]).
+fn clicked(t: &w::DockTile, p: &apps::Pin) {
+    match click(p, t.is_running()) {
+        Click::Focus(target) => {
+            // Off the UI thread: a stalled compositor froze the shell per click (audit2 A2-10).
+            let d = crate::hypr::Dispatch::FocusWindow(target);
+            glib::spawn_future_local(async move {
+                let _ = gio::spawn_blocking(move || crate::hypr::dispatch(&d)).await;
+            });
+        }
+        Click::Launch => {
+            kit::spawn(&p.exec.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+            launched(t);
+        }
+    }
+}
+
+/// CSS margin above the shelf (`.dock-shelf` margin-top in kit.css): room for tiles to lift and
+/// bounce, part of the shelf's measured height, never reserved from windows.
+pub const SHELF_LIFT: i32 = 24;
+
+/// Screen space the Dock reserves: the shelf and its bottom margin, from the shelf's natural
+/// height (both CSS margins included) minus the lift room. Not the layer window (hot zone + lift
+/// + shelf), which left a band between zoomed windows and the shelf. Autohide reserves nothing.
+pub fn exclusive_zone(shelf_natural_height: i32, autohide: bool) -> i32 {
+    if autohide {
+        0
+    } else {
+        (shelf_natural_height - SHELF_LIFT).max(0)
+    }
+}
+
 /// Clicking a pinned app that is not running bounces its icon.
 pub fn bounces_on_click(running: bool) -> bool {
     !running
@@ -170,15 +243,12 @@ pub fn content(running: &HashSet<String>) -> Rc<Dock> {
     root.set_valign(gtk::Align::End);
     let tiles: Vec<w::DockTile> = apps::here()
         .iter()
-        .map(|p| {
-            let argv: Vec<String> = p.exec.iter().map(|s| s.to_string()).collect();
-            w::DockTile::new(p.icon, p.name, move || kit::spawn(&argv))
-        })
+        .map(|p| w::DockTile::new(p.icon, p.name, || {}))
         .collect();
-    for t in &tiles {
+    for (p, t) in apps::here().iter().zip(&tiles) {
         root.append(&t.button);
-        let tile = t.clone();
-        t.button.connect_clicked(move |_| launched(&tile));
+        let (tile, pin) = (t.clone(), p.clone());
+        t.button.connect_clicked(move |_| clicked(&tile, &pin));
     }
     root.append(&gtk::Separator::new(gtk::Orientation::Vertical));
     let downloads: Rc<RefCell<Vec<Item>>> = Default::default();
@@ -211,7 +281,8 @@ pub type Built = (gtk::ApplicationWindow, Rc<Dock>, Rc<dyn Fn(bool)>);
 pub fn build(app: &gtk::Application) -> Built {
     let win = super::window(app, "dock", Spec::dock());
     crate::kit::surface::survive_output_loss(&win, Spec::dock());
-    let d = content(&crate::hypr::running_classes(&crate::hypr::clients()));
+    // Running dots come from `ipc::hypr_events` (its reseed reads the clients off the UI thread).
+    let d = content(&HashSet::new());
     *d.monitor.borrow_mut() = watch_downloads(&downloads_dir(), d.downloads.clone());
     // Autohide: the shelf slides away and a thin hot zone at the bottom edge brings it back.
     let reveal = gtk::Revealer::builder()
@@ -240,14 +311,27 @@ pub fn build(app: &gtk::Application) -> Built {
     zone.add_controller(motion);
     win.set_child(Some(&zone));
     let keys = keyboard(&win, &d, &reveal, &hide);
+    // Reserve the shelf, not the layer window: zoomed windows end at the shelf ([`exclusive_zone`]).
+    // Measured when the shelf maps (CSS applied) and again after a tile size change.
+    let reserve: Rc<dyn Fn()> = {
+        let (win, root, hide) = (win.clone(), d.root.clone(), hide.clone());
+        Rc::new(move || {
+            let (_, natural, _, _) = root.measure(gtk::Orientation::Vertical, -1);
+            kit::surface::set_exclusive_px(&win, exclusive_zone(natural, hide.get()));
+        })
+    };
     {
-        let (root, win, d) = (d.root.clone(), win.clone(), d.clone());
+        let r = reserve.clone();
+        d.root.connect_map(move |_| r());
+    }
+    {
+        let (root, d) = (d.root.clone(), d.clone());
         super::ipc::on_reload(move |p| {
             hide.set(p.dock_autohide);
             delay.set(p.autohide_delay_ms());
             d.set_tile_size(p.tile_size());
             reveal.set_reveal_child(!p.dock_autohide);
-            kit::surface::set_exclusive(&win, !p.dock_autohide);
+            reserve();
             set_magnify(&root, p.dock_magnify);
         });
     }
@@ -381,6 +465,76 @@ mod launch_tests {
             "{rule}"
         );
         assert!(css.contains("@keyframes dock-bounce"));
+    }
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    /// Live: clicking the Dock icon of a running app started a second instance (macOS brings
+    /// the app forward). The focus target names every class the running dot accepts.
+    #[test]
+    fn a_click_focuses_a_running_app_and_launches_the_rest() {
+        let files = apps::Pin {
+            id: "org.gnome.Nautilus",
+            name: "Files",
+            icon: "wolos-files",
+            exec: &["nautilus"],
+        };
+        assert_eq!(click(&files, false), Click::Launch);
+        assert_eq!(
+            click(&files, true),
+            Click::Focus("class:^(?i)(org\\.gnome\\.Nautilus|nautilus)$".into())
+        );
+        let same = apps::Pin {
+            id: "helium",
+            name: "Browser",
+            icon: "wolos-browser",
+            exec: &["/usr/bin/helium"],
+        };
+        assert_eq!(
+            focus_target(&same),
+            "class:^(?i)(helium)$",
+            "program = id: once"
+        );
+        for p in apps::PINS {
+            let t = focus_target(p);
+            assert!(t.starts_with("class:^(?i)(") && t.ends_with(")$"), "{t}");
+        }
+    }
+
+    /// Live: zoomed windows stopped 36 px above the shelf: the Dock reserved its whole layer
+    /// window (hot zone, lift room, shelf). The zone is the shelf plus its bottom margin.
+    #[test]
+    fn the_dock_reserves_the_shelf_not_its_lift_room() {
+        let css = include_str!("../kit/kit.css");
+        let shelf = css
+            .lines()
+            .skip_while(|l| !l.starts_with(".dock-shelf {"))
+            .take(3)
+            .collect::<String>();
+        // The CSS margin, top right bottom left, in pixels (units stripped: no px literals here).
+        let margin: Vec<i32> = shelf
+            .split(" margin:")
+            .nth(1)
+            .and_then(|m| m.split(';').next())
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(|v| {
+                v.trim_end_matches(char::is_alphabetic)
+                    .parse()
+                    .unwrap_or(-1)
+            })
+            .collect();
+        assert_eq!(margin, [SHELF_LIFT, 32, 8, 32], "{shelf}");
+        assert_eq!(
+            exclusive_zone(24 + 4 + 64 + 8, false),
+            76,
+            "shelf + bottom margin"
+        );
+        assert_eq!(exclusive_zone(100, true), 0, "autohide reserves nothing");
+        assert_eq!(exclusive_zone(10, false), 0, "never negative");
     }
 }
 
