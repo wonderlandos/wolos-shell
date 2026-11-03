@@ -152,10 +152,16 @@ fn journal_theme(text: Option<&str>) -> std::io::Result<()> {
 /// Kit stylesheet: the only visual style (HIG). Colours via `var(--token)`.
 pub const KIT_CSS: &str = include_str!("kit/kit.css");
 
-/// Token block, then the kit CSS, then surface glue.
+/// What only a dark theme changes, after the kit CSS (the Dock's shelf).
+pub const DARK_CSS: &str = include_str!("kit/dark.css");
+
+/// Token block, then the kit CSS (and [`DARK_CSS`] for a dark theme), then surface glue.
 pub fn stylesheet(t: &Theme, extra: &str) -> String {
     let mut s = t.css();
     s.push_str(KIT_CSS);
+    if t.variant == Variant::Dark {
+        s.push_str(DARK_CSS);
+    }
     s.push_str(extra);
     s
 }
@@ -318,6 +324,25 @@ mod tests {
             );
         }
         assert!(css.find("--accent:").unwrap() < css.find(".glass-panel").unwrap());
+    }
+
+    /// MANUAL 0.12.0: in dark mode the Dock read light. Its dark shelf is the menu bar's material;
+    /// light keeps the glass.
+    #[test]
+    fn the_dock_follows_dark_mode() {
+        let shelf = |dark: bool, id: &str| {
+            let css = stylesheet(&resolve(Some(id), dark), "");
+            css.rmatch_indices(".dock-shelf {")
+                .next()
+                .map(|(i, _)| css[i..].split('}').next().unwrap_or_default().to_owned())
+                .unwrap_or_default()
+        };
+        assert!(shelf(true, "wol-dark").contains("background: var(--bar-fill)"));
+        assert!(shelf(true, "wol-dark-blue").contains("background: var(--bar-fill)"));
+        let light = shelf(false, "wol-light");
+        assert!(light.contains("var(--glass) 50%"), "{light}");
+        assert!(!stylesheet(&resolve(Some("wol-light"), false), "").contains(DARK_CSS));
+        assert!(KIT_CSS.contains("--bar-fill: alpha(var(--surface)"));
     }
 
     #[test]

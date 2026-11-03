@@ -865,19 +865,25 @@ impl Inner {
                 password,
             } => c.add_user(name, full_name, *admin, password, &pw),
             // wopkg runs as the person and asks wold, which checks the consent grant (ADR 0021);
-            // without wopkg the Authenticate-sheet path through wol-admind stays.
-            Action::PkgUpgrade => {
-                crate::packages::upgrade(crate::packages::present(), &crate::packages::run_wopkg)
-                    .unwrap_or_else(|| c.pkg_upgrade(&pw))
-            }
-            Action::PkgInstall(t) => {
-                crate::packages::install(t, crate::packages::present(), &crate::packages::run_wopkg)
-                    .unwrap_or_else(|| c.pkg_install(t, &pw))
-            }
-            Action::PkgRemove(t) => {
-                crate::packages::remove(t, crate::packages::present(), &crate::packages::run_wopkg)
-                    .unwrap_or_else(|| c.pkg_remove(t, &pw))
-            }
+            // without wopkg, or without wopkg's grant (a fresh install has none, and wold would
+            // refuse it before any sheet), the Authenticate-sheet path through wol-admind stays.
+            Action::PkgUpgrade => crate::packages::upgrade(
+                crate::packages::usable("packages-update"),
+                &crate::packages::run_wopkg,
+            )
+            .unwrap_or_else(|| c.pkg_upgrade(&pw)),
+            Action::PkgInstall(t) => crate::packages::install(
+                t,
+                crate::packages::usable("packages-install"),
+                &crate::packages::run_wopkg,
+            )
+            .unwrap_or_else(|| c.pkg_install(t, &pw)),
+            Action::PkgRemove(t) => crate::packages::remove(
+                t,
+                crate::packages::usable("packages-remove"),
+                &crate::packages::run_wopkg,
+            )
+            .unwrap_or_else(|| c.pkg_remove(t, &pw)),
             Action::FlatpakInstall(id) => {
                 flatpak_install_tracked(id).unwrap_or_else(|| c.flatpak_install(id))
             }

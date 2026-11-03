@@ -427,15 +427,39 @@ pub fn upgrade_argv() -> Vec<String> {
 }
 
 /// wopkg's exit code in the Store's own error kinds (`copy.rs` words them): 0 done, 2 bad request,
-/// 77 wold refused (the consent grant is off), anything else did not finish.
+/// anything else did not finish. 77 is wold's refusal: the person said no on wold's own sheet, or
+/// nobody answered it. That is no wrong password, so it is never `Denied`: `Denied` opens the
+/// Authenticate sheet again, whose password never reaches wopkg (MANUAL 0.12.0: the sheet came
+/// up saying "Incorrect password" and refused every password).
 pub fn outcome(code: Option<i32>) -> Result<(), ControlError> {
     match code {
         Some(0) => Ok(()),
         Some(2) => Err(ControlError::Invalid),
-        Some(77) => Err(ControlError::Denied),
         Some(_) => Err(ControlError::Failed),
         None => Err(ControlError::Unavailable),
     }
+}
+
+/// `grant` (`packages-install`, `-remove`, `-update`) is held by wopkg in the consent file
+/// `consent` (`wol_core::consent::FILE`'s text, None when there is none). Without it wold refuses
+/// wopkg before any sheet, so the change goes through wol-admind and the Authenticate sheet.
+pub fn wopkg_granted(consent: Option<&str>, grant: &str) -> bool {
+    consent
+        .map(wol_core::consent::parse)
+        .unwrap_or_default()
+        .iter()
+        .any(|(app, cap)| app == WOPKG && cap == grant)
+}
+
+/// wopkg is on this system and may make the change `grant` names (read on every call, like wold).
+pub fn usable(grant: &str) -> bool {
+    present()
+        && wopkg_granted(
+            std::fs::read_to_string(wol_core::consent::FILE)
+                .ok()
+                .as_deref(),
+            grant,
+        )
 }
 
 /// Run wopkg with `argv`; its exit code, None when it could not start. Replaced in tests.
@@ -628,7 +652,7 @@ mod tests {
             ]
         );
         for (c, want) in [
-            (Some(77), ControlError::Denied),
+            (Some(77), ControlError::Failed),
             (Some(2), ControlError::Invalid),
             (Some(1), ControlError::Failed),
             (Some(3), ControlError::Failed),
@@ -639,6 +663,26 @@ mod tests {
             assert_eq!(remove("vim", true, &run), Some(Err(want)));
             assert_eq!(upgrade(true, &run), Some(Err(want)));
         }
+    }
+
+    /// MANUAL 0.12.0: a fresh install has no consent file, so wold refuses wopkg (exit 77). The
+    /// shell must not take that path then; it goes to wol-admind, which asks for the password.
+    #[test]
+    fn wopkg_is_used_only_with_its_grant() {
+        assert!(!wopkg_granted(None, "packages-install"));
+        assert!(!wopkg_granted(Some("not json"), "packages-install"));
+        let file = wol_core::consent::set(None, WOPKG, "packages-install", true);
+        assert!(wopkg_granted(Some(&file), "packages-install"));
+        assert!(!wopkg_granted(Some(&file), "packages-remove"));
+        let other = wol_core::consent::set(None, "/usr/bin/other", "packages-install", true);
+        assert!(!wopkg_granted(Some(&other), "packages-install"));
+    }
+
+    /// wold's refusal is never read as a wrong password (which reopens the Authenticate sheet).
+    #[test]
+    fn a_refusal_is_not_a_wrong_password() {
+        assert_ne!(outcome(Some(77)), Err(ControlError::Denied));
+        assert_ne!(outcome(Some(77)), Err(ControlError::NeedsAuth));
     }
 
     #[test]
