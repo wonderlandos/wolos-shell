@@ -223,6 +223,57 @@ pub const BAR: i32 = 28;
 /// Tag wol-hypr puts on windows that draw their own title bar.
 pub const CSD_TAG: &str = "wol-csd";
 
+/// Where the menu bar takes the frontmost app's own menus from (beside the app and Window menus).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Source {
+    /// Only the shell's rows ([`app_menu`], [`window_menu`]).
+    Builtin,
+    /// A Wolkit native app that publishes its window menus on the session bus: its well-known
+    /// name is the app's own id, the path is [`super::ui::transient::object_path`] of it and the
+    /// interface [`WOLKIT_MENUS`] (`Get` -> the menus as JSON, `Activate(menu, key)`, `Changed`).
+    Wolkit { bus: String, path: String },
+}
+
+/// The interface a Wolkit app's menus are published on.
+pub const WOLKIT_MENUS: &str = "org.wolos.Menus";
+/// A toplevel's app id that asked for glass ends in this (`realtime::glass::APP_SUFFIX`, frozen).
+pub const GLASS_SUFFIX: &str = ".glass";
+/// Largest `Get` reply read: 8 menus of 48 entries with their labels and keys fit.
+pub const MAX_MENUS_JSON: usize = 64 * 1024;
+
+/// The app's own id from a window class (a glass window's suffix dropped).
+pub fn app_id(class: &str) -> &str {
+    match class.strip_suffix(GLASS_SUFFIX) {
+        Some(base) if !base.is_empty() => base,
+        _ => class,
+    }
+}
+
+/// The menus' source for the frontmost window's class: `publishes(bus name)` says whether that
+/// name answers [`WOLKIT_MENUS`] now (the caller asks the bus; GTK apps own their id too).
+pub fn source(class: &str, publishes: impl Fn(&str) -> bool) -> Source {
+    let id = app_id(class);
+    if id.is_empty() || !publishes(id) {
+        return Source::Builtin;
+    }
+    Source::Wolkit {
+        bus: id.to_string(),
+        path: crate::ui::transient::object_path(id),
+    }
+}
+
+/// A Wolkit app's `Get` reply: its menus, bounded and checked like a Kit window's menus. Anything
+/// too large or invalid shows none (the app and Window menus stay).
+pub fn wolkit_menus(json: &str) -> Vec<shared::view::Menu> {
+    if json.len() > MAX_MENUS_JSON {
+        return Vec::new();
+    }
+    match serde_json::from_str::<Vec<shared::view::Menu>>(json) {
+        Ok(m) if shared::view::validate_chrome(&m, None).is_ok() => m,
+        _ => Vec::new(),
+    }
+}
+
 /// Apps known to open their preferences on Ctrl+, (no fake "Settings…" elsewhere).
 const SETTINGS_ON_CTRL_COMMA: &[&str] = &["org.gnome.TextEditor", "org.gnome.Nautilus"];
 
@@ -659,5 +710,49 @@ mod tests {
             batch(Act::Fill, &csd, &[], ZONE).unwrap(),
             "[[BATCH]]dispatch setfloating address:0xa;dispatch resizewindowpixel exact 1280 670,address:0xa;dispatch movewindowpixel exact 0 28,address:0xa"
         );
+    }
+
+    #[test]
+    fn a_wolkit_app_that_publishes_its_menus_is_the_source() {
+        let publishes = |id: &str| id == "org.wolos.todos";
+        let want = Source::Wolkit {
+            bus: "org.wolos.todos".into(),
+            path: "/org/wolos/todos".into(),
+        };
+        assert_eq!(source("org.wolos.todos", publishes), want);
+        assert_eq!(
+            source("org.wolos.todos.glass", publishes),
+            want,
+            "a glass window is the same app"
+        );
+        assert_eq!(source("org.gnome.Nautilus", publishes), Source::Builtin);
+        assert_eq!(source("", |_| true), Source::Builtin);
+        assert_eq!(app_id(".glass"), ".glass");
+        assert_eq!(app_id("helium"), "helium");
+    }
+
+    #[test]
+    fn wolkit_menus_are_bounded_like_kit_menus() {
+        let ok = r#"[{"id":1,"title":"File","entries":[{"type":"item","key":"new","label":"New","shortcut":"cmd+n"},{"type":"separator"}]}]"#;
+        let m = wolkit_menus(ok);
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].title, "File");
+        for bad in [
+            "",
+            "{",
+            r#"[{"id":1,"title":"","entries":[]}]"#,
+            r#"[{"id":1,"title":"A","entries":[]},{"id":1,"title":"B","entries":[]}]"#,
+            r#"[{"id":1,"title":"A","entries":[],"x":1}]"#,
+        ] {
+            assert!(wolkit_menus(bad).is_empty(), "{bad}");
+        }
+        let huge = format!("[{}]", [ok.trim_matches(['[', ']'])].repeat(2000).join(","));
+        assert!(huge.len() > MAX_MENUS_JSON && wolkit_menus(&huge).is_empty());
+    }
+
+    #[test]
+    fn the_glass_suffix_is_the_compositor_s() {
+        let glass = include_str!("../../realtime/src/glass.rs");
+        assert!(glass.contains(&format!("pub const APP_SUFFIX: &str = \"{GLASS_SUFFIX}\";")));
     }
 }

@@ -29,6 +29,9 @@ pub struct Bar {
     pub appname: gtk::Label,
     app_menu: gtk::MenuButton,
     window_menu: gtk::MenuButton,
+    /// What the AppMenus item holds: the frontmost Wolkit app's own menus, then Window.
+    app_menus: gtk::Box,
+    global: Rc<Global>,
     network: gtk::Image,
     battery: gtk::Image,
     volume: gtk::Image,
@@ -77,6 +80,7 @@ impl Bar {
         );
         self.window_menu.set_visible(!class.is_empty());
         self.app_menu.set_visible(!name.is_empty());
+        self.global.follow(&class);
     }
 }
 
@@ -116,6 +120,216 @@ fn about(name: &str, class: &str) {
         let icon = crate::apps::icon_for(&class, crate::apps::here(), &installed);
         super::panels::about(&app, &name, &icon, &class).present();
     });
+}
+
+// ---- the global menu: a Wolkit app's own menus in the bar ----------------------------------
+
+/// The menus of the frontmost Wolkit app (`appmenu::Source::Wolkit`): one title per menu, before
+/// Window, filled from the app's `org.wolos.Menus` object and refreshed when it signals a change.
+/// Choosing an item calls `Activate` on the app, which clicks the item in its window.
+struct Global {
+    /// Holds the menu titles and, last, the Window menu.
+    host: gtk::Box,
+    shown: RefCell<Vec<gtk::MenuButton>>,
+    /// Bumped on every change of app; an answer for an older one is dropped.
+    epoch: std::cell::Cell<u64>,
+    /// Dropping it ends the subscription.
+    watch: RefCell<Option<gio::SignalSubscription>>,
+}
+
+/// Longest wait for an app's answer; an app that stalls shows no menus.
+const MENUS_TIMEOUT_MS: i32 = 500;
+
+impl Global {
+    fn new(host: &gtk::Box) -> Global {
+        Global {
+            host: host.clone(),
+            shown: RefCell::new(Vec::new()),
+            epoch: std::cell::Cell::new(0),
+            watch: RefCell::new(None),
+        }
+    }
+
+    /// The app in front is `class`: drop the last app's menus, and when the app publishes any
+    /// ([`appmenu::source`]) show them and follow its changes.
+    fn follow(self: &Rc<Self>, class: &str) {
+        let epoch = self.epoch.get() + 1;
+        self.epoch.set(epoch);
+        self.watch.take();
+        self.show(None, Vec::new());
+        // Every app is a candidate; the call below fails at once for one that publishes none
+        // (and never starts a service: `NO_AUTO_START`).
+        let appmenu::Source::Wolkit { bus, path } = appmenu::source(class, |_| true) else {
+            return;
+        };
+        let me = self.clone();
+        glib::spawn_future_local(async move {
+            let Ok(conn) = gio::bus_get_future(gio::BusType::Session).await else {
+                return;
+            };
+            if me.epoch.get() != epoch {
+                return;
+            }
+            // Subscribe before the first read, so a change in between is not lost. The callback
+            // holds the bar's state weakly: the subscription lives in it.
+            let again = {
+                let (me, bus, path) = (Rc::downgrade(&me), bus.clone(), path.clone());
+                move |s: gio::DBusSignalRef| {
+                    if let Some(me) = me.upgrade() {
+                        read_menus(&me, s.connection, &bus, &path, epoch);
+                    }
+                }
+            };
+            let sub = conn.subscribe_to_signal(
+                Some(&bus),
+                Some(appmenu::WOLKIT_MENUS),
+                Some("Changed"),
+                Some(&path),
+                None,
+                gio::DBusSignalFlags::NONE,
+                again,
+            );
+            me.watch.replace(Some(sub));
+            read_menus(&me, &conn, &bus, &path, epoch);
+        });
+    }
+
+    /// Replace the titles with `menus` (none: the app's own menus are gone).
+    fn show(
+        &self,
+        from: Option<(&gio::DBusConnection, &str, &str)>,
+        menus: Vec<shared::view::Menu>,
+    ) {
+        for b in self.shown.take() {
+            self.host.remove(&b);
+        }
+        let Some((conn, bus, path)) = from else {
+            return;
+        };
+        let mut last: Option<gtk::MenuButton> = None;
+        for m in &menus {
+            let b = w::menubar_menu(&w::label(&m.title, ""));
+            b.set_popover(Some(&popover(conn, bus, path, m)));
+            hover_in(&b, &self.host);
+            self.host.insert_child_after(&b, last.as_ref());
+            last = Some(b.clone());
+            self.shown.borrow_mut().push(b);
+        }
+    }
+}
+
+/// Read the app's menus again and show them, unless the app in front changed meanwhile.
+fn read_menus(me: &Rc<Global>, conn: &gio::DBusConnection, bus: &str, path: &str, epoch: u64) {
+    let (me, conn, bus, path) = (me.clone(), conn.clone(), bus.to_string(), path.to_string());
+    glib::spawn_future_local(async move {
+        let reply = conn
+            .call_future(
+                Some(&bus),
+                &path,
+                appmenu::WOLKIT_MENUS,
+                "Get",
+                None,
+                glib::VariantTy::new("(s)").ok(),
+                gio::DBusCallFlags::NO_AUTO_START,
+                MENUS_TIMEOUT_MS,
+            )
+            .await;
+        if me.epoch.get() != epoch {
+            return;
+        }
+        let menus = reply
+            .ok()
+            .and_then(|v| v.get::<(String,)>())
+            .map(|(json,)| appmenu::wolkit_menus(&json))
+            .unwrap_or_default();
+        me.show(Some((&conn, &bus, &path)), menus);
+    });
+}
+
+/// One menu of the app: its items as buttons (disabled ones greyed, a checked one ticked); a
+/// choice calls `Activate(menu, key)` on the app.
+fn popover(
+    conn: &gio::DBusConnection,
+    bus: &str,
+    path: &str,
+    m: &shared::view::Menu,
+) -> gtk::Popover {
+    use shared::view::MenuEntry;
+    let p = gtk::Popover::new();
+    p.add_css_class("menu");
+    p.set_has_arrow(false);
+    let col = w::vbox(0);
+    for e in &m.entries {
+        match e {
+            MenuEntry::Separator => col.append(&gtk::Separator::new(gtk::Orientation::Horizontal)),
+            MenuEntry::Item {
+                key,
+                label,
+                shortcut,
+                enabled,
+                checked,
+            } => {
+                let row = w::hbox(w::S6);
+                let tick = if *checked { "\u{2713} " } else { "" };
+                row.append(&w::label(&format!("{tick}{label}"), ""));
+                if !shortcut.is_empty() {
+                    row.append(&w::spacer());
+                    row.append(&w::label(shortcut, "menu-key"));
+                }
+                let it = gtk::Button::builder().child(&row).build();
+                it.add_css_class("menu-item");
+                it.set_sensitive(*enabled);
+                let (p2, conn, bus, path) =
+                    (p.clone(), conn.clone(), bus.to_string(), path.to_string());
+                let (id, key) = (m.id, key.clone());
+                it.connect_clicked(move |_| {
+                    p2.popdown();
+                    activate(&conn, &bus, &path, id, &key);
+                });
+                col.append(&it);
+            }
+        }
+    }
+    p.set_child(Some(&col));
+    p
+}
+
+/// `Activate(menu, key)` on the app; nothing comes back.
+fn activate(conn: &gio::DBusConnection, bus: &str, path: &str, menu: u32, key: &str) {
+    use glib::prelude::ToVariant;
+    conn.call(
+        Some(bus),
+        path,
+        appmenu::WOLKIT_MENUS,
+        "Activate",
+        Some(&(menu, key.to_string()).to_variant()),
+        None,
+        gio::DBusCallFlags::NO_AUTO_START,
+        MENUS_TIMEOUT_MS,
+        gio::Cancellable::NONE,
+        |_| {},
+    );
+}
+
+/// Once a menu in `host` is open, moving the pointer onto the title `b` opens that one.
+fn hover_in(b: &gtk::MenuButton, host: &gtk::Box) {
+    let motion = gtk::EventControllerMotion::new();
+    let (b2, host) = (b.clone(), host.clone());
+    motion.connect_enter(move |_, _, _| {
+        let mut c = host.first_child();
+        while let Some(x) = c {
+            c = x.next_sibling();
+            if let Some(m) = x.downcast_ref::<gtk::MenuButton>()
+                && m != &b2
+                && m.is_active()
+            {
+                m.set_active(false);
+                b2.set_active(true);
+                return;
+            }
+        }
+    });
+    b.add_controller(motion);
 }
 
 /// The Control Center page a status icon opens (audit2 A2-14: all four opened the main page).
@@ -171,7 +385,7 @@ impl Bar {
         Some(match item {
             BarItem::Logo => i.logo.clone().upcast(),
             BarItem::AppName => self.app_menu.clone().upcast(),
-            BarItem::AppMenus => self.window_menu.clone().upcast(),
+            BarItem::AppMenus => self.app_menus.clone().upcast(),
             BarItem::Start => i.start.clone().upcast(),
             BarItem::Focus => i.focus.clone().upcast(),
             BarItem::Battery => i.battery.clone().upcast(),
@@ -256,6 +470,10 @@ pub fn content_with(
     let window_menu = w::menubar_menu(&w::label("Window", ""));
     window_menu.set_popover(Some(&w::menu_keys(actions(appmenu::window_menu(), "", ""))));
     window_menu.set_visible(false);
+    let app_menus = w::hbox(0);
+    app_menus.append(&window_menu);
+    let global = Rc::new(Global::new(&app_menus));
+    hover_in(&window_menu, &app_menus);
     let slots = [w::hbox(0), w::hbox(0), w::hbox(0)];
     let spacers = [w::spacer(), w::spacer()];
     root.append(&slots[0]);
@@ -350,6 +568,8 @@ pub fn content_with(
         appname,
         app_menu,
         window_menu,
+        app_menus,
+        global,
         network,
         battery,
         volume,
