@@ -51,7 +51,7 @@ impl ToggleTile {
         // Wraps to two lines, ellipsised only past them: the whole name reads in the tile.
         let l = w::centered(title, "secondary");
         l.set_wrap(true);
-        l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        l.set_wrap_mode(gtk::pango::WrapMode::Word);
         l.set_lines(TILE_LABEL_LINES);
         l.set_ellipsize(gtk::pango::EllipsizeMode::End);
         l.set_max_width_chars(TILE_LABEL_CHARS);

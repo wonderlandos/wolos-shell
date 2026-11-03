@@ -150,11 +150,14 @@ fn main() {
         must(&mut f, Step::Modules);
         if scenario == "modules" {
             // What a person can tick: the page's rows, not every record on the image (a record
-            // the page has no words for, such as ai-sessions, is not offered).
+            // the page has no words for, such as ai-sessions, is not offered). ai-claude when the
+            // page offers it: its root side is a few MiB (its large part is a user-side recipe), so
+            // the e2e stays small; else the smallest row.
             let id = f
                 .module_list
                 .iter()
-                .min_by_key(|m| m.size_mb)
+                .find(|m| m.id == "ai-claude")
+                .or_else(|| f.module_list.iter().min_by_key(|m| m.size_mb))
                 .map(|m| m.id.clone())
                 .unwrap();
             f.tick_module(&id, true);
