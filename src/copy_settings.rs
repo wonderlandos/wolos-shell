@@ -8,18 +8,25 @@
 /// The sound service is (re)starting: the device lists are empty for a moment.
 pub const SOUND_RECONNECTING: &str = "Sound devices are coming back. This takes a few seconds.";
 /// "Allow louder" subtitle.
+/// budget: 90
 pub const SOUND_LOUDER: &str = "Lets volume sliders pass 100%. Sound above 100% can distort.";
 /// "Automatic input level" subtitle.
+/// budget: 90
 pub const SOUND_AUTO_LEVEL: &str = "Keeps your voice at an even level on calls and recordings.";
 /// "Reduce background noise" subtitle.
+/// budget: 90
 pub const SOUND_NOISE: &str = "Filters out fans, typing and traffic behind your voice.";
 /// Bluetooth autoswitch subtitle.
+/// budget: 90
 pub const SOUND_AUTOSWITCH: &str = "Headphones use their microphone while an app records.";
 /// "Keep device awake" subtitle.
+/// budget: 90
 pub const SOUND_AWAKE: &str = "Stops a click or a lost first second when sound starts.";
 /// "Ignore hardware volume" subtitle.
+/// budget: 90
 pub const SOUND_SOFT_VOLUME: &str = "For volume that jumps or does nothing on this output.";
 /// "Reset audio" subtitle.
+/// budget: 90
 pub const SOUND_RESET_ABOUT: &str = "Forgets stored volumes and devices, then restarts sound.";
 /// After Reset audio.
 pub const SOUND_RESET_DONE: &str = "Sound settings were reset. Devices start at their usual level.";
@@ -29,6 +36,7 @@ pub const SOUND_DIAG_COPIED: &str =
 /// "Copy diagnostics" had nothing to copy.
 pub const SOUND_DIAG_NONE: &str = "Sound diagnostics couldn’t be collected. Try again in a moment.";
 /// Pro Audio footnote.
+/// budget: 160
 pub const SOUND_PRO_NOTE: &str =
     "Smaller buffers lower the delay but can crackle. Dropouts count the moments sound ran out.";
 /// A sound change did not take.

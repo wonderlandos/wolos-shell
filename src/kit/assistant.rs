@@ -817,6 +817,7 @@ pub fn run(
     snapshot: &'static str,
     build: impl Fn(&gtk::ApplicationWindow) + 'static,
 ) -> glib::ExitCode {
+    crate::i18n::init();
     let app = gtk::Application::builder().application_id(app_id).build();
     app.connect_activate(move |app| {
         super::style::install("");

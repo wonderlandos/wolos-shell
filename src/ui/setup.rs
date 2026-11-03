@@ -345,6 +345,10 @@ impl Setup {
             move |i| {
                 let s = me.upgrade()?;
                 s.flow.borrow_mut().draft.set_language(i);
+                // The assistant speaks the language the person just chose (ADR 0045).
+                crate::i18n::set_lang(crate::i18n::lang_of(
+                    LANGUAGES[i.min(LANGUAGES.len() - 1)].locale,
+                ));
                 let k = s.flow.borrow().draft.keyboard;
                 Some(k)
             },

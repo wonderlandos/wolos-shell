@@ -19,6 +19,8 @@ mod font_cases;
 mod form_kit;
 #[path = "golden_cases/installer.rs"]
 mod installer_cases;
+#[path = "golden_cases/locale.rs"]
+mod locale_cases;
 #[path = "golden_cases/maker.rs"]
 mod maker_cases;
 #[path = "golden_cases/offers.rs"]
@@ -1231,6 +1233,7 @@ fn cases() -> Vec<Case> {
     v.extend(audit4_shell_cases());
     v.extend(widget_cases::cases());
     v.extend(settings_cases::cases());
+    v.extend(locale_cases::cases());
     v.extend(plugin_host_cases::cases());
     v.extend(package_cases::cases());
     v.extend(app_view_cases::cases());
@@ -1820,6 +1823,8 @@ fn main() {
             if !c.wallpaper && c.class == "preview-app" {
                 win.add_css_class("app");
             }
+            // Every case starts in English; a locale case sets its own language while it builds.
+            shell::i18n::set_lang(shared::i18n::Lang::En);
             let child = (c.build)();
             // Broadway clamps windows to its 1024x768 screen; a sized frame holds the declared size.
             let frame = gtk::Overlay::new();

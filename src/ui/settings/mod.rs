@@ -306,6 +306,7 @@ thread_local! {
 /// with its own arguments (`HANDLES_COMMAND_LINE`), which presents the window on that page (live:
 /// the Wi-Fi tile's "Wi-Fi Settings…" opened the pane of the first launch, or a second window).
 pub fn run() -> glib::ExitCode {
+    crate::i18n::init();
     let app = gtk::Application::builder()
         .application_id("org.wolos.settings")
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
@@ -872,6 +873,15 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
     };
     let rebuild: Rc<dyn Fn()> = Rc::new(rebuild);
     *env.refresh.borrow_mut() = Some(rebuild);
+    // A new language (Language & Region, or the session's) builds every shown pane again in it.
+    {
+        let env = Rc::downgrade(&env);
+        crate::i18n::watch(move |_| {
+            if let Some(env) = env.upgrade() {
+                env.refresh();
+            }
+        });
+    }
     undo_toast(&aw, &env);
     aw.content
         .connect_visible_child_name_notify(move |s| ensure(s));

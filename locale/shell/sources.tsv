@@ -1,0 +1,2 @@
+# path (relative to this directory)	module: the key prefix
+../../src/copy_settings.rs	settings

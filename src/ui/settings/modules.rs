@@ -8,7 +8,7 @@
 //! "Could Not Be Added" lists what modules-install gave up on ([`GAVE_UP_FILE`]): a module offers
 //! Retry, the same install as Install; a media format package its own `PkgInstall`.
 use super::*;
-use crate::copy::settings as copy;
+use crate::i18n::{self, keys};
 use wol_core::modules::Status;
 
 /// What a module's row says and offers, from its state (`Status::state`).
@@ -163,7 +163,7 @@ fn enable_said(ok: bool) -> &'static str {
     if ok {
         ""
     } else {
-        copy::MODULES_ENABLE_NOT_DONE
+        i18n::t(keys::SETTINGS_MODULES_ENABLE_NOT_DONE)
     }
 }
 
@@ -224,7 +224,7 @@ fn module_row(
         Offer::Install => install_button(e, s, "Install", reload, st, busy),
     };
     let sub = if offer(s) == Offer::Pending {
-        copy::MODULES_PENDING.to_string()
+        i18n::t(keys::SETTINGS_MODULES_PENDING).to_string()
     } else {
         sub
     };
@@ -345,7 +345,7 @@ fn media_row(
     w::list_row(
         "view-app-grid-symbolic",
         &media_title(name),
-        copy::MODULES_GAVE_UP_MEDIA,
+        i18n::t(keys::SETTINGS_MODULES_GAVE_UP_MEDIA),
         Some(&retry),
     )
     .upcast()
@@ -370,9 +370,9 @@ fn media_title(pkg: &str) -> String {
 /// What the pane says with no rows: a list that could not be read is not an empty list.
 fn empty_copy(list: &Option<Vec<Status>>) -> &'static str {
     if list.is_some() {
-        copy::MODULES_NONE
+        i18n::t(keys::SETTINGS_MODULES_NONE)
     } else {
-        copy::MODULES_UNREADABLE
+        i18n::t(keys::SETTINGS_MODULES_UNREADABLE)
     }
 }
 
@@ -419,7 +419,7 @@ fn render(
             w::list_row(
                 "view-app-grid-symbolic",
                 &s.name,
-                copy::MODULES_GAVE_UP,
+                i18n::t(keys::SETTINGS_MODULES_GAVE_UP),
                 Some(&retry),
             )
             .upcast()
@@ -443,7 +443,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let p = w::page("Modules");
     let body = w::vbox(w::S6);
     p.append(&body);
-    p.append(&w::footnote(copy::MODULES_ABOUT));
+    p.append(&w::footnote(i18n::t(keys::SETTINGS_MODULES_ABOUT)));
     let status = status_label();
     p.append(&status);
     let reload: Slot = Rc::default();
@@ -481,6 +481,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::copy::settings as copy;
 
     fn st(installed: bool, enabled: bool, pending: bool, needs_enable: bool) -> Status {
         Status {

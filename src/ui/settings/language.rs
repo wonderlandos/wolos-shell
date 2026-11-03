@@ -2,6 +2,7 @@
 //! General > Language & Region: the language of menus and formats (desktop prefs `language`, the
 //! session's `LANG` from the next login) and the keyboard's input sources live in Keyboard.
 use super::*;
+use crate::i18n;
 use wol_core::region::LANGUAGES;
 
 /// Index in [`LANGUAGES`] for a saved locale (None or unknown = English (US)).
@@ -30,11 +31,18 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         move |i| {
             let (dk2, n2, m, opened) = (dk.clone(), n.clone(), m.clone(), opened.clone());
             n.set_visible(true);
+            // The shell itself speaks the new language at once (ADR 0045), after this handler
+            // returns: the pane is built again in it, and this menu is part of the pane.
+            let locale = LANGUAGES[i].0;
+            glib::idle_add_local_once(move || i18n::set_lang(i18n::lang_of(locale)));
             dk.set_or(
                 &st,
                 |p| p.language = Some(LANGUAGES[i].0.to_string()),
                 move || {
                     let saved = dk2.get().language;
+                    // The save failed: the menu goes back, and so does the shell's language.
+                    let back = saved.as_deref().map_or(i18n::lang_of(""), i18n::lang_of);
+                    glib::idle_add_local_once(move || i18n::set_lang(back));
                     // The note only for a language saved since the page opened.
                     n2.set_visible(saved != opened);
                     if let Some(m) = m.upgrade() {

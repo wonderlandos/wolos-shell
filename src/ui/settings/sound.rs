@@ -11,7 +11,7 @@
 //! are WirePlumber fragments under the user's config, written journaled ([`awake_conf`],
 //! [`soft_volume_conf`]).
 use super::*;
-use crate::copy::settings as copy;
+use crate::i18n::{self, keys};
 use wol_core::audio::{
     ALLOWED_RATES, Action as AudioAction, Device, DeviceKind, InputMeter, ProAudio, QUANTA, db_of,
     hardware_percent, max_percent, percent_of, quantum_ms,
@@ -327,7 +327,7 @@ const DOCTOR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 fn service_notice(s: &SoundState) -> Option<&str> {
     s.error
         .as_deref()
-        .or_else(|| (!s.connected).then_some(copy::SOUND_RECONNECTING))
+        .or_else(|| (!s.connected).then_some(i18n::t(keys::SETTINGS_SOUND_RECONNECTING)))
 }
 
 /// Whether a state shows an asked-for Reset audio: Some(false) when the service reports an
@@ -498,7 +498,12 @@ impl View {
         {
             self.reset_pending.set(false);
             // A failed reset's reason is the service's error, already on `notice`.
-            say(&self.status, if r { copy::SOUND_RESET_DONE } else { "" });
+            let done = if r {
+                i18n::t(keys::SETTINGS_SOUND_RESET_DONE)
+            } else {
+                ""
+            };
+            say(&self.status, done);
         }
         let pro_changed = self.state.borrow().pro != s.pro;
         *self.state.borrow_mut() = s;
@@ -517,7 +522,12 @@ impl View {
             clear(list);
             let devs: Vec<&Device> = s.devices.iter().filter(|d| d.kind == kind).collect();
             if devs.is_empty() && kind == DeviceKind::Input {
-                list.append(&w::list_row("", copy::SOUND_NO_INPUT, "", None));
+                list.append(&w::list_row(
+                    "",
+                    i18n::t(keys::SETTINGS_SOUND_NO_INPUT),
+                    "",
+                    None,
+                ));
             }
             for d in devs {
                 let badge = d.codec.as_deref().map(codec_label).unwrap_or_default();
@@ -594,14 +604,21 @@ impl View {
             let st = self.status.clone();
             rows.push(form::pending_toggle_row(
                 "Use the headset microphone automatically",
-                copy::SOUND_AUTOSWITCH,
+                i18n::t(keys::SETTINGS_SOUND_AUTOSWITCH),
                 ex.autoswitch,
                 move |on, done| {
                     let st = st.clone();
                     off_thread(
                         move || run_ok(&autoswitch_argv(on)),
                         move |ok| {
-                            say(&st, if ok { "" } else { copy::SOUND_NOT_SAVED });
+                            say(
+                                &st,
+                                if ok {
+                                    ""
+                                } else {
+                                    i18n::t(keys::SETTINGS_SOUND_NOT_SAVED)
+                                },
+                            );
                             done(ok)
                         },
                     );
@@ -647,7 +664,8 @@ impl View {
             "Pro Audio",
             &[rate, buffer, info("Dropouts", &dropouts_label(pro.xruns))],
         ));
-        self.pro.append(&w::footnote(copy::SOUND_PRO_NOTE));
+        self.pro
+            .append(&w::footnote(i18n::t(keys::SETTINGS_SOUND_PRO_NOTE)));
     }
 }
 
@@ -835,7 +853,7 @@ fn fragment_switch(
                     &st,
                     match r {
                         Fragment::Applied => "",
-                        Fragment::SavedLater => copy::SOUND_SAVED_LATER,
+                        Fragment::SavedLater => i18n::t(keys::SETTINGS_SOUND_SAVED_LATER),
                         Fragment::NotSaved => SAVE_FAILED,
                     },
                 );
@@ -947,7 +965,11 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let out_rows = w::vbox(0);
     out_rows.append(&outputs);
     out_rows.append(&balance_holder);
-    out_rows.append(&row_sub("Allow louder", copy::SOUND_LOUDER, &louder));
+    out_rows.append(&row_sub(
+        "Allow louder",
+        i18n::t(keys::SETTINGS_SOUND_LOUDER),
+        &louder,
+    ));
     p.append(&w::section("Output", &[out_rows.upcast()]));
     let input_rows = w::vbox(0);
     input_rows.append(&inputs);
@@ -963,12 +985,12 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     input_rows.append(&row("Mute input", &in_mute));
     input_rows.append(&row_sub(
         "Automatic input level",
-        copy::SOUND_AUTO_LEVEL,
+        i18n::t(keys::SETTINGS_SOUND_AUTO_LEVEL),
         &auto_level,
     ));
     input_rows.append(&row_sub(
         "Reduce background noise",
-        copy::SOUND_NOISE,
+        i18n::t(keys::SETTINGS_SOUND_NOISE),
         &noise,
     ));
     p.append(&w::section("Input", &[input_rows.upcast()]));
@@ -1092,13 +1114,13 @@ fn balance_row(v: &Rc<View>, balance: f32) -> gtk::Widget {
 fn troubleshooting_section(v: &Rc<View>, ex: &Extras, st: &gtk::Label) -> gtk::Box {
     let awake = form::pending_toggle_row(
         "Keep device awake",
-        copy::SOUND_AWAKE,
+        i18n::t(keys::SETTINGS_SOUND_AWAKE),
         ex.keep_awake,
         fragment_switch(AWAKE_FILE, awake_conf, st),
     );
     let soft = form::pending_toggle_row(
         "Ignore hardware volume",
-        copy::SOUND_SOFT_VOLUME,
+        i18n::t(keys::SETTINGS_SOUND_SOFT_VOLUME),
         ex.soft_volume,
         fragment_switch(SOFT_VOLUME_FILE, soft_volume_conf, st),
     );
@@ -1114,9 +1136,9 @@ fn troubleshooting_section(v: &Rc<View>, ex: &Extras, st: &gtk::Label) -> gtk::B
                 move |report| match report {
                     Some(t) => {
                         anchor.display().clipboard().set_text(&t);
-                        say(&st, copy::SOUND_DIAG_COPIED);
+                        say(&st, i18n::t(keys::SETTINGS_SOUND_DIAG_COPIED));
                     }
-                    None => say(&st, copy::SOUND_DIAG_NONE),
+                    None => say(&st, i18n::t(keys::SETTINGS_SOUND_DIAG_NONE)),
                 },
             );
         })
@@ -1125,7 +1147,7 @@ fn troubleshooting_section(v: &Rc<View>, ex: &Extras, st: &gtk::Label) -> gtk::B
         let (me, st) = (Rc::downgrade(v), st.clone());
         row_sub(
             "Reset audio",
-            copy::SOUND_RESET_ABOUT,
+            i18n::t(keys::SETTINGS_SOUND_RESET_ABOUT),
             &w::button("Reset", w::Kind::Destructive, move || {
                 if let Some(me) = me.upgrade() {
                     // The "done" sentence waits for a state that shows the reset (audit5 S7-1).
@@ -1142,6 +1164,7 @@ fn troubleshooting_section(v: &Rc<View>, ex: &Extras, st: &gtk::Label) -> gtk::B
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::copy::settings as copy;
 
     #[test]
     fn codecs_read_as_their_names() {

@@ -17,6 +17,7 @@ pub mod files;
 pub mod focus;
 pub mod focus_grab;
 pub mod hypr;
+pub mod i18n;
 pub mod install;
 pub mod layout;
 pub mod login;

@@ -62,6 +62,7 @@ fn mark(t0: std::time::Instant, stage: &str) {
 }
 
 pub fn run_shell() -> glib::ExitCode {
+    crate::i18n::init();
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder()
         .application_id("org.wolos.shell")
@@ -242,6 +243,7 @@ pub fn run_panel_app(
     spec: surface::Spec,
     build: fn(&gtk::ApplicationWindow, Rc<dyn crate::system::System>) -> gtk::Widget,
 ) -> glib::ExitCode {
+    crate::i18n::init();
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder().application_id(id).build();
     app.connect_startup(move |_| mark(t0, "startup"));
