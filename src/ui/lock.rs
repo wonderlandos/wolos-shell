@@ -212,14 +212,43 @@ pub fn lock_screen(panel: &w::UserPanel) -> gtk::Widget {
 }
 
 /// Restart the way the menu does (`wol power restart`, through wol-admind); true when it was
-/// taken. Blocking: handed to `gio::spawn_blocking`.
+/// taken. Blocking: handed to `gio::spawn_blocking`. Waits at most [`restart_wait`].
 fn restart_now() -> bool {
     std::process::Command::new("wol")
         .args(["power", "restart"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+        .spawn()
+        .is_ok_and(|c| finished_ok(c, restart_wait()))
+}
+
+/// As long as `wol` itself waits for wol-admind's answer to a restart (`admin::reply_secs`;
+/// stdin is closed, so it never asks for a password), plus a little.
+fn restart_wait() -> std::time::Duration {
+    let req = shared::admin::AdminRequest {
+        action: shared::admin::AdminAction::SessionPower,
+        args: vec!["restart".into()],
+    };
+    std::time::Duration::from_secs(u64::from(wol_core::admin::reply_secs(&req)) + 5)
+}
+
+/// True when `child` exited successfully within `limit`; one still running then is killed and
+/// counts as not taken, so the lock screen's Restart always answers (SP-5: no stuck state).
+fn finished_ok(mut child: std::process::Child, limit: std::time::Duration) -> bool {
+    let end = std::time::Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => return s.success(),
+            Ok(None) if std::time::Instant::now() < end => {
+                std::thread::sleep(std::time::Duration::from_millis(50))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
 }
 
 /// Lock screen whose password can't be checked (wol-authcheck missing or broken): Restart
@@ -228,17 +257,24 @@ fn restart_now() -> bool {
 /// the session user failed silently); nothing of the session is shown or kept.
 fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box) {
     let message = panel.message.clone();
-    let (restart, _) = action(
+    let (restart, button) = action(
         login::power_icon(login::Power::Restart),
         login::power_label(login::Power::Restart),
-        move || {
-            let m = message.clone();
-            glib::spawn_future_local(async move {
-                let taken = gtk::gio::spawn_blocking(restart_now).await.unwrap_or(false);
-                m.set_label(restart_caption(taken).0);
-            });
-        },
+        || {},
     );
+    // One request at a time (pressing again while one is out started another `wol`); the wait
+    // is bounded ([`finished_ok`]), so the button always comes back for a later try.
+    button.connect_clicked(move |b| {
+        b.set_sensitive(false);
+        let (m, b) = (message.clone(), b.downgrade());
+        glib::spawn_future_local(async move {
+            let taken = gtk::gio::spawn_blocking(restart_now).await.unwrap_or(false);
+            m.set_label(restart_caption(taken).0);
+            if let Some(b) = b.upgrade() {
+                b.set_sensitive(true);
+            }
+        });
+    });
     let foot = w::hbox(0);
     foot.add_css_class("login-power");
     foot.set_halign(gtk::Align::Center);
@@ -743,6 +779,42 @@ mod tests {
             power_note(Power::ShutDown, Verdict::Error),
             Some(crate::copy::power_refused(Power::ShutDown))
         );
+    }
+
+    /// SP-5: the lock screen's Restart waits a bounded time for `wol power restart`; a `wol`
+    /// that hangs is killed and counts as not taken (the refusal caption shows, the button
+    /// comes back), a quick answer is read as it is.
+    #[test]
+    fn the_restart_wait_is_bounded() {
+        let run = |sh: &str| {
+            std::process::Command::new("sh")
+                .args(["-c", sh])
+                .spawn()
+                .expect("sh")
+        };
+        let t = std::time::Instant::now();
+        assert!(!finished_ok(
+            run("sleep 30"),
+            std::time::Duration::from_millis(200)
+        ));
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(5),
+            "killed, not waited out"
+        );
+        assert!(finished_ok(
+            run("exit 0"),
+            std::time::Duration::from_secs(5)
+        ));
+        assert!(!finished_ok(
+            run("exit 1"),
+            std::time::Duration::from_secs(5)
+        ));
+        assert_eq!(
+            caption(Some(crate::copy::LOCK_RESTART_REFUSED)),
+            restart_caption(false)
+        );
+        let w = restart_wait();
+        assert!(w > std::time::Duration::from_secs(5) && w < std::time::Duration::from_secs(600));
     }
 
     #[test]

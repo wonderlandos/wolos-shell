@@ -57,21 +57,45 @@ fn refresh_off_thread() {
         .spawn(|| {
             let cat = installed();
             gtk::glib::MainContext::default().invoke(move || {
-                adopt(cat);
-                let f = REFRESHED.with(|r| r.borrow().clone());
-                if let Some(f) = f {
-                    f();
-                }
+                CATALOG.with(|c| MISSED.with(|m| adopt_in(c, m, cat)));
+                redraw();
             });
         });
 }
 
 /// Draws with `installed` (built-ins, theme folders and plugin packs, read off the GTK thread by
 /// the theme picker) from now on, plus the accent variants: a pick the picker offers is one the
-/// shell can draw (audit5 S9-2). No disk work.
+/// shell can draw (audit5 S9-2). No disk work. An id missed earlier that `installed` knows is
+/// drawn now: it leaves `MISSED` and the loader redraws (audit7 R7-4; before, the desktop stayed
+/// on the default until the next theme-file event).
 pub fn adopt(installed: ThemeCatalog) {
-    let cat = with_accents(installed);
-    CATALOG.with(|c| *c.borrow_mut() = cat);
+    if CATALOG.with(|c| MISSED.with(|m| adopt_in(c, m, installed))) {
+        redraw();
+    }
+}
+
+/// Swaps `installed` (plus accents) in; true when it knows an id in `missed`, which then leaves
+/// it. Ids it still lacks stay missed: `installed` is a fresh look on disk, and clearing them
+/// would start a re-read after every adopt, whose own adopt would start the next one.
+fn adopt_in(
+    cat: &std::cell::RefCell<ThemeCatalog>,
+    missed: &std::cell::RefCell<std::collections::HashSet<String>>,
+    installed: ThemeCatalog,
+) -> bool {
+    let fresh = with_accents(installed);
+    let mut m = missed.borrow_mut();
+    let before = m.len();
+    m.retain(|id| fresh.resolve(id).is_err());
+    *cat.borrow_mut() = fresh;
+    m.len() != before
+}
+
+/// Runs the loader registered with [`on_refreshed`], outside any borrow of the catalog.
+fn redraw() {
+    let f = REFRESHED.with(|r| r.borrow().clone());
+    if let Some(f) = f {
+        f();
+    }
 }
 
 fn with_accents(installed: ThemeCatalog) -> ThemeCatalog {
@@ -270,6 +294,56 @@ mod tests {
             true,
         );
         assert_eq!(t.id, "pack-late");
+    }
+
+    /// Audit7 R7-4 / SP-5: the picker (or Settings) reads the themes and adopts them. A missed id
+    /// they bring is drawn (it leaves `MISSED`, the loader redraws); one they still lack stays
+    /// missed, so the background re-read's own adopt does not start another (no re-read loop).
+    #[test]
+    fn adopt_brings_back_a_missed_id_and_keeps_the_ones_still_gone() {
+        let cat = std::cell::RefCell::new(ThemeCatalog::builtin());
+        let missed = Default::default();
+        let reads = std::cell::Cell::new(0);
+        let count = || reads.set(reads.get() + 1);
+        resolve_in(&cat, &missed, count, Some("pack-back"), true);
+        resolve_in(&cat, &missed, count, Some("pack-gone"), true);
+        assert_eq!(reads.get(), 2);
+        // The background re-read lands without either: nothing to redraw, both stay missed.
+        assert!(!adopt_in(&cat, &missed, ThemeCatalog::builtin()));
+        resolve_in(
+            &cat,
+            &missed,
+            || panic!("re-read loop"),
+            Some("pack-back"),
+            true,
+        );
+        resolve_in(
+            &cat,
+            &missed,
+            || panic!("re-read loop"),
+            Some("pack-gone"),
+            true,
+        );
+        // The picker's read has "pack-back" (its plugin was turned on): redraw, it is drawn.
+        let mut pack = ThemeCatalog::builtin()
+            .list()
+            .into_iter()
+            .find(|s| s.variant == Variant::Dark)
+            .cloned()
+            .expect("a built-in dark theme");
+        pack.id = "pack-back".into();
+        assert!(adopt_in(&cat, &missed, ThemeCatalog::builtin().with(pack)));
+        assert!(!missed.borrow().contains("pack-back"));
+        assert!(
+            missed.borrow().contains("pack-gone"),
+            "still gone: still missed"
+        );
+        let t = resolve_in(&cat, &missed, || panic!("known"), Some("pack-back"), true);
+        assert_eq!(t.id, "pack-back");
+        assert!(
+            cat.borrow().resolve("wol-light-blue").is_ok(),
+            "accent variants kept"
+        );
     }
 
     #[test]

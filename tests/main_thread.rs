@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! STANDARDS §1 (audit3 R2A-21): the GTK main thread never blocks. In `src/ui` and `src/kit` the
-//! blocking calls below appear only inside a `gio::spawn_blocking` / `off_thread` /
+//! STANDARDS §1 (audit3 R2A-21): the GTK main thread never blocks. In `src/` the blocking calls
+//! below appear only inside a `gio::spawn_blocking` / `off_thread` /
 //! `std::thread::spawn` closure, or in a function that is only handed to one. Heuristic: a call
 //! is off the main thread when a wrapper starts within [`WINDOW`] lines above it (same statement),
 //! or when its enclosing `fn` is named within [`WINDOW`] lines after a wrapper in the same file.
@@ -55,12 +55,36 @@ const WRAPPERS: [&str; 5] = [
 
 const WINDOW: usize = 6;
 
-/// Scope: code that runs on the GTK thread.
-/// `theme.rs` too: `resolve` runs on the GTK thread and must not walk the theme folders (S6-2).
-const SCOPE: [&str; 3] = ["ui/", "kit/", "theme.rs"];
+/// Scope: every file under `src/` (SP-5). It was `ui/`, `kit/` and `theme.rs`, which missed GTK
+/// code at the top level (`theme.rs` itself until audit6 S6-2) and any new folder. Modules whose
+/// functions are blocking by contract ("run off the GTK thread": `hypr.rs`, `system.rs`, ...)
+/// are frozen in [`BASELINE`] like the rest, so a new blocking helper there is a choice made
+/// in review, not a blind spot.
+const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 20] = [
+const BASELINE: [(&str, usize); 37] = [
+    // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
+    // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
+    // cannot follow a call into another file); each row only shrinks.
+    ("alerts.rs", 1),
+    ("app_session.rs", 1),
+    // A command-line tool (menu bar verbs bound to keys): no GTK main loop to stall.
+    ("bin/wol-app.rs", 7),
+    ("desktop.rs", 2),
+    ("files.rs", 2),
+    ("focus.rs", 1),
+    ("hypr.rs", 1),
+    ("install.rs", 3),
+    ("install_flow.rs", 1),
+    ("login.rs", 3),
+    ("offers.rs", 2),
+    ("packages.rs", 2),
+    ("sessions.rs", 1),
+    ("setup.rs", 1),
+    ("software_update.rs", 1),
+    ("system.rs", 8),
+    ("widgets/weather.rs", 1),
     // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).
     ("kit/assistant.rs", 1),
     ("kit/data.rs", 1),
@@ -189,11 +213,25 @@ fn the_main_thread_never_blocks() {
     }
     let r = std::panic::catch_unwind(|| {
         scan::ratchet(
-            "blocking calls on the GTK thread in src/ui, src/kit, src/theme.rs (move them into \
-             gio::spawn_blocking; STANDARDS §1, R2A-21)",
+            "blocking calls on the GTK thread in src/ (move them into gio::spawn_blocking; \
+             STANDARDS §1, R2A-21)",
             &have,
             &BASELINE,
         )
     });
     assert!(r.is_ok(), "the calls:\n{}", listing.join("\n"));
+}
+
+/// SP-5 (audit6 S6-2): the scope was `ui/` and `kit/`, so `theme.rs` walked the theme folders on
+/// the GTK thread unseen. Every file under `src/` is checked, top-level ones included.
+#[test]
+fn the_scope_is_every_source_file() {
+    let all = scan::sources();
+    assert!(all.iter().any(|s| s.path == "theme.rs"));
+    let out: Vec<&str> = all
+        .iter()
+        .map(|s| s.path.as_str())
+        .filter(|p| !SCOPE.iter().any(|s| p.starts_with(s)))
+        .collect();
+    assert!(out.is_empty(), "outside the ratchet: {out:?}");
 }
