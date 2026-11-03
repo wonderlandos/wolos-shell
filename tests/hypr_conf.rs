@@ -409,3 +409,63 @@ fn releasing_either_super_finishes_switching() {
             .any(|b| b.combo.same(&tab) && b.args == "wol shell show switcher")
     );
 }
+
+/// The Lua configuration of the compositor 0.57 series (WolOS 0.13). Its binds equal the conf's
+/// (`wol_core::theme::hypr::tests::lua_binds_equal_the_conf_binds`), so the bind tests above cover
+/// it; the layer rules and the panels it names are checked here.
+const LUA: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+
+/// `hl.layer_rule({ match = { namespace = "P" }, effect = v, … })`: (pattern, effects).
+fn lua_layer_rules() -> Vec<(String, String)> {
+    LUA.lines()
+        .filter_map(|l| {
+            l.trim()
+                .strip_prefix("hl.layer_rule({ match = { namespace = \"")
+        })
+        .filter_map(|r| r.split_once("\" }, "))
+        .map(|(p, e)| (p.to_string(), e.trim_end_matches(" })").to_string()))
+        .collect()
+}
+
+#[test]
+fn every_glass_surface_is_blurred_without_its_margins_in_lua() {
+    let rules = lua_layer_rules();
+    for ns in GLASS {
+        let (_, e) = rules
+            .iter()
+            .find(|(p, e)| matches(p, ns) && e.contains("blur = true"))
+            .unwrap_or_else(|| panic!("{ns}: no blur rule in hyprland.lua"));
+        let v: f32 = e
+            .split(", ")
+            .find_map(|f| f.strip_prefix("ignore_alpha = "))
+            .unwrap_or_else(|| panic!("{ns}: no ignore_alpha"))
+            .parse()
+            .unwrap();
+        assert!(v > 0.0, "{ns}: ignore_alpha {v} blurs transparent margins");
+    }
+    for ns in ["wol-panel-capture", "wol-panel-capture-thumb"] {
+        assert!(
+            rules
+                .iter()
+                .any(|(p, e)| matches(p, ns) && e.contains("no_anim = true")),
+            "{ns}: fades into the capture"
+        );
+    }
+}
+
+#[test]
+fn every_bound_shell_panel_is_accepted_by_wol_in_lua() {
+    let bound: Vec<&str> = LUA
+        .lines()
+        .filter_map(|l| l.split_once("\"wol shell ").map(|(_, r)| r))
+        .filter_map(|r| r.split_whitespace().nth(1))
+        .map(|p| p.trim_end_matches(['"', ')', ',']))
+        .collect();
+    assert!(bound.len() >= 6, "{bound:?}");
+    for p in bound {
+        assert!(
+            shared::shell::PANELS.contains(&p),
+            "{p} not in shared::shell::PANELS"
+        );
+    }
+}
