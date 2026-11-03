@@ -261,24 +261,22 @@ static MALWARE_SEEN: std::sync::Mutex<Option<std::time::SystemTime>> = std::sync
 
 /// The account's lists, read only when they changed: a stat every poll, no read at rest.
 fn malware_read() -> Option<Vec<String>> {
+    let uid = wol_core::malware::my_uid();
     malware_read_in(
-        std::path::Path::new(wol_core::malware::STATE_DIR),
-        wol_core::malware::my_uid(),
+        [
+            wol_core::malware::findings_path(uid).into(),
+            wol_core::malware::sweep_path(uid).into(),
+        ],
         &MALWARE_SEEN,
     )
 }
 
-/// [`malware_read`] in `dir` for `uid`: the guard's list and the background pass's
-/// (`sweep-<uid>.json`, the account's own 0600 file; audit R7-1).
+/// [`malware_read`] of `files`: the guard's list and the background pass's (`sweep-<uid>.json`,
+/// the account's own 0600 file; audit R7-1), each in its own folder (audit F10).
 fn malware_read_in(
-    dir: &std::path::Path,
-    uid: u32,
+    files: [std::path::PathBuf; 2],
     seen: &std::sync::Mutex<Option<std::time::SystemTime>>,
 ) -> Option<Vec<String>> {
-    let files = [
-        dir.join(wol_core::malware::findings_file(uid)),
-        dir.join(wol_core::malware::sweep_file(uid)),
-    ];
     let newest = files
         .iter()
         .filter_map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok())
@@ -394,7 +392,13 @@ mod tests {
         )
         .unwrap();
         let seen = std::sync::Mutex::new(None);
-        let texts = malware_read_in(&d, uid, &seen).expect("a new list is read");
+        let files = |u: u32| {
+            [
+                d.join(wol_core::malware::findings_file(u)),
+                d.join(wol_core::malware::sweep_file(u)),
+            ]
+        };
+        let texts = malware_read_in(files(uid), &seen).expect("a new list is read");
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         let shown = Alerts::default().malware(&wol_core::malware::merge(&refs));
         assert!(
@@ -402,11 +406,11 @@ mod tests {
             "{shown:?}"
         );
         assert!(
-            malware_read_in(&d, uid, &seen).is_none(),
+            malware_read_in(files(uid), &seen).is_none(),
             "unchanged: no read"
         );
         assert!(
-            malware_read_in(&d, uid + 1, &std::sync::Mutex::new(None)).is_none(),
+            malware_read_in(files(uid + 1), &std::sync::Mutex::new(None)).is_none(),
             "another account's list is not this one's"
         );
         let _ = std::fs::remove_dir_all(&d);
