@@ -64,8 +64,8 @@ pub use search::{Hit, hits};
 pub use shortcuts::KEY_LEGEND;
 pub use software_update::{UpdateState, parse_check, with_flatpaks};
 pub use sound::{
-    Extras as SoundExtras, Request as SoundRequest, SoundState, Source as SoundSource,
-    live as sound_live,
+    Extras as SoundExtras, Request as SoundRequest, SoundState, Source as SoundSource, Touch,
+    apply_scale_plan, live as sound_live, scale_plan, system_percent,
 };
 
 /// One sidebar pane: its title (also the `wol-settings <title>` name), icon and search words.

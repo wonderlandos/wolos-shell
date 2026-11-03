@@ -62,6 +62,60 @@ pub fn read() -> Option<Badge> {
     badge(Some(&u.installed(running.as_deref())))
 }
 
+// ---- Plugin updates (audit6 ST6-4) ----
+
+/// A plugin of this account the signed plugin index has a newer, runnable version of.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginNews {
+    pub id: String,
+    pub name: String,
+    /// The version that is ready.
+    pub to: String,
+}
+
+/// The plugin updates for the plugins in `p`: the verified plugin list (a download only when
+/// wopkg's own rule asks for one: nothing cached, expired or stale), against what this account
+/// has. Nothing is asked of the network when no plugin is installed. A version that needs a newer
+/// WolOS is not news. Blocking: off the GTK thread.
+pub(crate) fn plugin_news_in(
+    p: &crate::ui::store::plugins::Paths,
+    keys: &[[u8; 32]],
+    net: &wopkg::fetch::Net,
+    url: &str,
+    os: &str,
+) -> Vec<PluginNews> {
+    let (have, _, _) = crate::ui::store::plugins::on_this_account(p);
+    if have.is_empty() {
+        return Vec::new();
+    }
+    let Ok(index) = wopkg::index::plugins::load(net, url, &p.cache, keys, false) else {
+        return Vec::new();
+    };
+    wopkg::release::plugin_updates(os, &have, &index)
+        .into_iter()
+        .filter(|u| u.reason == wopkg::release::PluginReason::Available)
+        .filter_map(|u| {
+            let e = index.get(&u.id)?;
+            Some(PluginNews {
+                id: u.id,
+                name: e.name.clone(),
+                to: u.to,
+            })
+        })
+        .collect()
+}
+
+/// [`plugin_news_in`] on this computer's account, the real index and the running version.
+pub fn plugin_news() -> Vec<PluginNews> {
+    plugin_news_in(
+        &crate::ui::store::plugins::paths(),
+        &crate::ui::store::plugins::keys(),
+        &wopkg::fetch::Net::new(false),
+        wopkg::index::plugins::DEFAULT_URL,
+        env!("CARGO_PKG_VERSION"),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,5 +154,70 @@ mod tests {
     #[test]
     fn the_click_opens_software_update() {
         assert_eq!(OPEN, ["wol-settings", "Software Update"]);
+    }
+
+    /// ST6-4: a plugin update is found by the background check, not only by opening the Store:
+    /// from the verified list, for the plugins this account has, and only a version this WolOS can
+    /// run. No plugin installed, no list asked for.
+    #[test]
+    fn plugin_updates_are_found_from_the_verified_list() {
+        use crate::ui::store::plugins::Paths;
+        let root = std::env::temp_dir().join(format!("wol-plugin-news-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let p = Paths {
+            data: root.join("data"),
+            config: root.join("config"),
+            cache: root.join("cache"),
+        };
+        let seed = [9u8; 32];
+        let keys = [wol_core::package::public_of(&seed)];
+        let net = wopkg::fetch::Net::new(false);
+        // Nothing listens here: whatever is found comes from the cache.
+        let url = "http://127.0.0.1:9/index.json";
+        let list = |ver: &str, min: &str| {
+            let e = serde_json::json!({
+                "id": "alice.demo", "name": "Demo", "version": ver, "summary": "Says hello",
+                "author": "Alice", "license": "MIT", "kinds": ["menubar"], "permissions": [],
+                "min_wolos": min, "url": "https://plugins.wolos.org/alice.demo.wolplug",
+                "sha256": "ab".repeat(32), "size": 4096
+            });
+            let text =
+                serde_json::to_vec(&serde_json::json!({"format": 1, "plugins": [e]})).unwrap();
+            std::fs::create_dir_all(&p.cache).unwrap();
+            std::fs::write(p.cache.join("index.json"), &text).unwrap();
+            std::fs::write(
+                p.cache.join("index.json.sig"),
+                wol_core::package::sign(&seed, &text),
+            )
+            .unwrap();
+        };
+        list("0.2", "0.12");
+        assert!(
+            plugin_news_in(&p, &keys, &net, url, "0.12.0").is_empty(),
+            "no plugin installed: nothing to update"
+        );
+        let user = p.data.join(shared::plugins::USER_DIR);
+        crate::ui::maker::editor::create(&user, "alice.demo", &[shared::plugins::Kind::Menubar])
+            .unwrap();
+        // The scaffold is version 0.1.
+        assert_eq!(
+            plugin_news_in(&p, &keys, &net, url, "0.12.0"),
+            [PluginNews {
+                id: "alice.demo".into(),
+                name: "Demo".into(),
+                to: "0.2".into()
+            }]
+        );
+        list("0.1", "0.12");
+        assert!(plugin_news_in(&p, &keys, &net, url, "0.12.0").is_empty(), "same version");
+        list("0.3", "0.13");
+        assert!(
+            plugin_news_in(&p, &keys, &net, url, "0.12.0").is_empty(),
+            "needs a newer WolOS: not news"
+        );
+        assert_eq!(plugin_news_in(&p, &keys, &net, url, "0.13.0").len(), 1);
+        // A list no known key signed is not believed.
+        assert!(plugin_news_in(&p, &[[0; 32]], &net, url, "0.13.0").is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 }

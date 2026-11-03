@@ -14,7 +14,7 @@ use super::*;
 use crate::copy::settings as copy;
 use wol_core::audio::{
     ALLOWED_RATES, Action as AudioAction, Device, DeviceKind, InputMeter, ProAudio, QUANTA, db_of,
-    max_percent, percent_of, quantum_ms,
+    hardware_percent, max_percent, percent_of, quantum_ms,
 };
 
 /// What the page draws: `wol_audio::Snapshot`'s shape, in the frozen `wol_core::audio` types.
@@ -264,7 +264,14 @@ pub fn balance_percents(volume: u16, balance: f32) -> (u16, u16) {
     (side((1.0 - b).min(1.0)), side((1.0 + b).min(1.0)))
 }
 
-/// `pactl set-sink-volume @DEFAULT_SINK@ L% R%`.
+/// A slider position as `Action::Volume` takes it: whole percent, never above 100 (System's
+/// `wpctl` path has no louder range; a value over 255 used to wrap to 255 here).
+pub fn system_percent(v: u16) -> u8 {
+    u8::try_from(v.min(100)).unwrap_or(100)
+}
+
+/// `pactl set-sink-volume @DEFAULT_SINK@ L% R%` (percents of the hardware maximum, as pactl counts:
+/// [`hardware_percent`] converts a slider position).
 pub fn balance_argv(volume: u16, balance: f32) -> Vec<String> {
     let (l, r) = balance_percents(volume, balance);
     argv(&[
@@ -350,6 +357,11 @@ pub trait Source {
     /// The newest state, when one arrived since the last call.
     fn latest(&self) -> Option<SoundState>;
     fn request(&self, r: Request);
+    /// The service really moves the volumes (false for a fixed preview state): the output slider
+    /// then goes to it ([`AudioAction::OutputVolume`]), else to `System`.
+    fn live(&self) -> bool {
+        false
+    }
 }
 
 /// A fixed state (previews): the first call returns it; requests change nothing.
@@ -383,6 +395,9 @@ impl From<wol_audio::Snapshot> for SoundState {
 impl Source for Live {
     fn latest(&self) -> Option<SoundState> {
         self.0.latest().map(SoundState::from)
+    }
+    fn live(&self) -> bool {
+        true
     }
     fn request(&self, r: Request) {
         use wol_audio::service::Request as R;
@@ -428,8 +443,10 @@ struct View {
     outputs: gtk::Box,
     inputs: gtk::Box,
     out_slider: gtk::Scale,
+    out_touch: Rc<Touch>,
     out_mute: gtk::Switch,
     in_slider: gtk::Scale,
+    in_touch: Rc<Touch>,
     in_mute: gtk::Switch,
     meter: gtk::ProgressBar,
     louder: gtk::Switch,
@@ -461,10 +478,13 @@ impl View {
         }
         let out = s.default_of(DeviceKind::Output);
         let inp = s.default_of(DeviceKind::Input);
-        set_scale(&self.out_slider, out, s.boost);
+        // "Allow louder" is one setting for both sliders; a slider being moved is the user's, not
+        // the poll's (A6-1, A6-3).
+        let hold = Touch::hold(form::SETTLE_MS);
+        set_scale(&self.out_slider, out, s.boost, self.out_touch.busy(hold));
         self.out_mute.set_active(out.is_some_and(|d| d.muted));
         self.out_mute.set_sensitive(out.is_some());
-        set_scale(&self.in_slider, inp, false);
+        set_scale(&self.in_slider, inp, s.boost, self.in_touch.busy(hold));
         self.in_mute.set_active(inp.is_some_and(|d| d.muted));
         self.in_mute.set_sensitive(inp.is_some());
         self.meter
@@ -631,32 +651,96 @@ impl View {
     }
 }
 
-/// Moves `s` to `d`'s volume (range 0..[`slider_max`], a tick at 100 = 0 dB when it can pass it).
-fn set_scale(s: &gtk::Scale, d: Option<&Device>, boost: bool) {
-    let Some(d) = d else {
-        s.set_sensitive(false);
-        return;
-    };
-    s.set_sensitive(true);
+/// What a volume slider shows for a device ([`scale_plan`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScalePlan {
+    /// The range ends here ([`slider_max`]).
+    pub max: u16,
+    /// A tick labelled "0 dB" at 100 (the slider can pass it).
+    pub tick: bool,
+    /// Where the knob goes; None while the user is moving it (the state is older than their hand).
+    pub value: Option<u16>,
+}
+
+/// The slider for `d`: None when there is no device (the slider is off).
+pub fn scale_plan(d: Option<&Device>, boost: bool, dragging: bool) -> Option<ScalePlan> {
+    let d = d?;
     let max = slider_max(d, boost);
-    s.set_range(0.0, f64::from(max));
-    s.clear_marks();
-    if max > 100 {
-        s.add_mark(100.0, gtk::PositionType::Bottom, Some("0 dB"));
+    Some(ScalePlan {
+        max,
+        tick: max > 100,
+        value: (!dragging).then(|| percent_of(d.volume, d.volume_base, boost)),
+    })
+}
+
+/// Draws [`scale_plan`] on `s`.
+fn set_scale(s: &gtk::Scale, d: Option<&Device>, boost: bool, dragging: bool) {
+    match scale_plan(d, boost, dragging) {
+        Some(plan) => {
+            s.set_sensitive(true);
+            apply_scale_plan(s, &plan);
+        }
+        None => s.set_sensitive(false),
     }
-    s.set_value(f64::from(percent_of(d.volume, d.volume_base, boost)));
+}
+
+/// Puts `plan` on a scale: the range and the 0 dB tick when they changed, the knob when it has
+/// a value. Shared by Settings and the Control Center.
+pub fn apply_scale_plan(s: &gtk::Scale, plan: &ScalePlan) {
+    if (s.adjustment().upper() - f64::from(plan.max)).abs() > f64::EPSILON {
+        s.set_range(0.0, f64::from(plan.max));
+        s.clear_marks();
+        if plan.tick {
+            s.add_mark(100.0, gtk::PositionType::Bottom, Some("0 dB"));
+        }
+    }
+    if let Some(v) = plan.value {
+        s.set_value(f64::from(v));
+    }
+}
+
+/// When the user last moved a slider. The page's state arrives every 100 ms (every buffer while
+/// the meter runs) and is older than their hand until the service has carried out the change, so
+/// a slider they touched lately is left alone (A6-3).
+#[derive(Default)]
+pub struct Touch(Cell<Option<std::time::Instant>>);
+
+/// How long the service takes to show a change it was sent: the PipeWire round trip.
+const ECHO_MS: u64 = 500;
+
+impl Touch {
+    pub fn moved(&self) {
+        self.0.set(Some(std::time::Instant::now()));
+    }
+    /// A touch counts for `hold`: the slider's own delay before it sends plus [`ECHO_MS`].
+    pub fn hold(send_delay_ms: u64) -> std::time::Duration {
+        std::time::Duration::from_millis(send_delay_ms + ECHO_MS)
+    }
+    pub fn busy(&self, hold: std::time::Duration) -> bool {
+        self.busy_at(std::time::Instant::now(), hold)
+    }
+    pub fn busy_at(&self, now: std::time::Instant, hold: std::time::Duration) -> bool {
+        self.0
+            .get()
+            .is_some_and(|t| now.saturating_duration_since(t) < hold)
+    }
 }
 
 /// A slider that reports once per drag ([`form::SETTLE_MS`] after the knob stops); moves made
 /// while `quiet` (the page drawing a new state) report nothing.
-fn volume_slider(quiet: &Rc<Cell<bool>>, changed: impl Fn(u16) + 'static) -> gtk::Scale {
+fn volume_slider(
+    quiet: &Rc<Cell<bool>>,
+    touch: &Rc<Touch>,
+    changed: impl Fn(u16) + 'static,
+) -> gtk::Scale {
     let pending = Rc::new(Cell::new(None::<glib::SourceId>));
     let changed = Rc::new(changed);
-    let quiet = quiet.clone();
+    let (quiet, touch) = (quiet.clone(), touch.clone());
     let s = w::row_slider(0.0, move |v| {
         if quiet.get() {
             return;
         }
+        touch.moved();
         if let Some(id) = pending.take() {
             id.remove();
         }
@@ -780,17 +864,26 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     };
     let with_view = Rc::new(with_view);
 
-    // Output volume: System's path (wpctl), percent of 0 dB; balance follows when not centred.
+    // Output volume: the slider's scale is percent of 0 dB, so it goes to the sound service,
+    // which knows each device's 0 dB; wpctl and pactl count from the hardware maximum (A6-2).
+    // Only a fixed preview (no service) keeps System's path. Balance follows when not centred.
+    let (out_touch, in_touch): (Rc<Touch>, Rc<Touch>) = Default::default();
     let out_slider = {
         let (wv, ctx) = (with_view.clone(), e.ctx.clone());
-        volume_slider(&quiet, move |v| {
+        volume_slider(&quiet, &out_touch, move |v| {
             wv(&|view| {
                 let b = view.extras.borrow().balance;
+                let base = view
+                    .state
+                    .borrow()
+                    .default_of(DeviceKind::Output)
+                    .map_or(1.0, |d| d.volume_base);
                 if b.abs() > f32::EPSILON {
-                    background(vec![balance_argv(v, b)]);
+                    background(vec![balance_argv(hardware_percent(v, base), b)]);
+                } else if view.src.live() {
+                    view.send(Request::Act(AudioAction::OutputVolume(v)));
                 } else {
-                    let pct = u8::try_from(v).unwrap_or(u8::MAX);
-                    ctx.act(Action::Volume(pct), Rc::new(|_| {}));
+                    ctx.act(Action::Volume(system_percent(v)), Rc::new(|_| {}));
                 }
             })
         })
@@ -805,7 +898,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     };
     let in_slider = {
         let wv = with_view.clone();
-        volume_slider(&quiet, move |v| {
+        volume_slider(&quiet, &in_touch, move |v| {
             wv(&|view| view.send(Request::Act(AudioAction::MicVolume(v))))
         })
     };
@@ -897,8 +990,10 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         outputs,
         inputs,
         out_slider,
+        out_touch,
         out_mute,
         in_slider,
+        in_touch,
         in_mute,
         meter,
         louder,
@@ -986,9 +1081,9 @@ fn balance_row(v: &Rc<View>, balance: f32) -> gtk::Widget {
             let Some(me) = me.upgrade() else { return };
             me.extras.borrow_mut().balance = b as f32;
             let s = me.state.borrow();
-            let vol = s
-                .default_of(DeviceKind::Output)
-                .map_or(0, |d| percent_of(d.volume, d.volume_base, s.boost));
+            let vol = s.default_of(DeviceKind::Output).map_or(0, |d| {
+                hardware_percent(percent_of(d.volume, d.volume_base, s.boost), d.volume_base)
+            });
             background(vec![balance_argv(vol, b as f32)]);
         },
     )
@@ -1090,6 +1185,97 @@ mod tests {
             slider_max(&speakers, true),
             100,
             "no boost range: 100 is the top"
+        );
+    }
+
+    /// A6-1: "Allow louder" reaches the input slider too; A6-3: a slider in the user's hand keeps
+    /// its knob when a state arrives.
+    #[test]
+    fn the_scale_plan_follows_allow_louder_and_leaves_a_dragged_knob_alone() {
+        let mic = Device {
+            kind: DeviceKind::Input,
+            volume: 0.1,
+            volume_base: 0.1,
+            ..Device::default()
+        };
+        assert_eq!(scale_plan(None, true, false), None, "no device, no slider");
+        let quiet = scale_plan(Some(&mic), false, false).unwrap();
+        assert_eq!(
+            (quiet.max, quiet.tick, quiet.value),
+            (100, false, Some(100))
+        );
+        let loud = scale_plan(Some(&mic), true, false).unwrap();
+        assert_eq!(loud.max, max_percent(0.1));
+        assert!(loud.max > 200 && loud.tick, "{loud:?}");
+        let held = scale_plan(Some(&mic), true, true).unwrap();
+        assert_eq!(
+            held.value, None,
+            "the poll does not move the knob under a finger"
+        );
+        assert_eq!(held.max, loud.max, "the range still follows the setting");
+        // The input slider is fed the setting, like the output one (it was `false`).
+        let src = include_str!("sound.rs");
+        let apply = &src[src.find("fn apply(self: &Rc<Self>").unwrap()..];
+        let apply = &apply[..apply.find("\n    }\n").unwrap()];
+        assert!(
+            apply.contains("set_scale(&self.in_slider, inp, s.boost,"),
+            "{apply}"
+        );
+        assert!(
+            apply.contains("set_scale(&self.out_slider, out, s.boost,"),
+            "{apply}"
+        );
+    }
+
+    #[test]
+    fn a_touched_slider_is_the_users_until_the_service_has_answered() {
+        use std::time::{Duration, Instant};
+        let t = Touch::default();
+        let hold = Touch::hold(form::SETTLE_MS);
+        assert!(
+            hold > Duration::from_millis(form::SETTLE_MS),
+            "it outlasts the send delay"
+        );
+        assert!(!t.busy(hold), "never touched");
+        t.moved();
+        assert!(t.busy(hold));
+        let now = Instant::now();
+        assert!(t.busy_at(now + hold / 2, hold));
+        assert!(!t.busy_at(now + hold + Duration::from_millis(50), hold));
+        // Every drag step renews it, so a long drag is covered end to end.
+        let src = include_str!("sound.rs");
+        let slider = &src[src.find("fn volume_slider(").unwrap()..];
+        let slider = &slider[..slider.find("\n}\n").unwrap()];
+        assert!(slider.contains("touch.moved()"), "{slider}");
+    }
+
+    /// A6-2: the output slider's number is percent of 0 dB; pactl's is of the hardware maximum.
+    #[test]
+    fn balance_and_system_volume_are_converted_from_the_zero_db_scale() {
+        assert_eq!(system_percent(0), 0);
+        assert_eq!(system_percent(64), 64);
+        assert_eq!(system_percent(100), 100);
+        assert_eq!(
+            system_percent(300),
+            100,
+            "no wrap to 255, no louder than System can"
+        );
+        assert_eq!(system_percent(u16::MAX), 100);
+        // A DAC whose 0 dB is half way up: 100% on the slider is 50% for pactl.
+        let hw = hardware_percent(100, 0.125);
+        assert_eq!(hw, 50);
+        assert_eq!(
+            balance_argv(hw, 0.0),
+            ["pactl", "set-sink-volume", "@DEFAULT_SINK@", "50%", "50%"]
+        );
+        // Nothing to convert on the usual device.
+        assert_eq!(hardware_percent(80, 1.0), 80);
+        // Only a fixed preview sends the output slider to System.
+        assert!(!Fixed(RefCell::new(None)).live());
+        let src = include_str!("sound.rs");
+        assert!(
+            src.contains("AudioAction::OutputVolume(v)"),
+            "the live page sends the slider to the service"
         );
     }
 

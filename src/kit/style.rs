@@ -77,6 +77,9 @@ pub fn install(extra: &'static str) {
         }
     };
     load();
+    // An id unknown at the first draw (a theme pack) is read off-thread; draw again when it lands
+    // (audit6 S6-2).
+    theme::on_refreshed(Rc::new(load.clone()));
     auto_timer(Rc::new(load.clone()));
     for p in [path.clone(), contrast_path(), looks_path()] {
         if let Ok(m) = gio::File::for_path(&p)

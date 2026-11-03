@@ -13,6 +13,8 @@ use std::rc::Rc;
 mod app_view_cases;
 #[path = "golden_cases/controlcenter.rs"]
 mod controlcenter_cases;
+#[path = "golden_cases/form_kit.rs"]
+mod form_kit;
 #[path = "golden_cases/installer.rs"]
 mod installer_cases;
 #[path = "golden_cases/maker.rs"]
@@ -23,6 +25,8 @@ mod offer_cases;
 mod package_cases;
 #[path = "golden_cases/plugin_host.rs"]
 mod plugin_host_cases;
+#[path = "golden_cases/regressions.rs"]
+mod regressions;
 #[path = "golden_cases/settings.rs"]
 mod settings_cases;
 #[path = "golden_cases/theme_picker.rs"]
@@ -161,6 +165,27 @@ fn cases() -> Vec<Case> {
                         request: shared::shell::ApprovalRequest::Change {
                             capability: "appearance".into(),
                             what: "switch to Dark appearance".into(),
+                        },
+                    },
+                )
+            }),
+        },
+        Case {
+            // Any program using `wol` asks to install a repo package: the sheet leads with the
+            // change and the package name, not with "wol" (audit P6-4).
+            name: "approval-via-wol".into(),
+            size: (400, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                ui::approval::content(
+                    Rc::new(shell::system::Fake),
+                    shared::shell::Approval {
+                        helper: shared::portal::HELPER_GATE.into(),
+                        tool: "wol: packages-install".into(),
+                        request: shared::shell::ApprovalRequest::Packages {
+                            verb: "install".into(),
+                            names: vec!["gimp".into()],
                         },
                     },
                 )
@@ -1143,7 +1168,7 @@ fn cases() -> Vec<Case> {
         }),
     });
     v.extend(control_center_cases());
-    v.extend(form_kit_cases());
+    v.extend(form_kit::cases());
     v.extend(audit4_shell_cases());
     v.extend(widget_cases::cases());
     v.extend(settings_cases::cases());
@@ -1219,482 +1244,6 @@ fn cases() -> Vec<Case> {
         });
     }
     v
-}
-
-/// Settings-style Kit components (`kit::form` and the pickers panes share), on the app surface.
-fn form_kit_cases() -> Vec<Case> {
-    use shell::kit::form as f;
-    use wol_core::shortcuts::Combo;
-    let case = |name: &str, build: fn() -> gtk::Widget| Case {
-        name: format!("kit-{name}"),
-        size: (w::APP_NARROW.0, 1),
-        class: "preview-app",
-        wallpaper: false,
-        build: Box::new(move || {
-            let p = w::vbox(w::S4);
-            p.add_css_class("page");
-            p.add_css_class("app-window");
-            p.append(&build());
-            p.upcast()
-        }),
-    };
-    fn combo(m: &str, k: &str) -> Combo {
-        Combo::parse(m, k).unwrap()
-    }
-    vec![
-        case("form-rows", || {
-            w::section(
-                "Windows",
-                &[
-                    f::toggle_row(
-                        "Tile windows",
-                        "New windows fill the screen side by side",
-                        true,
-                        |_| {},
-                    ),
-                    f::picker_row("Layout", "", &["Dwindle", "Master"], 0, |_| {}),
-                    f::segmented_row("Appearance", "", &["Light", "Dark", "Auto"], 2, |_| {}),
-                    f::stepper_row("Gaps", "", 12, (0, 32, 4), |v| format!("{v} pt"), |_| {}),
-                    f::info_row("Processor", "Intel Core i5 (8 cores)"),
-                    f::entry_row("Computer name", "wonderland", "Name", |_| {}),
-                    f::nav_row("help-about-symbolic", "About", "Name, hardware, serial").upcast(),
-                ],
-            )
-            .upcast()
-        }),
-        case("slider-row", || {
-            w::section(
-                "",
-                &[
-                    f::slider_row(
-                        "Key repeat rate",
-                        (5.0, 60.0, 5.0),
-                        25.0,
-                        ("Slow", "Fast"),
-                        |_| {},
-                    ),
-                    f::slider_row(
-                        "Delay until repeat",
-                        (150.0, 1000.0, 50.0),
-                        400.0,
-                        ("Long", "Short"),
-                        |_| {},
-                    ),
-                ],
-            )
-            .upcast()
-        }),
-        case("shortcut-recorder", || {
-            let c = combo("SUPER", "Space");
-            let ok = f::ShortcutRecorder::new(Some(&c), |_| {}, |_| {});
-            let taken = f::ShortcutRecorder::new(Some(&combo("SUPER SHIFT", "4")), |_| {}, |_| {});
-            taken.set_conflict(true);
-            let off = f::ShortcutRecorder::new(None, |_| {}, |_| {});
-            let fixed =
-                f::ShortcutRecorder::new(Some(&combo("SUPER", "mouse:272")), |_| {}, |_| {});
-            fixed.set_editable(false);
-            let swap = w::button("Swap", w::Kind::Default, || {});
-            let cancel = w::button("Cancel", w::Kind::Plain, || {});
-            w::section(
-                "Screenshots",
-                &[
-                    f::row("Show Search", "", &ok.button),
-                    f::row("Capture the screen", "", &taken.button),
-                    f::notice("⇧⌘4 is used by “Capture a selection”.", &[swap, cancel]).upcast(),
-                    f::row("Record the screen", "", &off.button),
-                    f::row("Move window", "", &fixed.button),
-                ],
-            )
-            .upcast()
-        }),
-        case("permission-row", || {
-            w::section(
-                "Screen Recording",
-                &[
-                    f::permission_row(
-                        "wolos-browser",
-                        "Browser",
-                        "Can record the screen",
-                        true,
-                        |_| {},
-                    ),
-                    f::permission_row(
-                        "wolos-terminal",
-                        "Terminal",
-                        "Asked yesterday",
-                        false,
-                        |_| {},
-                    ),
-                ],
-            )
-            .upcast()
-        }),
-        case("wallpaper-tile", || {
-            let r = w::wrap_row(w::S3, 3);
-            let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers");
-            for (i, n) in ["wonderland-day", "wonderland-dusk", "wonderland-night"]
-                .iter()
-                .enumerate()
-            {
-                let p = std::path::PathBuf::from(format!("{dir}/{n}.svg"));
-                r.insert(&f::wallpaper_tile(Some(&p), n, i == 1), -1);
-            }
-            r.upcast()
-        }),
-        case("empty-state", || {
-            w::empty_state(
-                "bluetooth-disabled-symbolic",
-                "No Bluetooth Hardware",
-                "This computer has no Bluetooth adapter. Plug in a USB adapter to use wireless devices.",
-                None,
-            )
-            .upcast()
-        }),
-        case("search-field", || w::search_field("Search").upcast()),
-        case("preset-card", || {
-            use shell::kit::pickers::{PresetCard, Tokens};
-            use wol_core::looks::Looks;
-            let r = w::wrap_row(w::S3, 2);
-            let soft = Looks {
-                rounding: 18,
-                ..Looks::default()
-            };
-            for (name, about, l, on) in [
-                (
-                    "WolOS",
-                    "Soft glass, gentle motion.",
-                    Looks::default(),
-                    true,
-                ),
-                ("Rounded", "Round corners and wide gaps.", soft, false),
-            ] {
-                let c = PresetCard::new(name, about, &l, Tokens::current(), on);
-                r.insert(&c.button, -1);
-            }
-            r.upcast()
-        }),
-        case("color-well", || {
-            use shell::kit::pickers::{ColorWell, Tokens};
-            let row = w::hbox(w::S2);
-            for hex in ["#7c5cffff", "#33ccffee", "#ffffff40"] {
-                row.append(&ColorWell::new(hex, &[], Tokens::current(), |_| {}).button);
-            }
-            w::section("", &[f::row("Border colours", "", &row)]).upcast()
-        }),
-        case("usage-bar", || {
-            let parts: Vec<(String, String, f64)> = [
-                ("Documents", "61 GB", 0.12),
-                ("Apps", "38 GB", 0.07),
-                ("System", "24 GB", 0.05),
-                ("Restore points", "12 GB", 0.02),
-                ("Other", "8 GB", 0.02),
-            ]
-            .iter()
-            .map(|(n, s, f)| ((*n).into(), (*s).into(), *f))
-            .collect();
-            shell::kit::pickers::usage_bar(&parts).upcast()
-        }),
-        case("key-legend", || {
-            shell::kit::pickers::key_legend(&ui::settings::KEY_LEGEND)
-        }),
-        case("toast", || {
-            let aw = w::AppWindow::new(false, false);
-            let t = shell::kit::toast::Toast::new(&aw);
-            t.show("Wallpaper changed", "Undo", || {});
-            t.revealer.set_transition_duration(0);
-            aw.root.set_size_request(-1, 160);
-            aw.root.upcast()
-        }),
-    ]
-}
-
-/// Settings > Effects & Looks keeps its state alive once built: picking a look and then Restore
-/// Defaults checks the WolOS card again (every card, control and button did nothing when the
-/// page's state was dropped at the end of building it).
-fn effects_page_answers_after_it_is_built() {
-    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
-    a.open("Effects & Looks");
-    pump(50);
-    let root: gtk::Widget = a.root.clone().upcast();
-    let mut cards: Vec<gtk::ToggleButton> = Vec::new();
-    find_type(&root, &mut cards);
-    let card = |name: &str| {
-        cards
-            .iter()
-            .filter(|b| b.has_css_class("preset-card"))
-            .find(|b| b.tooltip_text().as_deref() == Some(name))
-            .unwrap_or_else(|| panic!("no {name} card in {}", cards.len()))
-            .clone()
-    };
-    card("Compact").set_active(true);
-    let mut all = Vec::new();
-    find_type::<gtk::Button>(&root, &mut all);
-    let restore = all
-        .into_iter()
-        .find(|b| {
-            let mut l = Vec::new();
-            find_type::<gtk::Label>(b.upcast_ref(), &mut l);
-            b.label().as_deref() == Some("Restore Defaults")
-                || l.iter().any(|l| l.label() == "Restore Defaults")
-        })
-        .expect("Restore Defaults");
-    restore.emit_clicked();
-    pump(50);
-    assert!(card("WolOS").is_active(), "Restore Defaults did nothing");
-    assert!(!card("Compact").is_active());
-}
-
-/// Return is Continue, unless the keyboard ring is on a button: then it is that button's.
-/// Audit5 S8-1/S9-5: the Dock follows `shell.json` like the menu bar. A layout with the Dock on
-/// the left and a plugin item before the apps turns the shelf and puts the plugin box first; the
-/// same layout again rebuilds nothing. The shelf hands the keyboard focus to its first button
-/// (what `keyboard` relies on after a rebuild).
-fn the_dock_takes_a_new_layout() {
-    use shared::layout::{DockItem, Edge};
-    let d = ui::dock::content(&Default::default());
-    assert_eq!(d.edge(), Edge::Bottom);
-    let items = vec![
-        DockItem::Plugin {
-            plugin: "com.example.dock".into(),
-            id: "x".into(),
-        },
-        DockItem::Apps,
-        DockItem::Trash,
-    ];
-    assert!(d.set_layout(Edge::Left, &items), "new items: rebuilt");
-    assert_eq!((d.edge(), d.items()), (Edge::Left, items.clone()));
-    assert_eq!(d.root.orientation(), gtk::Orientation::Vertical);
-    assert_eq!(
-        (d.root.halign(), d.root.valign()),
-        (gtk::Align::Start, gtk::Align::Center)
-    );
-    let first = d.root.first_child().expect("a first entry");
-    assert!(
-        first.is::<gtk::Box>() && !first.is::<gtk::Button>(),
-        "the plugin box first"
-    );
-    let last = d.root.last_child().expect("a last entry");
-    assert!(last.is::<gtk::Button>(), "Trash last");
-    let n = {
-        let mut n = 0;
-        let mut c = d.root.first_child();
-        while let Some(w) = c {
-            n += 1;
-            c = w.next_sibling();
-        }
-        n
-    };
-    assert!(!d.set_layout(Edge::Left, &items), "same items: kept");
-    assert!(
-        !d.set_layout(Edge::Right, &items),
-        "an edge alone turns, no rebuild"
-    );
-    assert_eq!(d.root.halign(), gtk::Align::End);
-    let mut m = 0;
-    let mut c = d.root.first_child();
-    while let Some(w) = c {
-        m += 1;
-        c = w.next_sibling();
-    }
-    assert_eq!(n, m, "nothing added by a turn");
-    let win = gtk::Window::new();
-    win.set_child(Some(&d.root));
-    win.present();
-    pump(20);
-    let keys = kit::surface::keyboard_access(&win, &d.root, |_| {});
-    keys(true);
-    let focus = gtk::prelude::GtkWindowExt::focus(&win);
-    assert!(
-        focus.is_some_and(|f| f.is::<gtk::Button>() && f.is_ancestor(&d.root)),
-        "the shelf hands the focus to one of its buttons"
-    );
-    keys(false);
-    win.close();
-}
-
-fn return_belongs_to_the_button_with_the_keyboard_ring() {
-    use shell::kit::assistant::return_is_the_buttons;
-    let win = gtk::Window::new();
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let button = gtk::Button::with_label("Try");
-    let entry = gtk::Entry::new();
-    body.append(&button);
-    body.append(&entry);
-    win.set_child(Some(&body));
-    win.present();
-    pump(20);
-    GtkWindowExt::set_focus(&win, Some(&button));
-    win.set_focus_visible(true);
-    assert!(return_is_the_buttons(&win), "a ringed button takes Return");
-    win.set_focus_visible(false);
-    assert!(
-        !return_is_the_buttons(&win),
-        "focus nobody can see: Continue"
-    );
-    GtkWindowExt::set_focus(&win, Some(&entry));
-    win.set_focus_visible(true);
-    assert!(!return_is_the_buttons(&win), "a field: Continue");
-    win.close();
-}
-
-/// A switch whose change takes time: insensitive while it runs, flipped back when it fails.
-fn a_toggle_waits_for_its_change_and_reverts_when_it_fails() {
-    type Done = Box<dyn FnOnce(bool)>;
-    let pending: Rc<std::cell::RefCell<Option<Done>>> = Default::default();
-    let p = pending.clone();
-    let s = w::pending_toggle(false, move |_on, done| *p.borrow_mut() = Some(done));
-    s.set_active(true);
-    assert!(
-        !s.is_sensitive(),
-        "the switch must wait while the change runs"
-    );
-    (pending.borrow_mut().take().expect("change started"))(false);
-    assert!(s.is_sensitive());
-    assert!(
-        !s.is_active() && !s.state(),
-        "a failed change must flip the switch back"
-    );
-    s.set_active(true);
-    (pending.borrow_mut().take().expect("change started"))(true);
-    assert!(s.is_active() && s.state());
-}
-
-/// Setup's cross-fade froze half way when the compositor stopped answering frame callbacks, and
-/// the old page stayed drawn until the window closed. No tick is delivered here (the loop does
-/// not run between the page change and the check), which is the same state: `settle` must leave
-/// only the new page, fully shown.
-/// A display plugged in and out over and over: its wallpaper and menu bar leave no minute tick,
-/// reload hook or registered bar behind (a docking laptop must not grow all day).
-fn displays_coming_and_going_leave_nothing_behind() {
-    let base = (
-        shell::kit::lifetime::live_ticks(),
-        ui::ipc::reload_hooks(),
-        ui::menubar::bars().len(),
-    );
-    for _ in 0..25 {
-        let wall = gtk::Window::new();
-        ui::panels::dress_wallpaper(&wall);
-        let bar_win = gtk::Window::new();
-        let bar = ui::menubar::content(&shell::system::Fake);
-        bar.life.tie(&bar_win);
-        bar_win.set_child(Some(&bar.root));
-        drop(bar);
-        wall.present();
-        bar_win.present();
-        pump(10);
-        wall.destroy();
-        bar_win.destroy();
-        pump(10);
-    }
-    let now = (
-        shell::kit::lifetime::live_ticks(),
-        ui::ipc::reload_hooks(),
-        ui::menubar::bars().len(),
-    );
-    assert_eq!(
-        now, base,
-        "(minute ticks, reload hooks, bars) after 25 plug/unplug cycles"
-    );
-}
-
-fn a_stalled_page_fade_settles() {
-    use shell::kit::assistant as a;
-    let pager = a::pager();
-    for n in ["a", "b", "c"] {
-        pager.add_named(&gtk::Label::new(Some(n)), Some(n));
-    }
-    let win = gtk::Window::builder()
-        .default_width(300)
-        .default_height(200)
-        .build();
-    win.set_child(Some(&pager));
-    win.present();
-    pump(300);
-    pager.set_visible_child_name("b");
-    assert!(pager.is_transition_running(), "the fade has started");
-    a::settle(&pager);
-    assert!(!pager.is_transition_running(), "a stalled fade must end");
-    let shown: Vec<bool> = ["a", "b", "c"]
-        .iter()
-        .map(|n| pager.child_by_name(n).unwrap().is_child_visible())
-        .collect();
-    assert_eq!(shown, [false, true, false], "only the new page stays drawn");
-    assert_eq!(pager.visible_child_name().as_deref(), Some("b"));
-    assert_eq!(pager.transition_type(), gtk::StackTransitionType::Crossfade);
-    win.destroy();
-}
-
-/// Audit2 A2-4: below 640 px the sidebar collapsed with no way back. The toolbar toggle shows it in
-/// place of the content, picking a row returns to the content, and widening the window brings the
-/// two-pane layout back.
-fn a_narrow_window_can_bring_the_sidebar_back() {
-    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
-    let (aw, ah) = w::APP_NARROW;
-    let win = gtk::Window::builder()
-        .decorated(false)
-        .default_width(aw)
-        .default_height(ah)
-        .build();
-    win.set_child(Some(&a.root));
-    win.present();
-    pump(300);
-    let side = a
-        .sidebar
-        .parent()
-        .and_then(|v| v.parent())
-        .expect("sidebar scroller");
-    assert!(
-        a.sidebar_toggle.is_visible(),
-        "narrow: the toolbar offers the sidebar"
-    );
-    assert!(
-        a.sidebar_toggle.is_focusable(),
-        "the toggle takes the keyboard"
-    );
-    assert!(
-        !side.is_visible() && a.content.is_visible(),
-        "narrow starts on the content"
-    );
-    a.sidebar_toggle.emit_clicked();
-    assert!(
-        side.is_visible() && !a.content.is_visible(),
-        "the toggle shows the sidebar"
-    );
-    assert!(
-        a.sidebar_toggle.is_visible(),
-        "the sidebar alone still offers the way back to the page"
-    );
-    a.sidebar_toggle.emit_clicked();
-    assert!(
-        !side.is_visible() && a.content.is_visible(),
-        "the toggle goes back to the content"
-    );
-    a.sidebar_toggle.emit_clicked();
-    assert!(side.is_visible(), "and shows the sidebar again");
-    let mut i = 0;
-    let row = loop {
-        let r = a.sidebar.row_at_index(i).expect("a Sound row");
-        if r.widget_name() == "Sound" {
-            break r;
-        }
-        i += 1;
-    };
-    a.sidebar.select_row(Some(&row));
-    row.emit_activate();
-    assert!(
-        !side.is_visible() && a.content.is_visible(),
-        "picking a row shows its page"
-    );
-    assert_eq!(a.content.visible_child_name().as_deref(), Some("Sound"));
-    assert!(a.sidebar_toggle.is_visible());
-    win.set_default_size(900, 600);
-    pump(300);
-    assert!(
-        side.is_visible() && a.content.is_visible(),
-        "wide: both panes"
-    );
-    assert!(!a.sidebar_toggle.is_visible(), "wide: no toggle");
-    win.destroy();
 }
 
 fn find_type<T: IsA<gtk::Widget>>(w: &gtk::Widget, out: &mut Vec<T>) {
@@ -2158,15 +1707,15 @@ fn main() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../design/icons/symbolic"
     ));
-    effects_page_answers_after_it_is_built();
+    regressions::effects_page_answers_after_it_is_built();
     settings_cases::checks();
-    a_stalled_page_fade_settles();
-    a_narrow_window_can_bring_the_sidebar_back();
-    displays_coming_and_going_leave_nothing_behind();
-    a_toggle_waits_for_its_change_and_reverts_when_it_fails();
-    return_belongs_to_the_button_with_the_keyboard_ring();
-    the_dock_takes_a_new_layout();
-    an_app_tile_keeps_one_source_badge();
+    regressions::a_stalled_page_fade_settles();
+    regressions::a_narrow_window_can_bring_the_sidebar_back();
+    regressions::displays_coming_and_going_leave_nothing_behind();
+    regressions::a_toggle_waits_for_its_change_and_reverts_when_it_fails();
+    regressions::return_belongs_to_the_button_with_the_keyboard_ring();
+    regressions::the_dock_takes_a_new_layout();
+    regressions::an_app_tile_keeps_one_source_badge();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
@@ -2307,28 +1856,4 @@ fn audit4_shell_cases() -> Vec<Case> {
         wallpaper: false,
         build: Box::new(|| ui::lock::Login::new(&[]).root.clone()),
     }]
-}
-
-/// Audit4 S3-11: a tile re-sourced (Store refresh) showed "Flathub Flathub".
-fn an_app_tile_keeps_one_source_badge() {
-    let t = w::AppTile::new(&w::store_icon("gimp", w::ICON_L), "GIMP", "Edit photos");
-    assert_eq!(t.source(), "", "no badge until set");
-    t.set_source("Flathub");
-    t.set_source("Flathub");
-    assert_eq!(t.source(), "Flathub");
-    // Not in a window: walk the tree by hand (find_class wants drawn widgets).
-    fn visible_badges(w: &gtk::Widget) -> usize {
-        let here = usize::from(w.is_visible() && w.has_css_class("badge"));
-        let mut n = here;
-        let mut c = w.first_child();
-        while let Some(ch) = c {
-            n += visible_badges(&ch);
-            c = ch.next_sibling();
-        }
-        n
-    }
-    let shown = visible_badges(t.root.upcast_ref());
-    assert_eq!(shown, 1, "one badge, however often it is set");
-    t.set_source("");
-    assert_eq!(t.source(), "", "an empty source hides it");
 }

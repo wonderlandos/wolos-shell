@@ -380,6 +380,20 @@ impl GroupNotes {
         self.notes.retain(|n| n.id != id);
         was_shown
     }
+
+    /// The shown note's banner time, when it has one.
+    pub fn shown_ms(&self) -> Option<u32> {
+        self.shown().and_then(banner_ms)
+    }
+
+    /// The app withdrew `id`. `Some(timer)` when the withdrawn one was on screen and the group
+    /// shows another note now: `timer` is that note's banner time (None = it stays until
+    /// answered). The note re-shown needs its own timer, the one it had ran out unseen
+    /// (audit6 S6-1).
+    pub fn withdraw(&mut self, id: u32) -> Option<Option<u32>> {
+        let reshown = self.remove(id) && !self.is_empty();
+        reshown.then(|| self.shown_ms())
+    }
 }
 
 /// Where a new banner goes, given the banners on screen as (app, stacked count), top first.
@@ -1002,6 +1016,51 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 gr.last = (id, click_action(n));
             })
         };
+        // Starts the banner timer of the group holding `rev`: when it runs out and `generation`
+        // is still the group's, the timed notes expire (audit6 S6-1: one place for every arm).
+        let arm = {
+            let (groups, drop_group, closed, render) = (
+                groups.clone(),
+                drop_group.clone(),
+                closed.clone(),
+                render.clone(),
+            );
+            move |rev: gtk::Revealer, generation: u32, ms: u32| {
+                let (groups, drop_group, closed, render) = (
+                    groups.clone(),
+                    drop_group.clone(),
+                    closed.clone(),
+                    render.clone(),
+                );
+                glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(ms as u64),
+                    move || {
+                        // Only the group's latest note expires it (a newer note has its own
+                        // timer); its sticky notes stay and show again (audit4 S3-4).
+                        let (gone, empty) = {
+                            let mut g = groups.borrow_mut();
+                            let Some(gr) = g
+                                .iter_mut()
+                                .find(|g| g.rev == rev && g.generation == generation)
+                            else {
+                                return;
+                            };
+                            let gone = gr.notes.expire();
+                            if !gr.notes.is_empty() {
+                                render(gr);
+                            }
+                            (gone, gr.notes.is_empty())
+                        };
+                        if empty {
+                            drop_group(&rev);
+                        }
+                        for id in gone {
+                            closed(id, CloseReason::Expired);
+                        }
+                    },
+                );
+            }
+        };
         while let Ok(ev) = rx.recv().await {
             let (mut n, fresh) = match ev {
                 Event::Show(n) => (n, true),
@@ -1027,12 +1086,20 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                         let Some(gr) = g.iter_mut().find(|x| x.notes.contains(id)) else {
                             continue;
                         };
-                        let was_shown = gr.notes.remove(id);
+                        let reshown = gr.notes.withdraw(id);
                         if gr.notes.is_empty() {
                             Some(gr.rev.clone())
                         } else {
-                            if was_shown {
+                            if let Some(ms) = reshown {
                                 render(gr);
+                                // The note shown again may be a timed one that ran its timer
+                                // out of sight: it gets a fresh one (audit6 S6-1).
+                                if let Some(ms) = ms {
+                                    let generation = next_gen.get().wrapping_add(1);
+                                    next_gen.set(generation);
+                                    gr.generation = generation;
+                                    arm(gr.rev.clone(), generation, ms);
+                                }
                             }
                             None
                         }
@@ -1123,39 +1190,7 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 }
             };
             if let Some(ms) = banner_ms(&n) {
-                let (groups, drop_group, closed, render) = (
-                    groups.clone(),
-                    drop_group.clone(),
-                    closed.clone(),
-                    render.clone(),
-                );
-                glib::timeout_add_local_once(
-                    std::time::Duration::from_millis(ms as u64),
-                    move || {
-                        // Only the group's latest note expires it (a newer note has its own
-                        // timer); its sticky notes stay and show again (audit4 S3-4).
-                        let (gone, empty) = {
-                            let mut g = groups.borrow_mut();
-                            let Some(gr) = g
-                                .iter_mut()
-                                .find(|g| g.rev == rev && g.generation == generation)
-                            else {
-                                return;
-                            };
-                            let gone = gr.notes.expire();
-                            if !gr.notes.is_empty() {
-                                render(gr);
-                            }
-                            (gone, gr.notes.is_empty())
-                        };
-                        if empty {
-                            drop_group(&rev);
-                        }
-                        for id in gone {
-                            closed(id, CloseReason::Expired);
-                        }
-                    },
-                );
+                arm(rev, generation, ms);
             }
         }
     });
@@ -1380,6 +1415,51 @@ mod tests {
         assert_eq!(c.remove(7), None);
         assert_eq!(c.clear().len(), CENTER_MAX - 1);
         assert!(c.is_empty());
+    }
+
+    /// Audit6 S6-1: a timed note under a sticky one lost its timer when the sticky one was
+    /// withdrawn (or replaced the shown note by id) and then stayed on screen for good.
+    #[test]
+    fn a_timed_note_shown_again_after_a_withdrawal_gets_a_timer() {
+        let sticky = |id| Note {
+            id,
+            actions: vec![("open".into(), "Open".into())],
+            ..n(false, -1)
+        };
+        let timed = |id| Note {
+            id,
+            ..n(false, 3000)
+        };
+        let mut g = GroupNotes::default();
+        g.push(timed(2));
+        g.push(sticky(3));
+        assert_eq!(g.shown_ms(), None, "the sticky one has no timer");
+        assert_eq!(
+            g.withdraw(3),
+            Some(Some(3000)),
+            "note 2 is back, with a fresh timer"
+        );
+        g.push(sticky(4));
+        assert_eq!(
+            g.withdraw(2),
+            None,
+            "a hidden note goes quietly: nothing to re-arm"
+        );
+        assert_eq!(g.withdraw(9), None, "an unknown id changes nothing");
+        assert_eq!(
+            g.withdraw(4),
+            None,
+            "the last one leaves: no group left to time"
+        );
+        g.push(sticky(5));
+        g.push(timed(6));
+        g.push(sticky(7));
+        assert_eq!(g.withdraw(7), Some(Some(3000)));
+        assert_eq!(
+            g.withdraw(6),
+            Some(None),
+            "a sticky note comes back: no timer"
+        );
     }
 
     /// Audit4 S3-4: a plain note stacked over an unanswered one with buttons expired both; the

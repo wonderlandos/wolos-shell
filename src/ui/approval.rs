@@ -11,6 +11,7 @@
 //! (`crate::app_session::set_sheet`), never on the socket (audit S1). A same-account requester is
 //! named by the executable the kernel reports; the name it gives itself is only a second line
 //! (audit S18).
+use crate::copy;
 use crate::kit::{surface, widgets as w};
 use crate::system::{ActionError, System};
 use gtk::{gio, glib, prelude::*};
@@ -116,6 +117,11 @@ pub fn plain(s: &str) -> String {
 pub fn title(a: &Approval, exe: Option<&str>) -> String {
     let path = exe.or_else(|| a.helper.starts_with('/').then_some(a.helper.as_str()));
     let what = plain(&a.request.describe());
+    // P6-4: any process of the account can run `/usr/bin/wol` and raise this sheet, so the file
+    // name "wol" says nothing; the sheet leads with what would change, package names in quotes.
+    if path == Some(shared::portal::HELPER_GATE) {
+        return copy::approval_via_wol(&plain(&quoted(&a.request).describe()));
+    }
     match path {
         Some(p) => format!(
             "“{}” ({}) wants to {what}.",
@@ -123,6 +129,18 @@ pub fn title(a: &Approval, exe: Option<&str>) -> String {
             plain(p)
         ),
         None => format!("“{}” wants to {what}.", plain(display_name(&a.helper))),
+    }
+}
+
+/// `request` with the package names of a package change in quotes (the name is what the person
+/// must check), anything else as it is.
+fn quoted(request: &ApprovalRequest) -> ApprovalRequest {
+    match request {
+        ApprovalRequest::Packages { verb, names } => ApprovalRequest::Packages {
+            verb: verb.clone(),
+            names: names.iter().map(|n| format!("“{}”", plain(n))).collect(),
+        },
+        other => other.clone(),
     }
 }
 
@@ -723,6 +741,37 @@ mod tests {
             None,
             "nothing to add when the names agree"
         );
+    }
+
+    /// Audit P6-4: `/usr/bin/wol` is what any process of the account can be, so its sheet does not
+    /// name "wol" as the requester: "a program using wol", and the package name in quotes.
+    #[test]
+    fn a_sheet_raised_through_the_wol_gate_names_the_change_not_wol() {
+        let a = Approval {
+            helper: shared::portal::HELPER_GATE.into(),
+            tool: "wol: packages-install".into(),
+            request: R::Packages {
+                verb: "install".into(),
+                names: vec!["gimp".into(), "ev\u{202E}il".into()],
+            },
+        };
+        let t = title(&a, None);
+        assert_eq!(
+            t, "A program using wol wants to install “gimp”, “evil” for every account.",
+            "{t}"
+        );
+        assert!(!t.contains("/usr/bin/wol") && !t.contains("“wol”"), "{t}");
+        assert_eq!(title(&a, Some("/usr/bin/wol")), t, "the same from the kernel's word");
+        let wifi = Approval {
+            request: R::Wifi { on: false },
+            ..a.clone()
+        };
+        assert_eq!(title(&wifi, None), "A program using wol wants to turn Wi-Fi off.");
+        let other = Approval {
+            helper: "/usr/bin/wopkg".into(),
+            ..a
+        };
+        assert!(title(&other, None).starts_with("“wopkg” (/usr/bin/wopkg)"));
     }
 
     /// R2C-12: a path or a name with bidi overrides or control characters cannot reorder the

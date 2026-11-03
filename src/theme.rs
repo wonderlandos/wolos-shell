@@ -6,18 +6,43 @@ use wol_core::theme::{self as core_theme, ThemeCatalog, active};
 pub type Theme = core_theme::ResolvedTheme;
 
 thread_local! {
-    static CATALOG: std::cell::RefCell<ThemeCatalog> = std::cell::RefCell::new(catalog());
+    /// Built-ins and the accent variants only: no disk work on the GTK thread. The installed
+    /// themes (folders, plugin packs) are read off-thread the first time an id is unknown.
+    static CATALOG: std::cell::RefCell<ThemeCatalog> =
+        std::cell::RefCell::new(with_accents(ThemeCatalog::builtin()));
+    /// Ids already looked for on disk and not found: one re-read per id (audit6 S6-2).
+    static MISSED: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+    /// Runs on the GTK thread after the installed themes were adopted (the stylesheet loader).
+    static REFRESHED: std::cell::RefCell<Option<std::rc::Rc<dyn Fn()>>> = Default::default();
 }
 
-/// The installed catalog plus the accent variants: the one the shell draws with.
-fn catalog() -> ThemeCatalog {
-    with_accents(installed())
-}
-
-/// Built-ins, theme folders and enabled plugins' theme packs (ADR 0031 themes v2).
+/// Built-ins, theme folders and enabled plugins' theme packs (ADR 0031 themes v2). Walks the
+/// disk: only ever called from a worker thread ([`refresh_off_thread`]).
 fn installed() -> ThemeCatalog {
     let data = core_theme::apps::data_home(|k| std::env::var(k).ok());
     ThemeCatalog::installed(&core_theme::config_home(), data.as_deref())
+}
+
+/// `f` runs on the GTK thread each time a background re-read of the installed themes was
+/// adopted, so the loader can draw an id that was unknown until then.
+pub fn on_refreshed(f: std::rc::Rc<dyn Fn()>) {
+    REFRESHED.with(|r| *r.borrow_mut() = Some(f));
+}
+
+/// Reads the installed themes on a worker thread and adopts them on the GTK thread.
+fn refresh_off_thread() {
+    let _ = std::thread::Builder::new()
+        .name("theme-refresh".into())
+        .spawn(|| {
+            let cat = installed();
+            gtk::glib::MainContext::default().invoke(move || {
+                adopt(cat);
+                let f = REFRESHED.with(|r| r.borrow().clone());
+                if let Some(f) = f {
+                    f();
+                }
+            });
+        });
 }
 
 /// Draws with `installed` (built-ins, theme folders and plugin packs, read off the GTK thread by
@@ -36,22 +61,26 @@ fn with_accents(installed: ThemeCatalog) -> ThemeCatalog {
 
 /// Saved id (None = follow appearance) -> resolved theme; unknown ids fall back to the variant default.
 /// `wol-auto-<accent>` follows `prefer_dark` (`wol_core::theme::accent`).
-/// An id the catalog does not know re-reads the installed themes once before falling back
-/// (audit5 S9-2: a pack picked after the shell started).
+/// Never touches the disk: an id the catalog does not know (a pack picked after the shell
+/// started, or one that was removed) draws the default now and starts one background re-read
+/// per id, after which `on_refreshed` redraws (audit5 S9-2, audit6 S6-2).
 pub fn resolve(saved: Option<&str>, prefer_dark: bool) -> Theme {
-    CATALOG.with(|c| resolve_in(c, catalog, saved, prefer_dark))
+    CATALOG.with(|c| MISSED.with(|m| resolve_in(c, m, refresh_off_thread, saved, prefer_dark)))
 }
 
 fn resolve_in(
     cat: &std::cell::RefCell<ThemeCatalog>,
-    fresh: impl FnOnce() -> ThemeCatalog,
+    missed: &std::cell::RefCell<std::collections::HashSet<String>>,
+    refresh: impl FnOnce(),
     saved: Option<&str>,
     prefer_dark: bool,
 ) -> Theme {
     let saved = core_theme::accent::effective(saved, prefer_dark);
     let id = active::effective(saved.as_deref(), prefer_dark);
-    if cat.borrow().resolve(&id).is_err() {
-        *cat.borrow_mut() = fresh();
+    if cat.borrow().resolve(&id).is_ok() {
+        missed.borrow_mut().remove(&id);
+    } else if missed.borrow_mut().insert(id.clone()) {
+        refresh();
     }
     let c = cat.borrow();
     c.resolve(&id)
@@ -115,9 +144,11 @@ mod tests {
     use super::*;
 
     /// Audit5 S9-2: a pack picked after the shell started is drawn, not the variant default.
+    /// Audit6 S6-2: the re-read happens once per unknown id, not on every resolve.
     #[test]
     fn a_theme_installed_after_start_resolves_without_restart() {
         let cat = std::cell::RefCell::new(ThemeCatalog::builtin());
+        let missed = Default::default();
         let base = ThemeCatalog::builtin()
             .list()
             .into_iter()
@@ -127,17 +158,60 @@ mod tests {
         let mut pack = base.clone();
         pack.id = "pack-night".into();
         pack.name = "Night".into();
-        let first = resolve_in(&cat, ThemeCatalog::builtin, None, true);
+        let first = resolve_in(&cat, &missed, || panic!("builtin id"), None, true);
         assert_ne!(first.id, "pack-night");
-        let added = ThemeCatalog::builtin().with(pack.clone());
-        let t = resolve_in(&cat, move || added, Some("pack-night"), true);
-        assert_eq!(
-            t.id, "pack-night",
-            "the unknown id re-read the installed themes"
+        let reads = std::cell::Cell::new(0);
+        let t = resolve_in(
+            &cat,
+            &missed,
+            || reads.set(reads.get() + 1),
+            Some("pack-night"),
+            true,
         );
-        // Still unknown after the re-read: the variant default.
-        let t = resolve_in(&cat, ThemeCatalog::builtin, Some("gone"), false);
-        assert_eq!(t.id, Variant::Light.default_theme());
+        assert_ne!(
+            t.id, "pack-night",
+            "unknown until the re-read lands: the default"
+        );
+        assert_eq!(reads.get(), 1);
+        // The background read lands (`adopt` swaps the catalog in).
+        *cat.borrow_mut() = ThemeCatalog::builtin().with(pack.clone());
+        let t = resolve_in(
+            &cat,
+            &missed,
+            || panic!("known now"),
+            Some("pack-night"),
+            true,
+        );
+        assert_eq!(t.id, "pack-night");
+    }
+
+    /// Audit6 S6-2: a saved id that stays unknown (its plugin was removed) walked the theme
+    /// folders on every resolve. One re-read per id; a second unknown id gets its own.
+    #[test]
+    fn an_id_that_stays_unknown_is_looked_for_once() {
+        let cat = std::cell::RefCell::new(ThemeCatalog::builtin());
+        let missed = Default::default();
+        let reads = std::cell::Cell::new(0);
+        for _ in 0..5 {
+            let t = resolve_in(
+                &cat,
+                &missed,
+                || reads.set(reads.get() + 1),
+                Some("gone"),
+                false,
+            );
+            assert_eq!(t.id, Variant::Light.default_theme());
+        }
+        assert_eq!(reads.get(), 1, "five resolves, one re-read");
+        resolve_in(
+            &cat,
+            &missed,
+            || reads.set(reads.get() + 1),
+            Some("other"),
+            false,
+        );
+        assert_eq!(reads.get(), 2);
+        resolve_in(&cat, &missed, || panic!("asked again"), Some("gone"), false);
     }
 
     #[test]

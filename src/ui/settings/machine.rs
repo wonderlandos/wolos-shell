@@ -627,7 +627,7 @@ impl Machine for Demo {
             ),
             m(
                 "ai-claude",
-                "Claude Code",
+                "AI Assistants",
                 "The AI coding assistant in the terminal",
                 120,
                 true,

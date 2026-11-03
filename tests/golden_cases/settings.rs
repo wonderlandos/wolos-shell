@@ -35,7 +35,7 @@ pub fn cases() -> Vec<Case> {
     }
     // S7-12: a list `wol` could not give is an error, not "no modules".
     v.push(Case {
-        name: "settings-modules-error".into(),
+        name: "settings-modules-error-wide".into(),
         size: w::APP_SIZE,
         class: "preview-app",
         wallpaper: false,
@@ -48,7 +48,7 @@ pub fn cases() -> Vec<Case> {
     });
     // What modules-install gave up on: a "Could Not Be Added" section with Retry on each.
     v.push(Case {
-        name: "settings-modules-gave-up".into(),
+        name: "settings-modules-gave-up-wide".into(),
         size: w::APP_SIZE,
         class: "preview-app",
         wallpaper: false,

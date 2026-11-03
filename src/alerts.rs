@@ -4,6 +4,7 @@
 //! `wol_core::update::check`; the sentences from [`crate::copy`].
 use crate::status::{Battery, BatteryStatus};
 use wol_core::power::policy::{self, Alert};
+use crate::software_update::PluginNews;
 use wol_core::update::check::Updates;
 
 /// Below this share of free space on the startup disk, warn once (until it is back above
@@ -34,6 +35,8 @@ pub struct Alerts {
     polls: u32,
     /// The update check already notified about (its `checked` time).
     updates_shown: u64,
+    /// Plugin versions already notified about: (id, version).
+    plugins_shown: Vec<(String, String)>,
     /// The online install result already shown (its `at` time).
     online_shown: Option<u64>,
     /// Newest stopped file already shown (its `when`).
@@ -81,6 +84,26 @@ impl Alerts {
         let u = u.filter(|u| u.notify_after(self.updates_shown))?;
         self.updates_shown = u.checked;
         let (s, body) = crate::copy::updates_ready(u.count(), !u.security.is_empty());
+        Some(Notice::Show(s, body, false))
+    }
+
+    /// Plugin updates the plugin index has for this account (audit6 ST6-4): one notice for the
+    /// versions not yet told about, none when every one was. A plugin that updates again is told
+    /// about again; one that was updated is forgotten.
+    pub fn plugin_updates(&mut self, news: Vec<PluginNews>) -> Option<Notice> {
+        self.plugins_shown
+            .retain(|(id, v)| news.iter().any(|n| n.id == *id && n.to == *v));
+        let fresh: Vec<&PluginNews> = news
+            .iter()
+            .filter(|n| !self.plugins_shown.contains(&(n.id.clone(), n.to.clone())))
+            .collect();
+        if fresh.is_empty() {
+            return None;
+        }
+        self.plugins_shown
+            .extend(fresh.iter().map(|n| (n.id.clone(), n.to.clone())));
+        let names: Vec<&str> = fresh.iter().map(|n| n.name.as_str()).collect();
+        let (s, body) = crate::copy::plugin_updates_ready(&names);
         Some(Notice::Show(s, body, false))
     }
 
@@ -157,15 +180,33 @@ pub struct Reads {
 #[derive(Debug, Default)]
 pub struct DueReads {
     pub updates: Option<Updates>,
+    /// Plugin updates, read about once an hour ([`PLUGINS_EVERY_DUE`]); None between the checks
+    /// (an empty list is a check that found nothing).
+    pub plugins: Option<Vec<PluginNews>>,
     pub online: Option<shared::hardware::OnlineInstall>,
     /// Free and total bytes of the startup disk.
     pub disk: Option<(u64, u64)>,
+}
+
+/// Due reads between plugin index checks (a due read is every 5 minutes: once an hour). The check
+/// reads the verified cache and downloads only when wopkg's own rule asks for it, so this bounds
+/// how often an offline computer tries.
+pub const PLUGINS_EVERY_DUE: u32 = 12;
+static DUE_READS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Whether this due read also checks the plugin index: the first one, then every
+/// [`PLUGINS_EVERY_DUE`]th.
+fn plugins_due() -> bool {
+    DUE_READS
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .is_multiple_of(PLUGINS_EVERY_DUE)
 }
 
 /// Blocking: `df`, the update check's files, the online-install record and the malware lists.
 fn read(due: bool) -> Reads {
     let due = due.then(|| DueReads {
         updates: Updates::read(std::path::Path::new(wol_core::update::check::DIR)),
+        plugins: plugins_due().then(crate::software_update::plugin_news),
         online: std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
             .ok()
             .and_then(|t| wol_core::hardware::online::parse(&t)),
@@ -185,6 +226,10 @@ pub fn notices(a: &mut Alerts, r: Reads) -> Vec<Notice> {
         out.extend(a.online(d.online));
         out.extend(d.disk.and_then(|(f, t)| a.disk(f, t)));
         out.extend(a.updates(d.updates));
+        // Between the hourly checks nothing is read, and what was told stays told.
+        if let Some(news) = d.plugins {
+            out.extend(a.plugin_updates(news));
+        }
     }
     if let Some(texts) = r.malware {
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
@@ -430,6 +475,56 @@ mod tests {
         );
     }
 
+    /// ST6-4: a plugin update is told once per version, again for a newer one, and an empty or
+    /// absent read does not make the same version new again.
+    #[test]
+    fn plugin_updates_notify_once_per_version() {
+        let n = |id: &str, name: &str, to: &str| PluginNews {
+            id: id.into(),
+            name: name.into(),
+            to: to.into(),
+        };
+        let mut a = Alerts::default();
+        assert_eq!(a.plugin_updates(vec![]), None);
+        let Some(Notice::Show(s, body, false)) =
+            a.plugin_updates(vec![n("alice.weather", "Weather", "1.3")])
+        else {
+            panic!()
+        };
+        assert_eq!(s, "Plugin Update Available");
+        assert_eq!(body, "Weather has an update. Open the App Store, then Plugins, to install it.");
+        assert_eq!(
+            a.plugin_updates(vec![n("alice.weather", "Weather", "1.3")]),
+            None,
+            "same version: once"
+        );
+        // Another plugin: only it is named.
+        let Some(Notice::Show(_, body, _)) = a.plugin_updates(vec![
+            n("alice.weather", "Weather", "1.3"),
+            n("bob.clock", "Clock", "2.0"),
+        ]) else {
+            panic!()
+        };
+        assert!(body.starts_with("Clock has"), "{body}");
+        // A newer version of the first is news again.
+        let Some(Notice::Show(_, body, _)) = a.plugin_updates(vec![n("alice.weather", "Weather", "1.4")]) else {
+            panic!()
+        };
+        assert!(body.contains("Weather"), "{body}");
+        // Two at once: counted, not listed.
+        let mut b = Alerts::default();
+        let Some(Notice::Show(_, body, _)) = b.plugin_updates(vec![
+            n("alice.weather", "Weather", "1.3"),
+            n("bob.clock", "Clock", "2.0"),
+        ]) else {
+            panic!()
+        };
+        assert!(body.starts_with("Updates are ready for 2 plugins"), "{body}");
+        // Updated (gone from the list), then a new version: told again.
+        assert_eq!(b.plugin_updates(vec![]), None);
+        assert!(b.plugin_updates(vec![n("bob.clock", "Clock", "2.0")]).is_some());
+    }
+
     /// Audit4 S3-6: what the blocking read found becomes notices on the UI thread, in order;
     /// a poll between the due ones reads no disk.
     #[test]
@@ -441,6 +536,11 @@ mod tests {
         let r = Reads {
             due: Some(DueReads {
                 updates: Updates::parse("100", "curl 8.1-1 -> 8.2-1\n", "", ""),
+                plugins: Some(vec![PluginNews {
+                    id: "alice.weather".into(),
+                    name: "Weather".into(),
+                    to: "1.3".into(),
+                }]),
                 online: Some(OnlineInstall {
                     at: 7,
                     packages: vec!["nvidia-drm-kmod".into()],
@@ -452,13 +552,17 @@ mod tests {
             malware: Some(vec![]),
         };
         let got = notices(&mut a, r);
-        assert_eq!(got.len(), 3, "{got:?}");
+        assert_eq!(got.len(), 4, "{got:?}");
         assert!(matches!(got[0], Notice::Restart(..)), "driver first");
         let Notice::Show(disk, ..) = &got[1] else {
             panic!("{got:?}")
         };
         assert_eq!(disk, &crate::copy::disk_full("2 GB").0);
         assert!(matches!(&got[2], Notice::Show(s, ..) if s == "Updates Available"));
+        let Notice::Show(s, body, false) = &got[3] else {
+            panic!("{got:?}")
+        };
+        assert_eq!((s.as_str(), body.contains("Weather")), ("Plugin Update Available", true));
         assert!(read(false).due.is_none(), "no df between the due polls");
     }
 
@@ -469,7 +573,9 @@ mod tests {
         let (_, db) = crate::copy::disk_full("2 GB");
         let (_, u1) = crate::copy::updates_ready(1, false);
         let (_, u2) = crate::copy::updates_ready(4, true);
-        for t in [b.as_str(), crate::copy::BATTERY_SLEEP.1, &db, &u1, &u2] {
+        let (_, p1) = crate::copy::plugin_updates_ready(&["Weather"]);
+        let (_, p2) = crate::copy::plugin_updates_ready(&["Weather", "Clock"]);
+        for t in [b.as_str(), crate::copy::BATTERY_SLEEP.1, &db, &u1, &u2, &p1, &p2] {
             assert!(
                 crate::copy::lint(t).is_empty(),
                 "{t}: {:?}",

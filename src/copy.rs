@@ -412,6 +412,13 @@ pub fn approval_package_file(sha256: &str) -> String {
     format!("SHA-256 of the copy: {sha256}. Enter your password to allow this.")
 }
 
+/// The title of an administrator or consent sheet raised by any program that runs `/usr/bin/wol`
+/// (any process of the account can; P6-4): the program is not named, the change is, so the sheet
+/// cannot pass for a WolOS tool. `what` ends "wants to …" with the package names quoted.
+pub fn approval_via_wol(what: &str) -> String {
+    format!("A program using wol wants to {what}.")
+}
+
 /// Joining the Wi-Fi network `name`. Denied = the administrator sheet was cancelled.
 pub fn wifi_join(e: ActionError, name: &str) -> String {
     match e {

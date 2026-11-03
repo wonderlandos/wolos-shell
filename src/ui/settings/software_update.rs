@@ -94,6 +94,13 @@ fn automatic(e: &Rc<Env>, into: &gtk::Box) {
     );
 }
 
+/// What the main switch (now `on`) asks of an option: `Some(on)` when the option is shown
+/// (`usable`), idle and not there yet; `None` for one that waits for its change or already
+/// matches (a second `set_active` on a waiting switch starts a second change).
+fn drive(on: bool, usable: bool, active: bool, idle: bool) -> Option<bool> {
+    (usable && idle && active != on).then_some(on)
+}
+
 /// The switches of [`automatic`]. Each option waits for its change and flips back, with the
 /// reason under the section, when it fails (the Authenticate sheet cancelled, wol-admind refused,
 /// the user timer could not be changed); the main switch follows them. Without the
@@ -153,10 +160,21 @@ fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool) {
             let on = m.is_active();
             dl_row.set_visible(can_download && on);
             ap_row.set_visible(on);
-            if can_download {
-                dl.set_active(on);
+            // Only an option that is idle and differs is driven: one that waits for its change
+            // would run a second one on top of the first (audit6 S6-3).
+            for (o, usable) in [(&dl, can_download), (&ap, true)] {
+                if let Some(want) = drive(on, usable, o.is_active(), o.is_sensitive()) {
+                    o.set_active(want);
+                }
             }
-            ap.set_active(on);
+        });
+    }
+    // The main switch waits while an option waits for its change: a second answer to either
+    // would race the first (audit6 S6-3).
+    for s in [&dl, &ap] {
+        let (main, dl, ap) = (main.clone(), dl.clone(), ap.clone());
+        s.connect_sensitive_notify(move |_| {
+            main.set_sensitive(dl.is_sensitive() && ap.is_sensitive())
         });
     }
     // An option that ends off (turned off, or a change that failed) turns the main switch off
@@ -394,6 +412,41 @@ mod tests {
         assert!(auto_main(true, false));
         assert!(auto_main(false, true));
         assert!(!auto_main(false, false));
+    }
+
+    /// Audit6 S6-3: the main switch started a second change on an option that was still waiting
+    /// for its first (a cancelled Authenticate then left the options and the main switch apart).
+    #[test]
+    fn the_main_switch_drives_only_idle_options_that_differ() {
+        assert_eq!(drive(true, true, false, true), Some(true));
+        assert_eq!(drive(false, true, true, true), Some(false));
+        assert_eq!(drive(true, true, true, true), None, "already there");
+        assert_eq!(
+            drive(true, true, false, false),
+            None,
+            "still waiting for its change"
+        );
+        assert_eq!(
+            drive(true, false, false, true),
+            None,
+            "not offered in this build"
+        );
+        // Both off; the main switch goes on: both options start their change and wait.
+        let (mut dl, mut ap) = ((false, true), (false, true)); // (active, idle)
+        for o in [&mut dl, &mut ap] {
+            if let Some(w) = drive(true, true, o.0, o.1) {
+                *o = (w, false);
+            }
+        }
+        assert_eq!((dl, ap), ((true, false), (true, false)));
+        // The Authenticate sheet is cancelled: `dl` flips back. `ap` is still waiting and on, so
+        // the main switch stays on, and nothing re-drives `ap`.
+        dl = (false, true);
+        assert!(auto_main(dl.0, ap.0));
+        assert_eq!(drive(true, true, ap.0, ap.1), None);
+        // `ap` ends on: main on, `ap` on, `dl` off.
+        ap = (true, true);
+        assert!(auto_main(dl.0, ap.0) && ap.0 && !dl.0);
     }
 
     #[test]

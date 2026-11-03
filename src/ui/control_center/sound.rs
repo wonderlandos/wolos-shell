@@ -3,8 +3,9 @@
 //! codec, drawn from the frozen `wol_core::audio::Device` model. The devices come from the
 //! wol-audio service through Settings > Sound's seam ([`SoundSource`], [`from_state`]); while the
 //! service has said nothing (no PipeWire) they come from `System` ([`snapshot`]). Outputs change
-//! through `System` (`Action::Output/Volume/Muted`, as Settings does); input pick, level and mute
-//! go to the service as `wol_core::audio::Action`s.
+//! through `System` (`Action::Output/Muted`, as Settings does); input pick, level and mute go to
+//! the service as `wol_core::audio::Action`s, and so does the output level whenever the service
+//! is the one drawing the page: its slider counts from 0 dB, which `System`'s `wpctl` does not.
 //! Invariant: 100% on a slider is 0 dB (`wol_core::audio::percent_of`), never the hardware maximum.
 use super::{SOUND_SETTINGS, Ui, launch};
 use crate::kit::{
@@ -12,9 +13,11 @@ use crate::kit::{
     widgets as w,
 };
 use crate::system::{Action, System};
-use crate::ui::settings::{SoundRequest, SoundSource, SoundState};
+use crate::ui::settings::{
+    SoundRequest, SoundSource, SoundState, Touch, apply_scale_plan, scale_plan, system_percent,
+};
 use gtk::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wol_core::audio::{self, Action as AudioAction, Device, DeviceKind};
 
@@ -46,6 +49,7 @@ pub(super) fn from_state(s: &SoundState) -> Snapshot {
         keys: outputs.iter().map(|d| d.id.to_string()).collect(),
         inputs: of(DeviceKind::Input),
         outputs,
+        boost: s.boost,
     }
 }
 
@@ -56,6 +60,8 @@ pub(super) struct Snapshot {
     pub inputs: Vec<Device>,
     /// What `Action::Output` takes for each output, in the order of `outputs`.
     pub keys: Vec<String>,
+    /// "Allow louder": the sliders may pass 0 dB (the service's setting; `System` has none).
+    pub boost: bool,
 }
 
 impl Snapshot {
@@ -105,6 +111,7 @@ pub(super) fn snapshot(s: &dyn System) -> Snapshot {
         outputs,
         inputs,
         keys: outs.into_iter().map(|o| o.id).collect(),
+        boost: false,
     }
 }
 
@@ -173,14 +180,27 @@ struct Level {
     scale: gtk::Scale,
     icon: gtk::Image,
     mute: gtk::Button,
+    /// When the user last moved the slider: the page's own refresh leaves it alone meanwhile.
+    touch: Rc<Touch>,
 }
 
 impl Level {
-    fn new(icon_name: &str, tip: &str, changed: impl Fn(f64) + 'static) -> Self {
+    /// `changed` gets the slider position (100 = 0 dB) for the user's moves, not for refreshes.
+    fn new(ui: &Rc<Ui>, icon_name: &str, tip: &str, changed: impl Fn(u16) + 'static) -> Self {
         let row = w::hbox(w::S2);
         let o = gtk::Overlay::new();
         o.set_hexpand(true);
-        let scale = w::slider(0.0, changed);
+        let touch: Rc<Touch> = Default::default();
+        let scale = {
+            let (ui, touch) = (ui.clone(), touch.clone());
+            w::slider(0.0, move |v| {
+                if ui.syncing.get() {
+                    return;
+                }
+                touch.moved();
+                changed(v.round().clamp(0.0, 1000.0) as u16)
+            })
+        };
         scale.add_css_class("fat");
         o.set_child(Some(&scale));
         let icon = w::icon(icon_name, w::ICON);
@@ -196,15 +216,14 @@ impl Level {
             scale,
             icon,
             mute,
+            touch,
         }
     }
-    fn set(&self, d: Option<&Device>, sliding: bool) {
+    /// Draws `d`: range from "Allow louder", knob unless `sliding` (the user has it).
+    fn set(&self, d: Option<&Device>, boost: bool, sliding: bool) {
         self.row.set_visible(d.is_some());
-        if let Some(d) = d {
-            let v = f64::from(percent(d));
-            if !sliding && (self.scale.value() - v).abs() >= 0.5 {
-                self.scale.set_value(v);
-            }
+        if let Some(plan) = scale_plan(d, boost, sliding) {
+            apply_scale_plan(&self.scale, &plan);
         }
         let i = level_icon(d);
         if self.icon.icon_name().as_deref() != Some(i) {
@@ -232,6 +251,9 @@ pub(super) struct SoundPage {
     /// Its newest state.
     state: RefCell<Option<SoundState>>,
     shown: Rc<RefCell<Option<Snapshot>>>,
+    /// The page is drawn from the running service (not a fixed preview, not `System`): the
+    /// output slider then goes to it.
+    from_service: Rc<Cell<bool>>,
 }
 
 /// Sends `a` to the sound service, unless a refresh is moving the controls.
@@ -261,10 +283,16 @@ impl SoundPage {
         }
         let src: Src = Default::default();
         let shown: Rc<RefCell<Option<Snapshot>>> = Default::default();
+        let from_service: Rc<Cell<bool>> = Default::default();
         let output = {
-            let u = ui.clone();
-            Level::new("audio-volume-high-symbolic", "Mute", move |v| {
-                u.act_latest("volume", Action::Volume(v.round().clamp(0.0, 100.0) as u8))
+            let (u, src, live) = (ui.clone(), src.clone(), from_service.clone());
+            Level::new(ui, "audio-volume-high-symbolic", "Mute", move |pct| {
+                if live.get() {
+                    // 100 = 0 dB, converted by the service (A6-2).
+                    send(&u, &src, AudioAction::OutputVolume(pct));
+                } else {
+                    u.act_latest("volume", Action::Volume(system_percent(pct)));
+                }
             })
         };
         {
@@ -277,12 +305,10 @@ impl SoundPage {
         let input = {
             let (u, src) = (ui.clone(), src.clone());
             Level::new(
+                ui,
                 "audio-input-microphone-symbolic",
                 "Mute Microphone",
-                move |v| {
-                    let pct = v.round().clamp(0.0, 100.0) as u16;
-                    send(&u, &src, AudioAction::MicVolume(pct))
-                },
+                move |pct| send(&u, &src, AudioAction::MicVolume(pct)),
             )
         };
         {
@@ -315,6 +341,7 @@ impl SoundPage {
             src,
             state: Default::default(),
             shown,
+            from_service,
         }
     }
 
@@ -353,9 +380,25 @@ impl SoundPage {
         let live = self.has_source() && self.state.borrow().is_some();
         self.input.scale.set_sensitive(live);
         self.input.mute.set_sensitive(live);
-        self.output
-            .set(snap.default_of(DeviceKind::Output), ui.sliding("volume"));
-        self.input.set(snap.default_of(DeviceKind::Input), false);
+        self.from_service.set(
+            self.src.borrow().as_ref().is_some_and(|s| s.live())
+                && self
+                    .state
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|s| !s.devices.is_empty()),
+        );
+        let hold = Touch::hold(0);
+        self.output.set(
+            snap.default_of(DeviceKind::Output),
+            snap.boost,
+            ui.sliding("volume") || self.output.touch.busy(hold),
+        );
+        self.input.set(
+            snap.default_of(DeviceKind::Input),
+            snap.boost,
+            self.input.touch.busy(hold),
+        );
         self.input_heading.set_visible(!snap.inputs.is_empty());
         if self.shown.borrow().as_ref() == Some(&snap) {
             return;
@@ -473,6 +516,25 @@ mod tests {
                 .any(|d| codec_label(d.codec.as_deref()).is_some())
         );
         assert_eq!(from_state(&SoundState::default()), Snapshot::default());
+    }
+
+    /// A6-1: "Allow louder" is the service's setting; the page's sliders get it with the devices,
+    /// and `System`'s snapshot has none.
+    #[test]
+    fn the_snapshot_carries_allow_louder() {
+        let mut st = SoundState::demo();
+        assert!(!from_state(&st).boost);
+        st.boost = true;
+        let snap = from_state(&st);
+        assert!(snap.boost);
+        let mic = snap.default_of(DeviceKind::Input).unwrap();
+        let plan = scale_plan(Some(mic), snap.boost, false).unwrap();
+        assert!(
+            plan.max > 100 && plan.tick,
+            "the demo microphone has +20 dB to give: {plan:?}"
+        );
+        assert_eq!(scale_plan(Some(mic), false, false).unwrap().max, 100);
+        assert!(!snapshot(&crate::system::Fake).boost);
     }
 
     /// The default output carries System's volume and mute; 100% on the slider is 0 dB.

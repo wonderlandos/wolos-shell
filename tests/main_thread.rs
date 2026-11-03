@@ -56,7 +56,8 @@ const WRAPPERS: [&str; 5] = [
 const WINDOW: usize = 6;
 
 /// Scope: code that runs on the GTK thread.
-const SCOPE: [&str; 2] = ["ui/", "kit/"];
+/// `theme.rs` too: `resolve` runs on the GTK thread and must not walk the theme folders (S6-2).
+const SCOPE: [&str; 3] = ["ui/", "kit/", "theme.rs"];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
 const BASELINE: [(&str, usize); 18] = [
@@ -182,7 +183,7 @@ fn the_main_thread_never_blocks() {
     }
     let r = std::panic::catch_unwind(|| {
         scan::ratchet(
-            "blocking calls on the GTK thread in src/ui, src/kit (move them into \
+            "blocking calls on the GTK thread in src/ui, src/kit, src/theme.rs (move them into \
              gio::spawn_blocking; STANDARDS §1, R2A-21)",
             &have,
             &BASELINE,

@@ -3,7 +3,8 @@
 //! on a real disk's probe, and writes the plan the app would.
 //! `install_scenario <scenario> <probe.json> <plan dir>`; prints the summary.
 //! Scenarios: erase, password, tpm, alongside, encrypted-alongside, manual, manual-ext4,
-//! replace (the partition named `linuxroot`), replace-wolos (the old WolOS partition).
+//! replace (the partition named `linuxroot`), replace-wolos (the old WolOS partition),
+//! modules (Erase, with the smallest module ticked on the Modules page: ai-sessions).
 use shell::install::flow::{Flow, Found, Method, Next, Row, Step, Use, manual_lines};
 use shell::install::{Check, write_plan};
 use shell::setup::Hints;
@@ -102,7 +103,7 @@ fn main() {
         must(&mut f, s);
     }
     match scenario {
-        "erase" | "password" | "tpm" => {
+        "erase" | "password" | "tpm" | "modules" => {
             f.method = Method::Erase;
             must(&mut f, Step::Protect);
         }
@@ -135,11 +136,23 @@ fn main() {
     };
     f.disk_password = "white rabbit".into();
     f.disk_verify = "white rabbit".into();
+    // The image's module records give the Modules page (the live system has them); the plain
+    // scenarios tick nothing. "modules" ticks one, so the plan carries a module to install.
+    f.set_modules(&shell::install::modules_on_image());
     must(&mut f, Step::Account);
     f.draft.set_full_name("Alice Liddell");
     f.draft.password = "curiouser".into();
     f.draft.verify = "curiouser".into();
-    // No module records here, so no Modules page; the media formats stay off.
+    if f.module_list.is_empty() {
+        assert_ne!(scenario, "modules", "the image has no module records");
+    } else {
+        must(&mut f, Step::Modules);
+        if scenario == "modules" {
+            f.tick_module("ai-sessions", true);
+            assert_eq!(f.modules, ["ai-sessions"], "ai-sessions is not offered");
+        }
+    }
+    // The media formats stay off.
     must(&mut f, Step::Extras);
     must(&mut f, Step::Summary);
     for l in f.summary() {

@@ -234,9 +234,8 @@ fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box) {
         move || {
             let m = message.clone();
             glib::spawn_future_local(async move {
-                if !gtk::gio::spawn_blocking(restart_now).await.unwrap_or(false) {
-                    m.set_label(crate::copy::power_refused(login::Power::Restart));
-                }
+                let taken = gtk::gio::spawn_blocking(restart_now).await.unwrap_or(false);
+                m.set_label(restart_caption(taken).0);
             });
         },
     );
@@ -301,10 +300,10 @@ impl Login {
                     let v = gtk::gio::spawn_blocking(move || login::power(login::LOGIN_SOCKET, p))
                         .await
                         .unwrap_or(Verdict::Error);
-                    if let Some(text) = power_note(p, v) {
-                        r.set_label(text);
-                        r.set_visible(true);
-                    }
+                    // A later answer replaces an earlier refusal: a taken request clears it.
+                    let (text, shown) = caption(power_note(p, v));
+                    r.set_label(text);
+                    r.set_visible(shown);
                 });
             };
             foot.append(&action(login::power_icon(p), login::power_label(p), run).0);
@@ -390,6 +389,22 @@ fn action(icon: &str, label: &str, run: impl Fn() + 'static) -> (gtk::Box, gtk::
     v.append(&b);
     v.append(&w::centered(label, "lock-caption"));
     (v, b)
+}
+
+const LOCK_RESTART_REFUSED_TMP: &str = "This computer can’t restart while someone else is signed in. Ask them to sign out, then try again.";
+
+/// The caption under a power row for `note` (what [`power_note`] returned): its text and whether
+/// it is shown. No note clears the caption (audit6 S6-5: a refusal stayed after a later
+/// request was taken).
+pub fn caption(note: Option<&'static str>) -> (&'static str, bool) {
+    (note.unwrap_or(""), note.is_some())
+}
+
+/// What the lock screen's Restart says once `wol power restart` answered. The restart is
+/// refused while another account is signed in (wol-admind's rule, `user_level_ok`), and the lock
+/// screen cannot ask for more rights, so the caption names that way out (audit6 S6-5).
+pub fn restart_caption(taken: bool) -> (&'static str, bool) {
+    caption((!taken).then_some(LOCK_RESTART_REFUSED_TMP))
 }
 
 /// What a power button's answer shows: nothing when it was taken.
@@ -714,6 +729,15 @@ mod tests {
         );
         assert!(login_accounts("root:*:0:0::/root:/bin/sh\n", "").is_empty());
         assert_eq!(power_note(Power::ShutDown, Verdict::Ok), None);
+        // Audit6 S6-5: a refusal and then a taken request: the caption goes away.
+        let refused = caption(power_note(Power::ShutDown, Verdict::Error));
+        assert_eq!(refused, (crate::copy::power_refused(Power::ShutDown), true));
+        assert_eq!(caption(power_note(Power::Sleep, Verdict::Ok)), ("", false));
+        // The lock screen's Restart names the other signed-in account when it is refused,
+        // and clears the text when taken.
+        assert_eq!(restart_caption(false), (LOCK_RESTART_REFUSED_TMP, true));
+        assert!(LOCK_RESTART_REFUSED_TMP.contains("signed in"));
+        assert_eq!(restart_caption(true), ("", false));
         assert_eq!(
             power_note(Power::ShutDown, Verdict::Error),
             Some(crate::copy::power_refused(Power::ShutDown))
