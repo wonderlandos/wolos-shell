@@ -115,7 +115,7 @@ pub const SEARCH_NONE_TITLE: &str = "No Results";
 pub const SEARCH_NONE: &str = "No settings match. Try another word.";
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 34] = [
+pub const ALL: [&str; 36] = [
     SOUND_RECONNECTING,
     SOUND_LOUDER,
     SOUND_AUTO_LEVEL,
@@ -150,7 +150,18 @@ pub const ALL: [&str; 34] = [
     AUTO_APPS_FAILED,
     DISPLAYS_NONE,
     SEARCH_NONE,
+    GENERAL_TERMINAL_SHELL,
+    GENERAL_TERMINAL_SHELL_NOT_SAVED,
 ];
+
+// ---- General ----
+
+/// "Shell in the terminal" subtitle (`wol_core::terminal_shell`).
+pub const GENERAL_TERMINAL_SHELL: &str =
+    "New terminal windows open in it. You still log in with zsh.";
+/// The choice could not be saved: the menu shows the saved shell again.
+pub const GENERAL_TERMINAL_SHELL_NOT_SAVED: &str =
+    "The shell couldn’t be changed. Try again in a moment.";
 
 #[cfg(test)]
 mod tests {

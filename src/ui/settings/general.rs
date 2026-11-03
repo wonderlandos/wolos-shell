@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! General: the way into About, Software Update, Storage, Login Items, Language & Region, Date &
-//! Time and Sharing (each a subpage with a back button).
+//! Time and Sharing (each a subpage with a back button), and the shell new terminal windows open
+//! in (`wol_core::terminal_shell`, journaled so the change can be undone).
 use super::*;
 
 /// (icon, title, subtitle) per row; rows of a group share a card.
@@ -63,7 +64,51 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             .collect();
         p.append(&w::section("", &rows));
     }
+    terminal_shell(e, &p);
     p
+}
+
+/// "Shell in the terminal": the installed shells by program name; the choice is saved to
+/// `$XDG_CONFIG_HOME/wolos/terminal-shell`, which `wol-term-shell` reads for each new window.
+fn terminal_shell(e: &Rc<Env>, p: &gtk::Box) {
+    use wol_core::terminal_shell as ts;
+    let shells: Vec<&'static str> = if e.host.terminal_shells.is_empty() {
+        vec![ts::DEFAULT]
+    } else {
+        e.host.terminal_shells.clone()
+    };
+    let saved = Rc::new(std::cell::Cell::new(ts::effective(
+        read(&config(ts::FILE)).as_deref(),
+        &shells,
+    )));
+    let at = |id: &str, list: &[&str]| list.iter().position(|s| *s == id).unwrap_or(0);
+    let note = w::footnote(crate::copy::settings::GENERAL_TERMINAL_SHELL_NOT_SAVED);
+    note.set_visible(false);
+    // The menu, so a failed save can put it back to the saved shell.
+    let menu = Rc::new(glib::WeakRef::<gtk::DropDown>::new());
+    let (list, sv, n, m) = (shells.clone(), saved.clone(), note.clone(), menu.clone());
+    let picker = form::picker_row(
+        "Shell in the terminal",
+        crate::copy::settings::GENERAL_TERMINAL_SHELL,
+        &shells,
+        at(saved.get(), &shells),
+        move |i| {
+            let id = list[i];
+            if id == sv.get() {
+                return;
+            }
+            let ok = save_journaled("terminal shell", ts::FILE, Some(&ts::render(id))).is_ok();
+            n.set_visible(!ok);
+            if ok {
+                sv.set(id);
+            } else if let Some(m) = m.upgrade() {
+                m.set_selected(u32::try_from(at(sv.get(), &list)).unwrap_or_default());
+            }
+        },
+    );
+    menu.set(control_in::<gtk::DropDown>(&picker).as_ref());
+    p.append(&w::section("", &[picker]));
+    p.append(&note);
 }
 
 /// A General subpage: back to General, large title.
