@@ -577,13 +577,13 @@ pub fn disk_full(free: &str) -> (String, String) {
     )
 }
 
-/// Files' "Analyze with ClamAV".
-pub const ANALYZE_TITLE: &str = "Analyze with ClamAV";
+/// Files' "Check for Malware" (the full signature set).
+pub const ANALYZE_TITLE: &str = "Check for Malware";
 
 pub fn analyze_checking(shown: &str) -> (String, String) {
     (
         format!("Checking {shown}…"),
-        "ClamAV can take a few seconds to start.".into(),
+        "The full check can take a few seconds to start.".into(),
     )
 }
 
@@ -597,7 +597,7 @@ pub fn analyze_offer(f: &wol_core::malware::Full) -> (String, String) {
     } else {
         (
             "Signatures Are Off".into(),
-            "ClamAV needs its signature database. You can turn it on in Settings > Privacy & Security, which downloads it to this computer. Nothing was checked.".into(),
+            "The full check needs its signature set. You can turn it on in Settings > Privacy & Security, which downloads it to this computer. Nothing was checked.".into(),
         )
     }
 }
@@ -613,14 +613,14 @@ pub fn analyze_result(
         Analysis::Clean => (
             "Nothing Found".into(),
             format!(
-                "ClamAV checked {shown} against {:.1} million signatures, version {}.",
+                "The full check compared {shown} with {:.1} million signatures, version {}.",
                 f.signatures as f64 / 1e6,
                 f.version
             ),
         ),
         Analysis::Found(_) => (
             "Malware Found".into(),
-            format!("ClamAV matched {shown} to known malware. Move it to the Trash."),
+            format!("The full check matched {shown} to known malware. Move it to the Trash."),
         ),
         Analysis::Incomplete(_) => (
             "Check Not Finished".into(),
@@ -670,6 +670,8 @@ pub fn malware_full(f: &wol_core::malware::Full) -> String {
         "Off. The standard check stays on.".into()
     } else if f.updating {
         "Downloading signatures…".into()
+    } else if let Some(why) = &f.refused {
+        format!("Signature update refused: {why}. The previous signatures stay in use.")
     } else if f.failed {
         "The last download did not finish. WolOS will try again tomorrow.".into()
     } else if f.version == 0 {
@@ -684,8 +686,8 @@ pub fn malware_full(f: &wol_core::malware::Full) -> String {
 }
 
 /// What turning it on means.
-pub const MALWARE_FULL_NOTE: &str = "Downloads about 110 MB from the ClamAV project, then a small \
-     update each day. While it checks a download it can use about 1 GB of memory.";
+pub const MALWARE_FULL_NOTE: &str = "Downloads about 115 MB once, then about 25 MB a day, and the \
+     system checks every download before use. A check can use about 1 GB of memory.";
 
 /// What the check does, and what it cannot do.
 pub const MALWARE_SCOPE: &str = "Checks downloads, new programs and removable disks for known \
@@ -915,6 +917,30 @@ pub const PLUGIN_OPEN_FAILED: &str = "No app here opens this.";
 
 #[cfg(test)]
 mod tests {
+    /// Audit F10: a download the system refused is said as such, not as "did not finish".
+    #[test]
+    fn a_refused_signature_update_is_said() {
+        let f = wol_core::malware::Full {
+            on: true,
+            version: 28173,
+            failed: false,
+            refused: Some("the publisher's signature does not verify".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            super::malware_full(&f),
+            "Signature update refused: the publisher's signature does not verify. The previous \
+             signatures stay in use."
+        );
+        let downloading = wol_core::malware::Full {
+            updating: true,
+            ..f.clone()
+        };
+        assert_eq!(super::malware_full(&downloading), "Downloading signatures…");
+        let fine = wol_core::malware::Full { refused: None, ..f };
+        assert!(super::malware_full(&fine).starts_with("0.0 million signatures"));
+    }
+
     use super::*;
 
     /// R2A-19: the Dock, Desktop & Dock and widget sentences pass the lint.
