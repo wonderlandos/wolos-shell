@@ -356,6 +356,25 @@ fn at(i: &Rc<Installer>, page: &str) {
             secure(i, "mok", "off", true);
             i.jump(Step::Summary)
         }
+        // No network at install time: the Summary says the media formats and modules chosen are
+        // added at first start (copy::installer::DEFERRED_BOTH).
+        "summary-offline" => {
+            i.set_online_probe(|| false);
+            i.with_flow(|f| {
+                f.method = Method::Erase;
+                f.set_modules(&records());
+                f.tick_module("dev", true);
+                f.codecs = true;
+                f.offline = true;
+            });
+            i.jump(Step::Summary);
+            i.with_flow(|f| {
+                assert_eq!(
+                    f.deferred_line(),
+                    Some(shell::copy::installer::DEFERRED_BOTH)
+                )
+            });
+        }
         // R2B-9: a Windows with BitLocker stays and this install changes the Secure Boot keys.
         "summary-bitlocker" | "secure-boot-bitlocker" => {
             i.with_flow(|f| {
@@ -439,7 +458,7 @@ refuse UntypablePassword
 }
 
 pub fn add(v: &mut Vec<Case>) {
-    const PAGES: [&str; 44] = [
+    const PAGES: [&str; 45] = [
         "begin",
         "language",
         "zone",
@@ -462,6 +481,7 @@ pub fn add(v: &mut Vec<Case>) {
         "summary-manual",
         "summary-bitlocker",
         "summary-choices",
+        "summary-offline",
         "secure-boot",
         "secure-boot-bitlocker",
         "secure-boot-choice",

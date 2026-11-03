@@ -727,7 +727,7 @@ pub fn plugin_updates_ready(names: &[&str]) -> (String, String) {
     }
 }
 
-/// Restart, Shut Down and Log Out ask first (macOS): question, countdown line, button.
+/// Restart, Shut Down and Log Out ask first: question, countdown line, button.
 pub fn session_confirm(action: &str, secs: u32) -> Option<(&'static str, String, &'static str)> {
     let (q, what, button) = match action {
         "shutdown" => (

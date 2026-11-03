@@ -117,7 +117,7 @@ impl Queued {
     }
 
     /// Super was released before the list came: switch without showing the strip (a quick
-    /// ⌘Tab tap brings the previous app forward, macOS).
+    /// ⌘Tab tap brings the previous app forward).
     pub fn commits(self) -> bool {
         self.commit
     }

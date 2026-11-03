@@ -54,7 +54,7 @@ pub struct Bar {
 }
 
 impl Bar {
-    /// Full strength on the focused display, dimmed on the others (macOS).
+    /// Full strength on the focused display, dimmed on the others.
     pub fn set_active(&self, on: bool) {
         if on {
             self.root.remove_css_class("inactive");
@@ -134,7 +134,7 @@ fn status_target(tip: &str) -> String {
     format!("control-center:{}", status_page(tip))
 }
 
-/// WolOS menu (the logo), macOS Apple menu order. Empty title = separator.
+/// WolOS menu (the logo), system menu order. Empty title = separator.
 pub const LOGO_MENU: &[(&str, &[&str])] = &[
     ("About This Computer", &["wol-settings", "About"]),
     ("", &[]),
@@ -452,6 +452,16 @@ pub fn build(
         let b = Rc::downgrade(&bar);
         let last = Rc::new(RefCell::new(Vec::new()));
         let paths = host.borrow().paths().clone();
+        if primary {
+            // A config reload drops every `keyword` bind (audit5 S9-4): put the plugin hotkeys in
+            // again. The hook lives for the session; a bar that is gone does nothing.
+            let (b, paths, last) = (Rc::downgrade(&bar), paths.clone(), last.clone());
+            crate::hypr::on_config_reloaded(move || {
+                if b.upgrade().is_some() {
+                    plugins::replay_hotkeys(&paths, &last);
+                }
+            });
+        }
         plugins::watch(
             &host,
             &bar.life,
@@ -483,7 +493,7 @@ pub fn build(
     (win, bar)
 }
 
-/// The menu to open when the pointer enters title `hovered` while menu `open` is open (macOS).
+/// The menu to open when the pointer enters title `hovered` while menu `open` is open.
 pub fn hover_switch(open: Option<usize>, hovered: usize) -> Option<usize> {
     open.filter(|o| *o != hovered).map(|_| hovered)
 }
@@ -678,7 +688,7 @@ pub fn poll_status(sys: Rc<dyn crate::system::System>) {
 mod hover_tests {
     use super::hover_switch;
 
-    /// macOS: with a menu open, the pointer over another title opens that one instead.
+    /// With a menu open, the pointer over another title opens that one instead.
     #[test]
     fn hovering_a_title_switches_only_while_a_menu_is_open() {
         assert_eq!(hover_switch(Some(0), 2), Some(2));

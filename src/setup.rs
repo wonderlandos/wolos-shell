@@ -322,7 +322,7 @@ pub const THEMES: [(&str, &str); 3] = [
     ("graphite", "Slate"),
 ];
 
-/// Account name macOS-style: lowercase ASCII letters and digits of the full name, accents folded,
+/// Account name: lowercase ASCII letters and digits of the full name, accents folded,
 /// starting with a letter, at most 32.
 pub fn account_name(full: &str) -> String {
     let fold = |c: char| -> Option<char> {

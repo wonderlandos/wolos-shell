@@ -264,7 +264,7 @@ impl Server {
 }
 
 /// Banner lifetime: server default 5 s, -1 = default, 0 = until clicked; critical and banners
-/// with buttons stay until answered or dismissed (macOS alerts).
+/// with buttons stay until answered or dismissed (alerts).
 pub fn banner_ms(n: &Note) -> Option<u32> {
     match (n.critical || !buttons(n).is_empty(), n.timeout_ms) {
         (true, _) | (_, 0) => None,
@@ -637,7 +637,7 @@ pub fn note_icon(app: &str, installed: &[crate::desktop::Entry]) -> String {
         .map_or(icon, |e| e.icon.clone())
 }
 
-/// macOS banner: 344 px glass card, app icon, app name + "now", bold title, body up to 2 lines.
+/// Banner: 344 px glass card, app icon, app name + "now", bold title, body up to 2 lines.
 /// `count` > 1 draws the group's stacked edges under the card. Buttons do nothing here (golden,
 /// Notification Center); [`banner_with`] wires them.
 pub fn banner(n: &Note, count: u32) -> gtk::Box {
@@ -743,7 +743,7 @@ pub fn banner_offering(n: &Note, count: u32, act: Rc<dyn Fn(&str)>, take: Rc<Tak
     }
     row.append(&text);
     if !n.image.is_empty() {
-        // A screenshot's banner shows the picture, as on macOS: a small copy decoded off the UI
+        // A screenshot's banner shows the picture: a small copy decoded off the UI
         // thread once, shared with the Notification Center card (audit4 S3-3).
         let pic = gtk::Picture::new();
         pic.set_paintable(thumb(&n.image).as_ref());

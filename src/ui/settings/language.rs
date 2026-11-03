@@ -38,7 +38,9 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                     // The note only for a language saved since the page opened.
                     n2.set_visible(saved != opened);
                     if let Some(m) = m.upgrade() {
-                        m.set_selected(language_index(saved.as_deref()) as u32);
+                        m.set_selected(
+                            u32::try_from(language_index(saved.as_deref())).unwrap_or_default(),
+                        );
                     }
                 },
             );

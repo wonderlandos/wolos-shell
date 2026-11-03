@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! System Settings goldens beyond one render per page (those come from `ui::settings::PAGES` and
 //! `SUBPAGES` in golden.rs): search over every pane and row, wide and narrow, and the Modules pane
-//! when its list cannot be read and when modules-install gave up on a module and a media format. [`checks`]: what the panes do after a change that failed or
+//! when its list cannot be read and when modules-install gave up on a module and a media format,
+//! and Displays with two displays. [`checks`]: what the panes do after a change that failed or
 //! succeeded (audit5 S7-5, S7-6, S7-10 to S7-13).
 use super::{Case, find_type, pump};
 use gtk::prelude::*;
@@ -59,7 +60,61 @@ pub fn cases() -> Vec<Case> {
             a.root.clone().upcast()
         }),
     });
+    // Two displays: one section each (the built-in one first, it is the main display), one Night
+    // Shift switch for both.
+    for (tag, size) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
+        v.push(Case {
+            name: format!("settings-displays-two-{tag}"),
+            size,
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(|| {
+                let a = ui::settings::content(Rc::new(TwoDisplays), &ui::settings::Host::demo());
+                a.open("Displays");
+                a.root.clone().upcast()
+            }),
+        });
+    }
     v
+}
+
+/// [`shell::system::Fake`] with an external display next to the built-in one.
+struct TwoDisplays;
+
+impl System for TwoDisplays {
+    fn battery(&self) -> Option<Battery> {
+        shell::system::Fake.battery()
+    }
+    fn audio(&self) -> Audio {
+        shell::system::Fake.audio()
+    }
+    fn network(&self) -> Network {
+        shell::system::Fake.network()
+    }
+    fn brightness(&self) -> Option<u8> {
+        shell::system::Fake.brightness()
+    }
+    fn night_light(&self) -> Option<bool> {
+        shell::system::Fake.night_light()
+    }
+    fn monitors(&self) -> Vec<shell::system::Monitor> {
+        let mut v = shell::system::Fake.monitors();
+        v.push(shell::system::Monitor {
+            name: "DP-1".into(),
+            description: "External Display".into(),
+            width: 3840,
+            height: 2160,
+            refresh: 60.0,
+            scale: 1.5,
+            modes: vec![
+                "3840x2160@60.00Hz".into(),
+                "3840x2160@30.00Hz".into(),
+                "2560x1440@60.00Hz".into(),
+                "1920x1080@60.00Hz".into(),
+            ],
+        });
+        v
+    }
 }
 
 /// Every check below, run once before the goldens.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Which shell surfaces go on which display, pure side. Every display gets the wallpaper and a
-//! menu bar (dimmed while another display has the focus, like macOS); the main display (the
+//! menu bar (dimmed while another display has the focus); the main display (the
 //! first one the compositor lists) also gets the Dock and the desktop widgets. `ui::displays` builds
 //! and drops surfaces as displays come and go. Settings > Displays builds its `monitor =`
 //! rules here too (refresh rate, scale, arrangement next to the main display).

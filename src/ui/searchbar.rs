@@ -286,7 +286,7 @@ pub fn content(
                     }
                 });
                 {
-                    // The pointer moves the selection (macOS): Return opens what is lit.
+                    // The pointer moves the selection: Return opens what is lit.
                     let (shown, sel) = (shown.clone(), sel.clone());
                     let motion = gtk::EventControllerMotion::new();
                     motion.connect_enter(move |_, _, _| {

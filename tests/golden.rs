@@ -106,7 +106,7 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
-            // A display without the focus: its menu bar dimmed (macOS).
+            // A display without the focus: its menu bar dimmed.
             name: "menubar-inactive".into(),
             size: (900, 28),
             class: "preview",

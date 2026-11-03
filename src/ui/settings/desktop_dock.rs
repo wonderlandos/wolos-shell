@@ -156,7 +156,7 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
             move || {
                 let at = LAYOUTS.iter().position(|l| l.0 == dk.get().layout);
                 if let (Some(m), Some(at)) = (m.upgrade(), at) {
-                    m.set_selected(at as u32);
+                    m.set_selected(u32::try_from(at).unwrap_or_default());
                 }
             },
         )

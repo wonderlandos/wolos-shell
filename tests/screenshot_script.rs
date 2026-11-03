@@ -88,7 +88,7 @@ fn a_clipboard_failure_still_prints_the_saved_path() {
     assert!(err.contains("not copied to the clipboard"), "{err}");
 }
 
-/// ⇧⌘3 saves to the Desktop (macOS) and the banner names the folder, never the full path; the
+/// ⇧⌘3 saves to the Desktop and the banner names the folder, never the full path; the
 /// picture rides along as the banner's thumbnail (`image-path` hint).
 #[test]
 fn saves_to_the_desktop_and_the_banner_shows_a_thumbnail_not_a_path() {

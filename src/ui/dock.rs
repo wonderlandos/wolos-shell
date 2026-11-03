@@ -33,7 +33,7 @@ fn file_icon(i: &Item) -> gtk::Image {
     img
 }
 
-/// The stack's popover body (macOS grid): newest files, a click opens one; Open in Files last.
+/// The stack's popover body (grid): newest files, a click opens one; Open in Files last.
 pub fn stack_grid(items: &[Item], dir: &str, done: Rc<dyn Fn()>) -> gtk::Box {
     let b = w::vbox(w::S2);
     b.add_css_class("downloads-stack");
@@ -128,7 +128,7 @@ fn watch_downloads(dir: &str, items: Rc<RefCell<Vec<Item>>>) -> Option<gio::File
 /// Seconds a launched icon bounces at most when no window shows up.
 pub const LAUNCH_TIMEOUT_SECS: u32 = 15;
 
-/// What a click on a pinned app does (macOS): a running app comes forward, anything else launches.
+/// What a click on a pinned app does: a running app comes forward, anything else launches.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Click {
     Launch,
@@ -740,7 +740,7 @@ mod launch_tests {
 mod click_tests {
     use super::*;
 
-    /// Live: clicking the Dock icon of a running app started a second instance (macOS brings
+    /// Live: clicking the Dock icon of a running app started a second instance (WolOS brings
     /// the app forward). The focus target names every class the running dot accepts.
     #[test]
     fn a_click_focuses_a_running_app_and_launches_the_rest() {

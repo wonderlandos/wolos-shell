@@ -236,7 +236,7 @@ pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
             true
         })
     };
-    // Return captures (macOS); the button holds focus whenever the bar opens.
+    // Return captures; the button holds focus whenever the bar opens.
     let cap = bar.capture.clone();
     win.connect_show(move |_| {
         cap.grab_focus();

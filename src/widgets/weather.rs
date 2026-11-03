@@ -254,7 +254,7 @@ pub fn condition(code: u8, day: bool) -> (&'static str, &'static str) {
     }
 }
 
-/// "18°" (rounded, no unit letter: macOS style).
+/// "18°" (rounded, no unit letter).
 pub fn degrees(t: f64) -> String {
     let r = t.round();
     format!("{}°", if r == 0.0 { 0.0 } else { r })

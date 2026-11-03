@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The compositor draws the window buttons of Kit windows. The About panel is a layer surface, which
-//! gets no strip, so it keeps a close light of its own.
+//! gets no strip, so it keeps a close light of its own, top right where the compositor puts close.
 
 const CSS: &str = include_str!("../src/kit/kit.css");
 const WIDGETS: &str = include_str!("../src/kit/widgets.rs");
 const PANELS: &str = include_str!("../src/ui/panels.rs");
+const PICKERS: &str = include_str!("../src/kit/pickers.rs");
 
 #[test]
 fn app_windows_draw_no_window_buttons() {
@@ -54,4 +55,20 @@ fn the_buttons_are_not_traffic_lights() {
             .find(|l| l.starts_with("button.light") && l.contains(s));
         assert!(line.is_none(), "{s}: {line:?}");
     }
+}
+
+/// Close sits at the right edge everywhere, as the compositor row draws it (close rightmost).
+#[test]
+fn the_about_close_light_sits_top_right() {
+    assert!(PANELS.contains("lights.set_halign(gtk::Align::End);"));
+    assert!(!PANELS.contains("close.set_halign(gtk::Align::Start)"));
+    assert!(CSS.contains(".traffic-lights { margin-left: 16px; }"));
+    assert!(!CSS.contains(".traffic-lights { margin-right"));
+}
+
+/// The theme previews draw the same controls: right-aligned, one quiet colour, no status colours.
+#[test]
+fn previews_draw_quiet_controls_on_the_right() {
+    assert!(!PICKERS.contains("[t.danger, t.warning, t.success]"));
+    assert!(PICKERS.contains("x + ww - r.max(bar * 0.5) - f64::from(i) * dot * 3.0"));
 }

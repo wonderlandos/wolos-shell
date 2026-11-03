@@ -678,7 +678,7 @@ impl Host {
     /// The bar's three slots: the layout's items, plugin items of plugins that are on and
     /// loaded, then the `[[menubar]]` entries the layout does not place, by their `side` (left:
     /// end of the left slot; centre: end of the centre; right: before the system items, in
-    /// plugin order, as macOS status items sit left of the clock).
+    /// plugin order, status items left of the clock).
     pub fn bar(&self, layout: &Layout) -> [Vec<BarItem>; 3] {
         let live = |p: &str, id: &str| self.has(Kind::Menubar, p, id);
         let mut slots = [
@@ -1115,15 +1115,9 @@ fn read_binds(paths: &Paths) -> Vec<(Combo, Bind)> {
 
 type Registered = Rc<RefCell<Vec<(Combo, Bind)>>>;
 
-thread_local! {
-    /// The paths and binds of the last [`register_hotkeys`], for [`replay_hotkeys`].
-    static HOTKEYS: RefCell<Option<(Paths, Registered)>> = const { RefCell::new(None) };
-}
-
 /// Registers the plugin hotkeys with the compositor (`hyprctl keyword bind`, off the GTK thread),
 /// moving from the binds registered before (`last`). Called on every load.
 pub fn register_hotkeys(paths: &Paths, last: &Registered) {
-    HOTKEYS.with_borrow_mut(|h| *h = Some((paths.clone(), last.clone())));
     let (paths, last) = (paths.clone(), last.clone());
     glib::spawn_future_local(async move {
         let old = last.borrow().clone();
@@ -1151,12 +1145,9 @@ pub fn replay_commands(last: &[(Combo, Bind)]) -> Vec<String> {
 
 /// The compositor reloaded its config (`configreloaded`): the plugin hotkeys are gone there, so the
 /// next [`register_hotkeys`] starts from nothing and sends them all again.
-pub fn replay_hotkeys() {
-    let Some((paths, last)) = HOTKEYS.with_borrow(|h| h.clone()) else {
-        return;
-    };
+pub fn replay_hotkeys(paths: &Paths, last: &Registered) {
     last.borrow_mut().clear();
-    register_hotkeys(&paths, &last);
+    register_hotkeys(paths, last);
 }
 
 // ---- GTK: loading, watching, drawing ----

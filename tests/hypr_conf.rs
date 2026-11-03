@@ -242,7 +242,7 @@ fn every_command_shortcut_reaches_the_app_as_ctrl() {
     }
 }
 
-/// macOS system shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
+/// System shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
 /// ⌥⌘Esc (Force Quit), ⌃F2 (menu bar), ⌃F3 (Dock). Esc (closes panels, dismisses banners) is
 /// forwarded by wol-hypr, not bound (`no_process_per_escape_or_super_release`).
 #[test]
@@ -345,7 +345,7 @@ fn every_transient_panel_can_be_opened() {
 
 /// Audit2 A2-9: plain ⌃ + letter, digit or ←/→ is the app's key (Ctrl+1..9 browser tabs,
 /// Ctrl+arrows word-wise cursor; Super is ⌘ here). Spaces are ⌃⌥←/→ and ⌃⌥1..4 (⌃⌘arrows resize in
-/// tiling.conf). ⌃↑ stays the macOS Overview key and ⌃F2/⌃F3 the macOS bar keys.
+/// tiling.conf). ⌃↑ stays the Overview key and ⌃F2/⌃F3 the bar keys.
 #[test]
 fn plain_ctrl_keys_belong_to_the_app() {
     use wol_core::shortcuts::{CTRL, Combo, parse};

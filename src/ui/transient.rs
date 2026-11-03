@@ -6,7 +6,7 @@ use gtk::prelude::*;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-/// Shell panels that close like macOS menus. Not the OSD, Overview, the screenshot bar or
+/// Shell panels that close like menus. Not the OSD, Overview, the screenshot bar or
 /// Force Quit (a window that stays until dismissed).
 pub const PANELS: &[&str] = &[
     "control-center",

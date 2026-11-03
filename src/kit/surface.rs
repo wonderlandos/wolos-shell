@@ -135,7 +135,7 @@ impl Spec {
     /// Notification banners: top right, never take the keyboard. On the Top layer, not Overlay,
     /// so a zoomed window's menu bar band stays theirs. The compositor draws a Top layer mapped after a
     /// window went full screen above it, so the shell holds banners while the active workspace
-    /// is in full screen and shows them after (`ui::notify::held`, audit3 R2A-9), as macOS does.
+    /// is in full screen and shows them after (`ui::notify::held`, audit3 R2A-9).
     pub const fn banners() -> Self {
         Spec {
             layer: Layer::Top,

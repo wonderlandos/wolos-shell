@@ -518,17 +518,17 @@ impl Installer {
     /// The Failed page's foot sentence and the tool's own line in Details (the golden case checks
     /// that the tool's words are not on the foot).
     pub fn failed_texts(&self) -> (String, String) {
-        let mut foot = String::new();
-        self.with_card(Step::Failed, |c| {
-            if c.status.is_visible() {
-                foot = c.status.label().to_string();
+        // The label's own `visible` flag: `is_visible` also asks the parents, and Details is closed.
+        let own = |w: &gtk::Label| {
+            if w.property::<bool>("visible") {
+                w.label().to_string()
+            } else {
+                String::new()
             }
-        });
-        let tool = self
-            .failed_tool
-            .is_visible()
-            .then(|| self.failed_tool.label().to_string());
-        (foot, tool.unwrap_or_default())
+        };
+        let mut foot = String::new();
+        self.with_card(Step::Failed, |c| foot = own(&c.status));
+        (foot, own(&self.failed_tool))
     }
 
     /// Shows or hides the Failed page's log (goldens; the Details button does the same).

@@ -132,7 +132,7 @@ fn pins_keep_wolos_names_and_icons() {
 
 #[test]
 fn app_store_is_pinned_installed_and_opens_wol_packages() {
-    // macOS Dock: App Store sits before System Settings.
+    // Dock: App Store sits before System Settings.
     let p = PINS.iter().find(|p| p.name == "App Store").unwrap();
     assert_eq!(
         (p.id, p.icon, p.exec),

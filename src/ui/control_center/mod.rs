@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Control Center (macOS Sonoma layout): a connectivity card (Wi-Fi, Bluetooth) next to Focus
+//! Control Center (WolOS layout): a connectivity card (Wi-Fi, Bluetooth) next to Focus
 //! and Dark Mode, the Display and Sound sliders, Now Playing, then a grid of square
 //! tiles (Battery, Screen Mirroring, Keyboard Brightness, Night Shift, Screenshot, Record, accessibility, and the
 //! tiles of [`tiles::TileSource`], ADR 0031). Every control goes through `System` (core backend

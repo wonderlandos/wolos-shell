@@ -112,7 +112,8 @@ pub(super) fn panel_on(
     win.upcast()
 }
 
-/// About <App> card: close light, 64 px icon, name, app id. Glass, centred (HIG panel).
+/// About <App> card: close light (top right, where the compositor puts close), 64 px icon, name,
+/// app id. Glass, centred (HIG panel).
 pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
     let g = w::glass_panel(w::S6);
     g.set_size_request(w::ABOUT_WIDTH, -1);
@@ -121,7 +122,6 @@ pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
         close.add_css_class(c);
     }
     close.set_tooltip_text(Some("Close"));
-    close.set_halign(gtk::Align::Start);
     close.connect_clicked(|b| {
         if let Some(win) = b.root().and_downcast::<gtk::Window>() {
             win.close();
@@ -129,6 +129,7 @@ pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
     });
     let lights = w::hbox(0);
     lights.add_css_class("traffic-lights");
+    lights.set_halign(gtk::Align::End);
     lights.append(&close);
     g.append(&lights);
     let i = w::icon(icon, w::ICON_XL);
@@ -194,7 +195,7 @@ impl Osd {
         row.append(&icon);
         row.append(&bar);
         g.append(&row);
-        // Top layer (kit::surface::Spec::banners), shown over full screen too (macOS HUD). No
+        // Top layer (kit::surface::Spec::banners), shown over full screen too (a HUD). No
         // keyboard: an on-demand layer takes the keys from the app on map.
         let window = panel_on(
             app,
@@ -214,7 +215,7 @@ impl Osd {
     }
 
     /// Shows for 1.5 s; a newer show extends it. Also over a window in full screen, like the
-    /// macOS volume HUD (brief; banners are the ones held, `notify::held`).
+    /// Volume HUD (brief; banners are the ones held, `notify::held`).
     pub fn show(self: &Rc<Self>, icon: &str, level: u8) {
         self.icon.set_icon_name(Some(icon));
         self.bar.set_fraction(level as f64 / 100.0);
@@ -230,7 +231,7 @@ impl Osd {
     }
 }
 
-/// Restart / Shut Down / Log Out ask first (macOS): the question, a 60 s countdown, Cancel and
+/// Restart / Shut Down / Log Out ask first: the question, a 60 s countdown, Cancel and
 /// the action. Doing nothing runs it; Cancel, Esc or closing the panel drops it.
 struct Confirm {
     view: gtk::Box,

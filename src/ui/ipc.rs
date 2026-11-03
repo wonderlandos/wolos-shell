@@ -163,7 +163,7 @@ pub fn cc_page(target: &str) -> Option<&str> {
 pub enum CcAction {
     /// Closed: open it on the page.
     Open,
-    /// Open on another page: slide to the page and stay open (macOS switches to the clicked
+    /// Open on another page: slide to the page and stay open (it switches to the clicked
     /// item; audit3 R2A-2, a click on Wi-Fi closed the panel).
     SwitchTo,
     Close,
@@ -542,7 +542,7 @@ async fn reseed(dock: &Dock, show: &Show) {
 
 /// `hypr::fullscreen_state` from the compositor now (off the UI thread): banners hold while the active
 /// workspace is in full screen (audit3 R2A-9); the volume OSD is not held, it shows over it
-/// (brief, like the macOS HUD; decision audit5 S6-3). Each display's mode too, for its desktop
+/// (brief, like a HUD; decision audit5 S6-3). Each display's mode too, for its desktop
 /// widgets (audit5 S6-2).
 async fn refresh_fullscreen() {
     let (mode, per) =
@@ -610,7 +610,7 @@ async fn handle(line: &str, dock: &Rc<Dock>, panels: &Panels, show: &Show) {
         // binds (when the key plugin is not loaded) and all plugin hotkeys go in again.
         Some(hypr::Event::ConfigReloaded) => {
             let _ = gio::spawn_blocking(hypr::ensure_key_forwarding).await;
-            super::plugins::replay_hotkeys();
+            crate::hypr::config_reloaded();
         }
         Some(hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. }) => {
             let clients = gio::spawn_blocking(hypr::clients).await.unwrap_or_default();

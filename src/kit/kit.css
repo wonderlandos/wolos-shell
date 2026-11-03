@@ -49,7 +49,7 @@ window.wallpaper { background: linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04
 .menubar-strip { min-height: 28px; background: var(--bar-fill); padding: 0 8px; }
 .menubar-strip label, .menubar-strip image { color: var(--bar-text); }
 .menubar-strip image { -gtk-icon-size: 16px; }
-/* A display without the focus: its menu bar steps back (macOS). */
+/* A display without the focus: its menu bar steps back. */
 .menubar-strip.inactive > * { opacity: 0.5; }
 .menubar-strip .app-name { font-weight: 700; }
 button.menubar-item, .menubar-strip menubutton > button {
@@ -189,7 +189,7 @@ button.row-button:hover { background: var(--control); }
 .app-window { background: var(--surface); }
 .app-window label { color: var(--text); }
 .toolbar { min-height: 36px; padding: 0 16px; background: var(--glass); border-bottom: 1px solid var(--line); }
-.traffic-lights { margin-right: 16px; }
+.traffic-lights { margin-left: 16px; }
 /* WolOS window buttons: a quiet circle, the glyph (close, minimise, zoom) shows while the pointer is over the group,
    and only the button under the pointer takes the accent (pressed: a shade deeper). */
 button.light { min-width: 12px; min-height: 12px; padding: 0; border-radius: 999px; border: none; box-shadow: none; background: alpha(var(--text), 0.28); }
@@ -233,7 +233,7 @@ button.hit.selected label { color: var(--accent-text); }
 .force-quit button.btn:disabled { opacity: 0.45; }
 
 /* ---- Notifications / OSD / session ---- */
-/* 344 px outer width (macOS): 318 + 2 x 12 padding + 2 x 1 border. */
+/* 344 px outer width: 318 + 2 x 12 padding + 2 x 1 border. */
 .notification { min-width: 318px; padding: 12px; margin: 0; border-radius: 16px; }
 .notification.critical { border-color: var(--danger); }
 .osd-pill { border-radius: 999px; padding: 8px 16px; min-width: 216px; margin-bottom: 112px; }
@@ -294,7 +294,7 @@ label.avatar-s { font-size: 13px; }
 label.avatar-l { font-size: 22px; }
 label.avatar-xl { font-size: 22px; }
 
-/* ---- Inactive windows (macOS): an app window's chrome steps back while another window has the keys.
+/* ---- Inactive windows: an app window's chrome steps back while another window has the keys.
    GTK sets :backdrop on an unfocused toplevel; shell layers (menu bar, Dock, panels) never carry it. ---- */
 window.app:backdrop .toolbar, window.app:backdrop .app-menubar { background: color-mix(in srgb, var(--glass) 60%, transparent); }
 window.app:backdrop .toolbar label, window.app:backdrop .app-menubar label, window.app:backdrop label.title { color: var(--dim); }
@@ -342,7 +342,7 @@ label.hero-subhead { opacity: 0.9; }
 list.sidebar row.sidebar-search { padding: 0 0 8px 0; }
 list.sidebar row.sidebar-search:hover { background: none; }
 .store-grid { margin-top: -8px; }
-.hero-banner button.get-button label { color: #1d1d1f; }
+.hero-banner button.get-button label { color: #181521; } /* WolOS ink (tokens light.text) on the white button */
 
 /* ---- Assistants (Setup, installer; ADR 0013): one fixed card per question over the lock backdrop ---- */
 .glass-panel.assistant-card { padding: 32px; }

@@ -456,6 +456,7 @@ pub fn read_monitor_fullscreen() -> std::collections::HashMap<String, Fullscreen
 
 type OnFullscreen = std::rc::Rc<dyn Fn(Fullscreen)>;
 type OnMonitors = std::rc::Rc<dyn Fn()>;
+type OnConfig = std::rc::Rc<dyn Fn()>;
 
 thread_local! {
     /// Kept by the shell's one compositor event reader (`ui::ipc::hypr_events`).
@@ -464,6 +465,21 @@ thread_local! {
     /// Per output (audit5 S6-2): desktop widgets follow their own display.
     static MONITOR_FULLSCREEN: std::cell::RefCell<std::collections::HashMap<String, Fullscreen>> = Default::default();
     static ON_MONITORS: std::cell::RefCell<Vec<OnMonitors>> = Default::default();
+    /// Who must start again after the compositor reloaded its config (it drops every `keyword` bind).
+    static ON_CONFIG: std::cell::RefCell<Vec<OnConfig>> = Default::default();
+}
+
+/// Calls `f` each time the compositor reloads its config. The hook stays for the session: one that
+/// belongs to something that can go away holds it weakly and does nothing once it is gone.
+pub fn on_config_reloaded(f: impl Fn() + 'static) {
+    ON_CONFIG.with_borrow_mut(|v| v.push(std::rc::Rc::new(f)));
+}
+
+/// The compositor reloaded its config (`configreloaded`, from the one event reader): runs the hooks.
+pub fn config_reloaded() {
+    // A hook may register another while it runs: call a snapshot.
+    let hooks: Vec<OnConfig> = ON_CONFIG.with_borrow(|v| v.clone());
+    hooks.iter().for_each(|f| f());
 }
 
 /// Output `name`'s mode as last read; the focused workspace's ([`fullscreen_state`]) when the
@@ -528,6 +544,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_config_reload_runs_every_hook_once() {
+        let n = std::rc::Rc::new(std::cell::Cell::new(0));
+        for add in [1, 10] {
+            let n = n.clone();
+            on_config_reloaded(move || n.set(n.get() + add));
+        }
+        config_reloaded();
+        assert_eq!(n.get(), 11);
+    }
 
     #[test]
     fn zone_is_the_focused_output_minus_reserved() {

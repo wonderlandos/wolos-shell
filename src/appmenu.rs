@@ -369,7 +369,7 @@ pub fn batch(
             .map(|c| Dispatch::KillWindow(win(c)))
             .collect(),
         Act::Minimise => vec![hide_cmd(front)],
-        // Zoom does nothing to a window in real full screen (macOS greys it out): the toggling
+        // Zoom does nothing to a window in real full screen (the menu greys it out): the toggling
         // `fullscreen 1` dropped it to its floating box instead (audit3 R2A-13).
         Act::Zoom if front.fullscreen == 2 => return None,
         // `fullscreenstate` acts on the focused window: name the front window first, so a menu

@@ -42,7 +42,7 @@ pub fn to_show(
     (!a.is_empty()).then_some(a)
 }
 
-/// Selection while Super is held. Opening selects the previous app (index 1), like macOS.
+/// Selection while Super is held. Opening selects the previous app (index 1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Cycle {
     pub index: usize,

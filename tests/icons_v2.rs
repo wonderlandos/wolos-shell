@@ -314,8 +314,11 @@ fn tags(s: &str) -> Vec<&str> {
     s.split('<')
         .skip(1)
         .filter_map(|t| {
-            let name = t.split(|c: char| c.is_whitespace() || c == '>' || c == '/').next()?;
-            (!name.is_empty() && !t.starts_with('/') && !t.starts_with('!') && !t.starts_with('?')).then_some(name)
+            let name = t
+                .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                .next()?;
+            (!name.is_empty() && !t.starts_with('/') && !t.starts_with('!') && !t.starts_with('?'))
+                .then_some(name)
         })
         .collect()
 }
@@ -342,7 +345,11 @@ fn edge_contrast(p: &Path, ground: [f64; 3]) -> f64 {
             let open = (-1i32..=1).any(|dy| {
                 (-1i32..=1).any(|dx| {
                     let (nx, ny) = (x as i32 + dx, y as i32 + dy);
-                    nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 || at(nx as usize, ny as usize)[3] < 77
+                    nx < 0
+                        || ny < 0
+                        || nx >= w as i32
+                        || ny >= h as i32
+                        || at(nx as usize, ny as usize)[3] < 77
                 })
             });
             if open {
@@ -361,11 +368,12 @@ fn edge_contrast(p: &Path, ground: [f64; 3]) -> f64 {
 /// blurs are allowed (rsvg draws them; the PNGs the dock uses are renders), images, text, scripts
 /// and styles are not; every app also has its small drawing (apps/small/, the 48 px PNG is a render
 /// of it). Each carries its own ground, so one drawing serves light and dark; what each needs is
-/// a silhouette that separates from both the light (#F5F5F7) and the dark (#1C1C1E) desktop.
+/// a silhouette that separates from both the light (`light.bg` #F3F1F8) and the dark (`dark.bg`
+/// #191720) desktop of the WolOS neutral ramp (design/tokens/colors.json, icon ground-light/-dark).
 #[test]
 fn full_colour_icons_are_crafted_vectors_that_read_on_light_and_dark() {
-    let light = hex("#F5F5F7").unwrap();
-    let dark = hex("#1C1C1E").unwrap();
+    let light = hex("#F3F1F8").unwrap();
+    let dark = hex("#191720").unwrap();
     let mut all = svgs(&apps_dir());
     for ctx in ["places", "devices", "mimetypes"] {
         all.extend(svgs(&root().join("design/icons").join(ctx)));
@@ -386,7 +394,17 @@ fn full_colour_icons_are_crafted_vectors_that_read_on_light_and_dark() {
             bad.push(format!("{n}: not a vector icon on the 1024 canvas"));
         }
         for t in tags(&s) {
-            if ["image", "text", "script", "style", "use", "foreignObject", "a"].contains(&t) {
+            if [
+                "image",
+                "text",
+                "script",
+                "style",
+                "use",
+                "foreignObject",
+                "a",
+            ]
+            .contains(&t)
+            {
                 bad.push(format!("{n}: <{t}>"));
             }
             if t.starts_with("fe") && !SAFE_FILTER.contains(&t) {
@@ -405,7 +423,9 @@ fn full_colour_icons_are_crafted_vectors_that_read_on_light_and_dark() {
                 bad.push(format!("{n}: banned colour {c}"));
             }
         }
-        if p.parent() == Some(apps_dir().as_path()) && !apps_dir().join("small").join(format!("{n}.svg")).is_file() {
+        if p.parent() == Some(apps_dir().as_path())
+            && !apps_dir().join("small").join(format!("{n}.svg")).is_file()
+        {
             bad.push(format!("{n}: no small drawing in apps/small"));
         }
         for (g, ground) in [("light", light), ("dark", dark)] {
@@ -415,7 +435,10 @@ fn full_colour_icons_are_crafted_vectors_that_read_on_light_and_dark() {
             }
         }
     }
-    assert!(icons >= APP_TILES.len() + 40, "only {icons} icons");
+    assert!(
+        icons >= 51,
+        "only {icons} icons (25 apps, 13 places, 2 devices, 11 mimetypes)"
+    );
     assert!(bad.is_empty(), "{bad:#?}");
 }
 

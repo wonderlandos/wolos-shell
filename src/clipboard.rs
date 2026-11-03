@@ -202,7 +202,7 @@ pub fn session_command(action: &str) -> Option<&'static [&'static str]> {
     })
 }
 
-/// Seconds the Restart / Shut Down / Log Out sheet waits before it acts by itself (macOS).
+/// Seconds the Restart / Shut Down / Log Out sheet waits before it acts by itself.
 pub const CONFIRM_SECS: u32 = 60;
 
 /// Actions that end every open app: asked first, with a countdown.
