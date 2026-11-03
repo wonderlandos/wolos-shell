@@ -365,14 +365,18 @@ mod tests {
         let path = sock.to_str().unwrap();
         let wait = std::time::Duration::from_millis(200);
         let (hung, took) = std::thread::scope(|sc| {
+            let (given_up, gone) = std::sync::mpsc::channel::<()>();
             // Holds the connection open without a word until the client has given up.
-            sc.spawn(|| {
-                let (c, _) = l.accept().unwrap();
-                std::thread::sleep(wait * 5);
+            let listener = &l;
+            sc.spawn(move || {
+                let (c, _) = listener.accept().unwrap();
+                let _ = gone.recv();
                 drop(c);
             });
             let t = std::time::Instant::now();
-            (exchange_within(path, b"x", wait), t.elapsed())
+            let got = (exchange_within(path, b"x", wait), t.elapsed());
+            given_up.send(()).unwrap();
+            got
         });
         assert_eq!(hung, Verdict::Error);
         assert!(took < wait * 4, "{took:?}");
