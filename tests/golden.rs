@@ -33,6 +33,8 @@ mod regressions;
 mod settings_cases;
 #[path = "golden_cases/theme_picker.rs"]
 mod theme_picker_cases;
+#[path = "golden_cases/tray.rs"]
+mod tray_cases;
 #[path = "golden_cases/widgets.rs"]
 mod widget_cases;
 #[path = "golden_cases/wol_file.rs"]
@@ -1238,6 +1240,7 @@ fn cases() -> Vec<Case> {
     v.extend(controlcenter_cases::cases());
     v.extend(theme_picker_cases::cases());
     v.extend(maker_cases::cases());
+    v.extend(tray_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-malware-{tag}"),

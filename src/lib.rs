@@ -37,6 +37,7 @@ pub mod supervise;
 pub mod switcher;
 pub mod system;
 pub mod theme;
+pub mod tray;
 pub mod widgets;
 pub mod winshot;
 
