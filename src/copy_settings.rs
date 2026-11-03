@@ -102,6 +102,9 @@ pub const THEME_PICTURE_UNREADABLE: &str =
 /// Software Update > Install app updates: the timer change did not take.
 pub const AUTO_APPS_FAILED: &str =
     "App updates couldn’t be turned on or off. Try again in a moment.";
+/// Under "N updates available" on a computer installed with one copy of WolOS (ADR 0023):
+/// Update Now changes the running system, with no restore point to go back to.
+pub const UPDATE_ONE_COPY: &str = "This computer has one copy of WolOS, so there is no restore point; the update changes the running system.";
 
 // ---- Displays ----
 
@@ -115,7 +118,7 @@ pub const SEARCH_NONE_TITLE: &str = "No Results";
 pub const SEARCH_NONE: &str = "No settings match. Try another word.";
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 34] = [
+pub const ALL: [&str; 35] = [
     SOUND_RECONNECTING,
     SOUND_LOUDER,
     SOUND_AUTO_LEVEL,
@@ -150,6 +153,7 @@ pub const ALL: [&str; 34] = [
     AUTO_APPS_FAILED,
     DISPLAYS_NONE,
     SEARCH_NONE,
+    UPDATE_ONE_COPY,
 ];
 
 #[cfg(test)]

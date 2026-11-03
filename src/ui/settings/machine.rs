@@ -70,6 +70,11 @@ pub trait Machine: Send + Sync {
     }
     /// The daily update check's findings; None before the first check.
     fn updates(&self) -> Option<wol_core::update::check::Updates>;
+    /// Installed with one copy of WolOS (ADR 0023, `wol_core::update::SINGLE_COPY`): Update Now
+    /// changes the running system and keeps no restore point.
+    fn single_copy(&self) -> bool {
+        false
+    }
     /// /etc/passwd text (accounts and their login shells).
     fn passwd(&self) -> String;
     /// Automatic updates: (download system updates, install app updates) (`wol_core::update::auto`).
@@ -234,6 +239,9 @@ impl Machine for Live {
         let u = Updates::parse(&f("checked"), &f("pkg"), &f("audit"), &f("base"))?;
         let userland = u.base.as_ref().and_then(|_| os.run(&USERLAND_ARGV));
         Some(u.installed(userland.as_deref()))
+    }
+    fn single_copy(&self) -> bool {
+        self.os().read_text(wol_core::update::SINGLE_COPY).is_some()
     }
     fn passwd(&self) -> String {
         self.os().read_text("/etc/passwd").unwrap_or_default()
@@ -667,6 +675,8 @@ impl Machine for Demo {
 pub struct DemoEdge {
     pub queued: std::sync::atomic::AtomicBool,
     pub gave_up: bool,
+    /// Installed with one copy of WolOS (Software Update says there is no restore point).
+    pub one_copy: bool,
 }
 
 impl Machine for DemoEdge {
@@ -729,6 +739,9 @@ impl Machine for DemoEdge {
     }
     fn updates(&self) -> Option<wol_core::update::check::Updates> {
         Demo.updates()
+    }
+    fn single_copy(&self) -> bool {
+        self.one_copy
     }
     fn passwd(&self) -> String {
         Demo.passwd()

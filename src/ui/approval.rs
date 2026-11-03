@@ -399,6 +399,7 @@ impl Approvals {
         }
         self.running.set(true);
         self.sheet.allow.set_sensitive(false);
+        let update_now = is_update_now(&a.request);
         let rx = self.sys.approve(a.request, pw);
         let me = self.clone();
         glib::spawn_future_local(async move {
@@ -412,11 +413,28 @@ impl Approvals {
                     me.sheet.field.grab_focus();
                 }
                 Err(e) => me.answer(Answer::Failed {
-                    message: e.message().into(),
+                    message: failed_sentence(e, update_now),
                 }),
             }
         });
     }
+}
+
+/// A sheet for Update Now (every pending package, with or without holds): wol-admind runs it
+/// and may say why it failed.
+fn is_update_now(r: &ApprovalRequest) -> bool {
+    matches!(r, ApprovalRequest::Packages { verb, names }
+        if verb == "update-holding" || (verb == "update" && names.is_empty()))
+}
+
+/// What the sheet tells the requester when the change failed: for Update Now, wol-admind's own
+/// sentence when it gave one (the restore point it kept, or why none could be kept); else the
+/// shell's words for `e`.
+fn failed_sentence(e: ActionError, update_now: bool) -> String {
+    update_now
+        .then(|| wol_core::controls::take_failure(shared::admin::AdminAction::PkgUpgrade))
+        .flatten()
+        .unwrap_or_else(|| e.message().into())
 }
 
 /// Audit record the shell writes itself: only an administrator change it ran for a requester
@@ -542,6 +560,35 @@ pub fn content(sys: Rc<dyn System>, a: Approval) -> gtk::Widget {
 mod tests {
     use super::*;
     use shared::shell::ApprovalRequest as R;
+
+    /// Update Now's sheet passes wol-admind's sentence on to wold (and so to wopkg and Settings);
+    /// other sheets and a failure without a sentence keep the shell's words.
+    #[test]
+    fn update_now_sheets_pass_on_what_wol_admind_said() {
+        use shared::admin::AdminAction::PkgUpgrade;
+        let p = |verb: &str, names: &[&str]| R::Packages {
+            verb: verb.into(),
+            names: names.iter().map(|n| (*n).to_string()).collect(),
+        };
+        assert!(is_update_now(&p("update", &[])));
+        assert!(is_update_now(&p("update-holding", &["gimp"])));
+        assert!(!is_update_now(&p("update", &["gimp"])));
+        assert!(!is_update_now(&p("install", &["gimp"])));
+        wol_core::controls::note_failure(PkgUpgrade, Some("No restore point.".into()));
+        assert_eq!(
+            failed_sentence(ActionError::Failed, false),
+            ActionError::Failed.message()
+        );
+        assert_eq!(
+            failed_sentence(ActionError::Failed, true),
+            "No restore point."
+        );
+        assert_eq!(
+            failed_sentence(ActionError::Failed, true),
+            ActionError::Failed.message(),
+            "taken once"
+        );
+    }
 
     fn change(helper: &str) -> Approval {
         Approval {
