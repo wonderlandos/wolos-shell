@@ -14,9 +14,12 @@ const SAMPLE: &str = r#"{"cpu_percent": 12.4, "memory": {"total": 8589934592, "u
 struct Fake {
     ran: RefCell<Vec<String>>,
     fail: bool,
+    /// `wol.now()` calls: how often a script that reads the clock first really ran.
+    clock_reads: std::cell::Cell<u32>,
 }
 impl Services for Fake {
     fn now(&self) -> Stamp {
+        self.clock_reads.set(self.clock_reads.get() + 1);
         Stamp {
             year: 2026,
             month: 11,
@@ -240,11 +243,12 @@ fn a_runaway_item_is_stopped_three_times_then_turned_off() {
             &slow,
             &[(
                 "bar.lua",
-                "return wol.menubar { render = function() local t = {} while true do table.move(t, 1, 2^20 - 1, 2) end; end }",
+                "return wol.menubar { render = function() wol.now() local t = {} while true do table.move(t, 1, 2^20 - 1, 2) end; end }",
             )],
         )],
     );
-    let mut h = host(&paths, BAR_KINDS, Rc::new(Fake::default()));
+    let fake = Rc::new(Fake::default());
+    let mut h = host(&paths, BAR_KINDS, fake.clone());
     let start = std::time::Instant::now();
     for _ in 0..3 {
         assert_eq!(
@@ -254,8 +258,14 @@ fn a_runaway_item_is_stopped_three_times_then_turned_off() {
             wol_lua::TOO_LONG
         );
     }
+    // Only the first render ran the script; the two after it answered without running, so the
+    // bar is not held three times. Counted, not timed: a stopwatch flakes on a loaded machine.
+    assert_eq!(fake.clock_reads.get(), 1);
+    // The deadline is wall-clock, so on a loaded machine the stop lands late by scheduling,
+    // never early. Without it only the instruction budget would stop this loop, after minutes:
+    // 2 s still tells the two apart.
     assert!(
-        start.elapsed() < 3 * DEADLINES.render,
+        start.elapsed() < std::time::Duration::from_secs(2),
         "{:?}",
         start.elapsed()
     );

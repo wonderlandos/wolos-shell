@@ -643,7 +643,14 @@ mod tests {
         let (mut h, r, paths) = host_for(&root, &dir);
         let start = std::time::Instant::now();
         let s = surfaces(&mut h, &r.snapshot, &paths.state_home);
-        assert!(start.elapsed() < 2 * plugins::DEADLINES.render);
+        // The deadline is wall-clock: on a loaded machine the stop lands late by scheduling,
+        // never early. Without it only the instruction budget would stop this loop, after
+        // minutes, so 2 s still tells the two apart.
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            start.elapsed()
+        );
         assert_eq!(s.bar[0].shown, Err(wol_lua::TOO_LONG.to_owned()));
         let _ = std::fs::remove_dir_all(root);
     }

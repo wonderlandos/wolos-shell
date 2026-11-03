@@ -272,6 +272,29 @@ mod tests {
         }
     }
 
+    /// [`Fixed`] that counts `wol.now()` calls: a script that reads the clock first tells the test
+    /// how often it really ran, which a stopwatch cannot do on a loaded machine.
+    #[derive(Default)]
+    struct Counted(std::cell::Cell<u32>);
+    impl Services for Counted {
+        fn now(&self) -> Stamp {
+            self.0.set(self.0.get() + 1);
+            Fixed.now()
+        }
+        fn system(&self) -> wol_lua::SystemInfo {
+            unreachable!()
+        }
+        fn notify(&self, _: &str, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    /// Wall-clock ceiling for "stopped at the deadline". The deadline is wall-clock, so on a
+    /// loaded machine (CI) the stop lands late by however long the thread waits for a core,
+    /// never early. Without the deadline only the instruction budget would stop this loop, and
+    /// that takes minutes: 2 s still tells the two apart with room for any scheduler.
+    const STOPPED_WITHIN: std::time::Duration = std::time::Duration::from_secs(2);
+
     fn dir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("wol-lua-shell-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -314,24 +337,21 @@ mod tests {
         let d = dir("slow");
         std::fs::write(
             d.join("slow.lua"),
-            "return wol.widget { name = 'Slow', render = function() local t = {} while true do table.move(t, 1, 2^20 - 1, 2) end; end }",
+            "return wol.widget { name = 'Slow', render = function() wol.now() local t = {} while true do table.move(t, 1, 2^20 - 1, 2) end; end }",
         )
         .unwrap();
-        let mut l = Lua::new(d.clone(), Rc::new(Fixed));
+        let runs = Rc::new(Counted::default());
+        let mut l = Lua::new(d.clone(), runs.clone());
         let start = std::time::Instant::now();
         assert_eq!(l.poll(), ["slow"]);
-        assert!(
-            start.elapsed() < 2 * DEADLINES.render,
-            "{:?}",
-            start.elapsed()
-        );
+        assert!(start.elapsed() < STOPPED_WITHIN, "{:?}", start.elapsed());
         let Some(Content::Error { details, .. }) = l.content("slow") else {
             panic!("{:?}", l.content("slow"))
         };
         assert_eq!(details, [wol_lua::TOO_LONG]);
-        let again = std::time::Instant::now();
+        assert_eq!(runs.0.get(), 1, "the first render ran the script");
         l.render("slow");
-        assert!(again.elapsed() < std::time::Duration::from_millis(5));
+        assert_eq!(runs.0.get(), 1, "a stopped card answers without running");
         assert!(matches!(l.content("slow"), Some(Content::Error { .. })));
         let _ = std::fs::remove_dir_all(d);
     }
