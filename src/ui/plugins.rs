@@ -1440,4 +1440,5 @@ pub fn dock_tile(t: &DockTile) -> w::DockTile {
 }
 
 #[cfg(test)]
+#[path = "../plugin_host/tests.rs"]
 mod tests;

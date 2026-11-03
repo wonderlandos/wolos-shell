@@ -134,7 +134,11 @@ fn no_raw_error_text_on_screen() {
             let p = e.path();
             if p.is_dir() {
                 dirs.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("copy.rs") {
+            } else if p.extension().is_some_and(|x| x == "rs")
+                && !p.ends_with("copy.rs")
+                // A split-out test module (`#[cfg(test)] mod tests;` in the parent) is test code.
+                && !p.ends_with("tests.rs")
+            {
                 files.push(p);
             }
         }
@@ -654,7 +658,16 @@ fn the_installer_says_nothing_outside_copy() {
         })
         .collect();
     files.push(src.join("ui/installer.rs"));
-    assert!(files.len() >= 3, "{files:?}");
+    // The pages and the flow split into folders: every module there, but not its `tests.rs`.
+    for dir in ["ui/installer", "install_flow"] {
+        for e in std::fs::read_dir(src.join(dir)).unwrap().flatten() {
+            let p = e.path();
+            if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("tests.rs") {
+                files.push(p);
+            }
+        }
+    }
+    assert!(files.len() >= 4, "{files:?}");
     let mut bad = Vec::new();
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap();

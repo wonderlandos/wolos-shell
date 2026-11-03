@@ -10,6 +10,8 @@ use std::cell::RefCell;
 
 /// Icon circle diameter in tiles and device rows.
 pub const CIRCLE: i32 = 28;
+/// Widest tile caption, in characters, before it is ellipsised (the full name is the tooltip).
+pub const TILE_LABEL_CHARS: i32 = 13;
 /// Now Playing cover art edge.
 pub const ART: i32 = 48;
 
@@ -30,7 +32,7 @@ fn set_class(wd: &impl IsA<gtk::Widget>, class: &str, on: bool) {
     }
 }
 
-/// Square tile: icon circle (accent while on) over a centred caption of up to two lines. Tiles in
+/// Square tile: icon circle (accent while on) over a centred one-line caption. Tiles in
 /// one homogeneous row share width and height. Action tiles (Screenshot) never turn on.
 pub struct ToggleTile {
     pub button: gtk::Button,
@@ -43,12 +45,15 @@ impl ToggleTile {
         col.set_valign(gtk::Align::Center);
         let circle = circle(icon_name);
         col.append(&circle);
+        // One line, ellipsised: tiles keep the same rhythm whatever the name (kit.css fixes the height).
         let l = w::centered(title, "secondary");
-        l.set_wrap(true);
-        l.set_lines(2);
+        l.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        l.set_max_width_chars(TILE_LABEL_CHARS);
+        l.add_css_class("may-ellipsize");
         col.append(&l);
         let button = gtk::Button::builder().child(&col).hexpand(true).build();
         button.add_css_class("toggle-tile");
+        button.set_tooltip_text(Some(title));
         ToggleTile { button, circle }
     }
     pub fn set_on(&self, on: bool) {

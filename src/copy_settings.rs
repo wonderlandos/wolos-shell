@@ -110,7 +110,8 @@ pub const DISPLAYS_NONE: &str = "Displays appear here once the desktop is runnin
 
 // ---- Search ----
 
-/// Search found nothing.
+/// Search found nothing: the empty state's title (a title, not a sentence: not in [`ALL`]) and its hint.
+pub const SEARCH_NONE_TITLE: &str = "No Results";
 pub const SEARCH_NONE: &str = "No settings match. Try another word.";
 
 /// Every sentence above, for the lint.

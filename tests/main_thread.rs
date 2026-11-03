@@ -60,7 +60,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 3] = ["ui/", "kit/", "theme.rs"];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 18] = [
+const BASELINE: [(&str, usize); 20] = [
     // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).
     ("kit/assistant.rs", 1),
     ("kit/data.rs", 1),
@@ -80,15 +80,21 @@ const BASELINE: [(&str, usize); 18] = [
     ("ui/installer.rs", 4),
     ("ui/ipc.rs", 1),
     ("ui/lock.rs", 5),
+    // remove_sandbox: the preview's few named files, once, after `app.run()` returned (the
+    // SandboxGuard drops when no window or main loop is left), so nothing waits on it.
+    ("ui/maker/preview.rs", 1),
     ("ui/mod.rs", 3),
     ("ui/settings/login_items.rs", 2),
     // + the demo Machine's `Demo.auto_updates()` delegation (S7-7 token; no I/O there).
     ("ui/settings/machine.rs", 2),
     ("ui/settings/privacy.rs", 1),
     ("ui/shortcut_sheet.rs", 1),
-    // Screenshot Picture and an icon Image (audit4 S3-3 count), and the screenshot thumb's
-    // Pixbuf::from_file_at_scale (S7-4 token, frozen 2026-11-02).
-    ("ui/store.rs", 3),
+    // The analysis graph Picture (audit4 S3-3 count).
+    ("ui/store.rs", 1),
+    // Split out of store.rs, same calls as before: the app's icon Image (audit4 S3-3 count) and a
+    // local screenshot's Pixbuf::from_file_at_scale (S7-4 token, frozen 2026-11-02); a remote
+    // screenshot is already decoded in `gio::spawn_blocking`.
+    ("ui/store/details.rs", 2),
 ];
 
 /// The name of the `fn` that encloses line `i` (0-based), if any.

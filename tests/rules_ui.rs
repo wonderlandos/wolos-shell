@@ -228,7 +228,6 @@ const BASELINE: &[(&str, usize)] = &[
     ("RU-045", 5),
     ("RU-050", 1),
     ("RU-060", 2),
-    ("RU-061", 10),
     ("RU-062", 15),
     ("RU-073", 6),
     ("RU-074", 8),
@@ -1242,6 +1241,17 @@ fn ru_061_to_064_css_tokens() {
         if all_src[i + 2 + n.len()..].starts_with(':') {
             defined.insert(n);
         }
+    }
+    // The theme contract defines its tokens and scale in every stylesheet (shared::theme).
+    for t in shared::theme::TOKENS {
+        defined.insert(
+            shared::theme::css_var(t)
+                .trim_start_matches("--")
+                .to_string(),
+        );
+    }
+    for (v, _) in shared::theme::SCALE {
+        defined.insert(v.trim_start_matches("--").to_string());
     }
     let mut undefined = BTreeSet::new();
     for (i, _) in code.match_indices("var(--") {

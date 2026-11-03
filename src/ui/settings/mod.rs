@@ -85,7 +85,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Wi-Fi",
             "network-wireless-symbolic",
-            "wifi wireless network internet join password hotspot",
+            "Wi-Fi wireless network internet join password hotspot",
         ),
         pane(
             "Bluetooth",
@@ -958,7 +958,12 @@ fn fill_results(env: &Rc<Env>, body: &gtk::Box, query: &str) {
     clear(body);
     let found = hits(query);
     if found.is_empty() {
-        body.append(&w::footnote(crate::copy::settings::SEARCH_NONE));
+        body.append(&w::empty_state(
+            "system-search-symbolic",
+            crate::copy::settings::SEARCH_NONE_TITLE,
+            crate::copy::settings::SEARCH_NONE,
+            None,
+        ));
         return;
     }
     let mut pages: Vec<&'static str> = Vec::new();

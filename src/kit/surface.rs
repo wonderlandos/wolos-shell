@@ -422,6 +422,12 @@ fn monitor_of(w: &gtk::Widget) -> Option<gtk::gdk::Monitor> {
         .and_then(|s| d.monitor_at_surface(&s))
 }
 
+/// The connector name (`eDP-1`) of the output `w` is on; None before it has a surface or when the
+/// output has none. The one place that asks the display which monitor a surface is on.
+pub fn connector_of(w: &impl IsA<gtk::Widget>) -> Option<String> {
+    Some(monitor_of(w.as_ref())?.connector()?.to_string())
+}
+
 /// [`reserved_bottom`] for the display `on` is on only: a Dock on another display does not
 /// shorten a panel here (audit3 R2A-4).
 #[cfg(feature = "layer-shell")]

@@ -272,8 +272,14 @@ impl Card {
         head.append(&sub);
         let b = w::vbox(0);
         b.add_css_class("assistant-body");
+        // Question: the body takes the spare room and sits in the middle of it, so a short list
+        // (one disk) is balanced between the header and the foot instead of floating above dead
+        // space; the card keeps its size, so Back and Continue never move between pages.
+        // Moment: the stage art takes the room.
+        if !moment && !body.vexpands() && body.valign() == gtk::Align::Fill {
+            body.set_valign(gtk::Align::Center);
+        }
         b.append(body);
-        // Question: the body takes the spare room. Moment: the stage art does.
         b.set_vexpand(!moment);
         c.append(&head);
         c.append(&b);

@@ -48,9 +48,7 @@ impl Live {
     /// The output this board's surface is on (its connector); None before it is mapped.
     pub(super) fn connector(&self) -> Option<String> {
         let win = self.board.win.borrow().clone()?;
-        let surf = win.surface()?;
-        let mon = gtk::prelude::WidgetExt::display(&win).monitor_at_surface(&surf)?;
-        Some(mon.connector()?.to_string())
+        crate::kit::surface::connector_of(&win)
     }
 
     pub(super) fn follow_fullscreen(self: &Rc<Self>) {

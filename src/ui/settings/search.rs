@@ -297,9 +297,12 @@ fn words(q: &str) -> Vec<String> {
     q.split_whitespace().map(str::to_lowercase).collect()
 }
 
+/// Every word of `q` is in `hay`, with or without its hyphens (`wifi` finds `Wi-Fi`).
 fn all_in(hay: &str, q: &[String]) -> bool {
     let hay = hay.to_lowercase();
-    q.iter().all(|w| hay.contains(w.as_str()))
+    let plain = hay.replace('-', "");
+    q.iter()
+        .all(|w| hay.contains(w.as_str()) || plain.contains(w.as_str()))
 }
 
 /// Pages whose title or search words match every word of `query`, then rows whose title (with

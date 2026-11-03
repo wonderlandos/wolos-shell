@@ -401,6 +401,9 @@ pub fn bitlocker(tier: &str, done: bool) -> Vec<&'static str> {
 /// Windows stays: WolOS keeps the clock in local time as Windows does (R2B-12).
 pub const CLOCK_LOCAL: &str = "The clock keeps local time, as Windows does.";
 
+/// Failed page foot when a step stopped: the computer's own words are behind the Details button.
+pub const FAILED_SEE_DETAILS: &str = "Click Details to see what the computer said.";
+
 /// Failed page subtitle when `wol install check` refused the plan: nothing was written, and the
 /// refusal's own sentence follows it.
 pub const REFUSED_STOPPED: &str =

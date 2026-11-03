@@ -242,12 +242,12 @@ pub const TRUST_ROWS: [(&str, &str, &str); 3] = [
     (
         "dialog-warning-symbolic",
         "Not signed",
-        "WolOS can't check who made this app. Install it only if you trust where it came from.",
+        "WolOS can’t check who made this app. Install it only if you trust where it came from.",
     ),
     (
         "dialog-warning-symbolic",
-        "Can't be installed",
-        "This file is damaged, was changed after it was signed, or comes from a developer WolOS doesn't know.",
+        "Can’t be installed",
+        "This file is damaged, was changed after it was signed, or comes from a developer WolOS doesn’t know.",
     ),
 ];
 

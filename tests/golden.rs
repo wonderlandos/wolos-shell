@@ -13,6 +13,8 @@ use std::rc::Rc;
 mod app_view_cases;
 #[path = "golden_cases/controlcenter.rs"]
 mod controlcenter_cases;
+#[path = "golden_cases/font.rs"]
+mod font_cases;
 #[path = "golden_cases/form_kit.rs"]
 mod form_kit;
 #[path = "golden_cases/installer.rs"]
@@ -1735,6 +1737,10 @@ fn main() {
             "window.preview {{ background: url(\"file://{WALL}\") center / cover; }} window.preview-app {{ background: none; }}"
         );
         kit::style::apply(&t, &extra);
+        if variant == Variant::Light {
+            // Once, with the kit stylesheet on: a golden in the fallback type locks the wrong glyphs.
+            font_cases::ui_family_is_inter();
+        }
         for c in cases() {
             let name = format!(
                 "{}-{}",

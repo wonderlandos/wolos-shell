@@ -44,7 +44,9 @@ fn push_buttons_hover_press_and_disable() {
 #[test]
 fn every_button_has_a_keyboard_focus_ring() {
     assert!(
-        CSS.contains("\nbutton:focus-visible {"),
-        "a global button focus ring"
+        CSS.contains(
+            "\n*:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }"
+        ),
+        "a global keyboard focus ring (every widget, buttons included)"
     );
 }

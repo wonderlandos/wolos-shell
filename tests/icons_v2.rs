@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Icon set v2 (design/tools/icons.py, design/tools/icons/): one geometry for every icon the shell draws.
+//! Icon set v2 (design/tools/icons.py, design/tools/icons/): one language for every icon the shell draws.
 //! Symbolic: 16 grid, filled outlines of 1.5 px lines, `currentColor` only (GTK recolours them for
-//! light and dark through CSS). App icons: the Wonderland card, vector SVGs on the 64 grid rendered
-//! to PNG at 48/128/512 (rsvg-convert) in desktop/overlay/usr/share/icons/WolOS; their silhouette
-//! reads on the light and the dark ground.
+//! light and dark through CSS). App icons: crafted objects on the soft card (places, devices and
+//! mimetypes: pressed paper), vector SVGs on the 1024 canvas, rendered to PNG at 48/128/512
+//! (rsvg-convert; 48 from the small drawing) in desktop/overlay/usr/share/icons/WolOS; their
+//! silhouette reads on the light and the dark ground.
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -290,12 +291,79 @@ const BANNED: &[&str] = &[
     "#30D158", "#0A84FF", "#FF5F57", "#FEBC2E", "#28C840", "#FF2D55", "#5AC8FA", "#8E8E93",
 ];
 
-/// Full-colour icons are vector cards on the 64 grid (the Wonderland card, design/tools/icons/):
-/// one flat body with a 1-unit rim and a hard shadow, no filter, one light-edge gradient. Each
-/// carries its own ground, so one drawing serves light and dark; what each needs is a silhouette
-/// (body or rim) that separates from both the light (#F5F5F7) and the dark (#1C1C1E) desktop.
+/// Filter primitives rsvg draws the same everywhere (design/tools/icons/checks.py SAFE_FILTER).
+const SAFE_FILTER: &[&str] = &[
+    "feGaussianBlur",
+    "feOffset",
+    "feFlood",
+    "feComposite",
+    "feMerge",
+    "feMergeNode",
+    "feColorMatrix",
+    "feTurbulence",
+    "feSpecularLighting",
+    "feDiffuseLighting",
+    "feDistantLight",
+    "feComponentTransfer",
+    "feFuncA",
+    "feBlend",
+];
+
+/// Element names opened in `s` (`<name ...>`; closing tags, comments and declarations skipped).
+fn tags(s: &str) -> Vec<&str> {
+    s.split('<')
+        .skip(1)
+        .filter_map(|t| {
+            let name = t.split(|c: char| c.is_whitespace() || c == '>' || c == '/').next()?;
+            (!name.is_empty() && !t.starts_with('/') && !t.starts_with('!') && !t.starts_with('?')).then_some(name)
+        })
+        .collect()
+}
+
+/// Contrast an icon's edge ring holds against `ground` when drawn at 128 px (the lit
+/// lip, hairline or rim of the silhouette counts; the 75th percentile, as design/tools/icons/checks.py).
+fn edge_contrast(p: &Path, ground: [f64; 3]) -> f64 {
+    let b = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(p, 128, 128, true).unwrap();
+    let (w, h, ch, stride) = (
+        b.width() as usize,
+        b.height() as usize,
+        b.n_channels() as usize,
+        b.rowstride() as usize,
+    );
+    assert_eq!(ch, 4, "{}: no alpha channel", p.display());
+    let px = b.read_pixel_bytes();
+    let at = |x: usize, y: usize| &px[y * stride + x * ch..y * stride + x * ch + 4];
+    let mut ring = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            if at(x, y)[3] < 230 {
+                continue;
+            }
+            let open = (-1i32..=1).any(|dy| {
+                (-1i32..=1).any(|dx| {
+                    let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+                    nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 || at(nx as usize, ny as usize)[3] < 77
+                })
+            });
+            if open {
+                let c = at(x, y);
+                ring.push(contrast([c[0] as f64, c[1] as f64, c[2] as f64], ground));
+            }
+        }
+    }
+    assert!(!ring.is_empty(), "{}: nothing drawn", p.display());
+    ring.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ring[ring.len() * 3 / 4]
+}
+
+/// Full-colour icons (design/tools/icons/, LANGUAGE-v2): crafted objects on the soft card (apps)
+/// and pressed paper (places, devices, mimetypes), vector SVGs on the 1024 canvas. Gradients and
+/// blurs are allowed (rsvg draws them; the PNGs the dock uses are renders), images, text, scripts
+/// and styles are not; every app also has its small drawing (apps/small/, the 48 px PNG is a render
+/// of it). Each carries its own ground, so one drawing serves light and dark; what each needs is
+/// a silhouette that separates from both the light (#F5F5F7) and the dark (#1C1C1E) desktop.
 #[test]
-fn full_colour_icons_are_vector_cards_that_read_on_light_and_dark() {
+fn full_colour_icons_are_crafted_vectors_that_read_on_light_and_dark() {
     let light = hex("#F5F5F7").unwrap();
     let dark = hex("#1C1C1E").unwrap();
     let mut all = svgs(&apps_dir());
@@ -303,22 +371,33 @@ fn full_colour_icons_are_vector_cards_that_read_on_light_and_dark() {
         all.extend(svgs(&root().join("design/icons").join(ctx)));
     }
     let mut bad = Vec::new();
-    let mut tiles = 0;
+    let mut icons = 0;
     for p in &all {
         let n = stem(p);
         if BRAND.contains(&n.as_str()) {
             continue;
         }
-        tiles += 1;
+        icons += 1;
         let s = std::fs::read_to_string(p).unwrap();
         if let Err(e) = well_formed(&s) {
             bad.push(format!("{n}: {e}"));
         }
-        if !s.contains(r#"viewBox="0 0 64 64""#) || s.contains("crispEdges") {
-            bad.push(format!("{n}: not a vector icon on the 64 grid"));
+        if !s.contains(r#"viewBox="0 0 1024 1024""#) || s.contains("crispEdges") {
+            bad.push(format!("{n}: not a vector icon on the 1024 canvas"));
         }
-        if s.contains("<filter") || s.contains("<image") || s.contains("<text") {
-            bad.push(format!("{n}: filter, image or text"));
+        for t in tags(&s) {
+            if ["image", "text", "script", "style", "use", "foreignObject", "a"].contains(&t) {
+                bad.push(format!("{n}: <{t}>"));
+            }
+            if t.starts_with("fe") && !SAFE_FILTER.contains(&t) {
+                bad.push(format!("{n}: filter primitive <{t}>"));
+            }
+        }
+        if s.contains("gloss") || s.contains("mix-blend-mode") {
+            bad.push(format!("{n}: gloss sweep or blend mode"));
+        }
+        if s.len() > 40 * 1024 {
+            bad.push(format!("{n}: {} KB", s.len() / 1024));
         }
         let upper = s.to_uppercase();
         for c in BANNED {
@@ -326,42 +405,17 @@ fn full_colour_icons_are_vector_cards_that_read_on_light_and_dark() {
                 bad.push(format!("{n}: banned colour {c}"));
             }
         }
-        // The only gradient is the light edge; the body is flat.
-        if s.matches("<linearGradient").count() != 1 || !s.contains(r#"<linearGradient id="edge""#)
-        {
-            bad.push(format!("{n}: gradients other than the light edge"));
+        if p.parent() == Some(apps_dir().as_path()) && !apps_dir().join("small").join(format!("{n}.svg")).is_file() {
+            bad.push(format!("{n}: no small drawing in apps/small"));
         }
-        if s.contains("<radialGradient") {
-            bad.push(format!("{n}: radial gradient"));
-        }
-        // The hard shadow: the silhouette 1.5 down, black at 22%.
-        if !s.contains(r##"transform="translate(0 1.5)" fill="#000000" fill-opacity="0.22""##) {
-            bad.push(format!("{n}: no hard shadow"));
-        }
-        // First plane: flat fill and a 1-unit rim.
-        let plane = s.split("<path ").find_map(|t| {
-            let t = t.split('>').next()?;
-            let fill = attr_values(&format!(" {t}"), "fill")
-                .first()
-                .and_then(|f| hex(f))?;
-            let rim = attr_values(&format!(" {t}"), "stroke")
-                .first()
-                .and_then(|f| hex(f))?;
-            t.contains(r#"stroke-width="1""#).then_some((fill, rim))
-        });
-        match plane {
-            None => bad.push(format!("{n}: no body plane with a rim")),
-            Some((body, rim)) => {
-                for (g, ground) in [("light", light), ("dark", dark)] {
-                    let best = contrast(body, ground).max(contrast(rim, ground));
-                    if best < 1.8 {
-                        bad.push(format!("{n}: silhouette is {best:.2}:1 on {g}"));
-                    }
-                }
+        for (g, ground) in [("light", light), ("dark", dark)] {
+            let best = edge_contrast(p, ground);
+            if best < 1.3 {
+                bad.push(format!("{n}: silhouette is {best:.2}:1 on {g}"));
             }
         }
     }
-    assert!(tiles >= APP_TILES.len(), "only {tiles} icons");
+    assert!(icons >= APP_TILES.len() + 40, "only {icons} icons");
     assert!(bad.is_empty(), "{bad:#?}");
 }
 

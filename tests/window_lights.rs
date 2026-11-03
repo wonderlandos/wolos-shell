@@ -28,9 +28,30 @@ fn the_toolbar_leaves_the_title_to_the_strip() {
 #[test]
 fn the_about_panel_keeps_its_close_light() {
     assert!(PANELS.contains("traffic-lights"));
-    assert!(CSS.contains(".traffic-lights:hover button.light image { color: rgba(0,0,0,0.55); }"));
+    // The glyph shows for the whole group at once; only the circle under the pointer takes the accent.
+    assert!(CSS.contains(".traffic-lights:hover button.light image { color: var(--text); }"));
+    assert!(CSS.contains("button.light:hover { background: var(--accent); }"));
+    assert!(CSS.contains("button.light:active { background: shade(var(--accent), 0.8); }"));
     assert!(
-        !CSS.contains("button.light:hover image"),
+        !CSS.contains("button.light:hover image { color: var(--text)"),
         "a per-button rule would show one glyph at a time"
     );
+}
+
+/// WolOS draws its own window buttons: one quiet circle for all three, no red, amber and green.
+#[test]
+fn the_buttons_are_not_traffic_lights() {
+    for s in [
+        "button.light.close",
+        "button.light.minimize",
+        "button.light.zoom",
+        "var(--danger)",
+        "var(--warning)",
+        "var(--success)",
+    ] {
+        let line = CSS
+            .lines()
+            .find(|l| l.starts_with("button.light") && l.contains(s));
+        assert!(line.is_none(), "{s}: {line:?}");
+    }
 }

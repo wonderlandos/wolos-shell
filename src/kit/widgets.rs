@@ -37,6 +37,8 @@ pub const APP_NARROW: (i32, i32) = (480, 360);
 pub const NARROW: i32 = 640;
 pub const LOCK_FIELD_WIDTH: i32 = 200;
 pub const LOCK_FIELD_HEIGHT: i32 = 28;
+/// Gap between the password field's peek glyph and the submit disc inside the lock pill.
+pub const LOCK_PILL_GAP: i32 = 6;
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
 /// Overview desktop thumbnail and window title line.
@@ -56,7 +58,8 @@ pub fn hbox(spacing: i32) -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Horizontal, spacing)
 }
 
-/// Text styles: "" body 13, "title" 13 semibold, "secondary" 11 dim, "large-title" 22 semibold.
+/// Text styles: "" body 13, "title" 13 semibold (row titles), "heading" 15 semibold (section headings),
+/// "secondary" 11 dim, "large-title" 26 bold (page titles).
 pub fn label(text: &str, style: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
@@ -432,7 +435,7 @@ pub fn menubar_menu(child: &impl IsA<gtk::Widget>) -> gtk::MenuButton {
 pub fn section(title: &str, rows: &[gtk::Widget]) -> gtk::Box {
     let b = vbox(S2);
     if !title.is_empty() {
-        b.append(&label(title, "title"));
+        b.append(&label(title, "heading"));
     }
     let card = vbox(0);
     card.add_css_class("card-list");
@@ -774,7 +777,9 @@ impl AppWindow {
     /// 28px sidebar row with a 16px symbolic icon; `page` becomes the content.
     pub fn source_item(&self, icon_name: &str, title: &str, page: &impl IsA<gtk::Widget>) {
         let row = hbox(S2);
-        row.append(&icon(icon_name, ICON));
+        let glyph = icon(icon_name, ICON);
+        glyph.add_css_class(tint_of(icon_name));
+        row.append(&glyph);
         row.append(&label(title, ""));
         let r = gtk::ListBoxRow::builder().child(&row).name(title).build();
         r.add_css_class("source-item");
@@ -981,9 +986,51 @@ pub fn module(child: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
+/// Section colours of the icon language (kit.css `--tint-*`): a sidebar glyph carries one, chosen
+/// from its icon name, so a section keeps its colour wherever it is listed.
+pub const TINTS: [&str; 6] = [
+    "tint-wolos",
+    "tint-files",
+    "tint-web",
+    "tint-talk",
+    "tint-media",
+    "tint-store",
+];
+
+/// FNV-1a: a hash that is the same on every run and every machine (std's is seeded).
+fn stable_hash(text: &str) -> u32 {
+    text.bytes().fold(0x811c_9dc5u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    })
+}
+
+/// `stable_hash(text)` as an index into a list of `len` (more than 0) items.
+fn pick(text: &str, len: usize) -> usize {
+    usize::try_from(stable_hash(text)).map_or(0, |h| h % len)
+}
+
+/// The section colour class of `icon_name`.
+pub fn tint_of(icon_name: &str) -> &'static str {
+    TINTS[pick(icon_name, TINTS.len())]
+}
+
+/// The avatar tone of a name nobody picked a colour for: the same name, the same colour, from the
+/// tones Setup offers (graphite stays the grey of "no name").
+pub fn name_tone(name: &str) -> Option<&'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let colours = &shared::login::AVATAR_TONES[..shared::login::AVATAR_TONES.len() - 1];
+    Some(colours[pick(&name.to_lowercase(), colours.len())])
+}
+
 pub fn avatar(name: &str, size: i32) -> gtk::Label {
     let l = gtk::Label::new(Some(&crate::login::initials(name)));
     l.add_css_class("avatar");
+    if let Some(tone) = name_tone(name) {
+        l.add_css_class(&super::assistant::tone_class(tone));
+    }
     l.add_css_class(match size {
         96.. => "avatar-xl",
         48.. => "avatar-l",
@@ -1034,7 +1081,7 @@ impl UserPanel {
         root.append(&avatar(name, AVATAR_XL));
         let n = centered(name, "lock-name");
         root.append(&n);
-        let pill = hbox(0);
+        let pill = hbox(LOCK_PILL_GAP);
         pill.add_css_class("lock-pill");
         pill.set_halign(gtk::Align::Center);
         pill.set_size_request(LOCK_FIELD_WIDTH, LOCK_FIELD_HEIGHT);
@@ -1692,6 +1739,51 @@ impl AppWindow {
         if self.content.child_by_name(name).is_some() {
             self.sidebar.unselect_all();
             self.content.set_visible_child_name(name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_keeps_its_avatar_colour() {
+        assert_eq!(name_tone("Alice Liddell"), name_tone("  alice liddell "));
+        assert_eq!(name_tone(""), None);
+        assert_eq!(name_tone("  "), None);
+    }
+
+    #[test]
+    fn avatar_colours_come_from_setups_tones_and_are_not_all_one() {
+        let names = [
+            "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi",
+        ];
+        let tones: std::collections::BTreeSet<_> =
+            names.iter().filter_map(|n| name_tone(n)).collect();
+        assert!(tones.len() >= 3, "{tones:?}");
+        assert!(
+            !tones.contains("graphite"),
+            "graphite is the grey of no name"
+        );
+        for t in &tones {
+            assert!(shared::login::AVATAR_TONES.contains(t));
+        }
+    }
+
+    #[test]
+    fn a_sidebar_glyph_keeps_its_section_colour_and_every_colour_is_styled() {
+        assert_eq!(
+            tint_of("network-wireless-symbolic"),
+            tint_of("network-wireless-symbolic")
+        );
+        let css = include_str!("kit.css");
+        for t in TINTS {
+            assert!(
+                css.contains(&format!("list.sidebar row image.{t} {{")),
+                "kit.css styles {t}"
+            );
+            assert!(css.contains(&format!("--{t}: #")), "kit.css defines --{t}");
         }
     }
 }

@@ -424,7 +424,17 @@ refuse UntypablePassword
             );
             i.toggle_details();
         }
-        _ => i.show_failed_with(Stage::Disk, "sfdisk: cannot open /dev/nvme0n1", ""),
+        _ => {
+            i.show_failed_with(Stage::Disk, "sfdisk: cannot open /dev/nvme0n1", "");
+            // The tool's words are behind Details; the foot keeps one plain sentence.
+            assert_eq!(
+                i.failed_texts(),
+                (
+                    shell::copy::installer::FAILED_SEE_DETAILS.to_string(),
+                    "sfdisk: cannot open /dev/nvme0n1".to_string()
+                )
+            );
+        }
     }
 }
 

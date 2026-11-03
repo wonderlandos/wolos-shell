@@ -319,7 +319,7 @@ impl Appearance {
 pub const THEMES: [(&str, &str); 3] = [
     ("violet", "Wonderland"),
     ("blue", "Ocean"),
-    ("graphite", "Graphite"),
+    ("graphite", "Slate"),
 ];
 
 /// Account name macOS-style: lowercase ASCII letters and digits of the full name, accents folded,
@@ -661,11 +661,11 @@ impl Flow {
             }
             (Job::JoinWifi { ssid, .. }, Verdict::Denied) => Next::Stay(
                 None,
-                format!("“{ssid}” didn't accept that password. Check it and try again."),
+                format!("“{ssid}” didn’t accept that password. Check it and try again."),
             ),
             (Job::JoinWifi { ssid, .. }, Verdict::Error) => Next::Stay(
                 None,
-                format!("“{ssid}” didn't answer. Try again, or choose Not Now and join later."),
+                format!("“{ssid}” didn’t answer. Try again, or choose Not Now and join later."),
             ),
             (Job::CreateAccount(_), Verdict::Ok) => {
                 self.created = true;
@@ -900,13 +900,13 @@ mod tests {
         d.verify = "curiouserr".into();
         assert_eq!(
             d.account_problem(),
-            Some((Verify, "Passwords don't match."))
+            Some((Verify, "Passwords don’t match."))
         );
         d.verify = "curiouser".into();
         d.hint = "curiouser".into();
         assert_eq!(
             d.account_problem(),
-            Some((Hint, "The hint can't be the password."))
+            Some((Hint, "The hint can’t be the password."))
         );
         d.hint = "white rabbit".into();
         assert_eq!(d.account_problem(), None);
@@ -953,7 +953,7 @@ mod tests {
         d.verify = "curi".into();
         assert_eq!(d.typing_problem(), None, "verify is still a prefix");
         d.verify = "curx".into();
-        assert_eq!(d.typing_problem(), Some((Verify, "Passwords don't match.")));
+        assert_eq!(d.typing_problem(), Some((Verify, "Passwords don’t match.")));
         d.verify = "curiouserr".into();
         assert_eq!(d.typing_problem().map(|p| p.0), Some(Verify));
         d.verify = "curiouser".into();
@@ -1026,7 +1026,7 @@ mod tests {
         let n = f.drive(&fake);
         assert_eq!(
             said(&n),
-            "“Rabbit Hole” didn't accept that password. Check it and try again."
+            "“Rabbit Hole” didn’t accept that password. Check it and try again."
         );
         assert_eq!(f.step, Step::Wifi);
         assert_eq!(f.drive(&fake), Next::Go(Step::Account));

@@ -297,7 +297,7 @@ fn the_layout_places_items_and_drops_plugins_that_are_off() {
 /// The plugin tiles reach the real Control Center, not only the golden (audit5 S7-3).
 #[test]
 fn the_control_center_panel_installs_the_plugin_tile_source() {
-    let src = include_str!("../control_center/mod.rs");
+    let src = include_str!("../ui/control_center/mod.rs");
     let body = &src[src.find("pub fn panel(").unwrap()..];
     let body = &body[..body
         .find(
