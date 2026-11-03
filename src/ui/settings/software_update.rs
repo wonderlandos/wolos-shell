@@ -17,6 +17,30 @@ pub enum UpdateState {
     Failed(String),
 }
 
+/// Under "N updates available": the daily check's note, then what Update Now keeps. A computer
+/// with one copy of WolOS has no restore point, and the page says so before the button is used.
+pub fn before_update(note: Option<&str>, one_copy: bool) -> String {
+    let keeps = if one_copy {
+        crate::copy::settings::UPDATE_ONE_COPY
+    } else {
+        crate::copy::UPDATE_RESTORE_POINT
+    };
+    match note {
+        Some(n) if one_copy => format!("{n} {keeps}"),
+        Some(n) => format!("{n} WolOS saves a restore point first."),
+        None => keeps.into(),
+    }
+}
+
+/// Update Now failed: wol-admind's own sentence when it gave one (the restore point it kept, or
+/// why none could be kept), else the Store's words for `e`.
+pub fn update_failed(e: ActionError, said: Option<String>) -> String {
+    match (e, said) {
+        (ActionError::Failed, Some(m)) => m,
+        (e, _) => crate::copy::update(e).into(),
+    }
+}
+
 /// `wol update check --json` stdout -> state.
 pub fn parse_check(out: Option<&str>) -> UpdateState {
     match out.and_then(|o| serde_json::from_str::<Vec<String>>(o.trim()).ok()) {
@@ -270,6 +294,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         );
         let pulse: Rc<RefCell<Option<glib::SourceId>>> = Default::default();
         let note = note.clone();
+        let one_copy = e.machine().single_copy();
         Rc::new(move |s: &UpdateState| {
             let busy = matches!(s, UpdateState::Checking | UpdateState::Installing);
             spin.set_spinning(busy);
@@ -308,10 +333,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                     names.set_label(&names_line(v, 6));
                     (
                         crate::copy::updates_available(v.len()),
-                        match note.borrow().as_deref() {
-                            Some(n) => format!("{n} WolOS saves a restore point first."),
-                            None => crate::copy::UPDATE_RESTORE_POINT.into(),
-                        },
+                        before_update(note.borrow().as_deref(), one_copy),
                     )
                 }
                 UpdateState::Installing => (
@@ -373,7 +395,12 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 Rc::new(move |r| {
                     show(&match r {
                         Ok(()) => UpdateState::Installed,
-                        Err(e) => UpdateState::Failed(crate::copy::update(e).into()),
+                        Err(e) => UpdateState::Failed(update_failed(
+                            e,
+                            wol_core::controls::take_failure(
+                                shared::admin::AdminAction::PkgUpgrade,
+                            ),
+                        )),
                     })
                 }),
             );
@@ -405,6 +432,45 @@ mod tests {
             with_flatpaks(UpdateState::Failed("x".into()), &ids),
             UpdateState::Failed(_)
         ));
+    }
+
+    /// The page promises a restore point only where Update Now keeps one (ADR 0023: one copy).
+    #[test]
+    fn the_page_says_what_update_now_keeps() {
+        assert_eq!(
+            before_update(None, false),
+            crate::copy::UPDATE_RESTORE_POINT
+        );
+        assert_eq!(
+            before_update(Some("2 fix security problems."), false),
+            "2 fix security problems. WolOS saves a restore point first."
+        );
+        assert_eq!(
+            before_update(None, true),
+            "This computer has one copy of WolOS, so there is no restore point; the update changes the running system."
+        );
+        assert_eq!(
+            before_update(Some("Checked today."), true),
+            format!("Checked today. {}", crate::copy::settings::UPDATE_ONE_COPY)
+        );
+    }
+
+    /// wol-admind's sentence wins over the generic words; without one, nothing changes.
+    #[test]
+    fn a_failed_update_shows_what_wol_admind_said() {
+        let said = Some("The update did not finish, so nothing was changed.".to_string());
+        assert_eq!(
+            update_failed(ActionError::Failed, said.clone()),
+            "The update did not finish, so nothing was changed."
+        );
+        assert_eq!(
+            update_failed(ActionError::Failed, None),
+            crate::copy::update(ActionError::Failed)
+        );
+        assert_eq!(
+            update_failed(ActionError::Denied, said),
+            crate::copy::update(ActionError::Denied)
+        );
     }
 
     #[test]

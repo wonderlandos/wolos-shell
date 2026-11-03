@@ -47,6 +47,24 @@ pub fn cases() -> Vec<Case> {
             a.root.clone().upcast()
         }),
     });
+    // ADR 0023: one copy of WolOS has no restore point, and Software Update says so.
+    v.push(Case {
+        name: "settings-softwareupdate-onecopy-wide".into(),
+        size: w::APP_SIZE,
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let mut h = ui::settings::Host::demo();
+            h.machine = Arc::new(ui::settings::DemoEdge {
+                one_copy: true,
+                ..Default::default()
+            });
+            let a = ui::settings::content(Rc::new(shell::system::Fake), &h);
+            a.open("Software Update");
+            pump(300);
+            a.root.clone().upcast()
+        }),
+    });
     // What modules-install gave up on: a "Could Not Be Added" section with Retry on each.
     v.push(Case {
         name: "settings-modules-gave-up-wide".into(),

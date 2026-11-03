@@ -441,13 +441,56 @@ pub fn outcome(code: Option<i32>) -> Result<(), ControlError> {
 /// Run wopkg with `argv`; its exit code, None when it could not start. Replaced in tests.
 pub type Run<'a> = &'a dyn Fn(&[String]) -> Option<i32>;
 
-pub fn run_wopkg(argv: &[String]) -> Option<i32> {
-    std::process::Command::new(WOPKG)
+/// The prefix of wopkg's stderr line with what the system service said (wopkg's
+/// `Failure::SYSTEM_PREFIX`; stable on both sides).
+pub const SYSTEM_SAID: &str = "wopkg: system: ";
+
+/// The sentence of the last `wopkg: system: ` line in `stderr`, if any.
+pub fn system_said(stderr: &str) -> Option<String> {
+    stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix(SYSTEM_SAID))
+        .map(str::trim)
+        .rfind(|m| !m.is_empty())
+        .map(str::to_owned)
+}
+
+/// Runs `prog argv`; its exit code (None when it could not start) and what the system service
+/// said on its stderr. Every stderr line is passed on to ours, as before.
+pub fn run_reading(prog: &str, argv: &[String]) -> (Option<i32>, Option<String>) {
+    use std::io::{BufRead, Write};
+    let Ok(mut child) = std::process::Command::new(prog)
         .args(argv)
         .stdin(std::process::Stdio::null())
-        .status()
-        .ok()
-        .and_then(|s| s.code().or(Some(1)))
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    else {
+        return (None, None);
+    };
+    let mut said = None;
+    if let Some(err) = child.stderr.take() {
+        let mut out = std::io::stderr();
+        for line in std::io::BufReader::new(err).lines().map_while(Result::ok) {
+            let _ = writeln!(out, "{line}");
+            said = system_said(&line).or(said);
+        }
+    }
+    let code = child.wait().ok().and_then(|s| s.code().or(Some(1)));
+    (code, said)
+}
+
+/// wopkg with `argv`. After Update Now ([`upgrade_argv`]) what the system service said (wol-admind's
+/// sentence through wold) is kept for Software Update, which shows it instead of its own words
+/// (`wol_core::controls::take_failure`); a run that worked clears it.
+pub fn run_wopkg(argv: &[String]) -> Option<i32> {
+    let (code, said) = run_reading(WOPKG, argv);
+    if argv == upgrade_argv().as_slice() {
+        wol_core::controls::note_failure(
+            shared::admin::AdminAction::PkgUpgrade,
+            said.filter(|_| code != Some(0)),
+        );
+    }
+    code
 }
 
 /// Install through wopkg; None when wopkg is not on this system (the caller keeps the old path).
@@ -470,6 +513,31 @@ pub fn present() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Settings reads wol-admind's sentence from wopkg's stderr: the last prefixed line, and the
+    /// exit code as before.
+    #[test]
+    fn what_the_system_said_is_read_from_wopkg_stderr() {
+        assert_eq!(system_said("progress 3/4\n"), None);
+        assert_eq!(
+            system_said(
+                "x\nwopkg: system: First.\nwopkg: system: The restore point wolos-a is kept.\n"
+            )
+            .as_deref(),
+            Some("The restore point wolos-a is kept.")
+        );
+        assert_eq!(system_said("wopkg: system:   \n"), None);
+        let script =
+            "echo working >&2; echo 'wopkg: system: Update Now was not started.' >&2; exit 1";
+        let argv = ["-c".to_string(), script.to_string()];
+        assert_eq!(
+            run_reading("sh", &argv),
+            (Some(1), Some("Update Now was not started.".into()))
+        );
+        let ok = ["-c".to_string(), "echo fine >&2".to_string()];
+        assert_eq!(run_reading("sh", &ok), (Some(0), None));
+        assert_eq!(run_reading("/nonexistent/wopkg", &[]), (None, None));
+    }
 
     #[test]
     fn the_aur_stays_out_of_normal_search() {
