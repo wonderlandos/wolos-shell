@@ -127,6 +127,7 @@ pub const KIND_TOGGLE: &str = "Toggle";
 pub const KIND_HOTKEY: &str = "Keyboard shortcut";
 pub const KIND_WEBAPP: &str = "Web app";
 pub const KIND_THEME: &str = "Theme";
+pub const KIND_IPC: &str = "Commands for scripts";
 /// The Open Plugin folder chooser's title.
 pub const OPEN_FOLDER_TITLE: &str = "Open a Plugin Folder";
 /// The Theme Studio's Open Theme chooser: its title and its file filter's name.

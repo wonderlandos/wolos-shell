@@ -15,7 +15,8 @@
 //!   a change reloads every surface's host.
 //!
 //! Each surface (menu bar, Dock, desktop) owns its own [`Host`] for the kinds it draws; tiles and
-//! hotkeys need no Lua and are free functions ([`tiles`], [`set_tile`], [`hotkeys`]).
+//! hotkeys need no Lua and are free functions ([`tiles`], [`set_tile`], [`hotkeys`]). `[[ipc]]`
+//! functions run in one more host the shell socket keeps ([`call_line`], [`Host::call_ipc`]).
 use crate::kit::{self, lifetime::Lifetime, widgets as w};
 use crate::ui::app_view::{Act, Sink, View};
 use gtk::{gio, glib, prelude::*};
@@ -46,6 +47,8 @@ pub const RUNNING: &str = "Running…";
 /// Kinds each surface runs.
 pub const BAR_KINDS: &[Kind] = &[Kind::Menubar];
 pub const DESKTOP_KINDS: &[Kind] = &[Kind::Widget];
+/// `call <plugin> <fn> <json>` on the shell socket.
+pub const IPC_KINDS: &[Kind] = &[Kind::Ipc];
 /// Desktop widget ids of plugin cards start with this (`lua:plugin-...`, see [`widget_key`]).
 pub const WIDGET_PREFIX: &str = "plugin-";
 /// Settings > Keyboard ids of plugin hotkeys: `plugin:<plugin>/<id>`.
@@ -657,6 +660,52 @@ impl Host {
         }
     }
 
+    /// `[[ipc]]` function `id` of `plugin` with `args`, under the `event` deadline: what it
+    /// returned, or one sentence. A refusal (`return nil, "..."`) is the plugin's answer and an
+    /// argument of the wrong type never reaches the Lua; an error or a stop counts toward the
+    /// plugin's failure streak like a render does.
+    pub fn call_ipc(
+        &mut self,
+        plugin: &str,
+        id: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let arg_type = {
+            let snap = self.snap.borrow();
+            let Some((_, m)) = snap.manifest(plugin) else {
+                return Err(format!(
+                    "No plugin {plugin} is turned on (wol plugin list shows them)."
+                ));
+            };
+            let Some(e) = m.ipc.iter().find(|e| e.id == id) else {
+                let names: Vec<&str> = m.ipc.iter().map(|e| e.id.as_str()).collect();
+                return Err(if names.is_empty() {
+                    format!("{plugin} has no [[ipc]] functions.")
+                } else {
+                    format!(
+                        "{plugin} has no [[ipc]] \"{id}\"; it has {}.",
+                        names.join(", ")
+                    )
+                });
+            };
+            e.args
+        };
+        if !arg_type.accepts(args) {
+            return Err(arg_type.sentence(plugin, id));
+        }
+        let slot = self.slot(Kind::Ipc, plugin, id).ok_or_else(|| {
+            format!("{plugin} {id} is not loaded; try again after wol plugin check {plugin}.")
+        })?;
+        let r = match &mut slot.script {
+            Ok(s) => guarded(|| s.call(args)),
+            Err(m) => Err(m.clone()),
+        };
+        match self.outcome(plugin, r)? {
+            wol_lua::plugin::Answer::Value(v) => Ok(v),
+            wol_lua::plugin::Answer::Refused(m) => Err(m),
+        }
+    }
+
     /// Seconds between renders of the entry (0: only after a click).
     pub fn refresh(&self, kind: Kind, plugin: &str, id: &str) -> Option<u32> {
         let s = self
@@ -1171,6 +1220,39 @@ pub fn load(host: &Rc<RefCell<Host>>, changed: Rc<dyn Fn()>) {
         }
         toast(&h);
     });
+}
+
+thread_local! {
+    /// The shell socket's `[[ipc]]` host, made at the first `call`.
+    static IPC: RefCell<Option<Rc<RefCell<Host>>>> = const { RefCell::new(None) };
+}
+
+/// The reply line to a `call` line's target (`<plugin> <fn> [json]`): the plugins are read off
+/// the GTK thread first, so a plugin turned on or edited a moment ago answers; when nothing
+/// changed, the loaded scripts (and what their Lua keeps) stay.
+pub async fn call_line(target: String) -> String {
+    use crate::protocol::{Call, reply_err, reply_ok};
+    let Some(c) = Call::of(&target) else {
+        return reply_err("A call is: <plugin id> <function> [one JSON value].");
+    };
+    let host = IPC.with_borrow_mut(|h| {
+        h.get_or_insert_with(|| Rc::new(RefCell::new(Host::new(Paths::user(), IPC_KINDS))))
+            .clone()
+    });
+    let paths = host.borrow().paths.clone();
+    let Ok(snap) = gio::spawn_blocking(move || read_snapshot(&paths, IPC_KINDS)).await else {
+        return reply_err("The plugins could not be read.");
+    };
+    let r = {
+        let mut h = host.borrow_mut();
+        h.apply(snap);
+        h.call_ipc(&c.plugin, &c.entry, &c.args)
+    };
+    toast(&host);
+    match r {
+        Ok(v) => reply_ok(v),
+        Err(m) => reply_err(&m),
+    }
 }
 
 /// Posts the host's toasts (a plugin turned off) as notifications, off the GTK thread.
