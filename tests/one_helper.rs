@@ -37,7 +37,8 @@ const THREAD_LOCAL: [(&str, usize); 8] = [
     ("ui/menubar.rs", 1),
     ("ui/panels.rs", 2),
     ("ui/settings/mod.rs", 2),
-    ("ui/transient.rs", 2),
+    // 2 -> 3 (SP-4): PRESENCE, the per-thread window registry of the fades, like the other two.
+    ("ui/transient.rs", 3),
 ];
 
 fn per_file(needle: &str, keep: impl Fn(&str) -> bool) -> BTreeMap<String, usize> {
