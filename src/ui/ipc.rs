@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Event sources on the GTK main loop (no threads, no polling): the shell socket and Hyprland's event socket.
+//! Event sources on the GTK main loop (no threads, no polling): the shell socket and the compositor's event socket.
 use super::{Panels, dock::Dock, panels::Osd};
 use crate::{hypr, protocol};
 use gtk::{gio, glib, prelude::*};
@@ -137,9 +137,12 @@ pub fn shell_socket(
     });
 }
 
+/// Runs one shell command in this process.
+type Local = Rc<dyn Fn(&protocol::Command)>;
+
 thread_local! {
     /// In-process entry to [`run`], set by [`shell_socket`].
-    static LOCAL: std::cell::RefCell<Option<Rc<dyn Fn(&protocol::Command)>>> = Default::default();
+    static LOCAL: std::cell::RefCell<Option<Local>> = Default::default();
 }
 
 /// Runs `cmd` as if it came in on the shell socket (no `wol` process); nothing before the socket
@@ -324,13 +327,15 @@ fn run(
         }
         return super::panels::ask_session(action);
     }
-    if cmd.target == "osd" && cmd.verb == protocol::Verb::Show {
-        // Sent by wol-volume after a change: read the sink now, then show the new level.
+    if matches!(cmd.target.as_str(), "osd" | "osd-mic") && cmd.verb == protocol::Verb::Show {
+        // Sent by wol-volume after a change: read the sink and the source now, then show the new
+        // level (`osd-mic` after the mic-mute key: the microphone's state; audit5 S9-3).
         let (done, osd, sys) = (sys.refresh_audio(), osd.clone(), sys.clone());
+        let mic = cmd.target == "osd-mic";
         glib::spawn_future_local(async move {
             let _ = done.recv().await;
-            let a = sys.audio();
-            osd.show(crate::status::volume(a), a.volume.unwrap_or(0));
+            let (icon, level) = osd_view(mic, sys.audio());
+            osd.show(icon, level);
         });
         return;
     }
@@ -357,7 +362,7 @@ fn run(
     }
 }
 
-/// Reconnect delay after `failures` consecutive drops of the Hyprland event socket: 1 s, 2 s,
+/// Reconnect delay after `failures` consecutive drops of the compositor event socket: 1 s, 2 s,
 /// 4 s … capped at 30 s (a `hyprctl reload` or a compositor restart must not cost the dock its
 /// running dots for the session).
 pub fn backoff(failures: u32) -> std::time::Duration {
@@ -481,7 +486,7 @@ fn after_blank(active: Option<(String, String)>, panel_has_keys: bool) -> Option
     }
 }
 
-/// Hyprland `.socket2.sock`: active window -> menu bar name; open/close -> dock running dots;
+/// Compositor `.socket2.sock`: active window -> menu bar name; open/close -> dock running dots;
 /// another app in front or a workspace switch closes the transient panels. Reconnects with
 /// [`backoff`] and reseeds from `j/activewindow` + `j/clients` (off the UI thread) each time.
 pub fn hypr_events(dock: Rc<Dock>, panels: Panels) {
@@ -508,9 +513,9 @@ pub fn hypr_events(dock: Rc<Dock>, panels: Panels) {
                         failures = 0;
                         handle(&line, &dock, &panels, &show).await;
                     }
-                    eprintln!("wol-shell: Hyprland event socket closed, reconnecting");
+                    eprintln!("wol-shell: compositor event socket closed, reconnecting");
                 }
-                Err(e) => eprintln!("wol-shell: Hyprland event socket: {e}"),
+                Err(e) => eprintln!("wol-shell: compositor event socket: {e}"),
             }
             glib::timeout_future(backoff(failures)).await;
             failures = failures.saturating_add(1);
@@ -535,13 +540,28 @@ async fn reseed(dock: &Dock, show: &Show) {
     refresh_fullscreen().await;
 }
 
-/// `hypr::fullscreen_state` from Hyprland now (off the UI thread): banners and the OSD hold while
-/// the active workspace is in full screen (audit3 R2A-9).
+/// `hypr::fullscreen_state` from the compositor now (off the UI thread): banners hold while the active
+/// workspace is in full screen (audit3 R2A-9); the volume OSD is not held, it shows over it
+/// (brief, like the macOS HUD; decision audit5 S6-3). Each display's mode too, for its desktop
+/// widgets (audit5 S6-2).
 async fn refresh_fullscreen() {
-    let mode = gio::spawn_blocking(hypr::read_fullscreen)
-        .await
-        .unwrap_or_default();
+    let (mode, per) =
+        gio::spawn_blocking(|| (hypr::read_fullscreen(), hypr::read_monitor_fullscreen()))
+            .await
+            .unwrap_or_default();
+    hypr::set_monitor_fullscreen(per);
     hypr::set_fullscreen_state(mode);
+}
+
+/// The OSD's icon and level for `show osd` (the speaker) or `show osd-mic` (`mic`: the
+/// microphone, at 0 while muted, so the mute key is seen to have worked).
+pub fn osd_view(mic: bool, a: crate::status::Audio) -> (&'static str, u8) {
+    if !mic {
+        return (crate::status::volume(a), a.volume.unwrap_or(0));
+    }
+    let icon = crate::status::mic(a).unwrap_or("microphone-sensitivity-muted-symbolic");
+    let level = if a.mic_muted { 0 } else { a.mic.unwrap_or(0) };
+    (icon, level)
 }
 
 /// One event line.
@@ -586,6 +606,12 @@ async fn handle(line: &str, dock: &Rc<Dock>, panels: &Panels, show: &Show) {
             }
         }
         Some(hypr::Event::FocusedMonitor(m)) => super::menubar::set_focused(&m),
+        // A config reload drops every `keyword` bind (audit5 S9-4): the fallback Esc and Super
+        // binds (when the key plugin is not loaded) and all plugin hotkeys go in again.
+        Some(hypr::Event::ConfigReloaded) => {
+            let _ = gio::spawn_blocking(hypr::ensure_key_forwarding).await;
+            super::plugins::replay_hotkeys();
+        }
         Some(hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. }) => {
             let clients = gio::spawn_blocking(hypr::clients).await.unwrap_or_default();
             dock.set_running(&hypr::running_classes(&clients));
@@ -598,6 +624,35 @@ async fn handle(line: &str, dock: &Rc<Dock>, panels: &Panels, show: &Show) {
 mod tests {
     use super::*;
     use shared::shell::{Approval, ApprovalRequest};
+
+    /// Audit5 S9-3: the mic-mute key shows the microphone, muted, not the speaker level.
+    #[test]
+    fn the_mic_osd_shows_the_microphone_state() {
+        use crate::status::Audio;
+        let a = Audio {
+            volume: Some(80),
+            muted: false,
+            mic: Some(50),
+            mic_muted: true,
+        };
+        assert_eq!(
+            osd_view(true, a),
+            ("microphone-sensitivity-muted-symbolic", 0)
+        );
+        let live = Audio {
+            mic_muted: false,
+            ..a
+        };
+        assert_eq!(
+            osd_view(true, live),
+            ("microphone-sensitivity-high-symbolic", 50)
+        );
+        assert_eq!(osd_view(false, a), (crate::status::volume(a), 80));
+        assert!(
+            shared::shell::PANELS.contains(&"osd-mic"),
+            "the socket accepts it"
+        );
+    }
 
     fn json(request: ApprovalRequest) -> String {
         serde_json::to_string(&Approval {

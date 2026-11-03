@@ -29,7 +29,7 @@ pub struct Displays {
     dressed: RefCell<HashMap<Connector, Dressed>>,
 }
 
-/// The displays GTK knows now, in Hyprland's order, by connector.
+/// The displays GTK knows now, in the compositor's order, by connector.
 pub fn monitors() -> Vec<(Connector, gdk::Monitor)> {
     let Some(d) = gdk::Display::default() else {
         return vec![];

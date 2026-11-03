@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Control Center detail pages: Wi-Fi networks (join with password), Bluetooth devices, Sound
-//! output, Focus modes. Rows rebuild only when their data changed.
-use super::{SOUND_SETTINGS, Ui, WIFI_SETTINGS, launch};
+//! Control Center detail pages: Wi-Fi networks (join with password), Bluetooth devices, Focus
+//! modes (Sound and Display have their own files). Rows rebuild only when their data changed.
+use super::{Ui, WIFI_SETTINGS, launch};
 use crate::copy;
 use crate::focus::{self, Focus};
 use crate::kit::{
     controls::{DetailPage, DeviceRow},
     widgets as w,
 };
-use crate::system::{Action, ActionError, BtDevice, Output, WifiNetwork};
+use crate::system::{Action, ActionError, BtDevice, WifiNetwork};
 use gtk::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,8 +22,6 @@ pub(super) struct Pages {
     join: Join,
     bluetooth: DetailPage,
     devices: RefCell<Option<Vec<BtDevice>>>,
-    sound: DetailPage,
-    outputs: RefCell<Option<Vec<Output>>>,
     dnd: DeviceRow,
 }
 
@@ -208,11 +206,6 @@ impl Pages {
         }
         ui.pages.add_named(&bluetooth.root, Some("bluetooth"));
 
-        let sound = DetailPage::new("Sound", None, "Output", Some("Sound Settings…"));
-        back(ui, &sound);
-        link(&sound, SOUND_SETTINGS);
-        ui.pages.add_named(&sound.root, Some("sound"));
-
         let focus_page = DetailPage::new("Focus", None, "", None);
         back(ui, &focus_page);
         let dnd = DeviceRow::new(
@@ -273,8 +266,6 @@ impl Pages {
             join,
             bluetooth,
             devices: Default::default(),
-            sound,
-            outputs: Default::default(),
             dnd,
         }
     }
@@ -335,33 +326,6 @@ impl Pages {
             };
             self.bluetooth.set_rows(&rows, empty);
             *self.devices.borrow_mut() = Some(devices);
-        }
-
-        let outputs = s.output_devices();
-        if self.outputs.borrow().as_ref() != Some(&outputs) {
-            let rows: Vec<gtk::Widget> = outputs
-                .iter()
-                .map(|o| {
-                    let icon = if o.name.to_lowercase().contains("headphone") {
-                        "audio-headphones-symbolic"
-                    } else {
-                        "audio-speakers-symbolic"
-                    };
-                    let r = DeviceRow::new(
-                        icon,
-                        &o.name,
-                        "",
-                        o.default,
-                        o.default.then_some("object-select-symbolic"),
-                    );
-                    let (u, id) = (ui.clone(), o.id.clone());
-                    r.button
-                        .connect_clicked(move |_| u.act(Action::Output(id.clone())));
-                    r.button.upcast()
-                })
-                .collect();
-            self.sound.set_rows(&rows, "No output devices");
-            *self.outputs.borrow_mut() = Some(outputs);
         }
 
         self.dnd.set_active(f.active());

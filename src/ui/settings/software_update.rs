@@ -81,51 +81,86 @@ pub fn auto_main(download: bool, apps: bool) -> bool {
     download || apps
 }
 
-/// Automatic updates: the main switch and its two options (shown while it is on).
+/// Automatic updates: the main switch and its two options (shown while it is on). What is on now
+/// (`systemctl --user is-enabled`, `Machine::auto_updates`) is read off the GTK thread.
 fn automatic(e: &Rc<Env>, into: &gtk::Box) {
-    let ctx = e.ctx.clone();
-    let set_download: Rc<dyn Fn(bool)> = Rc::new(move |on| {
-        if let Some(a) = admin("auto-update", &[if on { "on" } else { "off" }]) {
-            ctx.act(a, Rc::new(|_| {}));
-        }
-    });
-    let set_apps: Rc<dyn Fn(bool)> = Rc::new(|on| {
-        std::thread::spawn(move || {
-            wol_core::system::run_with_timeout(
-                &wol_core::update::auto::apps_argv(on),
-                std::time::Duration::from_secs(20),
-            )
-        });
-    });
-    let (download, apps) = e.machine().auto_updates();
+    let holder = w::vbox(0);
+    into.append(&holder);
+    let (m, e) = (e.machine(), e.clone());
+    later(
+        &holder,
+        move || m.auto_updates(),
+        move |into, (download, apps)| automatic_rows(&e, into, download, apps),
+    );
+}
+
+/// The switches of [`automatic`]. Each option waits for its change and flips back, with the
+/// reason under the section, when it fails (the Authenticate sheet cancelled, wol-admind refused,
+/// the user timer could not be changed); the main switch follows them. Without the
+/// `auto-update` verb in this build the download option is not shown.
+fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool) {
+    let status = status_label();
+    let can_download = admin("auto-update", &["on"]).is_some();
+    let download = download && can_download;
+    let dl = {
+        let (ctx, st) = (e.ctx.clone(), status.clone());
+        w::pending_toggle(download, move |on, done| {
+            match admin("auto-update", &[if on { "on" } else { "off" }]) {
+                Some(a) => ctx.act_switch(a, &st, done),
+                None => done(false),
+            }
+        })
+    };
+    let ap = {
+        let st = status.clone();
+        w::pending_toggle(apps, move |on, done| {
+            let st = st.clone();
+            off_thread(
+                move || {
+                    wol_core::system::run_with_timeout(
+                        &wol_core::update::auto::apps_argv(on),
+                        std::time::Duration::from_secs(20),
+                    )
+                    .is_some()
+                },
+                move |ok| {
+                    say(
+                        &st,
+                        if ok {
+                            ""
+                        } else {
+                            crate::copy::settings::AUTO_APPS_FAILED
+                        },
+                    );
+                    done(ok)
+                },
+            );
+        })
+    };
+    // Shows what the options are; turning it on or off sets both, their handlers apply it.
     let main = w::toggle(auto_main(download, apps), |_| {});
-    let dl = w::toggle(download, {
-        let f = set_download.clone();
-        move |on| f(on)
-    });
-    let ap = w::toggle(apps, {
-        let f = set_apps.clone();
-        move |on| f(on)
-    });
     let dl_row = form::row(
         "Download new updates",
         "In the background. You choose when to install.",
         &dl,
     );
     let ap_row = form::row("Install app updates", "Flathub apps, once a day.", &ap);
-    dl_row.set_visible(main.is_active());
+    dl_row.set_visible(can_download && main.is_active());
     ap_row.set_visible(main.is_active());
     {
         let (dl, ap, dl_row, ap_row) = (dl.clone(), ap.clone(), dl_row.clone(), ap_row.clone());
         main.connect_active_notify(move |m| {
             let on = m.is_active();
-            dl_row.set_visible(on);
+            dl_row.set_visible(can_download && on);
             ap_row.set_visible(on);
-            // Each switch's own handler applies the change.
-            dl.set_active(on);
+            if can_download {
+                dl.set_active(on);
+            }
             ap.set_active(on);
         });
     }
+    // An option that ends off (turned off, or a change that failed) turns the main switch off
+    // once neither is on.
     for s in [&dl, &ap] {
         let (main, dl, ap) = (main.clone(), dl.clone(), ap.clone());
         s.connect_active_notify(move |_| {
@@ -146,6 +181,7 @@ fn automatic(e: &Rc<Env>, into: &gtk::Box) {
             ap_row,
         ],
     ));
+    into.append(&status);
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -253,14 +289,10 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 UpdateState::Available(v) => {
                     names.set_label(&names_line(v, 6));
                     (
-                        format!(
-                            "{} update{} available",
-                            v.len(),
-                            if v.len() == 1 { "" } else { "s" }
-                        ),
+                        crate::copy::updates_available(v.len()),
                         match note.borrow().as_deref() {
                             Some(n) => format!("{n} WolOS saves a restore point first."),
-                            None => "WolOS saves a restore point before updating.".into(),
+                            None => crate::copy::UPDATE_RESTORE_POINT.into(),
                         },
                     )
                 }

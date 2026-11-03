@@ -10,6 +10,7 @@ use shared::portal::{Answer, Call};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -66,27 +67,61 @@ pub fn notify_of(e: &Event, uid: u32) -> Option<(u32, Notify)> {
     ))
 }
 
+/// Presses kept for a banner whose Notify reply has not come back yet (other apps' banners
+/// land here too and fall off).
+const EARLY_KEPT: usize = 8;
+
 /// Banner id -> wold id, bounded.
 #[derive(Default)]
-struct Ids(Vec<(u32, u32)>);
+struct Ids {
+    map: Vec<(u32, u32)>,
+    /// (banner, action key) pressed before [`Ids::add`] knew the banner: the server sends
+    /// ActionInvoked as soon as the banner is up, which can beat Notify's reply here.
+    early: Vec<(u32, String)>,
+}
 
 impl Ids {
-    fn add(&mut self, banner: u32, wold: u32) {
-        self.0.retain(|e| e.1 != wold);
-        if self.0.len() == KEPT {
-            self.0.remove(0);
+    /// Banner `banner` shows wold's `wold`. Some(key) when it was already pressed: answer it.
+    fn add(&mut self, banner: u32, wold: u32) -> Option<String> {
+        if let Some(i) = self.early.iter().position(|e| e.0 == banner) {
+            return Some(self.early.remove(i).1);
         }
-        self.0.push((banner, wold));
+        self.map.retain(|e| e.1 != wold);
+        if self.map.len() == KEPT {
+            self.map.remove(0);
+        }
+        self.map.push((banner, wold));
+        None
     }
 
     fn take(&mut self, banner: u32) -> Option<u32> {
-        let i = self.0.iter().position(|e| e.0 == banner)?;
-        Some(self.0.remove(i).1)
+        let i = self.map.iter().position(|e| e.0 == banner)?;
+        Some(self.map.remove(i).1)
+    }
+
+    /// A press on `banner`: wold's id to answer, or kept until [`Ids::add`] names the banner.
+    fn press(&mut self, banner: u32, key: String) -> Option<(u32, String)> {
+        if let Some(id) = self.take(banner) {
+            return Some((id, key));
+        }
+        if self.early.len() == EARLY_KEPT {
+            self.early.remove(0);
+        }
+        self.early.push((banner, key));
+        None
     }
 
     /// The banner showing wold's notification `wold`; 0 when it is gone.
     fn banner(&self, wold: u32) -> u32 {
-        self.0.iter().find(|e| e.1 == wold).map_or(0, |e| e.0)
+        self.map.iter().find(|e| e.1 == wold).map_or(0, |e| e.0)
+    }
+}
+
+/// Tells wold the person pressed `key` on its notification `id`.
+fn answer(wold: &Path, id: u32, key: String) {
+    let a = call(wold, &Call::NotificationAnswer { id, key });
+    if !a.ok {
+        eprintln!("wol-shell: notification answer: {:?}", a.message);
     }
 }
 
@@ -129,56 +164,90 @@ pub(crate) fn call_with(wold: &Path, c: &Call, file: Option<&std::fs::File>) -> 
 /// Why the bridge stopped (logged).
 pub type Stop = Box<dyn std::error::Error + Send + Sync>;
 
-/// Bridge until wold or the session bus goes away. `dbus`: bus address (None: session bus).
-pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
-    let conn = match dbus {
-        Some(a) => zbus::blocking::connection::Builder::address(a).and_then(|b| b.build()),
-        None => zbus::blocking::Connection::session(),
-    }?;
-    let proxy = zbus::blocking::Proxy::new(&conn, NAME, PATH, NAME)?;
-    let ids: Arc<Mutex<Ids>> = Default::default();
-    // Listen before the first banner, so no press is missed. One stream keeps the server's
-    // order: ActionInvoked comes before the NotificationClosed that follows it.
-    let rule = zbus::MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .interface(NAME)
-        .and_then(|r| r.path(PATH))?
-        .build();
-    let signals = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(64))?;
-    {
-        let (ids, wold) = (ids.clone(), wold.to_path_buf());
+/// The session-bus side of the bridge: one connection, its Notifications proxy and the thread
+/// reading ActionInvoked/NotificationClosed. Made once and kept across wold reconnects: a new
+/// one per retry leaked a bus connection and a thread every time (audit4 S3-2).
+struct BusSide {
+    proxy: zbus::blocking::Proxy<'static>,
+    ids: Arc<Mutex<Ids>>,
+    /// False once the signal thread ended (the bus went away): open a new side.
+    alive: Arc<AtomicBool>,
+}
+
+impl BusSide {
+    fn open(wold: &Path, dbus: Option<&str>) -> Result<Self, Stop> {
+        let conn = match dbus {
+            Some(a) => zbus::blocking::connection::Builder::address(a).and_then(|b| b.build()),
+            None => zbus::blocking::Connection::session(),
+        }?;
+        let proxy = zbus::blocking::Proxy::new(&conn, NAME, PATH, NAME)?;
+        let ids: Arc<Mutex<Ids>> = Default::default();
+        // Listen before the first banner, so no press is missed. One stream keeps the server's
+        // order: ActionInvoked comes before the NotificationClosed that follows it.
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface(NAME)
+            .and_then(|r| r.path(PATH))?
+            .build();
+        let signals = zbus::blocking::MessageIterator::for_match_rule(rule, &conn, Some(64))?;
+        let alive = Arc::new(AtomicBool::new(true));
+        let (i, wold, a) = (ids.clone(), wold.to_path_buf(), alive.clone());
         std::thread::spawn(move || {
-            for m in signals.flatten() {
-                let h = m.header();
-                match h.member().map(|m| m.as_str()) {
-                    Some("ActionInvoked") => {
-                        let Ok((banner, key)) = m.body().deserialize::<(u32, String)>() else {
-                            continue;
-                        };
-                        let id = ids.lock().ok().and_then(|mut i| i.take(banner));
-                        if let Some(id) = id {
-                            let a = call(&wold, &Call::NotificationAnswer { id, key });
-                            if !a.ok {
-                                eprintln!("wol-shell: notification answer: {:?}", a.message);
-                            }
-                        }
-                    }
-                    Some("NotificationClosed") => {
-                        if let Ok((banner, _)) = m.body().deserialize::<(u32, u32)>()
-                            && let Ok(mut i) = ids.lock()
-                        {
-                            i.take(banner);
-                        }
-                    }
-                    _ => {}
+            signal_loop(signals, &i, &wold);
+            a.store(false, Ordering::Relaxed);
+        });
+        Ok(Self { proxy, ids, alive })
+    }
+
+    fn alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
+    }
+}
+
+fn signal_loop(signals: zbus::blocking::MessageIterator, ids: &Mutex<Ids>, wold: &Path) {
+    for m in signals.flatten() {
+        let h = m.header();
+        match h.member().map(|m| m.as_str()) {
+            Some("ActionInvoked") => {
+                let Ok((banner, key)) = m.body().deserialize::<(u32, String)>() else {
+                    continue;
+                };
+                let pressed = ids.lock().ok().and_then(|mut i| i.press(banner, key));
+                if let Some((id, key)) = pressed {
+                    answer(wold, id, key);
                 }
             }
-        });
+            Some("NotificationClosed") => {
+                if let Ok((banner, _)) = m.body().deserialize::<(u32, u32)>()
+                    && let Ok(mut i) = ids.lock()
+                {
+                    i.take(banner);
+                }
+            }
+            _ => {}
+        }
     }
+}
+
+/// wold's account subscription; nothing on the session bus is made before it answers.
+fn subscribe(wold: &Path) -> Result<std::os::unix::net::UnixStream, Stop> {
     let mut s = shared::jobs::connect(wold)?;
     s.write_all(b"subscribe account\n")?;
     // A write that wold does not take within the client timeout ends the bridge (it restarts).
     s.set_write_timeout(Some(shared::bounded::CLIENT_TIMEOUT))?;
+    Ok(s)
+}
+
+/// Bridge until wold or the session bus goes away. `dbus`: bus address (None: session bus).
+/// wold first: with wold away it returns before touching the bus (audit4 S3-2).
+pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
+    let s = subscribe(wold)?;
+    let bus = BusSide::open(wold, dbus)?;
+    bridge(s, &bus, wold)
+}
+
+fn bridge(s: std::os::unix::net::UnixStream, bus: &BusSide, wold: &Path) -> Result<(), Stop> {
+    let (proxy, ids) = (&bus.proxy, &bus.ids);
     let uid = shared::sys::euid();
     // STANDARDS 7.1 "Line protocols" (R2C-18): every event line is bounded. The subscription has
     // no idle timeout: wold sends nothing while nothing happens, and a dropped subscription would
@@ -234,8 +303,9 @@ pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
         );
         match banner {
             Ok(b) if id != 0 => {
-                if let Ok(mut i) = ids.lock() {
-                    i.add(b, id);
+                let early = ids.lock().ok().and_then(|mut i| i.add(b, id));
+                if let Some(key) = early {
+                    answer(wold, id, key);
                 }
             }
             Ok(_) => {}
@@ -245,13 +315,26 @@ pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
     Err("wold closed the connection".into())
 }
 
+/// One reconnect attempt: wold first, then the kept bus side (made on first need, again only
+/// when its signal thread ended).
+fn attempt(wold: &Path, dbus: Option<&str>, bus: &mut Option<BusSide>) -> Result<(), Stop> {
+    let s = subscribe(wold)?;
+    let side = match bus.take().filter(BusSide::alive) {
+        Some(b) => b,
+        None => BusSide::open(wold, dbus)?,
+    };
+    let side = bus.insert(side);
+    bridge(s, side, wold)
+}
+
 /// For the session: reconnect when wold restarts (backs off to a minute while it is away).
 pub fn start() {
     std::thread::spawn(|| {
+        let (wold, mut bus) = (wold_socket(), None);
         let mut wait = 2;
         loop {
             let t = std::time::Instant::now();
-            if let Err(e) = run(&wold_socket(), None)
+            if let Err(e) = attempt(&wold, None, &mut bus)
                 && wait >= 60
             {
                 eprintln!("wol-shell: app notifications: {e}");
@@ -316,5 +399,39 @@ mod tests {
         i.add(500, 3);
         assert_eq!(i.banner(3), 500, "the newest banner of a replaced note");
         assert_eq!(i.banner(9999), 0);
+    }
+
+    /// A press can reach the bridge before Notify's reply named the banner (seen on a loaded
+    /// forge): it is answered when the banner is known, once.
+    #[test]
+    fn a_press_before_the_reply_is_answered() {
+        let mut i = Ids::default();
+        assert_eq!(i.press(5, "open".into()), None, "banner 5 not known yet");
+        assert_eq!(i.add(5, 70), Some("open".to_string()), "answered now");
+        assert_eq!(i.banner(70), 0, "and not kept for a second answer");
+        assert_eq!(i.add(6, 71), None);
+        assert_eq!(i.press(6, "x".into()), Some((71, "x".to_string())));
+        for b in 100..100 + EARLY_KEPT as u32 + 4 {
+            i.press(b, "other app".into());
+        }
+        assert_eq!(i.early.len(), EARLY_KEPT, "bounded");
+    }
+
+    #[test]
+    fn wold_away_touches_no_session_bus() {
+        // audit4 S3-2: the bus side was made before wold answered, and leaked on every retry.
+        // A bus address that cannot work proves the order: the error is wold's, not the bus's.
+        let gone = Path::new("/nonexistent/wol-fs3/wold.sock");
+        let bad_bus = Some("unix:path=/nonexistent/wol-fs3/bus");
+        let e = run(gone, bad_bus).unwrap_err();
+        assert!(
+            e.downcast_ref::<std::io::Error>().is_some(),
+            "wold's error first: {e}"
+        );
+        let mut bus = None;
+        for _ in 0..3 {
+            assert!(attempt(gone, bad_bus, &mut bus).is_err());
+        }
+        assert!(bus.is_none(), "no bus connection while wold is away");
     }
 }

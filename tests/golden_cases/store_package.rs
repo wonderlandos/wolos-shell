@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! App Store install page for a double-clicked `.wol` (ADR 0011): signed, unsigned and damaged
-//! files, read through the real `verify`, wide and narrow.
+//! files, read through the real `verify`, wide and narrow; then the Plugins page with a list.
 use super::Case;
 use super::wol_file;
 use gtk::prelude::*;
 use shell::ui::store::{self, PackageFile};
 use std::rc::Rc;
 
+#[path = "store_plugins.rs"]
+mod plugins_cases;
+
 pub fn cases() -> Vec<Case> {
-    let mut v = Vec::new();
+    let mut v = plugins_cases::cases();
     for (sw, sh, tag) in [(900, 600, "wide"), (480, 360, "narrow")] {
         for kind in ["signed", "unsigned", "damaged"] {
             v.push(Case {

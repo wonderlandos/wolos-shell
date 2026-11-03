@@ -39,10 +39,11 @@ impl<T> Default for Queue<T> {
 }
 
 impl<T> Queue<T> {
-    /// Its id, or the request back when [`MAX_WAITING`] already wait.
-    pub fn push(&mut self, a: Approval, t: T) -> Result<u64, (Approval, T)> {
+    /// Its id, or the request back when [`MAX_WAITING`] already wait (boxed: an [`Approval`]
+    /// is large, and the refusal is the rare path).
+    pub fn push(&mut self, a: Approval, t: T) -> Result<u64, Box<(Approval, T)>> {
         if self.items.len() > MAX_WAITING {
-            return Err((a, t));
+            return Err(Box::new((a, t)));
         }
         self.next += 1;
         self.items.push_back((self.next, a, t));
@@ -137,6 +138,10 @@ pub fn self_named(a: &Approval, exe: Option<&str>) -> Option<String> {
 /// The line under the title: what the choices mean, and how many more wait.
 pub fn detail(a: &Approval, waiting: usize) -> String {
     let mut d = match &a.request {
+        // C10-1: a change that leaves something behind is asked every time; no Always Allow.
+        ApprovalRequest::Change { .. } if policy::once_only(&a.tool) => {
+            policy::ONCE_ONLY_DETAIL.into()
+        }
         ApprovalRequest::Change { capability, .. } => match policy::label(capability) {
             Some(l) => {
                 let mut c = l.chars();
@@ -149,6 +154,11 @@ pub fn detail(a: &Approval, waiting: usize) -> String {
             }
             None => "Allow Once lets it do this one time.".into(),
         },
+        // ADR 0034: the title carries a short SHA-256 prefix; the whole digest of wold's copy is
+        // here, so it can be compared with the one the builder published.
+        ApprovalRequest::PackageFile { sha256, .. } => {
+            crate::copy::approval_package_file(&plain(sha256))
+        }
         _ => "Enter your password to allow this.".into(),
     };
     match waiting {
@@ -232,8 +242,8 @@ impl Approvals {
         let (tx, rx) = async_channel::bounded(1);
         let pushed = self.queue.borrow_mut().push(a, Pending { tx, exe });
         match pushed {
-            Err((_, p)) => {
-                let _ = p.tx.try_send(Answer::Busy);
+            Err(refused) => {
+                let _ = refused.1.tx.try_send(Answer::Busy);
             }
             Ok(id) => {
                 let weak = Rc::downgrade(self);
@@ -286,7 +296,7 @@ impl Approvals {
             "security-high-symbolic"
         }));
         s.field.set_visible(admin);
-        s.always.set_visible(!admin);
+        s.always.set_visible(!admin && !policy::once_only(&a.tool));
         s.cancel.set_label("Deny");
         s.allow
             .set_label(if admin { "Allow" } else { "Allow Once" });
@@ -341,6 +351,10 @@ impl Approvals {
         let ApprovalRequest::Change { capability, .. } = &a.request else {
             return;
         };
+        // C10-1: nothing is saved for a once-only change; it counts this one time.
+        if policy::once_only(&a.tool) {
+            return self.answer(Answer::AllowOnce);
+        }
         match self.sys.allow_helper_always(&a.helper, capability) {
             Ok(()) => self.answer(Answer::AllowAlways),
             // Not saved: allow this once; it asks again next time.
@@ -519,6 +533,68 @@ mod tests {
                 capability: "appearance".into(),
                 what: "switch to Dark appearance".into(),
             },
+        }
+    }
+
+    /// C10-1: a change that leaves something behind (a web app, a session) never offers Always
+    /// Allow; the sheet says it asks every time. A plain `open` still does.
+    #[test]
+    fn once_only_changes_say_they_ask_every_time() {
+        let mut a = change("Claude");
+        a.tool = "webapp_add".into();
+        a.request = R::Change {
+            capability: "apps".into(),
+            what: "add “Mail” as a web app (https://m.example.com)".into(),
+        };
+        assert_eq!(detail(&a, 0), policy::ONCE_ONLY_DETAIL);
+        a.tool = "open".into();
+        assert!(detail(&a, 0).starts_with("Always Allow lets it open apps"));
+    }
+
+    /// Audit C7-1: wold's local-file, Undo Update and channel sheets are administrator sheets
+    /// only wold may put on screen; a same-account helper cannot.
+    #[test]
+    fn wolds_root_package_sheets_need_the_password() {
+        for r in [
+            R::PackageFile {
+                staged: "/var/cache/wolos/install/0123456789abcdef0123456789abcdef/x.pkg.tar.zst"
+                    .into(),
+                name: "hello".into(),
+                version: "1:2.0-3".into(),
+                sha256: "ab".repeat(32),
+            },
+            R::SystemRollback,
+            R::SystemChannel {
+                channel: "beta".into(),
+            },
+        ] {
+            assert!(may_approve(0, 1000, "/usr/bin/wold", &r));
+            assert!(!may_approve(1000, 1000, "/usr/bin/wol", &r), "{r:?}");
+            let file = matches!(r, R::PackageFile { .. });
+            let a = Approval {
+                helper: "/usr/bin/wopkg".into(),
+                tool: "wopkg packages-update".into(),
+                request: r,
+            };
+            if file {
+                // ADR 0034: name, version and a SHA-256 prefix in the title, the whole digest
+                // on the detail line, within the sheet's line limit.
+                let t = title(&a, None);
+                assert!(t.contains("“hello” 1:2.0-3 (SHA-256 abababababab…)"), "{t}");
+                assert!(!t.contains("/var/cache"), "{t}");
+                let d = detail(&a, 0);
+                assert_eq!(
+                    d,
+                    format!(
+                        "SHA-256 of the copy: {}. Enter your password to allow this.",
+                        "ab".repeat(32)
+                    )
+                );
+                assert!(d.chars().count() <= crate::copy::MAX_LEN, "{d}");
+                assert!(crate::copy::lint(&d).is_empty(), "{d}");
+            } else {
+                assert_eq!(detail(&a, 0), "Enter your password to allow this.");
+            }
         }
     }
 

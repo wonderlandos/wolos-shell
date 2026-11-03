@@ -1,107 +1,1258 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Sound: output device, volume, mute.
+//! Sound (audit-audio.md "Settings > Sound redesign"; docs/modules/audio.md): outputs with their
+//! Bluetooth codec, the output slider with its 0 dB tick and "Allow louder", balance; inputs with a
+//! slider capped at 0 dB, the live level, Automatic input level and Reduce background noise;
+//! Bluetooth codec and headset autoswitch; Pro Audio rate, buffer and dropouts; Troubleshooting.
+//!
+//! Invariant: the page draws [`SoundState`] (the sound service's snapshot, frozen types from
+//! `wol_core::audio`) and sends `wol_core::audio::Action`s back through a [`Source`]; it never asks
+//! PipeWire itself. Outputs keep the shell's `System` path (default, volume, mute), as `wol audio`
+//! and libwol do. The few user files the service does not own (keep awake, ignore hardware volume)
+//! are WirePlumber fragments under the user's config, written journaled ([`awake_conf`],
+//! [`soft_volume_conf`]).
 use super::*;
+use crate::copy::settings as copy;
+use wol_core::audio::{
+    ALLOWED_RATES, Action as AudioAction, Device, DeviceKind, InputMeter, ProAudio, QUANTA, db_of,
+    max_percent, percent_of, quantum_ms,
+};
 
-// ---- Sound ----
+/// What the page draws: `wol_audio::Snapshot`'s shape, in the frozen `wol_core::audio` types.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SoundState {
+    pub devices: Vec<Device>,
+    pub meter: InputMeter,
+    pub pro: ProAudio,
+    pub auto_input_level: bool,
+    pub noise_suppression: bool,
+    /// "Allow louder": sliders may pass 0 dB.
+    pub boost: bool,
+    /// The sound service is connected (false while PipeWire restarts).
+    pub connected: bool,
+    /// The last action's problem, in plain words; None when it worked.
+    pub error: Option<String>,
+}
 
-fn fill_outputs(list: &gtk::Box, ctx: &Rc<Ctx>, st: &gtk::Label, outs: Vec<crate::system::Output>) {
-    while let Some(c) = list.first_child() {
-        list.remove(&c);
+/// Settings the sound service does not report, read off the UI thread (`Machine::sound_extras`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Extras {
+    /// -1.0 (left) ..= 1.0 (right), the default output's (`pactl get-sink-volume` "balance").
+    pub balance: f32,
+    /// `bluetooth.autoswitch-to-headset-profile` (WirePlumber setting; shipped on).
+    pub autoswitch: bool,
+    /// [`AWAKE_FILE`] exists.
+    pub keep_awake: bool,
+    /// [`SOFT_VOLUME_FILE`] exists.
+    pub soft_volume: bool,
+    /// Connected Bluetooth devices: (name, address), to find a codec's device.
+    pub bluetooth: Vec<(String, String)>,
+}
+
+/// What the device lists show: (id, name, default, codec) per device ([`SoundState::shape`]).
+type Shape = Vec<(u32, String, bool, Option<String>)>;
+
+impl SoundState {
+    /// The fixed laptop of golden renders: speakers, AirPods on AAC, a USB microphone with +20 dB
+    /// of boost range at 0 dB, a 256-frame buffer.
+    pub fn demo() -> Self {
+        let dev = |id, name: &str, kind, default, volume, base, codec: Option<&str>| Device {
+            id,
+            name: name.into(),
+            kind,
+            default,
+            volume,
+            volume_base: base,
+            muted: false,
+            codec: codec.map(Into::into),
+            profile: None,
+        };
+        SoundState {
+            devices: vec![
+                dev(
+                    40,
+                    "AirPods Pro",
+                    DeviceKind::Output,
+                    true,
+                    0.216,
+                    1.0,
+                    Some("aac"),
+                ),
+                dev(
+                    41,
+                    "MacBook Speakers",
+                    DeviceKind::Output,
+                    false,
+                    0.4,
+                    1.0,
+                    None,
+                ),
+                dev(
+                    42,
+                    "HDMI Display",
+                    DeviceKind::Output,
+                    false,
+                    0.5,
+                    1.0,
+                    None,
+                ),
+                dev(50, "Yeti Nano", DeviceKind::Input, true, 0.1, 0.1, None),
+                dev(
+                    51,
+                    "Built-in Microphone",
+                    DeviceKind::Input,
+                    false,
+                    0.3,
+                    1.0,
+                    None,
+                ),
+            ],
+            meter: InputMeter {
+                device: 50,
+                peak: 0.3,
+                hold: 0.35,
+                clipping: false,
+            },
+            pro: ProAudio {
+                rate: 0,
+                quantum: 256,
+                xruns: 0,
+            },
+            auto_input_level: true,
+            noise_suppression: false,
+            boost: false,
+            connected: true,
+            error: None,
+        }
     }
-    if outs.is_empty() {
-        list.append(&row("No output devices", &w::label("", "secondary")));
+    fn default_of(&self, kind: DeviceKind) -> Option<&Device> {
+        self.devices.iter().find(|d| d.kind == kind && d.default)
     }
-    for o in &outs {
-        let b = w::choice_row("audio-speakers-symbolic", &o.name, "", o.default);
-        let (lc, ctx, st, id, all) = (
-            list.clone(),
-            ctx.clone(),
-            st.clone(),
-            o.id.clone(),
-            outs.clone(),
-        );
-        b.connect_clicked(move |_| {
-            let next: Vec<_> = all
-                .iter()
-                .cloned()
-                .map(|mut x| {
-                    x.default = x.id == id;
-                    x
-                })
-                .collect();
-            let (lc, c2, st) = (lc.clone(), ctx.clone(), st.clone());
-            ctx.act(
-                Action::Output(id.clone()),
-                Rc::new(move |r| match r {
-                    Ok(()) => {
-                        say(&st, "");
-                        fill_outputs(&lc, &c2, &st, next.clone());
-                    }
-                    Err(e) => say(&st, e.message()),
-                }),
-            );
+    /// What the device lists show (ids, names, the defaults, codecs): a change rebuilds them;
+    /// volumes and the meter only move the controls.
+    fn shape(&self) -> Shape {
+        self.devices
+            .iter()
+            .map(|d| (d.id, d.name.clone(), d.default, d.codec.clone()))
+            .collect()
+    }
+}
+
+impl Extras {
+    /// The fixed laptop's extras (golden renders).
+    pub fn demo() -> Self {
+        Extras {
+            balance: 0.0,
+            autoswitch: true,
+            keep_awake: false,
+            soft_volume: false,
+            bluetooth: vec![("AirPods Pro".into(), "aa:bb:cc:dd:ee:00".into())],
+        }
+    }
+}
+
+// ---- Pure rules (tested below) ----
+
+/// Codecs the Bluetooth picker offers, best first (70-wolos-bluetooth.conf order): (id, label).
+pub const BT_CODECS: [(&str, &str); 7] = [
+    ("ldac", "LDAC"),
+    ("aptx_hd", "aptX HD"),
+    ("aptx", "aptX"),
+    ("aac", "AAC"),
+    ("opus_05", "Opus"),
+    ("sbc_xq", "SBC XQ"),
+    ("sbc", "SBC"),
+];
+
+/// The badge for a codec id (`api.bluez5.codec`): "AAC", "LDAC"; calls: "mSBC".
+pub fn codec_label(codec: &str) -> String {
+    match codec {
+        "msbc" => "mSBC".into(),
+        "cvsd" => "CVSD".into(),
+        c => BT_CODECS
+            .iter()
+            .find(|(id, _)| *id == c)
+            .map_or_else(|| c.to_uppercase(), |(_, l)| (*l).to_string()),
+    }
+}
+
+/// The icon for a device: Bluetooth headphones, a display, speakers or a microphone.
+pub fn device_icon(d: &Device) -> &'static str {
+    let name = d.name.to_lowercase();
+    match d.kind {
+        DeviceKind::Input => "audio-input-microphone-symbolic",
+        _ if d.codec.is_some() => "audio-headphones-symbolic",
+        _ if name.contains("hdmi") || name.contains("displayport") || name.contains("display") => {
+            "video-display-symbolic"
+        }
+        _ if name.contains("headphone") || name.contains("headset") => "audio-headphones-symbolic",
+        _ => "audio-speakers-symbolic",
+    }
+}
+
+/// Sample rate picker: "Automatic" (0), then the allowed rates.
+pub fn rate_options() -> Vec<(u32, String)> {
+    let mut v = vec![(0, "Automatic".to_string())];
+    v.extend(ALLOWED_RATES.iter().map(|r| {
+        let k = f64::from(*r) / 1000.0;
+        (*r, format!("{} kHz", trim_zero(k)))
+    }));
+    v
+}
+
+/// Buffer picker: "Automatic" (0), then each size with its delay at `rate` (48 kHz when automatic).
+pub fn quantum_options(rate: u32) -> Vec<(u32, String)> {
+    let rate = if rate == 0 { 48_000 } else { rate };
+    let mut v = vec![(0, "Automatic".to_string())];
+    v.extend(QUANTA.iter().map(|q| {
+        (
+            *q,
+            format!(
+                "{q} samples ({} ms)",
+                trim_zero((f64::from(quantum_ms(*q, rate)) * 10.0).round() / 10.0)
+            ),
+        )
+    }));
+    v
+}
+
+/// "44.1", "48".
+fn trim_zero(v: f64) -> String {
+    let s = format!("{v:.1}");
+    s.strip_suffix(".0").map_or(s.clone(), str::to_string)
+}
+
+/// "None", "1 since the sound service started", "12 since …".
+pub fn dropouts_label(xruns: u32) -> String {
+    match xruns {
+        0 => "None".into(),
+        n => format!("{n} since sound started"),
+    }
+}
+
+/// The slider's end for `d`: 100 (0 dB), or the hardware maximum when louder is allowed.
+pub fn slider_max(d: &Device, boost: bool) -> u16 {
+    if boost {
+        max_percent(d.volume_base)
+    } else {
+        100
+    }
+}
+
+/// Meter fill 0..=1 for a linear peak: -60 dBFS empty, 0 dBFS full (a VU's useful range).
+pub fn meter_fraction(peak: f32) -> f64 {
+    if peak <= 0.0 {
+        return 0.0;
+    }
+    f64::from(((db_of(peak, 1.0) + 60.0) / 60.0).clamp(0.0, 1.0))
+}
+
+/// `pactl get-sink-volume` output's balance line ("balance -0.20"); 0 when absent.
+pub fn parse_balance(text: &str) -> f32 {
+    text.lines()
+        .find_map(|l| l.trim().strip_prefix("balance "))
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|v| v.is_finite())
+        .map_or(0.0, |v| v.clamp(-1.0, 1.0))
+}
+
+/// Left and right percents for `volume` at `balance` (-1 left .. 1 right), as PulseAudio does it:
+/// the far side is turned down, the near side keeps the volume.
+pub fn balance_percents(volume: u16, balance: f32) -> (u16, u16) {
+    let b = balance.clamp(-1.0, 1.0);
+    let v = f32::from(volume);
+    let side = |scale: f32| (v * scale).round().clamp(0.0, 1000.0) as u16;
+    (side((1.0 - b).min(1.0)), side((1.0 + b).min(1.0)))
+}
+
+/// `pactl set-sink-volume @DEFAULT_SINK@ L% R%`.
+pub fn balance_argv(volume: u16, balance: f32) -> Vec<String> {
+    let (l, r) = balance_percents(volume, balance);
+    argv(&[
+        "pactl",
+        "set-sink-volume",
+        "@DEFAULT_SINK@",
+        &format!("{l}%"),
+        &format!("{r}%"),
+    ])
+}
+
+/// `wpctl settings bluetooth.autoswitch-to-headset-profile` says false.
+pub fn parse_autoswitch(text: &str) -> bool {
+    !text.to_lowercase().contains("false")
+}
+
+/// `wpctl settings --save bluetooth.autoswitch-to-headset-profile <on>`: live and kept.
+pub fn autoswitch_argv(on: bool) -> Vec<String> {
+    argv(&[
+        "wpctl",
+        "settings",
+        "--save",
+        "bluetooth.autoswitch-to-headset-profile",
+        if on { "true" } else { "false" },
+    ])
+}
+
+/// User WirePlumber fragments, relative to `$XDG_CONFIG_HOME`.
+pub const AWAKE_FILE: &str = "wireplumber/wireplumber.conf.d/72-wolos-keep-awake.conf";
+pub const SOFT_VOLUME_FILE: &str = "wireplumber/wireplumber.conf.d/73-wolos-soft-volume.conf";
+
+/// "Keep device awake": sound cards never suspend (72-wolos-alsa.conf ships 5 s).
+pub fn awake_conf() -> String {
+    "# Settings > Sound > Keep device awake (WolOS). Delete this file to undo.\n\
+     monitor.alsa.rules = [\n  {\n    matches = [ { node.name = \"~alsa_output.*\" } { node.name = \"~alsa_input.*\" } ]\n    \
+     actions = { update-props = { session.suspend-timeout-seconds = 0 } }\n  }\n]\n"
+        .into()
+}
+
+/// "Ignore hardware volume": PipeWire scales the sound itself instead of the card's mixer.
+pub fn soft_volume_conf() -> String {
+    "# Settings > Sound > Ignore hardware volume (WolOS). Delete this file to undo.\n\
+     monitor.alsa.rules = [\n  {\n    matches = [ { device.name = \"~alsa_card.*\" } ]\n    \
+     actions = { update-props = { api.alsa.soft-mixer = true } }\n  }\n]\n"
+        .into()
+}
+
+/// `wol audio doctor`: the report Copy diagnostics puts on the clipboard (15 s: it times pw-top).
+const DOCTOR: [&str; 3] = ["wol", "audio", "doctor"];
+const DOCTOR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The service's own line under the page: its last error, else "reconnecting" while it is down.
+fn service_notice(s: &SoundState) -> Option<&str> {
+    s.error
+        .as_deref()
+        .or_else(|| (!s.connected).then_some(copy::SOUND_RECONNECTING))
+}
+
+/// Whether a state shows an asked-for Reset audio: Some(false) when the service reports an
+/// error, Some(true) when it is connected again with the input filters off (what a reset leaves),
+/// None while it is still on its way.
+fn reset_outcome(s: &SoundState) -> Option<bool> {
+    if s.error.is_some() {
+        return Some(false);
+    }
+    (s.connected && !s.auto_input_level && !s.noise_suppression).then_some(true)
+}
+
+// ---- Where the state comes from ----
+
+/// What the page asks of the sound service.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Request {
+    Act(AudioAction),
+    /// "Allow louder".
+    Boost(bool),
+    /// The page is on screen: run the input meter and the dropout count (false: stop them).
+    Meter(bool),
+}
+
+/// The sound service as the page sees it.
+pub trait Source {
+    /// The newest state, when one arrived since the last call.
+    fn latest(&self) -> Option<SoundState>;
+    fn request(&self, r: Request);
+}
+
+/// A fixed state (previews): the first call returns it; requests change nothing.
+struct Fixed(RefCell<Option<SoundState>>);
+
+impl Source for Fixed {
+    fn latest(&self) -> Option<SoundState> {
+        self.0.borrow_mut().take()
+    }
+    fn request(&self, _: Request) {}
+}
+
+/// The running system: the wol-audio service on its own threads (crates/audio).
+struct Live(wol_audio::pw::Handle);
+
+impl From<wol_audio::Snapshot> for SoundState {
+    fn from(s: wol_audio::Snapshot) -> Self {
+        SoundState {
+            devices: s.devices,
+            meter: s.meter,
+            pro: s.pro,
+            auto_input_level: s.auto_input_level,
+            noise_suppression: s.noise_suppression,
+            boost: s.boost,
+            connected: s.connected,
+            error: s.error,
+        }
+    }
+}
+
+impl Source for Live {
+    fn latest(&self) -> Option<SoundState> {
+        self.0.latest().map(SoundState::from)
+    }
+    fn request(&self, r: Request) {
+        use wol_audio::service::Request as R;
+        self.0.request(match r {
+            Request::Act(a) => R::Act(a),
+            Request::Boost(on) => R::Boost(on),
+            Request::Meter(on) => R::Meter(on),
         });
-        list.append(&b);
     }
 }
 
-/// Volume while dragging: one action in flight, newest value queued.
-#[derive(Default)]
-struct Coalesce {
-    busy: std::cell::Cell<bool>,
-    latest: std::cell::Cell<Option<u8>>,
+/// The page's source: the machine's fixed state when it has one (Demo), else the live service.
+fn source(m: &Arc<dyn Machine>) -> Rc<dyn Source> {
+    match m.sound() {
+        Some(s) => Rc::new(Fixed(RefCell::new(Some(s)))),
+        None => live(),
+    }
 }
 
-fn send_volume(ctx: &Rc<Ctx>, q: &Rc<Coalesce>, v: u8) {
-    if q.busy.replace(true) {
-        return q.latest.set(Some(v));
+/// Connects to the sound service (its own threads). Settings and the Control Center each start
+/// one, the first time their Sound page opens; both send the same requests.
+pub fn live() -> Rc<dyn Source> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    Rc::new(Live(wol_audio::pw::Handle::spawn(home)))
+}
+
+// ---- The page ----
+
+/// The controls that move with each new state (lists rebuild only when their shape changes).
+struct View {
+    src: Rc<dyn Source>,
+    ctx: Rc<Ctx>,
+    /// What the user's last action here did (Mute, Copy, Reset, the switches): only actions write
+    /// it, so the 100 ms state poll never erases it (audit5 S7-1).
+    status: gtk::Label,
+    /// The sound service's own word: its last error, or that it is reconnecting. Every state
+    /// rewrites it.
+    notice: gtk::Label,
+    /// Reset audio was asked for: [`reset_outcome`] of the next states says when it is done.
+    reset_pending: Cell<bool>,
+    outputs: gtk::Box,
+    inputs: gtk::Box,
+    out_slider: gtk::Scale,
+    out_mute: gtk::Switch,
+    in_slider: gtk::Scale,
+    in_mute: gtk::Switch,
+    meter: gtk::ProgressBar,
+    louder: gtk::Switch,
+    auto_level: gtk::Switch,
+    noise: gtk::Switch,
+    bluetooth: gtk::Box,
+    pro: gtk::Box,
+    /// Set while the page moves its own controls (their handlers then send nothing).
+    quiet: Rc<Cell<bool>>,
+    shape: RefCell<Shape>,
+    state: RefCell<SoundState>,
+    extras: RefCell<Extras>,
+}
+
+impl View {
+    fn send(&self, r: Request) {
+        if !self.quiet.get() {
+            self.src.request(r)
+        }
     }
-    let (c2, q2) = (ctx.clone(), q.clone());
-    ctx.act(
-        Action::Volume(v),
-        Rc::new(move |_| {
-            q2.busy.set(false);
-            if let Some(n) = q2.latest.take() {
-                send_volume(&c2, &q2, n);
+
+    /// Draws `s`: lists when the devices changed, then every control's value.
+    fn apply(self: &Rc<Self>, s: SoundState) {
+        self.quiet.set(true);
+        let shape = s.shape();
+        if *self.shape.borrow() != shape {
+            self.fill(&s);
+            *self.shape.borrow_mut() = shape;
+        }
+        let out = s.default_of(DeviceKind::Output);
+        let inp = s.default_of(DeviceKind::Input);
+        set_scale(&self.out_slider, out, s.boost);
+        self.out_mute.set_active(out.is_some_and(|d| d.muted));
+        self.out_mute.set_sensitive(out.is_some());
+        set_scale(&self.in_slider, inp, false);
+        self.in_mute.set_active(inp.is_some_and(|d| d.muted));
+        self.in_mute.set_sensitive(inp.is_some());
+        self.meter
+            .set_fraction(meter_fraction(s.meter.hold.max(s.meter.peak)));
+        self.louder.set_active(s.boost);
+        self.auto_level.set_active(s.auto_input_level);
+        self.noise.set_active(s.noise_suppression);
+        say(&self.notice, service_notice(&s).unwrap_or(""));
+        if self.reset_pending.get()
+            && let Some(r) = reset_outcome(&s)
+        {
+            self.reset_pending.set(false);
+            // A failed reset's reason is the service's error, already on `notice`.
+            say(&self.status, if r { copy::SOUND_RESET_DONE } else { "" });
+        }
+        let pro_changed = self.state.borrow().pro != s.pro;
+        *self.state.borrow_mut() = s;
+        if pro_changed || self.pro.first_child().is_none() {
+            self.fill_pro();
+        }
+        self.quiet.set(false);
+    }
+
+    /// Rebuilds the output and input lists and the Bluetooth section.
+    fn fill(self: &Rc<Self>, s: &SoundState) {
+        for (list, kind) in [
+            (&self.outputs, DeviceKind::Output),
+            (&self.inputs, DeviceKind::Input),
+        ] {
+            clear(list);
+            let devs: Vec<&Device> = s.devices.iter().filter(|d| d.kind == kind).collect();
+            if devs.is_empty() && kind == DeviceKind::Input {
+                list.append(&w::list_row("", copy::SOUND_NO_INPUT, "", None));
             }
-        }),
-    );
+            for d in devs {
+                let badge = d.codec.as_deref().map(codec_label).unwrap_or_default();
+                let b = w::choice_row(device_icon(d), &d.name, &badge, d.default);
+                let (me, id) = (Rc::downgrade(self), d.id);
+                b.connect_clicked(move |_| {
+                    if let Some(me) = me.upgrade() {
+                        me.choose(kind, id)
+                    }
+                });
+                list.append(&b);
+            }
+        }
+        self.fill_bluetooth(s);
+    }
+
+    /// The default for `kind` becomes `id`: inputs through the service, outputs through System.
+    fn choose(self: &Rc<Self>, kind: DeviceKind, id: u32) {
+        match kind {
+            DeviceKind::Input => self.send(Request::Act(AudioAction::Input(id))),
+            DeviceKind::Output => {
+                let mut s = self.state.borrow().clone();
+                for d in s.devices.iter_mut().filter(|d| d.kind == kind) {
+                    d.default = d.id == id;
+                }
+                let st = self.status.clone();
+                self.ctx.act(
+                    Action::Output(id.to_string()),
+                    Rc::new(move |r| say(&st, r.err().map_or("", |e| e.message()))),
+                );
+                self.apply(s);
+            }
+        }
+    }
+
+    /// Codec picker and autoswitch, when a Bluetooth device plays.
+    fn fill_bluetooth(self: &Rc<Self>, s: &SoundState) {
+        clear(&self.bluetooth);
+        let ex = self.extras.borrow().clone();
+        let mut rows = Vec::new();
+        for d in s
+            .devices
+            .iter()
+            .filter(|d| d.kind == DeviceKind::Output && d.codec.is_some())
+        {
+            let Some(addr) = ex
+                .bluetooth
+                .iter()
+                .find(|b| b.0 == d.name)
+                .map(|b| b.1.clone())
+            else {
+                continue;
+            };
+            let codec = d.codec.clone().unwrap_or_default();
+            let labels: Vec<&str> = BT_CODECS.iter().map(|c| c.1).collect();
+            let at = BT_CODECS.iter().position(|c| c.0 == codec).unwrap_or(3);
+            let src = self.src.clone();
+            rows.push(form::picker_row(
+                &format!("{} codec", d.name),
+                "",
+                &labels,
+                at,
+                move |i| {
+                    if let Some(c) = BT_CODECS.get(i) {
+                        src.request(Request::Act(AudioAction::BtCodec(
+                            addr.clone(),
+                            c.0.to_string(),
+                        )))
+                    }
+                },
+            ));
+        }
+        if !ex.bluetooth.is_empty() {
+            let st = self.status.clone();
+            rows.push(form::pending_toggle_row(
+                "Use the headset microphone automatically",
+                copy::SOUND_AUTOSWITCH,
+                ex.autoswitch,
+                move |on, done| {
+                    let st = st.clone();
+                    off_thread(
+                        move || run_ok(&autoswitch_argv(on)),
+                        move |ok| {
+                            say(&st, if ok { "" } else { copy::SOUND_NOT_SAVED });
+                            done(ok)
+                        },
+                    );
+                },
+            ));
+        }
+        if !rows.is_empty() {
+            self.bluetooth.append(&w::section("Bluetooth", &rows));
+        }
+    }
+
+    /// Sample rate, buffer and dropouts.
+    fn fill_pro(self: &Rc<Self>) {
+        clear(&self.pro);
+        let pro = self.state.borrow().pro;
+        let rates = rate_options();
+        let quanta = quantum_options(pro.rate);
+        let r_at = rates.iter().position(|r| r.0 == pro.rate).unwrap_or(0);
+        let q_at = quanta.iter().position(|q| q.0 == pro.quantum).unwrap_or(0);
+        let r_labels: Vec<&str> = rates.iter().map(|r| r.1.as_str()).collect();
+        let q_labels: Vec<&str> = quanta.iter().map(|q| q.1.as_str()).collect();
+        let (me, me2) = (Rc::downgrade(self), Rc::downgrade(self));
+        let (rates2, quanta2) = (rates.clone(), quanta.clone());
+        let rate = form::picker_row("Sample rate", "", &r_labels, r_at, move |i| {
+            if let (Some(me), Some(r)) = (me.upgrade(), rates2.get(i)) {
+                let q = me.state.borrow().pro.quantum;
+                me.send(Request::Act(AudioAction::ProAudio {
+                    rate: r.0,
+                    quantum: q,
+                }));
+            }
+        });
+        let buffer = form::picker_row("Buffer size", "", &q_labels, q_at, move |i| {
+            if let (Some(me), Some(q)) = (me2.upgrade(), quanta2.get(i)) {
+                let r = me.state.borrow().pro.rate;
+                me.send(Request::Act(AudioAction::ProAudio {
+                    rate: r,
+                    quantum: q.0,
+                }));
+            }
+        });
+        self.pro.append(&w::section(
+            "Pro Audio",
+            &[rate, buffer, info("Dropouts", &dropouts_label(pro.xruns))],
+        ));
+        self.pro.append(&w::footnote(copy::SOUND_PRO_NOTE));
+    }
 }
 
-pub(super) fn page(ctx: &Rc<Ctx>) -> gtk::Box {
+/// Moves `s` to `d`'s volume (range 0..[`slider_max`], a tick at 100 = 0 dB when it can pass it).
+fn set_scale(s: &gtk::Scale, d: Option<&Device>, boost: bool) {
+    let Some(d) = d else {
+        s.set_sensitive(false);
+        return;
+    };
+    s.set_sensitive(true);
+    let max = slider_max(d, boost);
+    s.set_range(0.0, f64::from(max));
+    s.clear_marks();
+    if max > 100 {
+        s.add_mark(100.0, gtk::PositionType::Bottom, Some("0 dB"));
+    }
+    s.set_value(f64::from(percent_of(d.volume, d.volume_base, boost)));
+}
+
+/// A slider that reports once per drag ([`form::SETTLE_MS`] after the knob stops); moves made
+/// while `quiet` (the page drawing a new state) report nothing.
+fn volume_slider(quiet: &Rc<Cell<bool>>, changed: impl Fn(u16) + 'static) -> gtk::Scale {
+    let pending = Rc::new(Cell::new(None::<glib::SourceId>));
+    let changed = Rc::new(changed);
+    let quiet = quiet.clone();
+    let s = w::row_slider(0.0, move |v| {
+        if quiet.get() {
+            return;
+        }
+        if let Some(id) = pending.take() {
+            id.remove();
+        }
+        let (p, f) = (pending.clone(), changed.clone());
+        let id = glib::timeout_add_local_once(
+            std::time::Duration::from_millis(form::SETTLE_MS),
+            move || {
+                p.set(None);
+                f(v.round().clamp(0.0, 1000.0) as u16)
+            },
+        );
+        pending.set(Some(id));
+    });
+    s.set_increments(1.0, 5.0);
+    s
+}
+
+fn volume_line(slider: &gtk::Scale, low: &str, high: &str) -> gtk::Box {
+    let b = w::hbox(w::S3);
+    b.append(&w::icon(low, w::ICON));
+    b.append(slider);
+    b.append(&w::icon(high, w::ICON));
+    b.set_hexpand(true);
+    b
+}
+
+/// `argv` ran and exited 0 (blocks up to [`wol_core::system::RUN_TIMEOUT`]: off the GTK thread).
+fn run_ok(argv: &[String]) -> bool {
+    let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+    wol_core::system::run_with_timeout(&a, wol_core::system::RUN_TIMEOUT).is_some()
+}
+
+/// `systemctl --user restart wireplumber`: it reads the user fragments again.
+const RESTART_WIREPLUMBER: [&str; 4] = ["systemctl", "--user", "restart", "wireplumber"];
+
+/// How a fragment switch ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fragment {
+    /// Saved, and WirePlumber restarted with it.
+    Applied,
+    /// Saved, but WirePlumber did not restart: it applies at the next login.
+    SavedLater,
+    /// Not saved: nothing changed.
+    NotSaved,
+}
+
+/// Saves (`body`) or removes (None) the fragment `rel` under `config` (journaled), then runs
+/// `restart` only when the save worked. Blocks: off the GTK thread.
+fn fragment_change(
+    config: &std::path::Path,
+    rel: &str,
+    body: Option<&str>,
+    restart: impl FnOnce() -> bool,
+) -> Fragment {
+    let saved = wol_core::journal::Journal::for_config(config).save(
+        "sound",
+        "settings",
+        &[(rel, body)],
+        wol_core::journal::now(),
+    );
+    match saved {
+        Err(_) => Fragment::NotSaved,
+        Ok(_) if restart() => Fragment::Applied,
+        Ok(_) => Fragment::SavedLater,
+    }
+}
+
+/// Keep awake / Ignore hardware volume: save or remove the fragment (journaled) and restart
+/// WirePlumber so it reads it, both off the GTK thread; the switch flips back when the save
+/// failed (audit5 S7-2).
+fn fragment_switch(
+    rel: &'static str,
+    text: fn() -> String,
+    st: &gtk::Label,
+) -> impl Fn(bool, Box<dyn FnOnce(bool)>) + use<> {
+    let st = st.clone();
+    move |on, done| {
+        let st = st.clone();
+        let config = PathBuf::from(kit::config_home());
+        off_thread(
+            move || {
+                let body = on.then(text);
+                fragment_change(&config, rel, body.as_deref(), || {
+                    run_ok(&argv(&RESTART_WIREPLUMBER))
+                })
+            },
+            move |r| {
+                if r != Fragment::NotSaved {
+                    changed("sound");
+                }
+                say(
+                    &st,
+                    match r {
+                        Fragment::Applied => "",
+                        Fragment::SavedLater => copy::SOUND_SAVED_LATER,
+                        Fragment::NotSaved => SAVE_FAILED,
+                    },
+                );
+                done(r != Fragment::NotSaved)
+            },
+        );
+    }
+}
+
+pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let p = w::page("Sound");
     let status = status_label();
-    let list = w::vbox(0);
-    fill_outputs(&list, ctx, &status, ctx.sys.output_devices());
-    p.append(&w::section("Output", &[list.upcast()]));
-    let audio = ctx.sys.audio();
-    let q = Rc::new(Coalesce::default());
-    let slider = {
-        let ctx = ctx.clone();
-        w::row_slider(audio.volume.unwrap_or(0) as f64, move |v| {
-            send_volume(&ctx, &q, v as u8)
+    let src = source(&e.machine());
+    let quiet: Rc<Cell<bool>> = Rc::default();
+
+    let outputs = w::vbox(0);
+    let inputs = w::vbox(0);
+    let view_cell: Rc<RefCell<Option<std::rc::Weak<View>>>> = Rc::default();
+    let with_view = {
+        let vc = view_cell.clone();
+        move |f: &dyn Fn(&Rc<View>)| {
+            if let Some(v) = vc.borrow().as_ref().and_then(std::rc::Weak::upgrade) {
+                f(&v)
+            }
+        }
+    };
+    let with_view = Rc::new(with_view);
+
+    // Output volume: System's path (wpctl), percent of 0 dB; balance follows when not centred.
+    let out_slider = {
+        let (wv, ctx) = (with_view.clone(), e.ctx.clone());
+        volume_slider(&quiet, move |v| {
+            wv(&|view| {
+                let b = view.extras.borrow().balance;
+                if b.abs() > f32::EPSILON {
+                    background(vec![balance_argv(v, b)]);
+                } else {
+                    let pct = u8::try_from(v).unwrap_or(u8::MAX);
+                    ctx.act(Action::Volume(pct), Rc::new(|_| {}));
+                }
+            })
         })
     };
-    slider.set_sensitive(audio.volume.is_some());
-    let mute = {
-        let (ctx, st) = (ctx.clone(), status.clone());
-        w::toggle(audio.muted, move |on| {
-            let st = st.clone();
-            ctx.act(
-                Action::Muted(on),
-                Rc::new(move |r| say(&st, r.err().map_or("", |e| e.message()))),
+    let out_mute = {
+        let (ctx, st, quiet) = (e.ctx.clone(), status.clone(), quiet.clone());
+        w::toggle(false, move |on| {
+            if !quiet.get() {
+                ctx.act_say(Action::Muted(on), &st)
+            }
+        })
+    };
+    let in_slider = {
+        let wv = with_view.clone();
+        volume_slider(&quiet, move |v| {
+            wv(&|view| view.send(Request::Act(AudioAction::MicVolume(v))))
+        })
+    };
+    let in_mute = {
+        let wv = with_view.clone();
+        w::toggle(false, move |on| {
+            wv(&|view| view.send(Request::Act(AudioAction::MicMuted(on))))
+        })
+    };
+    let louder = {
+        let wv = with_view.clone();
+        w::toggle(false, move |on| wv(&|view| view.send(Request::Boost(on))))
+    };
+    let auto_level = {
+        let wv = with_view.clone();
+        w::toggle(false, move |on| {
+            wv(&|view| view.send(Request::Act(AudioAction::AutoInputLevel(on))))
+        })
+    };
+    let noise = {
+        let wv = with_view.clone();
+        w::toggle(false, move |on| {
+            wv(&|view| view.send(Request::Act(AudioAction::NoiseSuppression(on))))
+        })
+    };
+    let meter = w::progress();
+    let bluetooth = w::vbox(w::S6);
+    let pro = w::vbox(w::S2);
+
+    p.append(&w::section(
+        "",
+        &[
+            row(
+                "Output volume",
+                &volume_line(
+                    &out_slider,
+                    "audio-volume-low-symbolic",
+                    "audio-volume-high-symbolic",
+                ),
+            ),
+            row("Mute", &out_mute),
+        ],
+    ));
+    // Balance: the default output's, from pactl; applied with the current volume.
+    let balance_holder = w::vbox(0);
+    let out_rows = w::vbox(0);
+    out_rows.append(&outputs);
+    out_rows.append(&balance_holder);
+    out_rows.append(&row_sub("Allow louder", copy::SOUND_LOUDER, &louder));
+    p.append(&w::section("Output", &[out_rows.upcast()]));
+    let input_rows = w::vbox(0);
+    input_rows.append(&inputs);
+    input_rows.append(&row(
+        "Input volume",
+        &volume_line(
+            &in_slider,
+            "microphone-sensitivity-muted-symbolic",
+            "microphone-sensitivity-high-symbolic",
+        ),
+    ));
+    input_rows.append(&row("Input level", &meter));
+    input_rows.append(&row("Mute input", &in_mute));
+    input_rows.append(&row_sub(
+        "Automatic input level",
+        copy::SOUND_AUTO_LEVEL,
+        &auto_level,
+    ));
+    input_rows.append(&row_sub(
+        "Reduce background noise",
+        copy::SOUND_NOISE,
+        &noise,
+    ));
+    p.append(&w::section("Input", &[input_rows.upcast()]));
+    p.append(&bluetooth);
+    p.append(&pro);
+
+    let troubleshooting = w::vbox(0);
+    p.append(&troubleshooting);
+    let notice = status_label();
+    p.append(&notice);
+    p.append(&status);
+
+    let view = Rc::new(View {
+        src: src.clone(),
+        ctx: e.ctx.clone(),
+        status: status.clone(),
+        notice,
+        reset_pending: Cell::new(false),
+        outputs,
+        inputs,
+        out_slider,
+        out_mute,
+        in_slider,
+        in_mute,
+        meter,
+        louder,
+        auto_level,
+        noise,
+        bluetooth,
+        pro,
+        quiet,
+        shape: RefCell::default(),
+        state: RefCell::default(),
+        extras: RefCell::default(),
+    });
+    *view_cell.borrow_mut() = Some(Rc::downgrade(&view));
+
+    // Extras off the UI thread; then balance, Bluetooth and Troubleshooting.
+    {
+        let (m, v, st) = (e.machine(), view.clone(), status.clone());
+        later(
+            &troubleshooting,
+            move || m.sound_extras(),
+            move |into, ex| {
+                *v.extras.borrow_mut() = ex.clone();
+                let s = v.state.borrow().clone();
+                v.fill_bluetooth(&s);
+                balance_holder.append(&balance_row(&v, ex.balance));
+                into.append(&troubleshooting_section(&v, &ex, &st));
+            },
+        );
+    }
+
+    // First state now (previews), then the newest every 100 ms while the page is on screen.
+    if let Some(s) = src.latest() {
+        view.apply(s);
+    }
+    let timer: Rc<Cell<Option<glib::SourceId>>> = Rc::default();
+    {
+        let (v, t) = (Rc::downgrade(&view), timer.clone());
+        p.connect_map(move |_| {
+            let Some(view) = v.upgrade() else { return };
+            view.src.request(Request::Meter(true));
+            let v2 = Rc::downgrade(&view);
+            // 100 ms: a meter that moves smoothly to the eye, ten snapshots a second at most.
+            let id = glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                let Some(view) = v2.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if let Some(s) = view.src.latest() {
+                    view.apply(s);
+                }
+                glib::ControlFlow::Continue
+            });
+            if let Some(old) = t.replace(Some(id)) {
+                old.remove();
+            }
+        });
+    }
+    {
+        let (v, t) = (Rc::downgrade(&view), timer);
+        p.connect_unmap(move |_| {
+            if let Some(id) = t.take() {
+                id.remove();
+            }
+            if let Some(view) = v.upgrade() {
+                view.src.request(Request::Meter(false));
+            }
+        });
+    }
+    // The view lives as long as the page.
+    let keep = view.clone();
+    p.connect_destroy(move |_| {
+        let _ = &keep;
+    });
+    p
+}
+
+/// Balance slider: Left .. Right, centred = 0.
+fn balance_row(v: &Rc<View>, balance: f32) -> gtk::Widget {
+    let me = Rc::downgrade(v);
+    form::slider_row(
+        "Balance",
+        (-1.0, 1.0, 0.1),
+        f64::from(balance),
+        ("Left", "Right"),
+        move |b| {
+            let Some(me) = me.upgrade() else { return };
+            me.extras.borrow_mut().balance = b as f32;
+            let s = me.state.borrow();
+            let vol = s
+                .default_of(DeviceKind::Output)
+                .map_or(0, |d| percent_of(d.volume, d.volume_base, s.boost));
+            background(vec![balance_argv(vol, b as f32)]);
+        },
+    )
+}
+
+fn troubleshooting_section(v: &Rc<View>, ex: &Extras, st: &gtk::Label) -> gtk::Box {
+    let awake = form::pending_toggle_row(
+        "Keep device awake",
+        copy::SOUND_AWAKE,
+        ex.keep_awake,
+        fragment_switch(AWAKE_FILE, awake_conf, st),
+    );
+    let soft = form::pending_toggle_row(
+        "Ignore hardware volume",
+        copy::SOUND_SOFT_VOLUME,
+        ex.soft_volume,
+        fragment_switch(SOFT_VOLUME_FILE, soft_volume_conf, st),
+    );
+    let diag = {
+        let (st, anchor) = (st.clone(), v.status.clone());
+        form::button_row("Diagnostics", "", "Copy", move || {
+            let (st, anchor) = (st.clone(), anchor.clone());
+            off_thread(
+                || {
+                    wol_core::system::run_with_timeout(&DOCTOR, DOCTOR_TIMEOUT)
+                        .filter(|t| !t.trim().is_empty())
+                },
+                move |report| match report {
+                    Some(t) => {
+                        anchor.display().clipboard().set_text(&t);
+                        say(&st, copy::SOUND_DIAG_COPIED);
+                    }
+                    None => say(&st, copy::SOUND_DIAG_NONE),
+                },
             );
         })
     };
-    let vol = w::hbox(w::S3);
-    vol.append(&w::icon("audio-volume-low-symbolic", w::ICON));
-    vol.append(&slider);
-    vol.append(&w::icon("audio-volume-high-symbolic", w::ICON));
-    vol.set_hexpand(true);
-    p.append(&w::section(
-        "",
-        &[row("Output volume", &vol), row("Mute", &mute)],
-    ));
-    p.append(&status);
-    p
+    let reset = {
+        let (me, st) = (Rc::downgrade(v), st.clone());
+        row_sub(
+            "Reset audio",
+            copy::SOUND_RESET_ABOUT,
+            &w::button("Reset", w::Kind::Destructive, move || {
+                if let Some(me) = me.upgrade() {
+                    // The "done" sentence waits for a state that shows the reset (audit5 S7-1).
+                    say(&st, "");
+                    me.reset_pending.set(true);
+                    me.send(Request::Act(AudioAction::ResetAudio));
+                }
+            }),
+        )
+    };
+    w::section("Troubleshooting", &[awake, soft, diag, reset])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codecs_read_as_their_names() {
+        assert_eq!(codec_label("aac"), "AAC");
+        assert_eq!(codec_label("ldac"), "LDAC");
+        assert_eq!(codec_label("aptx_hd"), "aptX HD");
+        assert_eq!(codec_label("msbc"), "mSBC");
+        assert_eq!(codec_label("lc3"), "LC3");
+    }
+
+    #[test]
+    fn pro_audio_offers_the_graph_rates_and_buffers() {
+        let r = rate_options();
+        assert_eq!(r[0], (0, "Automatic".into()));
+        assert_eq!(r[1], (44100, "44.1 kHz".into()));
+        assert_eq!(r[2], (48000, "48 kHz".into()));
+        assert_eq!(r.len(), ALLOWED_RATES.len() + 1);
+        let q = quantum_options(0);
+        assert_eq!(q[1], (64, "64 samples (1.3 ms)".into()));
+        assert_eq!(q.len(), QUANTA.len() + 1);
+        assert_eq!(quantum_options(96_000)[1].1, "64 samples (0.7 ms)");
+        assert_eq!(dropouts_label(0), "None");
+        assert_eq!(dropouts_label(3), "3 since sound started");
+    }
+
+    /// 100% is 0 dB: without "Allow louder" the slider stops there, with it the hardware maximum
+    /// (+20 dB on a 0.1-base microphone, 215%) is reachable and the tick marks 100.
+    #[test]
+    fn sliders_stop_at_zero_db_unless_louder_is_allowed() {
+        let mic = Device {
+            kind: DeviceKind::Input,
+            volume: 1.0,
+            volume_base: 0.1,
+            ..Device::default()
+        };
+        assert_eq!(slider_max(&mic, false), 100);
+        assert_eq!(slider_max(&mic, true), max_percent(0.1));
+        assert!(slider_max(&mic, true) > 200);
+        let speakers = Device::default();
+        assert_eq!(
+            slider_max(&speakers, true),
+            100,
+            "no boost range: 100 is the top"
+        );
+    }
+
+    #[test]
+    fn the_meter_spans_sixty_decibels() {
+        assert_eq!(meter_fraction(0.0), 0.0);
+        assert!((meter_fraction(1.0) - 1.0).abs() < 1e-6);
+        assert!(
+            (meter_fraction(0.001) - 0.0).abs() < 1e-6,
+            "-60 dBFS is empty"
+        );
+        let half = meter_fraction(10f32.powf(-30.0 / 20.0));
+        assert!((half - 0.5).abs() < 1e-3, "{half}");
+    }
+
+    #[test]
+    fn balance_reads_and_turns_down_the_far_side() {
+        let out = "Volume: front-left: 52428 /  80% / -5.81 dB,   front-right: 65536 / 100% / 0.00 dB\n        balance 0.20\n";
+        assert!((parse_balance(out) - 0.2).abs() < 1e-6);
+        assert_eq!(parse_balance("nothing"), 0.0);
+        assert_eq!(parse_balance("balance 7"), 1.0);
+        assert_eq!(balance_percents(80, 0.0), (80, 80));
+        assert_eq!(balance_percents(80, 0.5), (40, 80));
+        assert_eq!(balance_percents(80, -1.0), (80, 0));
+        assert_eq!(
+            balance_argv(50, 0.5),
+            ["pactl", "set-sink-volume", "@DEFAULT_SINK@", "25%", "50%"]
+        );
+    }
+
+    #[test]
+    fn autoswitch_is_a_saved_wireplumber_setting() {
+        assert!(parse_autoswitch("Value: true"));
+        assert!(!parse_autoswitch("Value: false"));
+        assert!(parse_autoswitch(""), "shipped on (71-wolos-input.conf)");
+        assert_eq!(autoswitch_argv(false)[2], "--save");
+        assert_eq!(autoswitch_argv(false)[4], "false");
+    }
+
+    /// The user fragments only touch ALSA nodes/cards and say how to undo them; WirePlumber
+    /// appends rule arrays across fragments, so they add to 72-wolos-alsa.conf, not replace it.
+    #[test]
+    fn troubleshooting_fragments_are_alsa_rules() {
+        for (f, t, key) in [
+            (
+                AWAKE_FILE,
+                awake_conf(),
+                "session.suspend-timeout-seconds = 0",
+            ),
+            (
+                SOFT_VOLUME_FILE,
+                soft_volume_conf(),
+                "api.alsa.soft-mixer = true",
+            ),
+        ] {
+            assert!(f.starts_with("wireplumber/wireplumber.conf.d/7"), "{f}");
+            assert!(t.contains("monitor.alsa.rules = ["), "{t}");
+            assert!(t.contains(key), "{t}");
+            assert!(t.contains("~alsa_"), "{t}");
+            assert!(!t.contains("override."), "{t}");
+        }
+    }
+
+    /// The service line follows each state; action results live on their own label, so a state
+    /// without an error no longer wipes them (audit5 S7-1).
+    #[test]
+    fn the_state_poll_only_writes_the_service_line() {
+        let mut s = SoundState::demo();
+        assert_eq!(service_notice(&s), None);
+        s.connected = false;
+        assert_eq!(service_notice(&s), Some(copy::SOUND_RECONNECTING));
+        s.error = Some("Could not mute.".into());
+        assert_eq!(service_notice(&s), Some("Could not mute."));
+        // `apply` rewrites `notice`; it touches `status` only to settle a pending reset.
+        let src = include_str!("sound.rs");
+        let apply = &src[src.find("fn apply(self: &Rc<Self>").unwrap()..];
+        let apply = &apply[..apply.find("\n    }\n").unwrap()];
+        assert!(apply.contains("say(&self.notice"), "{apply}");
+        assert_eq!(apply.matches("say(&self.status").count(), 1, "{apply}");
+        assert!(apply.contains("reset_pending"), "{apply}");
+    }
+
+    /// "Sound settings were reset" waits for a state that shows the reset, not the click.
+    #[test]
+    fn reset_done_waits_for_the_reset_state() {
+        let mut s = SoundState::demo();
+        assert!(s.auto_input_level);
+        assert_eq!(reset_outcome(&s), None, "filters still on: not reset yet");
+        s.auto_input_level = false;
+        s.connected = false;
+        assert_eq!(reset_outcome(&s), None, "restarting");
+        s.connected = true;
+        assert_eq!(reset_outcome(&s), Some(true));
+        s.error = Some("Sound could not be reset.".into());
+        assert_eq!(reset_outcome(&s), Some(false));
+    }
+
+    /// A fragment that cannot be saved restarts nothing and the switch flips back; a restart that
+    /// fails keeps the saved file for the next login (audit5 S7-2).
+    #[test]
+    fn fragment_switches_report_save_and_restart() {
+        let dir = std::env::temp_dir().join(format!("wol-sound-frag-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A file where the config folder should be: nothing can be written under it.
+        let blocked = dir.join("not-a-folder");
+        std::fs::write(&blocked, "").unwrap();
+        let ran = Cell::new(false);
+        let r = fragment_change(&blocked, AWAKE_FILE, Some(&awake_conf()), || {
+            ran.set(true);
+            true
+        });
+        assert_eq!(r, Fragment::NotSaved);
+        assert!(!ran.get(), "no restart without a saved file");
+
+        let home = dir.join("config");
+        let body = awake_conf();
+        assert_eq!(
+            fragment_change(&home, AWAKE_FILE, Some(&body), || true),
+            Fragment::Applied
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join(AWAKE_FILE)).unwrap(),
+            body
+        );
+        assert_eq!(
+            fragment_change(&home, AWAKE_FILE, None, || false),
+            Fragment::SavedLater
+        );
+        assert!(!home.join(AWAKE_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn devices_get_their_icons() {
+        let mut d = Device {
+            name: "AirPods Pro".into(),
+            codec: Some("aac".into()),
+            ..Device::default()
+        };
+        assert_eq!(device_icon(&d), "audio-headphones-symbolic");
+        d.codec = None;
+        d.name = "HDMI / DisplayPort 1".into();
+        assert_eq!(device_icon(&d), "video-display-symbolic");
+        d.name = "Speakers".into();
+        assert_eq!(device_icon(&d), "audio-speakers-symbolic");
+        d.kind = DeviceKind::Input;
+        assert_eq!(device_icon(&d), "audio-input-microphone-symbolic");
+    }
+
+    /// The demo state draws every part of the page: a Bluetooth output with a codec that the
+    /// extras can find, a boosted microphone at 0 dB, a forced buffer.
+    #[test]
+    fn the_demo_shows_every_section() {
+        let s = SoundState::demo();
+        let ex = Extras::demo();
+        let bt = s
+            .default_of(DeviceKind::Output)
+            .and_then(|d| d.codec.clone());
+        assert_eq!(bt.as_deref(), Some("aac"));
+        assert!(ex.bluetooth.iter().any(|b| b.0 == "AirPods Pro"));
+        let mic = s.default_of(DeviceKind::Input).cloned().unwrap_or_default();
+        assert_eq!(percent_of(mic.volume, mic.volume_base, false), 100);
+        assert!(QUANTA.contains(&s.pro.quantum));
+    }
 }

@@ -565,7 +565,7 @@ impl ShortcutRecorder {
                     recorded(None);
                     return glib::Propagation::Stop;
                 }
-                // Hyprland matches the unshifted key (⇧⌘4 is SHIFT+4, not "dollar").
+                // The compositor matches the unshifted key (⇧⌘4 is SHIFT+4, not "dollar").
                 let base = ctl
                     .widget()
                     .map(|wd| wd.display())

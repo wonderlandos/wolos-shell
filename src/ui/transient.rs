@@ -28,7 +28,7 @@ pub fn others(name: &str) -> Vec<&'static str> {
     PANELS.iter().copied().filter(|p| *p != name).collect()
 }
 
-/// A Hyprland event that closes transient panels: an app window came to the front, or the
+/// A compositor event that closes transient panels: an app window came to the front, or the
 /// workspace changed. `activewindow>>,` (a layer surface took the keyboard, e.g. the panel itself)
 /// does not.
 pub fn dismisses(e: &hypr::Event) -> bool {
@@ -39,7 +39,7 @@ pub fn dismisses(e: &hypr::Event) -> bool {
     }
 }
 
-/// A window address as Hyprland spells it in events: lowercase hex without `0x` (`j/activewindow`
+/// A window address as the compositor spells it in events: lowercase hex without `0x` (`j/activewindow`
 /// and `j/clients` add the prefix). Empty for "no window".
 pub fn address(s: &str) -> String {
     s.trim().trim_start_matches("0x").to_ascii_lowercase()
@@ -53,7 +53,7 @@ pub fn active_address(line: &str) -> Option<String> {
 }
 
 /// Decides, line by line from `.socket2.sock`, whether the shell panels close. When a focus grab
-/// ends, Hyprland hands the keyboard back to the window that had it (`activewindow` then
+/// ends, the compositor hands the keyboard back to the window that had it (`activewindow` then
 /// `activewindowv2` for the same window): that is not "another app came to the front", so the
 /// window in front when the panel opened never dismisses it. A click on that window still closes
 /// the panel: the grab clears first (`focus_grab`).
@@ -66,7 +66,7 @@ pub struct Dismisser {
     /// An `activewindow` with a class arrived; its `activewindowv2` line decides.
     pending: bool,
     /// The shell destroyed its focus grab: until then, the next `activewindow`/`activewindowv2`
-    /// pair is Hyprland handing the keyboard back (to the window under the pointer), not another
+    /// pair is the compositor handing the keyboard back (to the window under the pointer), not another
     /// app coming to the front (audit3 R2A-1).
     refocus_until: Option<Instant>,
 }
@@ -127,7 +127,7 @@ impl Dismisser {
                 self.pending = true;
                 false
             }
-            // An old Hyprland without `activewindowv2`: the class alone decides.
+            // An old compositor without `activewindowv2`: the class alone decides.
             _ => pending,
         }
     }
@@ -149,7 +149,7 @@ pub fn feed(line: &str) -> bool {
 
 /// Whether a panel's hide resyncs the focus grab now, from the panels' `(visible, mapped)`. Not
 /// while one is visible and not yet mapped (a panel switch): a grab without it would be cleared
-/// by its map (Hyprland drops a seat grab that does not accept a newly mapped on-demand layer)
+/// by its map (the compositor drops a seat grab that does not accept a newly mapped on-demand layer)
 /// and close it. Its own map syncs (audit3 R2A-1).
 pub fn sync_on_hide(panels: impl IntoIterator<Item = (bool, bool)>) -> bool {
     !panels
@@ -328,7 +328,7 @@ fn kept(app: &gtk::Application) -> Vec<gtk::Window> {
 }
 
 /// Keeps the transient panels in `panels` exclusive and closes them on a click outside. Layer
-/// surfaces get no reliable focus-out: Hyprland's focus grab (`crate::focus_grab`) covers every
+/// surfaces get no reliable focus-out: the compositor's focus grab (`crate::focus_grab`) covers every
 /// display; without it a click-catcher goes under the open panel on its display.
 pub fn manage(app: &gtk::Application, panels: &super::Panels) {
     let catcher = super::window(app, "catcher", crate::kit::surface::Spec::catcher());
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(object_path("org.wolos.search"), "/org/wolos/search");
     }
 
-    /// Hyprland's focus grab closes panels on a click on any display; the click-catcher (one
+    /// The compositor's focus grab closes panels on a click on any display; the click-catcher (one
     /// display) only stands in where the grab is missing, and never in dev windows.
     #[test]
     fn the_catcher_only_stands_in_for_a_missing_focus_grab() {
@@ -482,7 +482,7 @@ mod tests {
     }
 
     /// Live (lead, v0.12): the Control Center never stayed open. Opening it made the focus grab;
-    /// a second sync recreated it, Hyprland gave the keyboard back to Files, and
+    /// a second sync recreated it, the compositor gave the keyboard back to Files, and
     /// `activewindow>>org.gnome.Nautilus` closed the panel. The window in front when the panel
     /// opened never dismisses it.
     #[test]
@@ -516,7 +516,7 @@ mod tests {
         fresh.opened();
         assert!(!fresh.feed("activewindow>>foot,~\n"));
         assert!(fresh.feed("activewindowv2>>7\n"));
-        // An old Hyprland without activewindowv2: the next line settles it.
+        // An old compositor without activewindowv2: the next line settles it.
         let mut old = Dismisser::default();
         old.opened();
         assert!(!old.feed("activewindow>>foot,~\n"));
@@ -564,7 +564,7 @@ mod tests {
         ));
     }
 
-    /// Audit3 R2A-1: the shell destroyed its grab (a panel closed) and Hyprland handed the
+    /// Audit3 R2A-1: the shell destroyed its grab (a panel closed) and the compositor handed the
     /// keyboard to the window under the pointer, not the one the panel opened on. That pair is
     /// not "another app in front"; the next one is, and so is a pair after the window passed.
     #[test]

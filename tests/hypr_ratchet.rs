@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! STANDARDS §1 (audit3 R2A-17): Hyprland is spoken to through one module, `shell::hypr`.
+//! STANDARDS §1 (audit3 R2A-17): the compositor is spoken to through one module, `shell::hypr`.
 //! Raw JSON requests (`hypr::request("j/…")`), hand-built `"dispatch …"` strings and private
 //! `.socket2.sock` readers appear only in `src/hypr.rs` and the one event reader
 //! (`ui/ipc.rs` `hypr_events`). Everything else is frozen in [`BASELINE`]: the counts only come

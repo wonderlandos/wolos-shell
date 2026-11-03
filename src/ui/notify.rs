@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! org.freedesktop.Notifications server (zbus) + banners (top right, 5 s) + Notification Center panel.
+use crate::copy;
 use crate::kit::{
     surface::{Keyboard, Spec},
     widgets as w,
 };
-use gtk::{glib, prelude::*};
+use crate::offers::{self, Offer};
+use gtk::{gio, glib, prelude::*};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -310,6 +312,74 @@ impl Held {
     pub fn take(&mut self) -> Vec<Note> {
         std::mem::take(&mut self.notes)
     }
+
+    /// Dismiss all or the Center's Clear: nothing comes back after full screen (audit5 S6-1).
+    pub fn clear(&mut self) {
+        self.notes.clear();
+    }
+
+    /// The banners to replay now that the mode is `mode`: all of them once full screen ended,
+    /// none while it lasts.
+    pub fn release(&mut self, mode: crate::hypr::Fullscreen) -> Vec<Note> {
+        if mode.holds_banners() {
+            return Vec::new();
+        }
+        self.take()
+    }
+}
+
+/// One app's banner group: its notes oldest first, the newest on screen. A timed note's expiry
+/// takes the timed notes only: a sticky one (buttons, critical, no timeout) stays and shows again
+/// (audit4 S3-4: it was closed as Expired with the plain note stacked over it).
+#[derive(Default, Debug)]
+pub struct GroupNotes {
+    notes: Vec<Note>,
+}
+
+impl GroupNotes {
+    /// Puts `n` on screen (a replaced id moves to the top with its new text).
+    pub fn push(&mut self, n: Note) {
+        self.notes.retain(|x| x.id != n.id);
+        self.notes.push(n);
+    }
+
+    pub fn contains(&self, id: u32) -> bool {
+        self.notes.iter().any(|n| n.id == id)
+    }
+
+    pub fn ids(&self) -> Vec<u32> {
+        self.notes.iter().map(|n| n.id).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.notes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.notes.is_empty()
+    }
+
+    /// The note on screen.
+    pub fn shown(&self) -> Option<&Note> {
+        self.notes.last()
+    }
+
+    /// The shown note's timer ran out: the notes with a timeout leave (returned, to close as
+    /// Expired); the sticky ones stay, the newest of them on screen.
+    pub fn expire(&mut self) -> Vec<u32> {
+        let (gone, keep): (Vec<Note>, Vec<Note>) = std::mem::take(&mut self.notes)
+            .into_iter()
+            .partition(|n| banner_ms(n).is_some());
+        self.notes = keep;
+        gone.iter().map(|n| n.id).collect()
+    }
+
+    /// The app withdrew `id`; true when it was the one on screen (show the next one).
+    pub fn remove(&mut self, id: u32) -> bool {
+        let was_shown = self.shown().is_some_and(|n| n.id == id);
+        self.notes.retain(|n| n.id != id);
+        was_shown
+    }
 }
 
 /// Where a new banner goes, given the banners on screen as (app, stacked count), top first.
@@ -334,15 +404,18 @@ pub fn place(shown: &[(String, u32)], app: &str) -> Place {
     }
 }
 
-/// Notification Center row (same layout as a banner, no stack). No buttons: the banner with
-/// buttons stays until answered, and an answered note takes no second answer.
+/// Notification Center row (same layout as a banner, no stack). No app buttons: the banner with
+/// buttons stays until answered, and an answered note takes no second answer. The offers stay
+/// ([`crate::offers`]: a code can still be copied from the list); the card never closes itself.
 fn card(n: &Note) -> gtk::Box {
-    banner(
+    banner_offering(
         &Note {
             actions: vec![],
             ..n.clone()
         },
         1,
+        Rc::new(|_: &str| {}),
+        Rc::new(|o: &Offer, b: &gtk::Button, _| take_offer(o, b, None)),
     )
 }
 
@@ -398,7 +471,11 @@ impl<T> Center<T> {
 }
 
 /// The Notification Center's content: title, Clear, and the list `rows` fills (no golden yet).
-pub fn center_panel(rows: Rc<RefCell<Center<gtk::Box>>>) -> (gtk::Box, gtk::Box) {
+/// `on_clear` runs after Clear (the held banners go too, audit5 S6-1).
+pub fn center_panel(
+    rows: Rc<RefCell<Center<gtk::Box>>>,
+    on_clear: impl Fn() + 'static,
+) -> (gtk::Box, gtk::Box) {
     let list = w::vbox(0);
     let g = w::glass_panel(w::S2);
     let head = w::hbox(w::S2);
@@ -409,6 +486,7 @@ pub fn center_panel(rows: Rc<RefCell<Center<gtk::Box>>>) -> (gtk::Box, gtk::Box)
         for r in rows.borrow_mut().clear() {
             l2.remove(&r);
         }
+        on_clear();
     }));
     g.append(&head);
     g.append(
@@ -436,6 +514,115 @@ pub fn image_hint(hints: &HashMap<String, OwnedValue>) -> String {
         .unwrap_or_default()
 }
 
+/// Shorter side (px) a banner picture or a file icon is decoded at: 2x the thumbnail, for HiDPI.
+pub const THUMB_PX: i32 = 2 * w::ICON_L;
+/// Biggest picture file a banner decodes (audit4 S3-3: any app can name any file).
+pub const THUMB_FILE_MAX: u64 = 64 * 1024 * 1024;
+/// Decoded thumbnails kept: every Notification Center row's picture, and a few more.
+const THUMBS_KEPT: usize = CENTER_MAX + 8;
+
+/// Small textures by file, shared by a banner and its Notification Center card (audit4 S3-3:
+/// each decoded the full-size picture on the UI thread and kept it).
+static THUMBS: Mutex<Vec<(String, gtk::gdk::Texture)>> = Mutex::new(Vec::new());
+
+/// Decodes the picture at `path` with its shorter side at most [`THUMB_PX`] (the banner covers
+/// its box with it) and its longer side at most [`THUMB_LONG_MAX`]; None for a file that
+/// is missing, not a regular file, bigger than [`THUMB_FILE_MAX`] or not a picture. Blocking:
+/// called off the UI thread ([`preload_thumbs`]), or for a golden render.
+pub fn decode_thumb(path: &str) -> Option<gtk::gdk::Texture> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > THUMB_FILE_MAX {
+        return None;
+    }
+    let (_, w, h) = gtk::gdk_pixbuf::Pixbuf::file_info(path)?;
+    let (box_w, box_h) = thumb_box(w, h);
+    let pb = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(path, box_w, box_h, true).ok()?;
+    Some(gtk::gdk::Texture::for_pixbuf(&pb))
+}
+
+/// Longest side of a decoded thumbnail (a panorama keeps a short side under [`THUMB_PX`]).
+pub const THUMB_LONG_MAX: i32 = 4 * THUMB_PX;
+
+/// The box a `w`x`h` picture is scaled into (aspect kept): its shorter side [`THUMB_PX`].
+fn thumb_box(w: i32, h: i32) -> (i32, i32) {
+    let (w, h) = (i64::from(w.max(1)), i64::from(h.max(1)));
+    let px = i64::from(THUMB_PX);
+    let long = i64::from(THUMB_LONG_MAX);
+    let side = |a: i64, b: i64| i32::try_from((px * a / b).clamp(1, long)).unwrap_or(THUMB_PX);
+    if w >= h {
+        (side(w, h), THUMB_PX)
+    } else {
+        (THUMB_PX, side(h, w))
+    }
+}
+
+fn cached_thumb(path: &str) -> Option<gtk::gdk::Texture> {
+    let t = THUMBS.lock().ok()?;
+    t.iter().find(|(p, _)| p == path).map(|(_, t)| t.clone())
+}
+
+fn keep_thumb(path: &str, t: gtk::gdk::Texture) {
+    if let Ok(mut c) = THUMBS.lock() {
+        c.retain(|(p, _)| p != path);
+        if c.len() >= THUMBS_KEPT {
+            c.remove(0);
+        }
+        c.push((path.to_string(), t));
+    }
+}
+
+/// The files `n` shows as pictures: its `image-path` and an icon given as a file.
+fn thumb_files(n: &Note) -> Vec<String> {
+    [&n.image, &n.icon]
+        .into_iter()
+        .filter(|p| p.starts_with('/'))
+        .cloned()
+        .collect()
+}
+
+/// Decodes `n`'s pictures off the UI thread, once per file, before its banner and card are built.
+async fn preload_thumbs(n: &Note) {
+    for p in thumb_files(n) {
+        if cached_thumb(&p).is_some() {
+            continue;
+        }
+        let q = p.clone();
+        if let Ok(Some(t)) = gtk::gio::spawn_blocking(move || decode_thumb(&q)).await {
+            keep_thumb(&p, t);
+        }
+    }
+}
+
+/// The thumbnail of `path` from the cache. A golden render (WOL_FAKE_NOW) decodes it here; live
+/// banners were preloaded, and a picture that could not be decoded stays empty.
+fn thumb(path: &str) -> Option<gtk::gdk::Texture> {
+    if let Some(t) = cached_thumb(path) {
+        return Some(t);
+    }
+    // Only a golden render gets past here.
+    std::env::var_os("WOL_FAKE_NOW")?;
+    let t = decode_thumb(path)?;
+    keep_thumb(path, t.clone());
+    Some(t)
+}
+
+/// The icon of a note without `app_icon`: the dock pin, else the installed app whose entry, name
+/// or program is `app` (audit4 S3-8), else the app name as an icon name.
+pub fn note_icon(app: &str, installed: &[crate::desktop::Entry]) -> String {
+    if app == SYSTEM_APP {
+        return SYSTEM_ICON.into();
+    }
+    let icon = crate::apps::icon_for(app, crate::apps::here(), installed);
+    if icon != app.to_lowercase() {
+        return icon;
+    }
+    // Notify's app_name is what people read ("Signal"), not the entry id (signal-desktop).
+    installed
+        .iter()
+        .find(|e| !e.icon.is_empty() && e.name.eq_ignore_ascii_case(app))
+        .map_or(icon, |e| e.icon.clone())
+}
+
 /// macOS banner: 344 px glass card, app icon, app name + "now", bold title, body up to 2 lines.
 /// `count` > 1 draws the group's stacked edges under the card. Buttons do nothing here (golden,
 /// Notification Center); [`banner_with`] wires them.
@@ -443,8 +630,18 @@ pub fn banner(n: &Note, count: u32) -> gtk::Box {
     banner_with(n, count, Rc::new(|_: &str| {}))
 }
 
-/// [`banner`] whose buttons run `act(key)`.
+/// [`banner`] whose buttons run `act(key)`; offer buttons draw but do nothing.
 pub fn banner_with(n: &Note, count: u32, act: Rc<dyn Fn(&str)>) -> gtk::Box {
+    banner_offering(n, count, act, Rc::new(|_: &Offer, _: &gtk::Button, _| {}))
+}
+
+/// What an offer button runs: the offer, the button (for its "Copied" label) and whether
+/// copying it finishes the note ([`crate::offers::Offers::closes_after_copy`]).
+pub type Take = dyn Fn(&Offer, &gtk::Button, bool);
+
+/// [`banner_with`] plus one row of offer buttons ([`crate::offers::scan`] of the title and body:
+/// Copy Code, Open Link, Copy Number) that run `take`.
+pub fn banner_offering(n: &Note, count: u32, act: Rc<dyn Fn(&str)>, take: Rc<Take>) -> gtk::Box {
     let outer = w::vbox(0);
     outer.add_css_class("banner-group");
     let c = w::glass_panel(0);
@@ -453,15 +650,15 @@ pub fn banner_with(n: &Note, count: u32, act: Rc<dyn Fn(&str)>) -> gtk::Box {
         c.add_css_class("critical");
     }
     let row = w::hbox(w::S3);
-    let icon = if n.icon.is_empty() && n.app == SYSTEM_APP {
-        SYSTEM_ICON.to_string()
-    } else if n.icon.is_empty() {
-        crate::apps::icon_for(&n.app, crate::apps::here(), &[])
+    // Live notes come with the icon resolved against the installed apps ([`note_icon`]).
+    let icon = if n.icon.is_empty() {
+        note_icon(&n.app, &[])
     } else {
         n.icon.clone()
     };
     let img = if icon.starts_with('/') {
-        let i = gtk::Image::from_file(&icon);
+        let i = gtk::Image::new();
+        i.set_paintable(thumb(&icon).as_ref());
         i.set_pixel_size(w::ICON_M);
         i
     } else {
@@ -499,6 +696,26 @@ pub fn banner_with(n: &Note, count: u32, act: Rc<dyn Fn(&str)>) -> gtk::Box {
             "banner-more",
         ));
     }
+    let found = crate::offers::scan(&n.summary, &n.body);
+    let offered = found.buttons();
+    if !offered.is_empty() {
+        let bar = w::hbox(w::S2);
+        bar.add_css_class("banner-actions");
+        bar.set_halign(gtk::Align::End);
+        for o in offered {
+            let b = w::button(
+                &copy::offer_label(&o, found.codes.len() > 1),
+                w::Kind::Default,
+                || {},
+            );
+            b.set_tooltip_text(Some(&copy::offer_tip(&o)));
+            let closes = matches!(&o, Offer::Code(c) if found.closes_after_copy(c));
+            let take = take.clone();
+            b.connect_clicked(move |b| take(&o, b, closes));
+            bar.append(&b);
+        }
+        text.append(&bar);
+    }
     let actions = buttons(n);
     if !actions.is_empty() {
         let bar = w::hbox(w::S2);
@@ -512,14 +729,16 @@ pub fn banner_with(n: &Note, count: u32, act: Rc<dyn Fn(&str)>) -> gtk::Box {
     }
     row.append(&text);
     if !n.image.is_empty() {
-        // A screenshot's banner shows the picture, as on macOS.
-        let thumb = gtk::Picture::for_filename(&n.image);
-        thumb.set_content_fit(gtk::ContentFit::Cover);
-        thumb.set_size_request(w::ICON_L, w::ICON_L);
-        thumb.set_valign(gtk::Align::Center);
-        thumb.set_overflow(gtk::Overflow::Hidden);
-        thumb.add_css_class("banner-thumb");
-        row.append(&thumb);
+        // A screenshot's banner shows the picture, as on macOS: a small copy decoded off the UI
+        // thread once, shared with the Notification Center card (audit4 S3-3).
+        let pic = gtk::Picture::new();
+        pic.set_paintable(thumb(&n.image).as_ref());
+        pic.set_content_fit(gtk::ContentFit::Cover);
+        pic.set_size_request(w::ICON_L, w::ICON_L);
+        pic.set_valign(gtk::Align::Center);
+        pic.set_overflow(gtk::Overflow::Hidden);
+        pic.add_css_class("banner-thumb");
+        row.append(&pic);
     }
     c.append(&row);
     outer.append(&c);
@@ -533,6 +752,70 @@ pub fn banner_with(n: &Note, count: u32, act: Rc<dyn Fn(&str)>) -> gtk::Box {
         outer.append(&e);
     }
     outer
+}
+
+/// Runs an offer button. A code is copied as sensitive off the GTK thread and cleared after
+/// [`offers::CLEAR_AFTER`] if still on the clipboard; `close` (the banner whose only code it
+/// was) runs [`offers::CLOSE_AFTER`] after the copy, so the "Copied" label is seen. A number is
+/// a plain copy; a link opens in the browser after one more [`offers::safe_https_url`] check.
+fn take_offer(o: &Offer, b: &gtk::Button, close: Option<Rc<dyn Fn()>>) {
+    let b = b.clone();
+    match o.clone() {
+        Offer::Code(code) => {
+            glib::spawn_future_local(async move {
+                let copied = gio::spawn_blocking(move || {
+                    offers::copy_code(&mut offers::Wayland::default(), &offers::SECRETS, &code)
+                })
+                .await;
+                match copied {
+                    Ok(Ok(ticket)) => {
+                        b.set_label(copy::OFFER_COPIED);
+                        glib::timeout_add_local_once(offers::CLEAR_AFTER, move || {
+                            gio::spawn_blocking(move || {
+                                let mut clip = offers::Wayland::default();
+                                if let Err(e) = offers::expire(&mut clip, &offers::SECRETS, &ticket)
+                                {
+                                    eprintln!("wol-shell: clearing a copied code: {e}");
+                                }
+                            });
+                        });
+                        if let Some(close) = close {
+                            glib::timeout_add_local_once(offers::CLOSE_AFTER, move || close());
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        eprintln!("wol-shell: copying a code: {e}");
+                        b.set_label(copy::OFFER_NOT_COPIED);
+                    }
+                    Err(_) => b.set_label(copy::OFFER_NOT_COPIED),
+                }
+            });
+        }
+        Offer::Phone(number) => {
+            glib::spawn_future_local(async move {
+                let copied = gio::spawn_blocking(move || {
+                    offers::copy_number(&mut offers::Wayland::default(), &number)
+                })
+                .await;
+                match copied {
+                    Ok(Ok(())) => b.set_label(copy::OFFER_COPIED),
+                    Ok(Err(e)) => {
+                        eprintln!("wol-shell: copying a number: {e}");
+                        b.set_label(copy::OFFER_NOT_COPIED);
+                    }
+                    Err(_) => b.set_label(copy::OFFER_NOT_COPIED),
+                }
+            });
+        }
+        Offer::Link(url) => {
+            if let Some(url) = offers::safe_https_url(&url)
+                && let Err(e) =
+                    gio::AppInfo::launch_default_for_uri(&url, None::<&gio::AppLaunchContext>)
+            {
+                eprintln!("wol-shell: opening a link: {e}");
+            }
+        }
+    }
 }
 
 /// Starts the D-Bus server; returns the Notification Center panel and "dismiss every banner".
@@ -549,10 +832,8 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
     {
         let (held_back, tx) = (held_back.clone(), tx.clone());
         crate::hypr::on_fullscreen_change(move |mode| {
-            if !mode.holds_banners() {
-                for n in held_back.borrow_mut().take() {
-                    let _ = tx.try_send(Event::Replay(n));
-                }
+            for n in held_back.borrow_mut().release(mode) {
+                let _ = tx.try_send(Event::Replay(n));
             }
         });
     }
@@ -598,11 +879,16 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
     stack.set_halign(gtk::Align::End);
     banners.set_child(Some(&stack));
     let rows: Rc<RefCell<Center<gtk::Box>>> = Default::default();
-    let (g, center_list) = center_panel(rows.clone());
+    let (g, center_list) = {
+        let held_back = held_back.clone();
+        center_panel(rows.clone(), move || held_back.borrow_mut().clear())
+    };
     // Takes note `id`'s row off the Notification Center (answered, or withdrawn by its app).
     let unlist = {
-        let (rows, center_list) = (rows.clone(), center_list.clone());
+        let (rows, center_list, held_back) = (rows.clone(), center_list.clone(), held_back.clone());
         move |id: u32| {
+            // Off the center: never replayed either (audit5 S6-1).
+            held_back.borrow_mut().forget(id);
             if let Some(r) = rows.borrow_mut().remove(id) {
                 center_list.remove(&r);
             }
@@ -642,10 +928,11 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
     center.add_controller(esc);
 
     glib::spawn_future_local(async move {
-        // One banner per app, newest group on top; a group's ids leave together.
+        // One banner per app, newest group on top; a group's notes leave together, except the
+        // sticky ones a timed note's expiry leaves on screen ([`GroupNotes::expire`]).
         struct Group {
             app: String,
-            ids: Vec<u32>,
+            notes: GroupNotes,
             rev: gtk::Revealer,
             generation: u32,
             /// The note on screen and what a click on it runs ([`click_action`]).
@@ -666,7 +953,7 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 if g.is_empty() {
                     banners.set_visible(false);
                 }
-                gr.ids
+                gr.notes.ids()
             }
         };
         // Answers note `id`'s group: `key` goes to `id` (ActionInvoked), the rest are dismissed.
@@ -681,7 +968,7 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 let rev = groups
                     .borrow()
                     .iter()
-                    .find(|g| g.ids.contains(&id))
+                    .find(|g| g.notes.contains(id))
                     .map(|g| g.rev.clone());
                 let Some(rev) = rev else { return };
                 for i in drop_group(&rev) {
@@ -696,15 +983,32 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 }
             })
         };
-        let act = |id: u32| -> Rc<dyn Fn(&str)> {
-            let a = answer.clone();
-            Rc::new(move |k: &str| a(id, Some(k)))
+        // Draws the group's newest note in its banner, with the stack count and its buttons.
+        let render = {
+            let answer = answer.clone();
+            Rc::new(move |gr: &mut Group| {
+                let Some(n) = gr.notes.shown() else { return };
+                let (id, a) = (n.id, answer.clone());
+                let act: Rc<dyn Fn(&str)> = Rc::new(move |k: &str| a(id, Some(k)));
+                let a = answer.clone();
+                let take: Rc<Take> = Rc::new(move |o: &Offer, b: &gtk::Button, closes: bool| {
+                    let a = a.clone();
+                    let close: Option<Rc<dyn Fn()>> =
+                        closes.then(|| Rc::new(move || a(id, None)) as Rc<dyn Fn()>);
+                    take_offer(o, b, close)
+                });
+                gr.rev
+                    .set_child(Some(&banner_offering(n, gr.notes.len() as u32, act, take)));
+                gr.last = (id, click_action(n));
+            })
         };
         while let Ok(ev) = rx.recv().await {
-            let (n, fresh) = match ev {
+            let (mut n, fresh) = match ev {
                 Event::Show(n) => (n, true),
                 Event::Replay(n) => (n, false),
                 Event::DismissAll => {
+                    // Held ones are dismissed too: none replays after full screen (audit5 S6-1).
+                    held_back.borrow_mut().clear();
                     let all: Vec<gtk::Revealer> =
                         groups.borrow().iter().map(|g| g.rev.clone()).collect();
                     for rev in all {
@@ -715,16 +1019,23 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                     continue;
                 }
                 Event::Close(id) => {
-                    // The app withdrew it (`CloseNotification`): gone from the center too.
+                    // The app withdrew it (`CloseNotification`): gone from the center too. The
+                    // banner shows the group's next note, or leaves with the last one.
                     unlist(id);
-                    held_back.borrow_mut().forget(id);
                     let rev = {
                         let mut g = groups.borrow_mut();
-                        let Some(gr) = g.iter_mut().find(|x| x.ids.contains(&id)) else {
+                        let Some(gr) = g.iter_mut().find(|x| x.notes.contains(id)) else {
                             continue;
                         };
-                        gr.ids.retain(|&x| x != id);
-                        gr.ids.is_empty().then(|| gr.rev.clone())
+                        let was_shown = gr.notes.remove(id);
+                        if gr.notes.is_empty() {
+                            Some(gr.rev.clone())
+                        } else {
+                            if was_shown {
+                                render(gr);
+                            }
+                            None
+                        }
                     };
                     if let Some(rev) = rev {
                         drop_group(&rev);
@@ -732,6 +1043,13 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                     continue;
                 }
             };
+            // The icon from the installed apps (audit4 S3-8); the pictures decoded off the UI
+            // thread before the banner and the card are built (audit4 S3-3). Events wait here
+            // in order, so a Close never overtakes its Show.
+            if n.icon.is_empty() {
+                n.icon = note_icon(&n.app, &super::ipc::installed().await);
+            }
+            preload_thumbs(&n).await;
             if fresh {
                 let row = card(&n);
                 for gone in rows.borrow_mut().push(n.id, row.clone()) {
@@ -751,26 +1069,21 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
             let shown: Vec<(String, u32)> = groups
                 .borrow()
                 .iter()
-                .map(|g| (g.app.clone(), g.ids.len() as u32))
+                .map(|g| (g.app.clone(), g.notes.len() as u32))
                 .collect();
             let rev = match place(&shown, &n.app) {
                 Place::Stack { index, count } => {
                     let mut g = groups.borrow_mut();
                     let gr = &mut g[index];
-                    if !gr.ids.contains(&n.id) {
-                        gr.ids.push(n.id);
-                    }
+                    gr.notes.push(n.clone());
                     gr.generation = generation;
-                    gr.last = (n.id, click_action(&n));
-                    debug_assert!(count >= gr.ids.len() as u32);
-                    gr.rev
-                        .set_child(Some(&banner_with(&n, gr.ids.len() as u32, act(n.id))));
+                    debug_assert!(count >= gr.notes.len() as u32);
+                    render(gr);
                     gr.rev.clone()
                 }
                 Place::Top => {
                     let rev = gtk::Revealer::builder()
                         .transition_type(gtk::RevealerTransitionType::SlideLeft)
-                        .child(&banner_with(&n, 1, act(n.id)))
                         .build();
                     // A click runs the default action when there is one, else dismisses.
                     let click = gtk::GestureClick::new();
@@ -793,16 +1106,16 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                         }
                     });
                     stack.prepend(&rev);
-                    groups.borrow_mut().insert(
-                        0,
-                        Group {
-                            app: n.app.clone(),
-                            ids: vec![n.id],
-                            rev: rev.clone(),
-                            generation,
-                            last: (n.id, click_action(&n)),
-                        },
-                    );
+                    let mut gr = Group {
+                        app: n.app.clone(),
+                        notes: GroupNotes::default(),
+                        rev: rev.clone(),
+                        generation,
+                        last: (n.id, click_action(&n)),
+                    };
+                    gr.notes.push(n.clone());
+                    render(&mut gr);
+                    groups.borrow_mut().insert(0, gr);
                     banners.set_visible(true);
                     let r2 = rev.clone();
                     glib::idle_add_local_once(move || r2.set_reveal_child(true));
@@ -810,20 +1123,36 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 }
             };
             if let Some(ms) = banner_ms(&n) {
-                let (groups, drop_group, closed) =
-                    (groups.clone(), drop_group.clone(), closed.clone());
+                let (groups, drop_group, closed, render) = (
+                    groups.clone(),
+                    drop_group.clone(),
+                    closed.clone(),
+                    render.clone(),
+                );
                 glib::timeout_add_local_once(
                     std::time::Duration::from_millis(ms as u64),
                     move || {
-                        // Only the group's latest note expires it (a newer note has its own timer).
-                        let live = groups
-                            .borrow()
-                            .iter()
-                            .any(|g| g.rev == rev && g.generation == generation);
-                        if live {
-                            for id in drop_group(&rev) {
-                                closed(id, CloseReason::Expired);
+                        // Only the group's latest note expires it (a newer note has its own
+                        // timer); its sticky notes stay and show again (audit4 S3-4).
+                        let (gone, empty) = {
+                            let mut g = groups.borrow_mut();
+                            let Some(gr) = g
+                                .iter_mut()
+                                .find(|g| g.rev == rev && g.generation == generation)
+                            else {
+                                return;
+                            };
+                            let gone = gr.notes.expire();
+                            if !gr.notes.is_empty() {
+                                render(gr);
                             }
+                            (gone, gr.notes.is_empty())
+                        };
+                        if empty {
+                            drop_group(&rev);
+                        }
+                        for id in gone {
+                            closed(id, CloseReason::Expired);
                         }
                     },
                 );
@@ -968,6 +1297,39 @@ mod tests {
         assert!(!quiet(&n(false, -1), Focus::Off));
     }
 
+    /// Audit5 S6-1: dismiss all and the Center's Clear empty the held banners.
+    #[test]
+    fn cleared_held_banners_never_replay() {
+        use crate::hypr::Fullscreen;
+        let note = |id| Note { id, ..n(false, -1) };
+        let ids = |v: Vec<Note>| v.iter().map(|n| n.id).collect::<Vec<u32>>();
+        let mut h = Held::default();
+        h.hold(note(1));
+        h.hold(note(2));
+        assert!(
+            h.release(Fullscreen::Full).is_empty(),
+            "still in full screen"
+        );
+        assert_eq!(
+            ids(h.release(Fullscreen::None)),
+            [1, 2],
+            "untouched: they replay"
+        );
+        // Dismiss all (Esc, `wol shell hide banners`) or the Center's Clear while held.
+        h.hold(note(1));
+        h.hold(note(2));
+        h.clear();
+        assert!(
+            h.release(Fullscreen::None).is_empty(),
+            "nothing replays after full screen"
+        );
+        // A row taken off the Center (answered or withdrawn) never replays either.
+        h.hold(note(1));
+        h.hold(note(2));
+        h.forget(1);
+        assert_eq!(ids(h.release(Fullscreen::Maximized)), [2]);
+    }
+
     /// Audit3 R2A-9: over a game in full screen banners wait (critical ones still show); a
     /// zoomed window holds nothing; held ones replay in order, withdrawn ones never.
     #[test]
@@ -1018,5 +1380,129 @@ mod tests {
         assert_eq!(c.remove(7), None);
         assert_eq!(c.clear().len(), CENTER_MAX - 1);
         assert!(c.is_empty());
+    }
+
+    /// Audit4 S3-4: a plain note stacked over an unanswered one with buttons expired both; the
+    /// one with buttons stays and shows again. Withdrawing the shown note shows the previous.
+    #[test]
+    fn a_timed_note_expires_alone_and_sticky_ones_stay() {
+        let sticky = |id| Note {
+            id,
+            actions: vec![("open".into(), "Open".into())],
+            ..n(false, -1)
+        };
+        let timed = |id| Note { id, ..n(false, -1) };
+        let mut g = GroupNotes::default();
+        g.push(sticky(1));
+        g.push(timed(2));
+        assert_eq!(g.shown().map(|n| n.id), Some(2));
+        assert_eq!(g.expire(), [2]);
+        assert_eq!(
+            g.shown().map(|n| n.id),
+            Some(1),
+            "the note with buttons is back"
+        );
+        assert_eq!(g.ids(), [1]);
+        assert!(g.expire().is_empty(), "sticky notes never expire");
+        g.push(timed(3));
+        g.push(timed(4));
+        assert!(g.remove(4), "the shown one was withdrawn");
+        assert_eq!(g.shown().map(|n| n.id), Some(3));
+        assert!(!g.remove(1), "an older one goes quietly");
+        g.push(timed(3));
+        assert_eq!(g.len(), 1, "a replaced note is not counted twice");
+        assert_eq!(g.expire(), [3]);
+        assert!(g.is_empty());
+    }
+
+    /// Audit4 S3-3: a banner picture is decoded small (2x the thumbnail), once; a directory or
+    /// a missing file gives none.
+    #[test]
+    fn banner_pictures_are_small_and_checked() {
+        let svg = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../design/wallpapers/wonderland-day.svg"
+        );
+        let t = decode_thumb(svg).expect("the wallpaper decodes (the goldens need the loader)");
+        assert_eq!(
+            t.width().min(t.height()),
+            THUMB_PX,
+            "{}x{}",
+            t.width(),
+            t.height()
+        );
+        assert!(t.width().max(t.height()) <= THUMB_LONG_MAX);
+        assert_eq!(
+            thumb_box(3840, 2160),
+            (170, THUMB_PX),
+            "4K: small, covers the box"
+        );
+        assert_eq!(thumb_box(1080, 1920), (THUMB_PX, 170));
+        assert_eq!(
+            thumb_box(100_000, 10),
+            (THUMB_LONG_MAX, THUMB_PX),
+            "panorama capped"
+        );
+        assert_eq!(thumb_box(0, 0), (THUMB_PX, THUMB_PX));
+        assert!(
+            decode_thumb(env!("CARGO_MANIFEST_DIR")).is_none(),
+            "a directory"
+        );
+        assert!(decode_thumb("/nonexistent/wol-fs3.png").is_none());
+        keep_thumb(
+            "/a.png",
+            gtk::gdk::MemoryTexture::new(
+                1,
+                1,
+                gtk::gdk::MemoryFormat::R8g8b8,
+                &glib::Bytes::from_static(&[0, 0, 0]),
+                3,
+            )
+            .upcast(),
+        );
+        assert!(cached_thumb("/a.png").is_some(), "kept for the center card");
+        for i in 0..THUMBS_KEPT {
+            keep_thumb(&format!("/{i}.png"), cached_thumb("/a.png").unwrap());
+        }
+        assert!(cached_thumb("/a.png").is_none(), "bounded: the oldest goes");
+        let note = Note {
+            image: "/s.png".into(),
+            icon: "/i.svg".into(),
+            ..n(false, -1)
+        };
+        assert_eq!(thumb_files(&note), ["/s.png", "/i.svg"]);
+        assert!(
+            thumb_files(&Note {
+                icon: "mail".into(),
+                ..n(false, -1)
+            })
+            .is_empty()
+        );
+    }
+
+    /// Audit4 S3-8: a note from an app outside the dock takes its installed entry's icon, found
+    /// by the name Notify carries.
+    #[test]
+    fn note_icons_come_from_installed_apps() {
+        let e = crate::desktop::Entry {
+            id: "signal-desktop.desktop".into(),
+            name: "Signal".into(),
+            exec: vec!["signal-desktop".into()],
+            icon: "signal-desktop".into(),
+        };
+        assert_eq!(
+            note_icon("Signal", std::slice::from_ref(&e)),
+            "signal-desktop"
+        );
+        assert_eq!(
+            note_icon("signal-desktop", std::slice::from_ref(&e)),
+            "signal-desktop"
+        );
+        assert_eq!(note_icon(SYSTEM_APP, &[]), SYSTEM_ICON);
+        assert_eq!(
+            note_icon("Zed", &[]),
+            "zed",
+            "unknown: the name as an icon name"
+        );
     }
 }

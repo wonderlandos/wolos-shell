@@ -141,6 +141,10 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             if !wol_core::settings::users::is_valid_name(&name) {
                 return say(&st, "Account names use lowercase letters, digits, - and _.");
             }
+            // wol-admind refuses these too (S4-6); saying so here keeps the sheet's typing.
+            if wol_core::settings::users::is_reserved(&name) {
+                return say(&st, crate::copy::settings::ACCOUNT_RESERVED);
+            }
             let password = pass.text().to_string();
             if let Some(e) = password_problem(&password, &verify.text()) {
                 return say(&st, e);

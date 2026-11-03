@@ -47,14 +47,29 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             ),
         ],
     ));
-    let (dk, st) = (e.desk.clone(), status.clone());
-    let mut pointer = vec![form::slider_row(
+    // The slider, so a failed save can put it back to the saved size (Desk::set_or).
+    let slider = Rc::new(glib::WeakRef::<gtk::Scale>::new());
+    let (dk, st, sl) = (e.desk.clone(), status.clone(), slider.clone());
+    let size = form::slider_row(
         "Pointer size",
         CURSOR,
         f64::from(d.cursor_size).clamp(CURSOR.0, CURSOR.1),
         ("Normal", "Large"),
-        move |v| dk.set(&st, |p| p.cursor_size = v as u32),
-    )];
+        move |v| {
+            let (dk2, sl) = (dk.clone(), sl.clone());
+            dk.set_or(
+                &st,
+                |p| p.cursor_size = v as u32,
+                move || {
+                    if let Some(s) = sl.upgrade() {
+                        s.set_value(f64::from(dk2.get().cursor_size).clamp(CURSOR.0, CURSOR.1));
+                    }
+                },
+            )
+        },
+    );
+    slider.set(control_in::<gtk::Scale>(&size).as_ref());
+    let mut pointer = vec![size];
     if let Some(on) = a.zoom {
         let (ctx, st) = (e.ctx.clone(), status.clone());
         pointer.push(form::pending_toggle_row(

@@ -18,6 +18,7 @@ pub(crate) fn topic(what: &str) -> &str {
         "helpers" => "Assistants & Automation",
         "files" => "Tidied Downloads",
         "widgets" => "Widgets",
+        "sound" => "Sound",
         other => other,
     }
 }

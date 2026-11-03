@@ -46,10 +46,10 @@ pub fn search(term: &str) -> Option<(Vec<PkgHit>, Vec<flatpak::Hit>)> {
     Some(parse_hits(&wopkg::search(&ctx, term, 30)))
 }
 
-/// What the App Store says about every AUR package, wherever one appears.
+/// What the App Store says about every community package, wherever one appears.
 pub const AUR_RISK: &str = "Built on this computer from a script a stranger wrote. Nobody at WolOS reviewed it, and no check can vouch for it.";
 
-/// Packages only the AUR has, from one `wopkg::search` document.
+/// Packages only the community package collection has, from one `wopkg::search` document.
 pub fn aur_hits(doc: &Value) -> Vec<PkgHit> {
     let mut out = Vec::new();
     for hit in doc["results"].as_array().into_iter().flatten() {
@@ -65,7 +65,7 @@ pub fn aur_hits(doc: &Value) -> Vec<PkgHit> {
     out
 }
 
-/// The AUR's matches from the local index.
+/// The community package collection's matches from the local index.
 pub fn aur_search(term: &str) -> Vec<PkgHit> {
     let Ok(ctx) = wopkg::context::Context::new(Default::default()) else {
         return Vec::new();
@@ -83,7 +83,7 @@ pub fn origin(kind: &str, repo: &str) -> String {
         }
         ("pacman", _) => "Arch",
         ("flatpak", _) => "Flathub",
-        ("aur", _) => "AUR",
+        ("aur", _) => "Community",
         ("appimage", _) => "AppImage",
         ("recipe", _) => "WolOS Recipe",
         ("wol", _) => "WolOS",
@@ -102,7 +102,7 @@ pub struct AppSource {
     pub installed: bool,
 }
 
-/// The sources of one `wopkg info` answer, best first. The AUR keeps to its own tab.
+/// The sources of one `wopkg info` answer, best first. Community packages keep to their own tab.
 pub fn parse_sources(hit: &Value) -> Vec<AppSource> {
     let text = |v: &Value, k: &str| v[k].as_str().unwrap_or_default().to_owned();
     hit["sources"]
@@ -552,6 +552,8 @@ mod tests {
         let names: Vec<&str> = s.iter().map(|x| x.origin.as_str()).collect();
         assert_eq!(names, ["WolOS", "Arch", "Flathub"]);
         assert!(s[0].installed && !s[1].installed);
+        // The source id stays `aur`; the user reads the neutral name (docs/THIRD-PARTY.md:4-5).
+        assert_eq!(origin("aur", "aur"), "Community");
     }
 
     #[test]

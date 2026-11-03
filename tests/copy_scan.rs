@@ -14,7 +14,12 @@ mod scan;
 use std::collections::BTreeMap;
 
 /// Files that are the copy, not surfaces.
-const COPY_FILES: [&str; 2] = ["copy.rs", "copy_installer.rs"];
+const COPY_FILES: [&str; 4] = [
+    "copy.rs",
+    "copy_installer.rs",
+    "copy_settings.rs",
+    "copy_maker.rs",
+];
 
 /// Text on a line near one of these is a log or a programmer message, not on screen.
 const NOT_ON_SCREEN: [&str; 9] = [

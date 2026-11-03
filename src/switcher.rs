@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! App switcher (Super+Tab): Hyprland clients grouped by app class, most recently used first.
+//! App switcher (Super+Tab): compositor clients grouped by app class, most recently used first.
 use crate::hypr::Client;
 
 /// One app in the strip; `address` is its most recently focused window.
@@ -78,12 +78,12 @@ impl Cycle {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
     Hide,
-    /// Hyprland `focuswindow` dispatch argument.
+    /// Compositor `focuswindow` dispatch argument.
     Focus(String),
 }
 
 /// Focus first, then hide. The strip holds the keyboard on demand (`ui::switcher::SPEC`), so
-/// `focuswindow` works while it is mapped; Hyprland's refocus when the layer unmaps goes to the
+/// `focuswindow` works while it is mapped; the compositor's refocus when the layer unmaps goes to the
 /// window focused last (`refocusLastWindow`), which is now the selection. An exclusive layer
 /// refused the focus and brought the old window forward first (60 ms, two activations).
 pub fn commit(selected: Option<&App>) -> Vec<Step> {
@@ -116,6 +116,46 @@ pub fn op(verb: crate::protocol::Verb, target: &str, visible: bool) -> Op {
         (Show | Toggle, "switcher-prev", false) => Op::Open,
         (Hide, "switcher" | "switcher-prev", true) => Op::Commit,
         _ => Op::None,
+    }
+}
+
+/// How long a `hide switcher` with nothing open cancels the next open (audit4 S5-3).
+pub const CANCEL_OPEN: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Without wol-hypr the Tab and the Super release are two `wol` processes racing to the socket:
+/// the release can arrive first, find nothing open, and the show after it would open a strip that
+/// waits for a release that already happened. A hide with nothing open therefore cancels an open
+/// arriving within [`CANCEL_OPEN`]. With the plugin, wol-hypr sends both lines itself, in order,
+/// and this never fires.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CancelOpen(Option<std::time::Instant>);
+
+impl CancelOpen {
+    /// The op to run for this command, given whether the strip is open (or opening) at `now`.
+    pub fn filter(
+        &mut self,
+        verb: crate::protocol::Verb,
+        target: &str,
+        open: bool,
+        now: std::time::Instant,
+    ) -> Op {
+        let o = op(verb, target, open);
+        match o {
+            // Only a stray release of the switcher arms it: `hide osd` and the like are not one.
+            Op::None
+                if !open
+                    && verb == crate::protocol::Verb::Hide
+                    && matches!(target, "switcher" | "switcher-prev") =>
+            {
+                self.0 = now.checked_add(CANCEL_OPEN);
+                Op::None
+            }
+            Op::Open => match self.0.take() {
+                Some(until) if now < until => Op::None,
+                _ => Op::Open,
+            },
+            _ => o,
+        }
     }
 }
 
@@ -162,7 +202,7 @@ mod tests {
     fn opens_only_on_a_readable_nonempty_client_list() {
         let one = r#"[{"address":"0x1","class":"foot","title":"~","focusHistoryID":0}]"#;
         for (reply, opens) in [
-            (None, false),             // no compositor answer (not Hyprland, socket down)
+            (None, false),             // no compositor answer (not the compositor, socket down)
             (Some("not json"), false), // unreadable
             (Some("[]"), false),       // nothing open: no "No open windows" pill
             (Some(one), true),
@@ -189,7 +229,7 @@ mod tests {
         assert_eq!(Cycle::open(3).prev().prev().index, 2);
     }
 
-    /// Live Hyprland 0.56: releasing Super left the old window focused (exclusive layer), then
+    /// Live on the compositor 0.56: releasing Super left the old window focused (exclusive layer), then
     /// the hide-first order showed the old window for 60 ms before the selection.
     #[test]
     fn commit_focuses_then_hides() {
@@ -204,6 +244,47 @@ mod tests {
             [Step::Focus("address:0x1".into()), Step::Hide]
         );
         assert_eq!(commit(None), [Step::Hide]);
+    }
+
+    /// Audit4 S5-3: (Hide, Show) in that order opens nothing; later opens are not affected.
+    #[test]
+    fn a_release_before_the_show_cancels_that_open() {
+        use crate::protocol::Verb::*;
+        use std::time::Duration;
+        let t0 = std::time::Instant::now();
+        let mut c = CancelOpen::default();
+        assert_eq!(c.filter(Hide, "switcher", false, t0), Op::None);
+        assert_eq!(
+            c.filter(Show, "switcher", false, t0 + Duration::from_millis(40)),
+            Op::None,
+            "the show of the tap that was already released"
+        );
+        assert_eq!(
+            c.filter(Show, "switcher", false, t0 + Duration::from_millis(60)),
+            Op::Open,
+            "one cancel per stray release"
+        );
+        // Shift+Tab first: same.
+        let mut c = CancelOpen::default();
+        c.filter(Hide, "switcher", false, t0);
+        assert_eq!(c.filter(Show, "switcher-prev", false, t0), Op::None);
+        // Past the window: a real new ⌘Tab.
+        let mut c = CancelOpen::default();
+        c.filter(Hide, "switcher", false, t0);
+        assert_eq!(
+            c.filter(Show, "switcher", false, t0 + CANCEL_OPEN),
+            Op::Open
+        );
+        // The normal order is untouched: show, tabs, release commits, the next show opens.
+        let mut c = CancelOpen::default();
+        assert_eq!(c.filter(Show, "switcher", false, t0), Op::Open);
+        assert_eq!(c.filter(Show, "switcher", true, t0), Op::Next);
+        assert_eq!(c.filter(Hide, "switcher", true, t0), Op::Commit);
+        assert_eq!(c.filter(Show, "switcher", false, t0), Op::Open);
+        // Unrelated commands neither arm nor consume it.
+        let mut c = CancelOpen::default();
+        assert_eq!(c.filter(Hide, "osd", false, t0), Op::None);
+        assert_eq!(c.filter(Show, "switcher", false, t0), Op::Open);
     }
 
     #[test]

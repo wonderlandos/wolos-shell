@@ -66,7 +66,6 @@ pub struct DeviceRow {
     pub button: gtk::Button,
     circle: gtk::Image,
     subtitle: gtk::Label,
-    trailing: gtk::Image,
 }
 
 impl DeviceRow {
@@ -102,7 +101,6 @@ impl DeviceRow {
             button,
             circle,
             subtitle: sub,
-            trailing: tr,
         };
         r.set_active(active);
         r
@@ -115,12 +113,6 @@ impl DeviceRow {
             self.subtitle.set_label(s);
         }
         self.subtitle.set_visible(!s.is_empty());
-    }
-    pub fn set_trailing(&self, icon_name: Option<&str>) {
-        if let Some(n) = icon_name {
-            self.trailing.set_icon_name(Some(n));
-        }
-        self.trailing.set_visible(icon_name.is_some());
     }
 }
 

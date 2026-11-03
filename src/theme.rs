@@ -6,30 +6,66 @@ use wol_core::theme::{self as core_theme, ThemeCatalog, active};
 pub type Theme = core_theme::ResolvedTheme;
 
 thread_local! {
-    static CATALOG: ThemeCatalog = core_theme::accent::variants()
+    static CATALOG: std::cell::RefCell<ThemeCatalog> = std::cell::RefCell::new(catalog());
+}
+
+/// The installed catalog plus the accent variants: the one the shell draws with.
+fn catalog() -> ThemeCatalog {
+    with_accents(installed())
+}
+
+/// Built-ins, theme folders and enabled plugins' theme packs (ADR 0031 themes v2).
+fn installed() -> ThemeCatalog {
+    let data = core_theme::apps::data_home(|k| std::env::var(k).ok());
+    ThemeCatalog::installed(&core_theme::config_home(), data.as_deref())
+}
+
+/// Draws with `installed` (built-ins, theme folders and plugin packs, read off the GTK thread by
+/// the theme picker) from now on, plus the accent variants: a pick the picker offers is one the
+/// shell can draw (audit5 S9-2). No disk work.
+pub fn adopt(installed: ThemeCatalog) {
+    let cat = with_accents(installed);
+    CATALOG.with(|c| *c.borrow_mut() = cat);
+}
+
+fn with_accents(installed: ThemeCatalog) -> ThemeCatalog {
+    core_theme::accent::variants()
         .into_iter()
-        .fold(ThemeCatalog::load(&core_theme::search_paths(&core_theme::config_home())), ThemeCatalog::with);
+        .fold(installed, ThemeCatalog::with)
 }
 
 /// Saved id (None = follow appearance) -> resolved theme; unknown ids fall back to the variant default.
 /// `wol-auto-<accent>` follows `prefer_dark` (`wol_core::theme::accent`).
+/// An id the catalog does not know re-reads the installed themes once before falling back
+/// (audit5 S9-2: a pack picked after the shell started).
 pub fn resolve(saved: Option<&str>, prefer_dark: bool) -> Theme {
+    CATALOG.with(|c| resolve_in(c, catalog, saved, prefer_dark))
+}
+
+fn resolve_in(
+    cat: &std::cell::RefCell<ThemeCatalog>,
+    fresh: impl FnOnce() -> ThemeCatalog,
+    saved: Option<&str>,
+    prefer_dark: bool,
+) -> Theme {
     let saved = core_theme::accent::effective(saved, prefer_dark);
     let id = active::effective(saved.as_deref(), prefer_dark);
-    CATALOG.with(|c| {
-        c.resolve(&id)
-            .or_else(|_| {
-                c.resolve(
-                    if prefer_dark {
-                        Variant::Dark
-                    } else {
-                        Variant::Light
-                    }
-                    .default_theme(),
-                )
-            })
-            .expect("built-in themes resolve")
-    })
+    if cat.borrow().resolve(&id).is_err() {
+        *cat.borrow_mut() = fresh();
+    }
+    let c = cat.borrow();
+    c.resolve(&id)
+        .or_else(|_| {
+            c.resolve(
+                if prefer_dark {
+                    Variant::Dark
+                } else {
+                    Variant::Light
+                }
+                .default_theme(),
+            )
+        })
+        .expect("built-in themes resolve")
 }
 
 /// `$XDG_CONFIG_HOME/wolos/theme`.
@@ -77,6 +113,50 @@ pub fn stylesheet(t: &Theme, extra: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit5 S9-2: a pack picked after the shell started is drawn, not the variant default.
+    #[test]
+    fn a_theme_installed_after_start_resolves_without_restart() {
+        let cat = std::cell::RefCell::new(ThemeCatalog::builtin());
+        let base = ThemeCatalog::builtin()
+            .list()
+            .into_iter()
+            .find(|s| s.variant == Variant::Dark)
+            .cloned()
+            .expect("a built-in dark theme");
+        let mut pack = base.clone();
+        pack.id = "pack-night".into();
+        pack.name = "Night".into();
+        let first = resolve_in(&cat, ThemeCatalog::builtin, None, true);
+        assert_ne!(first.id, "pack-night");
+        let added = ThemeCatalog::builtin().with(pack.clone());
+        let t = resolve_in(&cat, move || added, Some("pack-night"), true);
+        assert_eq!(
+            t.id, "pack-night",
+            "the unknown id re-read the installed themes"
+        );
+        // Still unknown after the re-read: the variant default.
+        let t = resolve_in(&cat, ThemeCatalog::builtin, Some("gone"), false);
+        assert_eq!(t.id, Variant::Light.default_theme());
+    }
+
+    #[test]
+    fn an_adopted_catalog_is_drawn_with_its_accents() {
+        let base = ThemeCatalog::builtin()
+            .list()
+            .into_iter()
+            .find(|s| s.variant == Variant::Light)
+            .cloned()
+            .expect("a built-in light theme");
+        let mut pack = base;
+        pack.id = "pack-dawn".into();
+        adopt(ThemeCatalog::builtin().with(pack));
+        CATALOG.with(|c| {
+            let c = c.borrow();
+            assert!(c.resolve("pack-dawn").is_ok());
+            assert!(c.resolve("wol-light-blue").is_ok(), "accent variants kept");
+        });
+    }
 
     #[test]
     fn resolves_builtins_and_falls_back() {

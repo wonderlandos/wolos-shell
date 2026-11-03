@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Layout check over live GTK allocations (rules: `crate::layout`). `WOL_LAYOUT_CHECK=exit` exits 1 on issues.
+//! Layout check over live GTK allocations (rules: `crate::layout`).
 use crate::layout::{self, Node, Rect};
-use gtk::{glib, prelude::*};
+use gtk::prelude::*;
 
 fn name(w: &gtk::Widget) -> String {
     let mut s = w.type_().name().trim_start_matches("Gtk").to_string();
@@ -79,6 +79,18 @@ fn glyph(w: &gtk::Widget, r: Rect) -> Rect {
     }
 }
 
+/// `r` cut to `to`; None when nothing is left.
+fn clip(r: Rect, to: Rect) -> Option<Rect> {
+    let (x, y) = (r.x.max(to.x), r.y.max(to.y));
+    let (x1, y1) = ((r.x + r.w).min(to.x + to.w), (r.y + r.h).min(to.y + to.h));
+    (x1 > x && y1 > y).then_some(Rect {
+        x,
+        y,
+        w: x1 - x,
+        h: y1 - y,
+    })
+}
+
 /// Union of what `w`'s content draws: leaves, and anything that draws, seen through layout-only
 /// wrappers (a stretched box is not content; the rows centred in it are).
 fn ink(w: &gtk::Widget, root: &gtk::Widget) -> Option<Rect> {
@@ -87,7 +99,14 @@ fn ink(w: &gtk::Widget, root: &gtk::Widget) -> Option<Rect> {
     while let Some(ch) = c {
         if shown(&ch) {
             let r = if layout_only(&ch) && ch.first_child().is_some() {
-                ink(&ch, root)
+                let inner = ink(&ch, root);
+                // A scroll view shows its content only inside itself: what is scrolled away
+                // draws nothing.
+                if ch.is::<gtk::ScrolledWindow>() || ch.is::<gtk::Viewport>() {
+                    inner.and_then(|r| clip(r, bounds(&ch, root)))
+                } else {
+                    inner
+                }
             } else {
                 Some(glyph(&ch, bounds(&ch, root))).filter(|r| r.w > 0 && r.h > 0)
             };
@@ -219,18 +238,19 @@ fn covered_cards(top: &gtk::Widget, root: &gtk::Widget) -> Vec<layout::Issue> {
         .collect()
 }
 
-/// After the first layout: log issues; exit 1 when `WOL_LAYOUT_CHECK=exit`.
-pub fn on_map(win: &gtk::Window, name: &'static str) {
-    win.connect_map(move |w| {
-        let w = w.clone();
-        glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
-            let found = issues(&w);
-            for i in &found {
-                eprintln!("wol layout: {name}: {}", i.message);
-            }
-            if !found.is_empty() && std::env::var("WOL_LAYOUT_CHECK").as_deref() == Ok("exit") {
-                std::process::exit(1);
-            }
-        });
-    });
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scroller's content counts only where the scroller shows it (the share sheet's long
+    /// entry is not ink below the sheet).
+    #[test]
+    fn scrolled_content_is_cut_to_its_scroller() {
+        let r = |x, y, w, h| Rect { x, y, w, h };
+        assert_eq!(
+            clip(r(10, 10, 100, 900), r(0, 0, 200, 260)),
+            Some(r(10, 10, 100, 250))
+        );
+        assert_eq!(clip(r(0, 300, 10, 10), r(0, 0, 200, 260)), None);
+    }
 }

@@ -50,13 +50,8 @@ pub fn content(f: Focus) -> Option<String> {
 
 /// Seconds from local `h:m:s` to the next [`MORNING_HOUR`]:00 ("until tomorrow").
 pub fn secs_to_morning(h: u8, m: u8, s: u8) -> u64 {
-    let now = h as u64 * 3600 + m as u64 * 60 + s as u64;
-    let target = MORNING_HOUR as u64 * 3600;
-    if now < target {
-        target - now
-    } else {
-        86_400 - now + target
-    }
+    let morning = u32::from(MORNING_HOUR) * 3600;
+    u64::from(wol_core::clock::secs_until(h, m, s, &[morning]))
 }
 
 /// Control Center subtitle: "Off", "On", or "Until 15:05" (local `h:m` now, `now` unix secs).

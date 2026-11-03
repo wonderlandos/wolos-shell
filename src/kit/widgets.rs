@@ -2,7 +2,7 @@
 //! IaraKit component set (HIG, archicture/modules/hig.md). The ONLY place widget metrics live:
 //! surfaces pass tokens from this module, never numbers.
 use gtk::{glib, prelude::*};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// Spacing scale (HIG §2).
@@ -37,10 +37,6 @@ pub const APP_NARROW: (i32, i32) = (480, 360);
 pub const NARROW: i32 = 640;
 pub const LOCK_FIELD_WIDTH: i32 = 200;
 pub const LOCK_FIELD_HEIGHT: i32 = 28;
-/// Setup assistant: card width, list row height, rows shown before scrolling.
-pub const SETUP_CARD_WIDTH: i32 = 560;
-pub const SETUP_ROW: i32 = 36;
-pub const SETUP_ROWS: i32 = 6;
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
 /// Overview desktop thumbnail and window title line.
@@ -240,6 +236,11 @@ pub fn dropdown(options: &[&str], selected: u32) -> gtk::DropDown {
     d
 }
 
+/// Gives a [`dropdown`] a new list of options (the selection is the first until set again).
+pub fn set_options(d: &gtk::DropDown, options: &[&str]) {
+    d.set_model(Some(&gtk::StringList::new(options)));
+}
+
 pub fn segmented(options: &[&str], selected: usize, picked: impl Fn(usize) + 'static) -> gtk::Box {
     let row = hbox(0);
     row.add_css_class("segmented");
@@ -286,21 +287,55 @@ pub fn password_field(placeholder: &str) -> gtk::PasswordEntry {
 /// inside the entry, only while focused; this one says it in words.
 pub const CAPS_LOCK: &str = "⇪ Caps Lock is on";
 
+/// Follows the seat's keyboard, also after one is plugged in or out (audit4 S3-12: it bound the
+/// first keyboard only); its handlers go with the label.
 pub fn caps_lock_note() -> gtk::Label {
+    use gtk::gdk;
     let l = label(CAPS_LOCK, "caps-lock");
     l.set_visible(false);
-    let kb = gtk::gdk::Display::default()
-        .and_then(|d| d.default_seat())
-        .and_then(|s| s.keyboard());
-    if let Some(kb) = kb {
-        l.set_visible(kb.is_caps_locked());
-        let weak = l.downgrade();
-        kb.connect_caps_lock_state_notify(move |kb| {
+    let Some(seat) = gdk::Display::default().and_then(|d| d.default_seat()) else {
+        return l;
+    };
+    type Bound = Rc<RefCell<Option<(gdk::Device, glib::SignalHandlerId)>>>;
+    let bound: Bound = Default::default();
+    let bind = {
+        let (weak, bound) = (l.downgrade(), bound.clone());
+        Rc::new(move |seat: &gdk::Seat| {
+            let Some(kb) = seat.keyboard() else { return };
+            if bound.borrow().as_ref().is_some_and(|(d, _)| d == &kb) {
+                return;
+            }
             if let Some(l) = weak.upgrade() {
                 l.set_visible(kb.is_caps_locked());
             }
-        });
-    }
+            let w = weak.clone();
+            let id = kb.connect_caps_lock_state_notify(move |kb| {
+                if let Some(l) = w.upgrade() {
+                    l.set_visible(kb.is_caps_locked());
+                }
+            });
+            if let Some((old, old_id)) = bound.borrow_mut().replace((kb, id)) {
+                old.disconnect(old_id);
+            }
+        })
+    };
+    bind(&seat);
+    let ids = {
+        let (b1, b2) = (bind.clone(), bind);
+        Cell::new(Some((
+            seat.connect_device_added(move |s, _| b1(s)),
+            seat.connect_device_removed(move |s, _| b2(s)),
+        )))
+    };
+    l.connect_destroy(move |_| {
+        if let Some((added, removed)) = ids.take() {
+            seat.disconnect(added);
+            seat.disconnect(removed);
+        }
+        if let Some((kb, id)) = bound.take() {
+            kb.disconnect(id);
+        }
+    });
     l
 }
 
@@ -946,45 +981,6 @@ pub fn module(child: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
-/// macOS fat slider: title above, 24px pill track with the icon inside at the left.
-pub fn control_slider(
-    title: &str,
-    icon_name: &str,
-    value: f64,
-    changed: impl Fn(f64) + 'static,
-) -> gtk::Box {
-    let b = vbox(S2);
-    b.append(&label(title, "title"));
-    let o = gtk::Overlay::new();
-    let s = slider(value, changed);
-    s.add_css_class("fat");
-    o.set_child(Some(&s));
-    let i = icon(icon_name, ICON);
-    i.set_halign(gtk::Align::Start);
-    i.add_css_class("fat-icon");
-    i.set_can_target(false);
-    o.add_overlay(&i);
-    b.append(&o);
-    module(&b)
-}
-
-/// Small square tile (Screenshot, Record): icon over a secondary label.
-pub fn square_tile(
-    icon_name: &str,
-    title: &str,
-    clicked: impl Fn(&gtk::Button) + 'static,
-) -> gtk::Button {
-    let c = vbox(S1);
-    let i = icon(icon_name, ICON);
-    i.set_halign(gtk::Align::Center);
-    c.append(&i);
-    c.append(&centered(title, "secondary"));
-    let b = gtk::Button::builder().child(&c).hexpand(true).build();
-    b.add_css_class("square-tile");
-    b.connect_clicked(move |b| clicked(b));
-    b
-}
-
 pub fn avatar(name: &str, size: i32) -> gtk::Label {
     let l = gtk::Label::new(Some(&crate::login::initials(name)));
     l.add_css_class("avatar");
@@ -999,7 +995,6 @@ pub fn avatar(name: &str, size: i32) -> gtk::Label {
     l.set_valign(gtk::Align::Center);
     l
 }
-pub const AVATAR_L: i32 = 48;
 pub const AVATAR_XL: i32 = 96;
 
 /// Lock/login clock: big time + long date, ticking on minute boundaries.
@@ -1509,7 +1504,9 @@ pub struct AppTile {
     pub action: gtk::Button,
     ring: gtk::DrawingArea,
     value: Rc<Cell<Option<u8>>>,
-    text: gtk::Box,
+    /// [`AppTile::set_source`]'s badge: one label, hidden until set (audit4 S3-11: each call
+    /// appended another, "Flathub Flathub").
+    source: gtk::Label,
 }
 
 impl AppTile {
@@ -1534,6 +1531,11 @@ impl AppTile {
         s.set_ellipsize(gtk::pango::EllipsizeMode::End);
         s.add_css_class("may-ellipsize");
         t.append(&s);
+        let source = label("", "badge");
+        source.set_halign(gtk::Align::Start);
+        source.set_margin_top(S1);
+        source.set_visible(false);
+        t.append(&source);
         root.append(&t);
         let action = gtk::Button::with_label("Get");
         action.add_css_class("get-button");
@@ -1548,17 +1550,25 @@ impl AppTile {
             action,
             ring,
             value,
-            text: t,
+            source,
         }
     }
 
     /// Where the app comes from when it is not WolOS's own packages ("Flathub"): a badge under
     /// the summary.
+    /// Calling it again replaces the badge; "" hides it.
     pub fn set_source(&self, source: &str) {
-        let b = label(source, "badge");
-        b.set_halign(gtk::Align::Start);
-        b.set_margin_top(S1);
-        self.text.append(&b);
+        self.source.set_label(source);
+        self.source.set_visible(!source.is_empty());
+    }
+
+    /// The badge [`AppTile::set_source`] shows ("" when none).
+    pub fn source(&self) -> String {
+        if self.source.is_visible() {
+            self.source.label().into()
+        } else {
+            String::new()
+        }
     }
 
     pub fn set_state(&self, s: TileState) {

@@ -11,10 +11,22 @@ use std::rc::Rc;
 
 #[path = "golden_cases/app_view.rs"]
 mod app_view_cases;
+#[path = "golden_cases/controlcenter.rs"]
+mod controlcenter_cases;
 #[path = "golden_cases/installer.rs"]
 mod installer_cases;
+#[path = "golden_cases/maker.rs"]
+mod maker_cases;
+#[path = "golden_cases/offers.rs"]
+mod offer_cases;
 #[path = "golden_cases/store_package.rs"]
 mod package_cases;
+#[path = "golden_cases/plugin_host.rs"]
+mod plugin_host_cases;
+#[path = "golden_cases/settings.rs"]
+mod settings_cases;
+#[path = "golden_cases/theme_picker.rs"]
+mod theme_picker_cases;
 #[path = "golden_cases/widgets.rs"]
 mod widget_cases;
 #[path = "golden_cases/wol_file.rs"]
@@ -42,6 +54,24 @@ fn analyze_full() -> wol_core::malware::Full {
         signatures: 3_628_245,
         updated: 1,
         ..Default::default()
+    }
+}
+
+/// dedup A9: Setup's language list moves the keyboard every time (the page following a language
+/// is not the person's pick, as in the installer). It used to stop after the first language,
+/// because the list's own move counted as a pick. Ends on the language it started with.
+fn keyboard_follows_languages(s: &ui::setup::Setup) {
+    use shell::setup::{KEYBOARDS, LANGUAGES};
+    let kb = |i: usize| {
+        KEYBOARDS
+            .iter()
+            .position(|k| k.0 == LANGUAGES[i].keymap)
+            .unwrap_or(0)
+    };
+    let (start, _) = s.language_and_keyboard();
+    for i in [2, 5, start] {
+        s.pick_language(i);
+        assert_eq!(s.language_and_keyboard(), (i, kb(i)), "after language {i}");
     }
 }
 
@@ -543,6 +573,29 @@ fn cases() -> Vec<Case> {
                 b.upcast()
             }),
         },
+        // Markup (ADR 0031 W5): pens, Undo, Copy, Save over the picture, two strokes drawn.
+        Case {
+            name: "capture-markup".into(),
+            size: (900, 600),
+            class: "preview",
+            wallpaper: false,
+            build: Box::new(|| {
+                let t = gdk::Texture::from_filename(Path::new(WALL)).expect("wallpaper");
+                let v = ui::capture::MarkupView::new(&t).expect("markup view");
+                {
+                    let mut m = v.markup.borrow_mut();
+                    let (w0, h0) = m.size;
+                    m.begin(shell::capture::Ink::Red, (w0 * 0.2, h0 * 0.3));
+                    for i in 1..=20 {
+                        let f = f64::from(i) / 20.0;
+                        m.extend((w0 * (0.2 + 0.4 * f), h0 * (0.3 + 0.2 * (f * 6.0).sin())));
+                    }
+                    m.begin(shell::capture::Ink::Blue, (w0 * 0.7, h0 * 0.7));
+                    m.extend((w0 * 0.85, h0 * 0.75));
+                }
+                v.root.clone().upcast()
+            }),
+        },
         Case {
             name: "banners".into(),
             size: (420, 360),
@@ -641,6 +694,9 @@ fn cases() -> Vec<Case> {
                 wallpaper: false,
                 build: Box::new(move || {
                     let s = ui::setup::Setup::new(&shell::system::Fake);
+                    if st == shell::setup::Step::Language {
+                        keyboard_follows_languages(&s);
+                    }
                     s.show(st);
                     s.root.clone()
                 }),
@@ -847,7 +903,7 @@ fn cases() -> Vec<Case> {
                 }),
             });
         }
-        // An AUR package: the risk first, no Get button, and what reading it found.
+        // A community package: the risk first, no Get button, and what reading it found.
         v.push(Case {
             name: format!("store-aur-details-{tag}"),
             size: (sw, sh),
@@ -913,7 +969,7 @@ fn cases() -> Vec<Case> {
                 s.aw.root.clone().upcast()
             }),
         });
-        // The AUR apart from the catalogue, locked: the warning and the way in, no package.
+        // The Community page apart from the catalogue, locked: the warning and the way in, no package.
         v.push(Case {
             name: format!("store-aur-tab-{tag}"),
             size: (sw, sh),
@@ -928,7 +984,7 @@ fn cases() -> Vec<Case> {
                         flatpaks: vec![],
                     },
                 );
-                s.aw.open("AUR");
+                s.aw.open("Community");
                 s.aw.root.clone().upcast()
             }),
         });
@@ -948,7 +1004,7 @@ fn cases() -> Vec<Case> {
                     },
                 );
                 s.aur.show_open();
-                s.aw.open("AUR");
+                s.aw.open("Community");
                 s.aw.root.clone().upcast()
             }),
         });
@@ -1088,9 +1144,16 @@ fn cases() -> Vec<Case> {
     });
     v.extend(control_center_cases());
     v.extend(form_kit_cases());
+    v.extend(audit4_shell_cases());
     v.extend(widget_cases::cases());
+    v.extend(settings_cases::cases());
+    v.extend(plugin_host_cases::cases());
     v.extend(package_cases::cases());
     v.extend(app_view_cases::cases());
+    v.extend(offer_cases::cases());
+    v.extend(controlcenter_cases::cases());
+    v.extend(theme_picker_cases::cases());
+    v.extend(maker_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-malware-{tag}"),
@@ -1382,6 +1445,73 @@ fn effects_page_answers_after_it_is_built() {
 }
 
 /// Return is Continue, unless the keyboard ring is on a button: then it is that button's.
+/// Audit5 S8-1/S9-5: the Dock follows `shell.json` like the menu bar. A layout with the Dock on
+/// the left and a plugin item before the apps turns the shelf and puts the plugin box first; the
+/// same layout again rebuilds nothing. The shelf hands the keyboard focus to its first button
+/// (what `keyboard` relies on after a rebuild).
+fn the_dock_takes_a_new_layout() {
+    use shared::layout::{DockItem, Edge};
+    let d = ui::dock::content(&Default::default());
+    assert_eq!(d.edge(), Edge::Bottom);
+    let items = vec![
+        DockItem::Plugin {
+            plugin: "com.example.dock".into(),
+            id: "x".into(),
+        },
+        DockItem::Apps,
+        DockItem::Trash,
+    ];
+    assert!(d.set_layout(Edge::Left, &items), "new items: rebuilt");
+    assert_eq!((d.edge(), d.items()), (Edge::Left, items.clone()));
+    assert_eq!(d.root.orientation(), gtk::Orientation::Vertical);
+    assert_eq!(
+        (d.root.halign(), d.root.valign()),
+        (gtk::Align::Start, gtk::Align::Center)
+    );
+    let first = d.root.first_child().expect("a first entry");
+    assert!(
+        first.is::<gtk::Box>() && !first.is::<gtk::Button>(),
+        "the plugin box first"
+    );
+    let last = d.root.last_child().expect("a last entry");
+    assert!(last.is::<gtk::Button>(), "Trash last");
+    let n = {
+        let mut n = 0;
+        let mut c = d.root.first_child();
+        while let Some(w) = c {
+            n += 1;
+            c = w.next_sibling();
+        }
+        n
+    };
+    assert!(!d.set_layout(Edge::Left, &items), "same items: kept");
+    assert!(
+        !d.set_layout(Edge::Right, &items),
+        "an edge alone turns, no rebuild"
+    );
+    assert_eq!(d.root.halign(), gtk::Align::End);
+    let mut m = 0;
+    let mut c = d.root.first_child();
+    while let Some(w) = c {
+        m += 1;
+        c = w.next_sibling();
+    }
+    assert_eq!(n, m, "nothing added by a turn");
+    let win = gtk::Window::new();
+    win.set_child(Some(&d.root));
+    win.present();
+    pump(20);
+    let keys = kit::surface::keyboard_access(&win, &d.root, |_| {});
+    keys(true);
+    let focus = gtk::prelude::GtkWindowExt::focus(&win);
+    assert!(
+        focus.is_some_and(|f| f.is::<gtk::Button>() && f.is_ancestor(&d.root)),
+        "the shelf hands the focus to one of its buttons"
+    );
+    keys(false);
+    win.close();
+}
+
 fn return_belongs_to_the_button_with_the_keyboard_ring() {
     use shell::kit::assistant::return_is_the_buttons;
     let win = gtk::Window::new();
@@ -2029,11 +2159,14 @@ fn main() {
         "/../../design/icons/symbolic"
     ));
     effects_page_answers_after_it_is_built();
+    settings_cases::checks();
     a_stalled_page_fade_settles();
     a_narrow_window_can_bring_the_sidebar_back();
     displays_coming_and_going_leave_nothing_behind();
     a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     return_belongs_to_the_button_with_the_keyboard_ring();
+    the_dock_takes_a_new_layout();
+    an_app_tile_keeps_one_source_badge();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
@@ -2163,4 +2296,39 @@ fn main() {
         eprintln!("golden failures: {failures:?}");
         std::process::exit(1);
     }
+}
+
+/// Audit4 S3-7: the login window with no account that can sign in says so.
+fn audit4_shell_cases() -> Vec<Case> {
+    vec![Case {
+        name: "login-empty".into(),
+        size: (900, 600),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| ui::lock::Login::new(&[]).root.clone()),
+    }]
+}
+
+/// Audit4 S3-11: a tile re-sourced (Store refresh) showed "Flathub Flathub".
+fn an_app_tile_keeps_one_source_badge() {
+    let t = w::AppTile::new(&w::store_icon("gimp", w::ICON_L), "GIMP", "Edit photos");
+    assert_eq!(t.source(), "", "no badge until set");
+    t.set_source("Flathub");
+    t.set_source("Flathub");
+    assert_eq!(t.source(), "Flathub");
+    // Not in a window: walk the tree by hand (find_class wants drawn widgets).
+    fn visible_badges(w: &gtk::Widget) -> usize {
+        let here = usize::from(w.is_visible() && w.has_css_class("badge"));
+        let mut n = here;
+        let mut c = w.first_child();
+        while let Some(ch) = c {
+            n += visible_badges(&ch);
+            c = ch.next_sibling();
+        }
+        n
+    }
+    let shown = visible_badges(t.root.upcast_ref());
+    assert_eq!(shown, 1, "one badge, however often it is set");
+    t.set_source("");
+    assert_eq!(t.source(), "", "an empty source hides it");
 }

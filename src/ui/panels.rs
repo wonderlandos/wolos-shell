@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Wallpaper, OSD, clipboard, session menu, window switcher.
+//! Wallpaper, OSD, session menu, window switcher (the clipboard panel is ui/clipboard.rs).
 use crate::kit::{
     self,
     surface::{Keyboard, Layer, Spec},
@@ -228,71 +228,6 @@ impl Osd {
             }
         });
     }
-}
-
-/// Clipboard history: watches the display clipboard (event-driven), click copies back.
-pub fn clipboard(app: &gtk::Application) -> gtk::Window {
-    let g = w::glass_panel(w::S2);
-    let head = w::hbox(w::S2);
-    head.append(&w::label("Clipboard", "title"));
-    head.append(&w::spacer());
-    let list = w::vbox(w::S1);
-    let scroll = gtk::ScrolledWindow::builder()
-        .child(&list)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .build();
-    let history: Rc<RefCell<Vec<String>>> = Default::default();
-    let render = {
-        let (list, history) = (list.clone(), history.clone());
-        Rc::new(move || {
-            while let Some(c) = list.first_child() {
-                list.remove(&c);
-            }
-            let h = history.borrow();
-            if h.is_empty() {
-                list.append(&w::label("Copied text shows up here", "secondary"));
-            }
-            for e in h.iter() {
-                let row = w::list_button("edit-paste-symbolic", &crate::clipboard::preview(e), "");
-                let e = e.clone();
-                // A pick copies and closes, like a menu item (audit2 A2-15).
-                row.connect_clicked(move |b| {
-                    b.display().clipboard().set_text(&e);
-                    if let Some(win) = b.root().and_downcast::<gtk::Window>() {
-                        win.set_visible(false);
-                    }
-                });
-                list.append(&row);
-            }
-        })
-    };
-    let (h2, r2) = (history.clone(), render.clone());
-    head.append(&w::button("Clear", w::Kind::Default, move || {
-        h2.borrow_mut().clear();
-        r2();
-    }));
-    g.append(&head);
-    g.append(&scroll);
-    render();
-    // No display (the shell lost its compositor): the panel shows, nothing is recorded (audit2
-    // A2-17: this was an `expect`).
-    if let Some(d) = gdk::Display::default() {
-        d.clipboard().connect_changed(move |cb| {
-            let (history, render) = (history.clone(), render.clone());
-            cb.read_text_async(gio_none(), move |r| {
-                if let Ok(Some(t)) = r
-                    && crate::clipboard::push(&mut history.borrow_mut(), &t)
-                {
-                    render();
-                }
-            });
-        });
-    }
-    panel(app, "clipboard", "wol-panel-clipboard", [false; 4], &g)
-}
-
-fn gio_none() -> Option<&'static gtk::gio::Cancellable> {
-    None
 }
 
 /// Restart / Shut Down / Log Out ask first (macOS): the question, a 60 s countdown, Cancel and
@@ -533,16 +468,13 @@ mod tests {
         }
     }
 
-    /// Audit2 A2-15/A2-17: About ignored everything but Esc and its close light, a clipboard pick
-    /// left the panel open, and the clipboard panel panicked without a display.
+    /// Audit2 A2-15: About ignored everything but Esc and its close light. (The clipboard half
+    /// of this test moved to ui/clipboard.rs with the panel.)
     #[test]
-    fn about_and_clipboard_close_like_menus_and_never_panic() {
+    fn about_closes_like_a_menu() {
         let src = include_str!("panels.rs");
-        let span = |from: &str, to: &str| {
-            let a = src.find(from).unwrap();
-            &src[a..a + src[a..].find(to).unwrap()]
-        };
-        let about = span("pub fn about(", "pub struct Osd");
+        let a = src.find("pub fn about(").unwrap();
+        let about = &src[a..a + src[a..].find("pub struct Osd").unwrap()];
         assert!(
             about.contains("transient::also_close"),
             "About closes with the set"
@@ -550,15 +482,6 @@ mod tests {
         assert!(
             about.contains("old.set_visible(false)"),
             "one About at a time"
-        );
-        let clip = span("pub fn clipboard(", "fn gio_none");
-        assert!(
-            clip.contains("win.set_visible(false)"),
-            "a pick closes the panel"
-        );
-        assert!(
-            !clip.contains(concat!(".expect", "(")),
-            "no expect on the display"
         );
     }
 

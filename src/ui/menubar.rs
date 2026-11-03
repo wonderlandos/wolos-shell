@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Menu bar: logo menu, frontmost app name, app menus, status icons, clock, Search, Control Center.
+//! Menu bar: logo menu, frontmost app name, app menus, status icons, clock, Search, Control Center,
+//! and the enabled plugins' `[[menubar]]` items (ADR 0031). Items sit in the three slots of the
+//! layout in `shell.json` (`shared::layout::Layout`), on the layout's edge.
+use super::plugins;
+use crate::kit::lifetime::Lifetime;
 use crate::kit::{self, widgets as w};
 use crate::perf::Changed;
 use crate::{appmenu, status};
-use gtk::{glib, prelude::*};
+use gtk::{gio, glib, prelude::*};
+use shared::layout::{BarItem, Layout};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// CSS class of the three slot boxes (left, centre, right).
+pub const SLOT_CLASS: &str = "menubar-slot";
 
 /// Last network, battery, volume icon, volume level and Focus icon pushed to widgets.
 type Seen = (
@@ -34,6 +42,15 @@ pub struct Bar {
     pub display: RefCell<String>,
     /// Ends with the bar's window: its clock tick, reload hook and Focus watch stop.
     pub life: kit::lifetime::Lifetime,
+    items: Items,
+    /// Left, centre, right.
+    slots: [gtk::Box; 3],
+    spacers: [gtk::Box; 2],
+    layout: RefCell<Layout>,
+    /// This bar's plugin host (None: built-in items only, as in previews).
+    plugins: Option<Rc<RefCell<plugins::Host>>>,
+    /// Ends when the plugin items are made again (their refresh timers stop).
+    plugin_life: RefCell<Lifetime>,
 }
 
 impl Bar {
@@ -133,7 +150,96 @@ fn run(argv: &'static [&'static str]) -> Box<dyn Fn()> {
     Box::new(move || kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
 }
 
+/// The built-in items, made once and placed by the layout ([`Bar::arrange`]).
+struct Items {
+    logo: gtk::MenuButton,
+    start: gtk::Button,
+    focus: gtk::Button,
+    battery: gtk::Button,
+    network: gtk::Button,
+    volume: gtk::Button,
+    search: gtk::Button,
+    control_center: gtk::Button,
+    clock: gtk::Button,
+}
+
+impl Bar {
+    /// The widget of a built-in item (None: a plugin item, or one this bar does not draw yet:
+    /// workspaces, tasks and the tray come with the taskbar style).
+    fn builtin(&self, item: &BarItem) -> Option<gtk::Widget> {
+        let i = &self.items;
+        Some(match item {
+            BarItem::Logo => i.logo.clone().upcast(),
+            BarItem::AppName => self.app_menu.clone().upcast(),
+            BarItem::AppMenus => self.window_menu.clone().upcast(),
+            BarItem::Start => i.start.clone().upcast(),
+            BarItem::Focus => i.focus.clone().upcast(),
+            BarItem::Battery => i.battery.clone().upcast(),
+            BarItem::Network => i.network.clone().upcast(),
+            BarItem::Volume => i.volume.clone().upcast(),
+            BarItem::Search => i.search.clone().upcast(),
+            BarItem::ControlCenter => i.control_center.clone().upcast(),
+            BarItem::Clock => i.clock.clone().upcast(),
+            BarItem::Workspaces | BarItem::Tasks | BarItem::Tray | BarItem::Plugin { .. } => {
+                return None;
+            }
+        })
+    }
+
+    /// Places the items: the layout's three slots with the plugin items of this bar's host
+    /// (`plugins::Host::bar`). Plugin items are made again; the old ones' timers end.
+    pub fn arrange(&self) {
+        let layout = self.layout.borrow().clone();
+        let slots = match &self.plugins {
+            Some(h) => h.borrow().bar(&layout),
+            None => [layout.left, layout.centre, layout.right],
+        };
+        // A child of the bar's lifetime: the old one unlinks as it ends (audit5 S8-11).
+        self.plugin_life.replace(self.life.child()).end();
+        let life = self.plugin_life.borrow().clone();
+        for slot in &self.slots {
+            while let Some(c) = slot.first_child() {
+                slot.remove(&c);
+            }
+        }
+        for (slot, items) in self.slots.iter().zip(slots) {
+            for item in &items {
+                if let Some(w) = self.builtin(item) {
+                    slot.append(&w);
+                } else if let (BarItem::Plugin { plugin, id }, Some(h)) = (item, &self.plugins) {
+                    slot.append(&plugins::bar_item(h, plugin, id, &life));
+                }
+            }
+        }
+        self.slots[1].set_visible(self.slots[1].first_child().is_some());
+    }
+
+    /// A new layout (Settings, `shell.json`): items placed again, in the bar edge's direction.
+    pub fn set_layout(&self, layout: Layout) {
+        let o = kit::surface::orientation(layout.bar);
+        self.root.set_orientation(o);
+        for s in &self.slots {
+            s.set_orientation(o);
+        }
+        for s in &self.spacers {
+            s.set_hexpand(o == gtk::Orientation::Horizontal);
+            s.set_vexpand(o == gtk::Orientation::Vertical);
+        }
+        self.layout.replace(layout);
+        self.arrange();
+    }
+}
+
 pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
+    content_with(sys, Layout::default(), None)
+}
+
+/// A bar laid out by `layout`, with the plugin items of `plugins` (None: built-in items only).
+pub fn content_with(
+    sys: &dyn crate::system::System,
+    layout: Layout,
+    plugins: Option<Rc<RefCell<plugins::Host>>>,
+) -> Rc<Bar> {
     let root = w::hbox(0);
     root.add_css_class("menubar-strip");
     let logo = gtk::MenuButton::new();
@@ -143,17 +249,23 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     logo.set_popover(Some(&w::menu(
         LOGO_MENU.iter().map(|&(t, argv)| (t, run(argv))).collect(),
     )));
-    root.append(&logo);
     // Only menus backed by real actions: the app menu and Window (no placeholder File/Edit/View).
     let appname = w::label(crate::apps::DESKTOP_NAME, "app-name");
     let app_menu = w::menubar_menu(&appname);
     app_menu.set_visible(false);
-    root.append(&app_menu);
     let window_menu = w::menubar_menu(&w::label("Window", ""));
     window_menu.set_popover(Some(&w::menu_keys(actions(appmenu::window_menu(), "", ""))));
     window_menu.set_visible(false);
-    root.append(&window_menu);
-    root.append(&w::spacer());
+    let slots = [w::hbox(0), w::hbox(0), w::hbox(0)];
+    let spacers = [w::spacer(), w::spacer()];
+    root.append(&slots[0]);
+    root.append(&spacers[0]);
+    root.append(&slots[1]);
+    root.append(&spacers[1]);
+    root.append(&slots[2]);
+    for s in &slots {
+        s.add_css_class(SLOT_CLASS);
+    }
 
     let (network, battery, volume) = (
         w::icon("network-wireless-symbolic", w::ICON),
@@ -165,12 +277,13 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
     let battery_box = w::hbox(w::S1);
     battery_box.append(&percent);
     battery_box.append(&battery);
-    for (img, tip) in [
+    let status = [
         (focus.upcast_ref::<gtk::Widget>(), "Focus"),
         (battery_box.upcast_ref::<gtk::Widget>(), "Battery"),
         (network.upcast_ref(), "Wi-Fi"),
         (volume.upcast_ref(), "Sound"),
-    ] {
+    ]
+    .map(|(img, tip)| {
         let b = w::menubar_item(img);
         b.set_tooltip_text(Some(tip));
         // In process (the bar is part of wol-shell): the Control Center on the icon's page.
@@ -181,22 +294,24 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
                 target: target.clone(),
             })
         });
-        root.append(&b);
-    }
-    for (icon, tip, argv) in [
+        b
+    });
+    let [search, control_center, start] = [
         ("system-search-symbolic", "Search", &["wol-search"][..]),
         (
             "view-grid-symbolic",
             "Control Center",
             &["wol", "shell", "toggle", "control-center"][..],
         ),
-    ] {
+        ("wolos-glyph-symbolic", "Start", &["wol-search"][..]),
+    ]
+    .map(|(icon, tip, argv)| {
         let b = w::menubar_item(&w::icon(icon, w::ICON));
         b.set_tooltip_text(Some(tip));
         let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
         b.connect_clicked(move |_| kit::spawn(&argv));
-        root.append(&b);
-    }
+        b
+    });
     let clock = w::label("", "");
     let cb = w::menubar_item(&clock);
     cb.set_tooltip_text(Some("Notification Center"));
@@ -208,7 +323,6 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
             "notifications".into(),
         ])
     });
-    root.append(&cb);
     let buf = RefCell::new(String::with_capacity(32));
     let show_date = Rc::new(std::cell::Cell::new(true));
     let tick = {
@@ -230,6 +344,7 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         let tick = tick.clone();
         kit::lifetime::every_minute_while(&life, move || tick());
     }
+    let [focus_b, battery_b, network_b, volume_b] = status;
     let bar = Rc::new(Bar {
         root,
         appname,
@@ -245,7 +360,24 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
         name_seen: Default::default(),
         display: Default::default(),
         life: life.clone(),
+        items: Items {
+            logo,
+            start,
+            focus: focus_b,
+            battery: battery_b,
+            network: network_b,
+            volume: volume_b,
+            search,
+            control_center,
+            clock: cb,
+        },
+        slots,
+        spacers,
+        layout: RefCell::new(Layout::default()),
+        plugins,
+        plugin_life: RefCell::new(Lifetime::new()),
     });
+    bar.set_layout(layout);
     BARS.with_borrow_mut(|b| {
         b.retain(|x| x.strong_count() > 0);
         b.push(Rc::downgrade(&bar));
@@ -265,10 +397,33 @@ pub fn content(sys: &dyn crate::system::System) -> Rc<Bar> {
                     b.percent
                         .set_label(&battery.map_or(String::new(), |x| format!("{}%", x.percent)));
                 }
+                read_layout(&b);
             }
         });
     }
     bar
+}
+
+/// Reads the layout in `shell.json` off the GTK thread; a different one is applied to `bar`
+/// (and its window moves to the new edge).
+fn read_layout(bar: &Rc<Bar>) {
+    let b = Rc::downgrade(bar);
+    glib::spawn_future_local(async move {
+        let path = std::path::Path::new(&kit::config_home()).join(wol_core::prefs::SHELL_FILE);
+        let text = gio::spawn_blocking(move || std::fs::read_to_string(path).ok())
+            .await
+            .ok()
+            .flatten();
+        let l = wol_core::prefs::layout(text.as_deref());
+        if let Some(b) = b.upgrade()
+            && *b.layout.borrow() != l
+        {
+            if let Some(w) = b.root.root().and_downcast::<gtk::Window>() {
+                kit::surface::reanchor(&w, kit::surface::Spec::bar(l.bar));
+            }
+            b.set_layout(l);
+        }
+    });
 }
 
 /// A menu bar window on `display` (None: the compositor picks). The `primary` bar takes the
@@ -285,8 +440,32 @@ pub fn build(
         crate::kit::surface::survive_output_loss(&win, kit::surface::Spec::menubar());
     }
     kit::surface::set_monitor(&win, display);
-    let bar = content(sys);
+    let host = Rc::new(RefCell::new(plugins::Host::new(
+        plugins::Paths::user(),
+        plugins::BAR_KINDS,
+    )));
+    let bar = content_with(sys, Layout::default(), Some(host.clone()));
     bar.life.tie(&win);
+    {
+        // Plugins load off the GTK thread and again whenever their folder changes; the
+        // primary bar registers their hotkeys.
+        let b = Rc::downgrade(&bar);
+        let last = Rc::new(RefCell::new(Vec::new()));
+        let paths = host.borrow().paths().clone();
+        plugins::watch(
+            &host,
+            &bar.life,
+            Rc::new(move || {
+                if let Some(b) = b.upgrade() {
+                    b.arrange();
+                }
+                if primary {
+                    plugins::register_hotkeys(&paths, &last);
+                }
+            }),
+        );
+    }
+    read_layout(&bar);
     if let Some(m) = display {
         bar.display
             .replace(m.connector().map(|c| c.to_string()).unwrap_or_default());
@@ -309,16 +488,31 @@ pub fn hover_switch(open: Option<usize>, hovered: usize) -> Option<usize> {
     open.filter(|o| *o != hovered).map(|_| hovered)
 }
 
-/// Once a menu-bar menu is open, moving the pointer onto another title opens that one.
-fn hover_menus(root: &gtk::Box) {
-    let mut menus = vec![];
+/// The bar's items in order: the children of its slot boxes.
+fn items(root: &gtk::Box) -> Vec<gtk::Widget> {
+    let mut out = Vec::new();
     let mut c = root.first_child();
     while let Some(w) = c {
         c = w.next_sibling();
-        if let Ok(m) = w.downcast::<gtk::MenuButton>() {
-            menus.push(m);
+        if w.has_css_class(SLOT_CLASS) {
+            let mut i = w.first_child();
+            while let Some(x) = i {
+                i = x.next_sibling();
+                out.push(x);
+            }
+        } else {
+            out.push(w);
         }
     }
+    out
+}
+
+/// Once a menu-bar menu is open, moving the pointer onto another title opens that one.
+fn hover_menus(root: &gtk::Box) {
+    let menus: Vec<gtk::MenuButton> = items(root)
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk::MenuButton>().ok())
+        .collect();
     let menus = Rc::new(menus);
     for (i, m) in menus.iter().enumerate() {
         let motion = gtk::EventControllerMotion::new();
@@ -339,12 +533,12 @@ fn hover_menus(root: &gtk::Box) {
 /// ⌃F2 (`wol shell show menubar`): the keyboard moves into the bar, the WolOS menu focused;
 /// arrows move, Return opens. A menu closing, an item chosen, or Esc gives the keyboard back.
 pub fn keyboard(win: &gtk::ApplicationWindow, root: &gtk::Box) -> Rc<dyn Fn(bool)> {
-    let Some(first) = root.first_child() else {
+    let all = items(root);
+    let Some(first) = all.first() else {
         return Rc::new(|_| {});
     };
-    let access = kit::surface::keyboard_access(win, &first, |_| {});
-    let mut c = root.first_child();
-    while let Some(w) = c {
+    let access = kit::surface::keyboard_access(win, first, |_| {});
+    for w in all {
         let a = access.clone();
         if let Some(m) = w.downcast_ref::<gtk::MenuButton>() {
             m.connect_active_notify(move |m| {
@@ -355,7 +549,6 @@ pub fn keyboard(win: &gtk::ApplicationWindow, root: &gtk::Box) -> Rc<dyn Fn(bool
         } else if let Some(b) = w.downcast_ref::<gtk::Button>() {
             b.connect_clicked(move |_| a(false));
         }
-        c = w.next_sibling();
     }
     access
 }

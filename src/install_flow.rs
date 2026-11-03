@@ -31,7 +31,14 @@ pub enum Step {
     /// One partition of the manual list.
     Edit,
     Protect,
+    /// Secure Boot, opt-in (lead 2026-11-02): only where it changes something
+    /// ([`Flow::secure_offer`]); the one-time key screen is pictured before it is chosen.
+    SecureBootChoice,
     Account,
+    /// Optional modules (ADR 0032 B): none ticked, the download size said.
+    Modules,
+    /// Media formats (the Store's codecs kit), one switch, off.
+    Extras,
     Summary,
     /// Secure Boot is on: the installed WolOS may not start; said before anything is written.
     SecureBoot,
@@ -44,7 +51,7 @@ pub enum Step {
 }
 
 /// Every page, in the order they are added to the pager.
-pub const STEPS: [Step; 17] = [
+pub const STEPS: [Step; 20] = [
     Step::Begin,
     Step::Language,
     Step::Zone,
@@ -55,7 +62,10 @@ pub const STEPS: [Step; 17] = [
     Step::Manual,
     Step::Edit,
     Step::Protect,
+    Step::SecureBootChoice,
     Step::Account,
+    Step::Modules,
+    Step::Extras,
     Step::Summary,
     Step::SecureBoot,
     Step::Installing,
@@ -77,7 +87,10 @@ impl Step {
             Step::Manual => "manual",
             Step::Edit => "edit",
             Step::Protect => "protect",
+            Step::SecureBootChoice => "secure-boot-choice",
             Step::Account => "account",
+            Step::Modules => "modules",
+            Step::Extras => "extras",
             Step::Summary => "summary",
             Step::SecureBoot => "secure-boot",
             Step::Installing => "installing",
@@ -99,7 +112,10 @@ impl Step {
             Step::Manual => "Partitions",
             Step::Edit => "Partition",
             Step::Protect => "Protect Your Files",
+            Step::SecureBootChoice => "Secure Boot",
             Step::Account => "Create Your Account",
+            Step::Modules => "Apps for What You Do",
+            Step::Extras => "Music and Video Formats",
             Step::Summary => "Ready to Install",
             Step::SecureBoot => super::SECURE_BOOT_TITLE,
             Step::Installing => "Installing WolOS",
@@ -172,6 +188,51 @@ pub fn meminfo_bytes(text: &str) -> Option<u64> {
         .and_then(|v| v.split_whitespace().next()?.parse::<u64>().ok())
         .map(|kib| kib * 1024)
 }
+
+/// What the Secure Boot page may offer on this computer (from `install-check`'s `boot` and
+/// `boot-off` tiers).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecureOffer {
+    /// Nothing to choose: Secure Boot can't be used (`off`), or only a firmware setting helps
+    /// (`firmware`, the Secure Boot sheet after the summary). The page is skipped.
+    Nothing,
+    /// The person chooses, default off: leaving it off changes nothing at the start.
+    /// `screen`: on means the one-time key screen (`mok`); else own keys, nothing to click.
+    Choice { screen: bool },
+    /// The computer's own Secure Boot is on, so WolOS uses it: the page explains the key screen
+    /// and has no switch (off would only start after a trip to the startup settings).
+    AlreadyOn,
+}
+
+/// One row of the Modules page: a registry record the page has words for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleChoice {
+    pub id: String,
+    pub title: &'static str,
+    pub detail: &'static str,
+    /// Download size from the record (MB).
+    pub size_mb: u64,
+}
+
+/// The Modules page's rows from the registry records on the image, in the page's order
+/// (`copy::installer::MODULE_ROWS`); a record the page has no words for is not offered.
+pub fn module_choices(records: &[wol_core::modules::Module]) -> Vec<ModuleChoice> {
+    copy::installer::MODULE_ROWS
+        .iter()
+        .filter_map(|(id, title, detail)| {
+            let m = records.iter().find(|m| m.id == *id)?;
+            Some(ModuleChoice {
+                id: m.id.clone(),
+                title,
+                detail,
+                size_mb: u64::from(m.size_mb),
+            })
+        })
+        .collect()
+}
+
+/// The Store kit the Extras page adds (`wol_core::store::KITS`).
+pub const CODECS_KIT: &str = "codecs-kit";
 
 /// One disk as the installer found it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -349,8 +410,45 @@ pub struct Flow {
     pub protect: Protect,
     pub disk_password: String,
     pub disk_verify: String,
+    /// The person turned Secure Boot on (only read when [`Flow::secure_offer`] is a choice).
+    pub secure: bool,
+    /// The modules the image offers, and the ids ticked (none by default).
+    pub module_list: Vec<ModuleChoice>,
+    pub modules: Vec<String>,
+    /// The media formats are added (off by default).
+    pub codecs: bool,
+    /// No default route when last looked ([`online_now`], off the GTK thread): the media
+    /// formats and the modules wait for the first start with a network, and Summary and Done
+    /// say so ([`Flow::deferred_line`]). False until a look says otherwise.
+    pub offline: bool,
     /// Where Back goes from each page: the pages that were really shown.
     trail: Vec<Step>,
+}
+
+/// Whether `/proc/net/route` (`v4`) or `/proc/net/ipv6_route` (`v6`) holds a default route
+/// that is up: the same question install-run asks (`ip route show default`) before it adds the
+/// media formats and the modules. A v6 default on `lo` or marked reject is not a way out.
+pub fn has_default_route(v4: &str, v6: &str) -> bool {
+    wol_core::controls::parse_proc_route(v4).is_some()
+        || v6.lines().any(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            let flags = f
+                .get(8)
+                .and_then(|x| u32::from_str_radix(x, 16).ok())
+                .unwrap_or(0);
+            f.len() >= 10
+                && f[0].bytes().all(|b| b == b'0')
+                && f[1] == "00"
+                && f[9] != "lo"
+                && flags & 0x0001 != 0
+                && flags & 0x0200 == 0
+        })
+}
+
+/// [`has_default_route`] on this computer now. Blocks (reads /proc): off the GTK thread only.
+pub fn online_now() -> bool {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    has_default_route(&read("/proc/net/route"), &read("/proc/net/ipv6_route"))
 }
 
 /// Where a time zone guess starts: the language's biggest city zone.
@@ -418,8 +516,128 @@ impl Flow {
             protect: if tpm { Protect::Tpm } else { Protect::Password },
             disk_password: String::new(),
             disk_verify: String::new(),
+            // Opt-in (lead, 2026-11-02): the key screen comes only to those who ask for it.
+            secure: false,
+            module_list: Vec::new(),
+            modules: Vec::new(),
+            codecs: false,
+            offline: false,
             trail: Vec::new(),
         }
+    }
+
+    /// The modules this image has records for (`install::modules_on_image`); ticks of ids it
+    /// does not offer are dropped.
+    pub fn set_modules(&mut self, records: &[wol_core::modules::Module]) {
+        self.module_list = module_choices(records);
+        let offered: Vec<String> = self.module_list.iter().map(|m| m.id.clone()).collect();
+        self.modules.retain(|id| offered.contains(id));
+    }
+
+    /// Ticks or unticks module `id`; an id the page does not offer is ignored.
+    pub fn tick_module(&mut self, id: &str, on: bool) {
+        if !self.module_list.iter().any(|m| m.id == id) {
+            return;
+        }
+        self.modules.retain(|m| m != id);
+        if on {
+            self.modules.push(id.to_string());
+        }
+    }
+
+    /// The ticked modules in the page's order: (title, MB).
+    fn ticked(&self) -> Vec<&ModuleChoice> {
+        self.module_list
+            .iter()
+            .filter(|m| self.modules.contains(&m.id))
+            .collect()
+    }
+
+    /// What the ticked modules download (MB).
+    pub fn modules_mb(&self) -> u64 {
+        self.ticked().iter().map(|m| m.size_mb).sum()
+    }
+
+    fn check(&self) -> Option<&super::Check> {
+        self.disks.get(self.chosen?).map(|f| &f.check)
+    }
+
+    /// What the Secure Boot page offers on this computer. A choice only where leaving it off
+    /// starts WolOS as well: `boot-off off`, or Setup Mode (own keys) when install-check says
+    /// nothing more. The key screen tier with the computer's Secure Boot on (or not said) is
+    /// [`SecureOffer::AlreadyOn`], today's behaviour.
+    pub fn secure_offer(&self) -> SecureOffer {
+        let Some(c) = self.check() else {
+            return SecureOffer::Nothing;
+        };
+        let off_is_free = match c.tier_off.as_deref() {
+            Some(t) => t == "off",
+            None => c.tier.as_deref() == Some("own-keys"),
+        };
+        match c.tier.as_deref() {
+            Some(t @ ("mok" | "own-keys")) if off_is_free => {
+                SecureOffer::Choice { screen: t == "mok" }
+            }
+            Some("mok" | "own-keys") => SecureOffer::AlreadyOn,
+            _ => SecureOffer::Nothing,
+        }
+    }
+
+    /// Secure Boot protection goes into the plan (`WOLOS_SECURE`): the person's answer where
+    /// they had one, else yes (what boot-setup did before the page existed).
+    pub fn secure_wanted(&self) -> bool {
+        match self.secure_offer() {
+            SecureOffer::Choice { .. } => self.secure,
+            SecureOffer::Nothing | SecureOffer::AlreadyOn => true,
+        }
+    }
+
+    /// The key screen may come after the restart by what was chosen: the Done page shows its
+    /// steps only then, and only when boot-setup queued it (`install::key_screen_needed`).
+    /// Off by choice: never (lead, 2026-11-02: repeated only when chosen).
+    pub fn key_screen_chosen(&self) -> bool {
+        match self.secure_offer() {
+            SecureOffer::Choice { .. } => self.secure,
+            SecureOffer::AlreadyOn | SecureOffer::Nothing => true,
+        }
+    }
+
+    /// Paragraph under a page's title: its subtitle, what it means for a newcomer, and the next
+    /// page when that is already known.
+    pub fn intro(&self, step: Step) -> String {
+        let mut v: Vec<&str> = vec![step.subtitle()];
+        if step == Step::SecureBootChoice {
+            v.extend(match self.secure_offer() {
+                SecureOffer::Choice { screen: true } => &copy::installer::SECURE_CHOICE_SCREEN[..],
+                SecureOffer::Choice { screen: false } => {
+                    &copy::installer::SECURE_CHOICE_OWN_KEYS[..]
+                }
+                SecureOffer::AlreadyOn => &copy::installer::SECURE_ALREADY_ON[..],
+                SecureOffer::Nothing => &[],
+            });
+        } else {
+            v.extend(copy::installer::explain(step));
+        }
+        v.extend(self.next_after(step).and_then(copy::installer::next_words));
+        v.retain(|s| !s.is_empty());
+        v.join(" ")
+    }
+
+    /// The page Continue leads to from `step` when no choice on it decides that.
+    pub fn next_after(&self, step: Step) -> Option<Step> {
+        Some(match step {
+            Step::Begin => Step::Language,
+            Step::Language => Step::Zone,
+            Step::Zone => Step::Disk,
+            Step::Disk => Step::Method,
+            Step::Replace | Step::Alongside | Step::Manual => Step::Protect,
+            Step::Protect if self.secure_offer() != SecureOffer::Nothing => Step::SecureBootChoice,
+            Step::Protect | Step::SecureBootChoice => Step::Account,
+            Step::Account if !self.module_list.is_empty() => Step::Modules,
+            Step::Account | Step::Modules => Step::Extras,
+            Step::Extras => Step::Summary,
+            _ => return None,
+        })
     }
 
     pub fn set_language(&mut self, i: usize) {
@@ -743,8 +961,12 @@ impl Flow {
                         );
                     }
                 }
-                self.go(Step::Account)
+                match self.next_after(Step::Protect) {
+                    Some(s) => self.go(s),
+                    None => self.go(Step::Account),
+                }
             }
+            Step::SecureBootChoice => self.go(Step::Account),
             Step::Account => match self.draft.account_problem() {
                 Some((f, why)) => Next::Stay(Some(f), why.into()),
                 // The chip's fallback is the account password, typed on the console keymap (B9).
@@ -754,8 +976,13 @@ impl Flow {
                 None if !super::is_valid_hostname(&self.hostname()) => {
                     Next::Stay(Some(Field::Hostname), copy::installer::HOSTNAME_RULE.into())
                 }
-                None => self.go(Step::Summary),
+                None => match self.next_after(Step::Account) {
+                    Some(s) => self.go(s),
+                    None => self.go(Step::Extras),
+                },
             },
+            Step::Modules => self.go(Step::Extras),
+            Step::Extras => self.go(Step::Summary),
             Step::Summary => match self.compiled() {
                 Err(r) => {
                     let d = self.disk().cloned().unwrap_or_default();
@@ -818,7 +1045,7 @@ impl Flow {
                     .unwrap_or(0);
                 Edit {
                     row: row.clone(),
-                    title: "New partition".into(),
+                    title: "New Partition".into(),
                     usage: use_of(&n.mount),
                     erase: true,
                     fs: n.fs,
@@ -830,7 +1057,7 @@ impl Flow {
             }
             Row::Free(bytes) => Edit {
                 row: row.clone(),
-                title: "New partition".into(),
+                title: "New Partition".into(),
                 usage: Use::System,
                 erase: true,
                 fs: Fs::Btrfs,
@@ -957,7 +1184,43 @@ impl Flow {
         if self.autologin {
             v.push(copy::INSTALL_AUTOLOGIN.to_string());
         }
+        if let Some(line) = self.secure_line() {
+            v.push(line.to_string());
+        }
+        let names: Vec<&str> = self.ticked().iter().map(|m| m.title).collect();
+        v.extend(copy::installer::summary_modules(&names, self.modules_mb()));
+        if self.codecs {
+            v.push(copy::installer::SUMMARY_CODECS.to_string());
+        }
+        v.extend(self.deferred_line().map(String::from));
         v
+    }
+
+    /// Offline: the line that says the media formats and modules chosen come at first start
+    /// (install-run queues them then). None online or when none were chosen.
+    pub fn deferred_line(&self) -> Option<&'static str> {
+        if !self.offline {
+            return None;
+        }
+        copy::installer::deferred(self.codecs, !self.ticked().is_empty())
+    }
+
+    /// The summary's Secure Boot line, by what the page offered and what was chosen; None when
+    /// the page was not shown (the Secure Boot sheet speaks for the firmware case).
+    pub fn secure_line(&self) -> Option<&'static str> {
+        use copy::installer as c;
+        Some(match self.secure_offer() {
+            SecureOffer::Nothing => return None,
+            SecureOffer::Choice { .. } if !self.secure => c::SUMMARY_SECURE_OFF,
+            SecureOffer::Choice { screen: false } => c::SUMMARY_SECURE_OWN_KEYS,
+            SecureOffer::Choice { screen: true } | SecureOffer::AlreadyOn => {
+                if self.tier() == Some("own-keys") {
+                    c::SUMMARY_SECURE_OWN_KEYS
+                } else {
+                    c::SUMMARY_SECURE_SCREEN
+                }
+            }
+        })
     }
 
     /// Another system stays, but WolOS gets a startup partition of its own: its menu cannot list
@@ -1003,12 +1266,28 @@ impl Flow {
             .and_then(|f| f.check.tier.as_deref())
     }
 
+    /// The Secure Boot sheet's lines under its subtitle: the firmware steps, then what BitLocker
+    /// needs when it applies ([`Self::bitlocker_notes`]).
+    pub fn secure_boot_notes(&self) -> Vec<&'static str> {
+        let mut notes = copy::installer::SECURE_BOOT_STEPS.to_vec();
+        notes.extend(self.bitlocker_notes(false));
+        notes
+    }
+
     /// What Summary (`done` false), the Secure Boot sheet and Done (`done` true) say about
     /// BitLocker: only when a Windows with BitLocker stays and this install changes the Secure
     /// Boot keys Windows measures (own keys, or the firmware setting). Empty: nothing to say.
     pub fn bitlocker_notes(&self, done: bool) -> Vec<&'static str> {
-        // Which tiers change the keys is core's rule, the one boot-setup's note follows too.
-        match self.tier().and_then(Tier::parse) {
+        // Which tiers change the keys is core's rule, the one boot-setup's note follows too. Left
+        // off by choice, the tier is the one without protection, which leaves the keys alone.
+        let tier = if self.secure_wanted() {
+            self.tier()
+        } else {
+            self.check()
+                .and_then(|c| c.tier_off.as_deref())
+                .or(Some("off"))
+        };
+        match tier.and_then(Tier::parse) {
             Some(t) if self.bitlocker_stays() && changes_windows_keys(t) => {
                 copy::installer::bitlocker(t.as_str(), done)
             }
@@ -1069,6 +1348,13 @@ impl Flow {
                 full_name: a.full_name,
                 tone: a.avatar,
             }),
+            secure_boot: Some(self.secure_wanted()),
+            modules: self.ticked().iter().map(|m| m.id.clone()).collect(),
+            extras: if self.codecs {
+                vec![CODECS_KIT.to_string()]
+            } else {
+                Vec::new()
+            },
         })
     }
 }
@@ -1199,11 +1485,14 @@ mod tests {
         assert_eq!(f.advance(), Next::Go(Step::Account));
         assert!(matches!(f.advance(), Next::Stay(Some(Field::FullName), _)));
         fill_account(&mut f);
+        // No module records in the test: the Modules page is skipped, the Extras page is not.
+        assert_eq!(f.advance(), Next::Go(Step::Extras));
         assert_eq!(f.advance(), Next::Go(Step::Summary));
+        assert_eq!(f.back(), Some(Step::Extras));
         assert_eq!(f.back(), Some(Step::Account));
         assert_eq!(f.back(), Some(Step::Protect));
         assert_eq!(f.back(), Some(Step::Method), "Alongside was never shown");
-        for s in [Step::Protect, Step::Account, Step::Summary] {
+        for s in [Step::Protect, Step::Account, Step::Extras, Step::Summary] {
             assert_eq!(f.advance(), Next::Go(s));
         }
         assert_eq!(f.advance(), Next::Install);
@@ -1472,7 +1761,7 @@ mod tests {
         f.protect = Protect::Off;
         let w = f.summary_warning().unwrap();
         assert!(
-            w.contains("Windows") && w.contains("won't be encrypted"),
+            w.contains("Windows") && w.contains("won’t be encrypted"),
             "{w}"
         );
         f.protect = Protect::Tpm;
@@ -1600,7 +1889,7 @@ mod tests {
         f.set_hostname("-bad-");
         assert!(matches!(f.advance(), Next::Stay(Some(Field::Hostname), _)));
         f.set_hostname("good-1");
-        assert_eq!(f.advance(), Next::Go(Step::Summary));
+        assert_eq!(f.advance(), Next::Go(Step::Extras));
         assert_eq!(swapfile_gib(GIB), 2);
         assert_eq!(swapfile_gib(64 * GIB), 8);
         assert_eq!(
@@ -1650,7 +1939,9 @@ mod tests {
         assert_eq!(f.advance(), Next::Install);
         // R2B-3: the shim is on the image, so the setting is changed after this install, never
         // by a second one, and the keys are never cleared (that trips BitLocker, R2B-9).
-        let t = Step::SecureBoot.subtitle().to_lowercase();
+        let mut said = vec![Step::SecureBoot.subtitle()];
+        said.extend(f.secure_boot_notes());
+        let t = said.join(" ").to_lowercase();
         assert!(!t.contains("install again"), "{t}");
         assert!(!t.contains("clear the secure boot keys"), "{t}");
         assert!(
@@ -1670,6 +1961,8 @@ mod tests {
         f.method = Method::Replace;
         f.replace = Some("u3".into());
         f.disks[0].check.tier = Some("own-keys".into());
+        // Own keys only when the person turns Secure Boot on (lead, 2026-11-02: opt-in).
+        f.secure = true;
         assert!(f.windows_stays() && f.bitlocker_stays());
         let lines = f.summary();
         for want in [
@@ -1835,11 +2128,11 @@ mod tests {
         );
         // A disk password of its own: the account password never opens the disk.
         f.protect = Protect::Password;
-        assert_eq!(f.advance(), Next::Go(Step::Summary));
+        assert_eq!(f.advance(), Next::Go(Step::Extras));
         f.step = Step::Account;
         f.protect = Protect::Tpm;
         fill_account(&mut f);
-        assert_eq!(f.advance(), Next::Go(Step::Summary));
+        assert_eq!(f.advance(), Next::Go(Step::Extras));
     }
 
     /// B3: next to a Windows startup partition too small to share, Windows leaves the menu.
@@ -1931,5 +2224,272 @@ mod tests {
         f.method = Method::Erase;
         f.step = Step::Method;
         assert_eq!(f.advance(), Next::Go(Step::Protect));
+    }
+
+    fn records() -> Vec<wol_core::modules::Module> {
+        [
+            ("creative", 3500),
+            ("dev", 900),
+            ("console", 50),
+            ("ai-claude", 300),
+        ]
+        .into_iter()
+        .map(|(id, mb)| wol_core::modules::Module {
+            id: id.into(),
+            name: id.into(),
+            size_mb: mb,
+            ..Default::default()
+        })
+        .collect()
+    }
+
+    /// Lead 2026-11-02: Secure Boot is opt-in where leaving it off changes nothing at the start,
+    /// default off; the key screen is pictured on its page and repeated on Done only when chosen.
+    #[test]
+    fn secure_boot_is_a_choice_default_off_where_off_still_starts() {
+        let mut f = flow(dual());
+        assert_eq!(f.secure_offer(), SecureOffer::Nothing, "no tier said");
+        f.disks[0].check.tier = Some("mok".into());
+        f.disks[0].check.tier_off = Some("off".into());
+        assert_eq!(f.secure_offer(), SecureOffer::Choice { screen: true });
+        assert!(!f.secure && !f.secure_wanted() && !f.key_screen_chosen());
+        f.method = Method::Erase;
+        f.protect = Protect::Off;
+        f.step = Step::Protect;
+        assert_eq!(f.advance(), Next::Go(Step::SecureBootChoice));
+        assert_eq!(f.advance(), Next::Go(Step::Account));
+        assert_eq!(f.back(), Some(Step::SecureBootChoice));
+        assert_eq!(f.plan().unwrap().secure_boot, Some(false));
+        assert_eq!(f.secure_line(), Some(copy::installer::SUMMARY_SECURE_OFF));
+        f.secure = true;
+        assert!(f.secure_wanted() && f.key_screen_chosen());
+        assert_eq!(f.plan().unwrap().secure_boot, Some(true));
+        assert!(
+            f.summary()
+                .iter()
+                .any(|l| l == copy::installer::SUMMARY_SECURE_SCREEN)
+        );
+        let intro = f.intro(Step::SecureBootChoice);
+        assert!(
+            intro.contains("blue screen") && intro.contains("optional"),
+            "{intro}"
+        );
+        // The computer's own Secure Boot is on: off would not start, so it is on and explained.
+        f.disks[0].check.tier_off = Some("firmware".into());
+        f.secure = false;
+        assert_eq!(f.secure_offer(), SecureOffer::AlreadyOn);
+        assert!(f.secure_wanted() && f.key_screen_chosen());
+        assert!(
+            f.intro(Step::SecureBootChoice)
+                .contains("already has Secure Boot")
+        );
+        // An install-check that does not say keeps today's answer.
+        f.disks[0].check.tier_off = None;
+        assert_eq!(f.secure_offer(), SecureOffer::AlreadyOn);
+        // Setup Mode: own keys, nothing to click.
+        f.disks[0].check.tier = Some("own-keys".into());
+        assert_eq!(f.secure_offer(), SecureOffer::Choice { screen: false });
+        assert!(f.intro(Step::SecureBootChoice).contains("nothing to click"));
+        // Nothing to choose: the page is skipped.
+        for t in ["off", "firmware"] {
+            f.disks[0].check.tier = Some(t.into());
+            assert_eq!(f.secure_offer(), SecureOffer::Nothing, "{t}");
+            assert!(f.secure_wanted() && f.secure_line().is_none());
+            f.step = Step::Protect;
+            assert_eq!(f.advance(), Next::Go(Step::Account), "{t}");
+        }
+    }
+
+    /// Off by choice in Setup Mode: Windows' Secure Boot keys stay, so BitLocker asks nothing.
+    #[test]
+    fn leaving_secure_boot_off_says_nothing_about_bitlocker() {
+        let mut d = dual();
+        d.parts[1].fstype = "BitLocker".into();
+        let mut f = flow(d);
+        f.method = Method::Replace;
+        f.replace = Some("u3".into());
+        f.disks[0].check.tier = Some("own-keys".into());
+        assert!(f.bitlocker_stays());
+        assert!(
+            f.bitlocker_notes(false).is_empty(),
+            "off: Windows' keys stay"
+        );
+        f.secure = true;
+        assert!(!f.bitlocker_notes(false).is_empty());
+    }
+
+    /// ADR 0032 B: the Modules page offers the image's records in the lead's order, none ticked;
+    /// the ticked ones, their size and the media formats reach the summary and the plan.
+    #[test]
+    fn modules_and_media_formats_are_offered_never_chosen_and_reach_the_plan() {
+        let mut f = flow(dual());
+        f.set_modules(&records());
+        let ids: Vec<&str> = f.module_list.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["dev", "ai-claude", "creative"],
+            "words for each, lead's order"
+        );
+        assert!(f.modules.is_empty() && !f.codecs, "nothing by default");
+        f.method = Method::Erase;
+        f.protect = Protect::Off;
+        f.step = Step::Account;
+        fill_account(&mut f);
+        assert_eq!(f.advance(), Next::Go(Step::Modules));
+        assert_eq!(f.advance(), Next::Go(Step::Extras));
+        assert_eq!(f.advance(), Next::Go(Step::Summary));
+        let p = f.plan().unwrap();
+        assert!(p.modules.is_empty() && p.extras.is_empty());
+        f.tick_module("creative", true);
+        f.tick_module("dev", true);
+        f.tick_module("console", true);
+        f.tick_module("nonsense", true);
+        assert_eq!(f.modules_mb(), 4400);
+        f.codecs = true;
+        let p = f.plan().unwrap();
+        assert_eq!(
+            p.modules,
+            ["dev", "creative"],
+            "page order, offered ids only"
+        );
+        assert_eq!(p.extras, [CODECS_KIT]);
+        assert!(wol_core::store::kit(CODECS_KIT).is_some());
+        let s = f.summary();
+        assert!(
+            s.iter()
+                .any(|l| l == "Adds Developer Tools and Creative Apps, about 4 GB to download."),
+            "{s:?}"
+        );
+        assert!(s.iter().any(|l| l == copy::installer::SUMMARY_CODECS));
+        assert_eq!(f.deferred_line(), None, "online: nothing waits");
+        // Offline: Summary says what waits for the first start with a network.
+        f.offline = true;
+        let s = f.summary();
+        assert_eq!(
+            s.last().map(String::as_str),
+            Some(copy::installer::DEFERRED_BOTH)
+        );
+        f.codecs = false;
+        assert_eq!(f.deferred_line(), Some(copy::installer::DEFERRED_MODULES));
+        f.codecs = true;
+        f.offline = false;
+        f.tick_module("dev", false);
+        assert_eq!(f.plan().unwrap().modules, ["creative"]);
+        // An image with no records: the page is skipped.
+        f.set_modules(&[]);
+        assert!(f.modules.is_empty());
+        f.step = Step::Account;
+        assert_eq!(f.advance(), Next::Go(Step::Extras));
+    }
+
+    /// Lead 2026-11-02: every page explains itself in plain words and names the next one; each
+    /// sentence passes the lint and no page uses a tool's word.
+    #[test]
+    fn every_page_explains_itself_in_plain_words() {
+        let mut f = flow(dual());
+        f.set_modules(&records());
+        f.disks[0].check.tier = Some("mok".into());
+        f.disks[0].check.tier_off = Some("off".into());
+        let mut said: Vec<String> = Vec::new();
+        for st in STEPS {
+            said.extend(copy::installer::explain(st).iter().map(|s| s.to_string()));
+            if let Some(n) = copy::installer::next_words(st) {
+                said.push(n.into());
+            }
+            let intro = f.intro(st);
+            for jargon in [
+                "ESP",
+                "LUKS",
+                "UKI",
+                "TPM",
+                "MOK",
+                "initramfs",
+                "zram",
+                "EFI",
+            ] {
+                assert!(
+                    !intro
+                        .split(|c: char| !c.is_alphanumeric())
+                        .any(|w| w == jargon),
+                    "{st:?}: {jargon} in {intro}"
+                );
+            }
+        }
+        for st in [
+            Step::Begin,
+            Step::Disk,
+            Step::Method,
+            Step::Protect,
+            Step::SecureBootChoice,
+            Step::Account,
+            Step::Modules,
+            Step::Extras,
+            Step::Summary,
+        ] {
+            assert!(
+                f.intro(st).len() > st.subtitle().len() + 20,
+                "{st:?} explains more than its line"
+            );
+        }
+        let next = |s: Step| copy::installer::next_words(s).unwrap();
+        assert!(
+            f.intro(Step::Protect)
+                .ends_with(next(Step::SecureBootChoice))
+        );
+        assert!(f.intro(Step::Account).ends_with(next(Step::Modules)));
+        assert!(f.intro(Step::Extras).ends_with(next(Step::Summary)));
+        assert_eq!(f.next_after(Step::Method), None, "the method decides");
+        for c in [
+            &copy::installer::SECURE_CHOICE_SCREEN[..],
+            &copy::installer::SECURE_CHOICE_OWN_KEYS[..],
+            &copy::installer::SECURE_ALREADY_ON[..],
+        ] {
+            said.extend(c.iter().map(|s| s.to_string()));
+        }
+        said.extend(
+            [
+                copy::installer::KEY_SCREEN_LOOKS,
+                copy::installer::SUMMARY_SECURE_SCREEN,
+                copy::installer::SUMMARY_SECURE_OWN_KEYS,
+                copy::installer::SUMMARY_SECURE_OFF,
+                copy::installer::SUMMARY_CODECS,
+                copy::installer::DEFERRED_BOTH,
+                copy::installer::DEFERRED_CODECS,
+                copy::installer::DEFERRED_MODULES,
+            ]
+            .map(String::from),
+        );
+        said.push(copy::installer::modules_download(0));
+        said.push(copy::installer::modules_download(4400));
+        said.extend(copy::installer::summary_modules(&["Gaming"], 9000));
+        said.extend(copy::installer::summary_modules(&["A", "B", "C"], 1));
+        for st in [Step::SecureBootChoice, Step::Modules, Step::Extras] {
+            said.push(st.subtitle().into());
+        }
+        for s in &said {
+            let l = crate::copy::lint(s);
+            assert!(l.is_empty(), "{s}: {l:?}");
+        }
+    }
+
+    /// S8-2: the offline look reads both route tables like install-run's `ip route show default`.
+    #[test]
+    fn a_default_route_means_online() {
+        let v4_head = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\n";
+        let v4 = format!("{v4_head}eth0\t00000000\t0102A8C0\t0003\t0\t0\t100\t00000000\n");
+        let v4_lan = format!("{v4_head}eth0\t0002A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\n");
+        let zero = "00000000000000000000000000000000";
+        let v6 = format!(
+            "{zero} 00 {zero} 00 fe800000000000000000000000000001 00000400 00000001 00000000 00000003 wlan0\n"
+        );
+        let v6_reject =
+            format!("{zero} 00 {zero} 00 {zero} ffffffff 00000001 00000000 00200200 lo\n");
+        assert!(has_default_route(&v4, ""));
+        assert!(has_default_route("", &v6));
+        assert!(
+            !has_default_route(&v4_lan, &v6_reject),
+            "a LAN route and lo's reject are not"
+        );
+        assert!(!has_default_route("", ""));
     }
 }

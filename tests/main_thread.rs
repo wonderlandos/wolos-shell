@@ -11,7 +11,7 @@ mod scan;
 use std::collections::BTreeMap;
 
 /// Calls that wait on another process, a socket or the disk.
-const BLOCKING: [&str; 15] = [
+const BLOCKING: [&str; 23] = [
     "hypr::request(",
     "hypr::clients(",
     // The typed requests in `shell::hypr` (R2A-17) wait on the compositor too.
@@ -28,16 +28,29 @@ const BLOCKING: [&str; 15] = [
     "desktop::load_all(",
     ".output()",
     ".status()",
+    // Decode a whole picture file on the spot (audit4 S3-3: a 4K screenshot per banner).
+    "Picture::for_filename(",
+    "Image::from_file(",
+    // Walk the theme folders and every enabled plugin's theme pack (audit5 S8-7).
+    "ThemeCatalog::load(",
+    "ThemeCatalog::installed(",
+    "packs::themes(",
+    // A whole picture decoded (any size), and Machine calls that run systemctl or stat (S7-4/S7-7).
+    "Pixbuf::from_file",
+    ".auto_updates(",
+    ".boot_key_pending(",
 ];
 
 /// `.output()` / `.status()` count only on a `Command` (within the window).
 const NEEDS_COMMAND: [&str; 2] = [".output()", ".status()"];
 
-const WRAPPERS: [&str; 4] = [
+const WRAPPERS: [&str; 5] = [
     "spawn_blocking",
     "off_thread(",
     "thread::spawn",
     "thread::Builder",
+    // ui/settings `later(into, load, render)`: `load` runs in gio::spawn_blocking.
+    "later(",
 ];
 
 const WINDOW: usize = 6;
@@ -46,23 +59,35 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 2] = ["ui/", "kit/"];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 13] = [
+const BASELINE: [(&str, usize); 18] = [
+    // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).
+    ("kit/assistant.rs", 1),
+    ("kit/data.rs", 1),
     // wallpaper_choice: one small config file at desktop build and on change.
     ("kit/pickers.rs", 1),
     // theme id file on the theme monitor's change signal: one line.
     ("kit/style.rs", 1),
+    // Pixbuf::from_file_at_scale in the icon loader's closure, counted since the S7-4 token
+    // (frozen 2026-11-02).
+    ("kit/widgets.rs", 1),
     ("ui/analyze.rs", 1),
+    ("ui/app_view.rs", 1),
     // downloads_dir: user-dirs.dirs once when the Dock is built.
     ("ui/dock.rs", 1),
-    ("ui/flatpak_consent.rs", 1),
-    ("ui/installer.rs", 6),
+    // One Image::from_file of the app's icon (audit4 S3-3 count).
+    ("ui/flatpak_consent.rs", 2),
+    ("ui/installer.rs", 4),
     ("ui/ipc.rs", 1),
     ("ui/lock.rs", 5),
     ("ui/mod.rs", 3),
     ("ui/settings/login_items.rs", 2),
-    ("ui/settings/machine.rs", 1),
+    // + the demo Machine's `Demo.auto_updates()` delegation (S7-7 token; no I/O there).
+    ("ui/settings/machine.rs", 2),
     ("ui/settings/privacy.rs", 1),
     ("ui/shortcut_sheet.rs", 1),
+    // Screenshot Picture and an icon Image (audit4 S3-3 count), and the screenshot thumb's
+    // Pixbuf::from_file_at_scale (S7-4 token, frozen 2026-11-02).
+    ("ui/store.rs", 3),
 ];
 
 /// The name of the `fn` that encloses line `i` (0-based), if any.

@@ -5,12 +5,13 @@
 //! Try, in a session that holds nothing else.
 use crate::copy;
 use crate::install::flow::{
-    self, DiskTitle, FILE_SYSTEMS, Flow, Found, Method, Next, Row, STEPS, SWAPS, Step, USES, Use,
+    self, DiskTitle, FILE_SYSTEMS, Flow, Found, Method, Next, Row, STEPS, SWAPS, SecureOffer, Step,
+    USES, Use,
 };
 use crate::install::{self, Check, Report, Stage};
 use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList, DiskBar, Seg, Tone};
 use crate::kit::{self, reveal, widgets as w};
-use crate::setup::{Field, Hints, KEYBOARDS, LANGUAGES};
+use crate::setup::{Field, Hints};
 use gtk::{glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::io::BufRead;
@@ -60,7 +61,6 @@ pub struct Installer {
     flow: RefCell<Flow>,
     cards: RefCell<Vec<(Step, Card)>>,
     zones: Vec<String>,
-    keyboard: RefCell<Option<gtk::DropDown>>,
     zone_search: RefCell<Option<gtk::SearchEntry>>,
     zone_list: gtk::Box,
     disk_list: gtk::Box,
@@ -101,6 +101,16 @@ pub struct Installer {
     secure_boot_notes: gtk::Box,
     /// The firmware's key screen comes after the restart: the steps, and the password in large type.
     key_screen: gtk::Box,
+    /// The Secure Boot page: its switch (a choice only), the key screen pictured before it is
+    /// chosen, and the own-keys notes (the install medium, BitLocker).
+    secure_row: gtk::Box,
+    secure_screen: gtk::Box,
+    secure_notes: gtk::Box,
+    /// The Modules page's rows and the download size under them.
+    modules_list: gtk::Box,
+    modules_size: gtk::Label,
+    /// The Extras page's switch.
+    codecs_switch: RefCell<Option<gtk::Switch>>,
     /// The install log's tail on the Failed page, behind Details.
     failed_details: gtk::Box,
     failed_log: gtk::Box,
@@ -118,6 +128,9 @@ pub struct Installer {
     probed: Cell<bool>,
     /// How disks are looked at, off the main thread ([`system_disks`]; tests hand in their own).
     probe: Cell<fn() -> Vec<Found>>,
+    /// Whether a default route is up now, off the main thread ([`flow::online_now`]). Given
+    /// disks (previews, goldens) mean a fixed world, which is online.
+    online: Cell<fn() -> bool>,
     /// With the security chip the account password also opens the disk: said on the Protect
     /// and Account pages while the chip is chosen.
     protect_tpm_note: gtk::Label,
@@ -178,6 +191,8 @@ impl Installer {
         secure_boot_notes.set_visible(false);
         let key_screen = w::vbox(w::S2);
         key_screen.set_visible(false);
+        let secure_notes = w::vbox(w::S1);
+        secure_notes.set_visible(false);
         let done_body = w::vbox(w::S4);
         done_body.append(&done_notes);
         done_body.append(&key_screen);
@@ -204,7 +219,6 @@ impl Installer {
             flow: RefCell::new(flow),
             cards: Default::default(),
             zones,
-            keyboard: Default::default(),
             zone_search: Default::default(),
             zone_list: holder(),
             disk_list: holder(),
@@ -238,6 +252,12 @@ impl Installer {
             done_notes,
             secure_boot_notes,
             key_screen,
+            secure_row: w::vbox(0),
+            secure_screen: w::vbox(w::S2),
+            secure_notes,
+            modules_list: holder(),
+            modules_size: a::wrapped("", "assistant-subtitle"),
+            codecs_switch: Default::default(),
             failed_details,
             failed_log,
             failed_refusal,
@@ -248,6 +268,11 @@ impl Installer {
             began: Cell::new(None),
             probed: Cell::new(probed),
             probe: Cell::new(system_disks),
+            online: Cell::new(if probed {
+                (|| true) as fn() -> bool
+            } else {
+                flow::online_now
+            }),
             protect_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
             account_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
             awake: RefCell::new(install::Awake::default()),
@@ -265,7 +290,10 @@ impl Installer {
                 Step::Manual => s.manual(),
                 Step::Edit => s.edit_page(),
                 Step::Protect => s.protect(),
+                Step::SecureBootChoice => s.secure_choice(),
                 Step::Account => s.account(),
+                Step::Modules => s.modules(),
+                Step::Extras => s.extras(),
                 Step::Summary => s.summary(),
                 Step::SecureBoot => s.secure_boot(),
                 Step::Installing => s.installing(),
@@ -290,6 +318,11 @@ impl Installer {
     /// Looks at disks with `f` instead of the system's tools (goldens, tests).
     pub fn set_probe(&self, f: fn() -> Vec<Found>) {
         self.probe.set(f);
+    }
+
+    /// Looks for a network with `f` instead of the route tables (goldens, tests).
+    pub fn set_online_probe(&self, f: fn() -> bool) {
+        self.online.set(f);
     }
 
     /// Shows `step` at once (goldens, tests).
@@ -345,6 +378,12 @@ impl Installer {
         for (_, c) in self.cards.borrow().iter() {
             c.say("", false);
         }
+        // Every page's paragraph: its line, what it means, what comes next (the Failed page
+        // says why it stopped instead).
+        if step != Step::Failed {
+            let intro = self.flow.borrow().intro(step);
+            self.with_card(step, |c| c.subtitle.set_label(&intro));
+        }
         match step {
             Step::Language => {
                 let cancel = !self.flow.borrow().boot;
@@ -367,9 +406,20 @@ impl Installer {
                     e.grab_focus();
                 }
             }
-            Step::Summary => self.fill_summary(),
+            Step::Summary => {
+                self.fill_summary();
+                self.look_online();
+            }
+            Step::SecureBootChoice => self.fill_secure_choice(),
+            Step::Modules => self.fill_modules(),
+            Step::Extras => {
+                let on = self.flow.borrow().codecs;
+                if let Some(sw) = &*self.codecs_switch.borrow() {
+                    sw.set_active(on);
+                }
+            }
             Step::SecureBoot => {
-                let notes = self.flow.borrow().bitlocker_notes(false);
+                let notes = self.flow.borrow().secure_boot_notes();
                 fill_notes(&self.secure_boot_notes, &notes);
             }
             _ => {}
@@ -476,9 +526,12 @@ impl Installer {
             let f = self.flow.borrow();
             notes.extend(f.windows_start());
             notes.extend(f.bitlocker_notes(true).into_iter().map(String::from));
+            notes.extend(f.deferred_line().map(String::from));
         }
         fill_notes(&self.done_notes, &notes);
-        self.key_screen.set_visible(key_screen);
+        // Repeated here only when it was chosen (or the computer's own Secure Boot made it so).
+        let chosen = self.flow.borrow().key_screen_chosen();
+        self.key_screen.set_visible(key_screen && chosen);
         self.recovery.set_visible(key.is_some());
         self.recovery_key.set_label(key.unwrap_or_default());
         if let Some(ack) = &*self.ack.borrow() {
@@ -579,63 +632,32 @@ impl Installer {
         Card::new(Art::Icon(icon), st.title(), st.subtitle(), body)
     }
 
+    /// The shared Language page (ui::setup::language_page, with "Try it"): the page following a
+    /// language is not the person's keyboard pick (R2B-8, B8).
     fn language(self: &Rc<Self>) -> Card {
         let (language, keyboard) = {
             let f = self.flow.borrow();
             (f.draft.language, f.draft.keyboard)
         };
-        let body = w::vbox(w::S4);
-        let rows = LANGUAGES
-            .iter()
-            .map(|l| Choice {
-                icon: None,
-                title: l.name.into(),
-                detail: l.region.into(),
-                trail: None,
-            })
-            .collect();
-        let me = Rc::downgrade(self);
-        let list = ChoiceList::new(rows, Some(language), move |i| {
-            if let Some(s) = me.upgrade() {
+        let (me, me2) = (Rc::downgrade(self), Rc::downgrade(self));
+        super::setup::language_page(
+            (Step::Language.title(), Step::Language.subtitle()),
+            language,
+            keyboard,
+            true,
+            move |i| {
+                let s = me.upgrade()?;
                 s.flow.borrow_mut().set_language(i);
                 let k = s.flow.borrow().draft.keyboard;
-                if let Some(dd) = &*s.keyboard.borrow() {
-                    // The page moves the list: not the person's pick (R2B-8).
-                    s.filling.set(true);
-                    dd.set_selected(k as u32);
-                    s.filling.set(false);
+                Some(k)
+            },
+            move |i, by_person| {
+                if let Some(s) = me2.upgrade() {
+                    s.flow.borrow_mut().keyboard_shown(i, by_person);
                 }
-            }
-        });
-        body.append(&list.root);
-        let names: Vec<&str> = KEYBOARDS.iter().map(|k| k.1).collect();
-        let kb = w::dropdown(&names, keyboard as u32);
-        let me = Rc::downgrade(self);
-        kb.connect_selected_notify(move |dd| {
-            let Some(s) = me.upgrade() else {
-                return;
-            };
-            let i = (dd.selected() as usize).min(KEYBOARDS.len() - 1);
-            // The language list sets this one inside `filling`: everything else is the person's
-            // pick, the suggested layout included, so only then do languages stop moving it (B8).
-            let by_person = !s.filling.get();
-            s.flow.borrow_mut().keyboard_shown(i, by_person);
-            if std::env::var_os("WOL_FAKE_NOW").is_none() {
-                kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
-            }
-        });
-        body.append(&a::form_row("Keyboard", &kb));
-        // Somewhere to see that the keys type what they say, before any password does.
-        let test = w::text_field("Type here to try the keyboard");
-        test.add_css_class("assistant-field");
-        body.append(&a::form_row("Try it", &test));
-        *self.keyboard.borrow_mut() = Some(kb);
-        Card::new(
-            Art::Icon("preferences-desktop-locale-symbolic"),
-            Step::Language.title(),
-            Step::Language.subtitle(),
-            &body,
+            },
         )
+        .card
     }
 
     fn zone(self: &Rc<Self>) -> Card {
@@ -1303,6 +1325,162 @@ impl Installer {
         )
     }
 
+    /// Secure Boot, opt-in: a switch where it is a choice, the key screen pictured before it is
+    /// chosen (what it looks like, the exact keys, the password), the own-keys notes.
+    fn secure_choice(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S3);
+        body.append(&self.secure_row);
+        let mut lines = vec![copy::installer::KEY_SCREEN_LOOKS.to_string()];
+        lines.extend(
+            key_screen_steps()
+                .iter()
+                .enumerate()
+                .map(|(i, st)| format!("{}. {st}", i + 1)),
+        );
+        self.secure_screen
+            .append(&a::caption(copy::INSTALL_KEY_SCREEN_TITLE));
+        self.secure_screen.append(&a::lines(&lines));
+        body.append(&self.secure_screen);
+        body.append(&self.secure_notes);
+        Card::new(
+            Art::Icon("security-high-symbolic"),
+            Step::SecureBootChoice.title(),
+            Step::SecureBootChoice.subtitle(),
+            &body,
+        )
+    }
+
+    fn fill_secure_choice(self: &Rc<Self>) {
+        let (offer, on, own_keys) = {
+            let f = self.flow.borrow();
+            (f.secure_offer(), f.secure, f.tier() == Some("own-keys"))
+        };
+        // The switch, only where it is a choice; under it, what turning it on costs.
+        let me = Rc::downgrade(self);
+        let sw = w::toggle(on, move |on| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().secure = on;
+                s.say_secure_notes();
+            }
+        });
+        let detail = if own_keys {
+            copy::installer::SECURE_SWITCH_OWN_KEYS
+        } else {
+            copy::installer::SECURE_SWITCH_SCREEN
+        };
+        let row = w::list_row(
+            "",
+            copy::installer::SECURE_SWITCH,
+            detail,
+            Some(sw.upcast_ref()),
+        );
+        row.add_css_class("assistant-row");
+        replace_child(&self.secure_row, &row);
+        self.secure_row
+            .set_visible(matches!(offer, SecureOffer::Choice { .. }));
+        // The key screen is pictured wherever it is how Secure Boot turns on.
+        self.secure_screen.set_visible(!own_keys);
+        self.say_secure_notes();
+    }
+
+    /// Own keys: the install medium stops starting here, said before the choice. BitLocker's
+    /// recovery key (R2B-9) only while Secure Boot is on: off leaves Windows' keys alone.
+    fn say_secure_notes(&self) {
+        let (own_keys, bitlocker) = {
+            let f = self.flow.borrow();
+            (
+                f.tier() == Some("own-keys"),
+                f.secure_wanted() && f.bitlocker_stays(),
+            )
+        };
+        let mut notes: Vec<&str> = Vec::new();
+        if own_keys {
+            notes.push(copy::INSTALL_OWN_KEYS_MEDIA);
+            if bitlocker {
+                notes.extend(copy::installer::bitlocker("own-keys", true));
+            }
+        }
+        fill_notes(&self.secure_notes, &notes);
+    }
+
+    /// Optional modules (ADR 0032 B): one switch each, none on, the download size under them.
+    fn modules(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S3);
+        body.append(&a::list_scroller(&self.modules_list));
+        body.append(&self.modules_size);
+        Card::new(
+            Art::Icon("view-app-grid-symbolic"),
+            Step::Modules.title(),
+            Step::Modules.subtitle(),
+            &body,
+        )
+    }
+
+    fn say_modules_size(&self) {
+        let mb = self.flow.borrow().modules_mb();
+        self.modules_size
+            .set_label(&copy::installer::modules_download(mb));
+    }
+
+    fn fill_modules(self: &Rc<Self>) {
+        let rows = w::vbox(0);
+        rows.set_valign(gtk::Align::Start);
+        let list = self.flow.borrow().module_list.clone();
+        for m in list {
+            let on = self.flow.borrow().modules.contains(&m.id);
+            let me = Rc::downgrade(self);
+            let id = m.id.clone();
+            let sw = w::toggle(on, move |on| {
+                if let Some(s) = me.upgrade() {
+                    s.flow.borrow_mut().tick_module(&id, on);
+                    s.say_modules_size();
+                }
+            });
+            let row = w::list_row("", m.title, m.detail, Some(sw.upcast_ref()));
+            row.add_css_class("assistant-row");
+            rows.append(&row);
+        }
+        replace_child(&self.modules_list, &rows);
+        self.say_modules_size();
+    }
+
+    /// Media formats, prioritised as the Store's codecs kit lists them; one switch, off.
+    fn extras(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S3);
+        let me = Rc::downgrade(self);
+        let sw = w::toggle(false, move |on| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().codecs = on;
+            }
+        });
+        let kit = wol_core::store::kit(flow::CODECS_KIT);
+        let row = w::list_row(
+            "",
+            copy::installer::CODECS_SWITCH,
+            kit.map_or("", |k| k.summary),
+            Some(sw.upcast_ref()),
+        );
+        row.add_css_class("assistant-row");
+        body.append(&row);
+        *self.codecs_switch.borrow_mut() = Some(sw);
+        if let Some(k) = kit {
+            let parts: Vec<String> = k
+                .parts
+                .iter()
+                .map(|p| format!("{}: {}", p.name, p.why))
+                .collect();
+            body.append(&a::lines(&parts));
+            let note = a::wrapped(k.note, "assistant-subtitle");
+            body.append(&note);
+        }
+        Card::new(
+            Art::Icon("media-playback-start-symbolic"),
+            Step::Extras.title(),
+            Step::Extras.subtitle(),
+            &body,
+        )
+    }
+
     fn summary(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S4);
         body.append(&self.summary_list);
@@ -1315,6 +1493,25 @@ impl Installer {
         );
         c.next.set_label("Install");
         c
+    }
+
+    /// Looks for a network off the main thread; when that changes what waits for the first
+    /// start, the Summary (if still shown) says it again. Done says what the last look found.
+    fn look_online(self: &Rc<Self>) {
+        let me = Rc::downgrade(self);
+        let probe = self.online.get();
+        glib::spawn_future_local(async move {
+            let online = gtk::gio::spawn_blocking(probe).await.unwrap_or(true);
+            let Some(s) = me.upgrade() else { return };
+            let changed = {
+                let mut f = s.flow.borrow_mut();
+                let was = std::mem::replace(&mut f.offline, !online);
+                was != f.offline && f.step == Step::Summary
+            };
+            if changed {
+                s.fill_summary();
+            }
+        });
     }
 
     fn fill_summary(&self) {
@@ -1586,7 +1783,7 @@ impl Installer {
                 return;
             };
             if let Some(d) = dir {
-                let _ = std::fs::remove_dir_all(d);
+                install::remove_plan(&d);
             }
             let r = install::parse_result(&out);
             if s.flow.borrow().key_unread(r.key.as_deref()) {
@@ -1768,6 +1965,9 @@ pub fn run() -> glib::ExitCode {
         // The same check install-run makes: a chip that exists but can't be used is no chip.
         let tpm = install::tpm_from_decide(&output(&install::tpm_command()));
         let s = Installer::new(&hints, boot, tpm, system_zones(), None);
+        // The optional modules this image offers (a few small records, read once at start).
+        let records = install::modules_on_image();
+        s.with_flow(|f| f.set_modules(&records));
         if let Some(mem) = std::fs::read_to_string("/proc/meminfo")
             .ok()
             .and_then(|t| flow::meminfo_bytes(&t))

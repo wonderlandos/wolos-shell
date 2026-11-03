@@ -165,10 +165,17 @@ pub fn parse_forecast(json: &str) -> Option<Forecast> {
     );
     let start = ht.iter().position(|t| t.starts_with(now_hour))?;
     let mut hours = Vec::new();
-    for (i, time) in ht.iter().enumerate().skip(start).take(FORECAST_HOURS) {
+    for (i, time) in ht.iter().enumerate().skip(start) {
+        if hours.len() == FORECAST_HOURS {
+            break;
+        }
         let (Some(t), Some(c), Some(d)) = (htemp.get(i), hcode.get(i), hday.get(i)) else {
             break;
         };
+        // Open-Meteo sends `null` for an hour it has no sample of: no "NaN°" row (audit4 S3-10).
+        if !t.is_finite() || !c.is_finite() {
+            continue;
+        }
         hours.push(Hour {
             label: if i == start {
                 "Now".into()
@@ -192,21 +199,26 @@ pub fn parse_forecast(json: &str) -> Option<Forecast> {
     let days: Vec<Day> = (first..dt.len().min(first + FORECAST_DAYS))
         .filter_map(|i| {
             let (y, m, dd) = ymd(&dt[i])?;
+            let (low, high, code) = (*dmin.get(i)?, *dmax.get(i)?, *dcode.get(i)?);
+            if ![low, high, code].iter().all(|x| x.is_finite()) {
+                return None;
+            }
             Some(Day {
                 label: if i == first {
                     "Today".into()
                 } else {
                     DAY_ABBR[weekday(y, m, dd) as usize].into()
                 },
-                low: *dmin.get(i)?,
-                high: *dmax.get(i)?,
-                code: *dcode.get(i)? as u8,
+                low,
+                high,
+                code: code as u8,
             })
         })
         .collect();
-    let today = days.first()?;
+    // Today's high and low come from today's row: without it the forecast is not used (stale).
+    let today = days.first().filter(|d| d.label == "Today")?;
     Some(Forecast {
-        temp: c["temperature_2m"].as_f64()?,
+        temp: c["temperature_2m"].as_f64().filter(|t| t.is_finite())?,
         code: c["weather_code"].as_f64()? as u8,
         day: c["is_day"].as_f64().unwrap_or(1.0) > 0.5,
         high: today.high,
@@ -323,10 +335,8 @@ pub fn load(
                 body,
             };
             if let (Some(dir), Ok(json)) = (path.parent(), serde_json::to_string(&c)) {
-                let tmp = path.with_extension("json.tmp");
                 let _ = std::fs::create_dir_all(dir)
-                    .and_then(|_| std::fs::write(&tmp, json))
-                    .and_then(|_| std::fs::rename(&tmp, &path));
+                    .and_then(|_| shared::atomic::atomic_write(&path, 0o644, json.as_bytes()));
             }
             Outcome::Fresh(f)
         }
@@ -370,6 +380,38 @@ mod tests {
         let days: Vec<&str> = f.days.iter().map(|d| d.label.as_str()).collect();
         assert_eq!(days, ["Today", "Wed", "Thu"]);
         assert_eq!(f.days[2].code, 0);
+    }
+
+    /// Audit4 S3-10: `null` samples became "NaN°" rows under a sun.
+    #[test]
+    fn null_samples_leave_no_nan_rows() {
+        let holes = FC
+            .replace(
+                "[11.9,11.6,11.2,11.0,10.9,11.8,13.4,15.1]",
+                "[11.9,11.6,null,11.0,10.9,11.8,13.4,15.1]",
+            )
+            .replace("[1,2,2,3,3,61,3,0]", "[1,2,2,null,3,61,3,0]")
+            .replace("[19.4,18.0,21.2]", "[19.4,null,21.2]");
+        let f = parse_forecast(&holes).unwrap();
+        let hours: Vec<&str> = f.hours.iter().map(|h| h.label.as_str()).collect();
+        assert_eq!(hours, ["Now", "07:00", "08:00", "09:00", "10:00"]);
+        let days: Vec<&str> = f.days.iter().map(|d| d.label.as_str()).collect();
+        assert_eq!(days, ["Today", "Thu"]);
+        assert!(f.hours.iter().all(|h| h.temp.is_finite()));
+        assert!(
+            f.days
+                .iter()
+                .all(|d| d.low.is_finite() && d.high.is_finite())
+        );
+        assert!(!format!("{f:?}").contains("NaN"));
+        let no_today = FC.replace("[19.4,18.0,21.2]", "[null,18.0,21.2]");
+        assert_eq!(
+            parse_forecast(&no_today),
+            None,
+            "no high/low for today: stale path"
+        );
+        let no_now = FC.replace(r#""temperature_2m":11.6"#, r#""temperature_2m":null"#);
+        assert_eq!(parse_forecast(&no_now), None);
     }
 
     #[test]

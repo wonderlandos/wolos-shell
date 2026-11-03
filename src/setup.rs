@@ -18,6 +18,10 @@ pub enum Step {
 }
 
 /// Welcome, the key screen when it is pending, four questions, Done.
+/// The account form's two problems that both checks report.
+const NO_MATCH: &str = "Passwords don’t match.";
+const HINT_IS_PASSWORD: &str = "The hint can’t be the password.";
+
 pub const STEPS: [Step; 7] = [
     Step::Welcome,
     Step::KeyScreen,
@@ -44,13 +48,13 @@ impl Step {
     /// One sentence under the title: what this page is for.
     pub fn subtitle(self) -> &'static str {
         match self {
-            Step::Welcome => "Let's get you set up.",
+            Step::Welcome => "Let’s get you set up.",
             Step::KeyScreen => {
-                "This computer hasn't accepted its WolOS key yet. At the next restart a blue screen asks once."
+                "This computer hasn’t accepted its WolOS key yet. At the next restart a blue screen asks once."
             }
             Step::Language => "WolOS uses this language and keyboard. You can change them later.",
             Step::Wifi => "Choose a network to get online. You can skip this and join later.",
-            Step::Account => "You'll use this name and password to sign in.",
+            Step::Account => "You’ll use this name and password to sign in.",
             Step::Appearance => "Choose a look. You can change it any time in System Settings.",
             Step::Done => "Your account is ready.",
         }
@@ -461,10 +465,10 @@ impl Draft {
             ));
         }
         if self.password != self.verify {
-            return Some((Field::Verify, "Passwords don't match."));
+            return Some((Field::Verify, NO_MATCH));
         }
         if !self.hint.is_empty() && self.hint == self.password {
-            return Some((Field::Hint, "The hint can't be the password."));
+            return Some((Field::Hint, HINT_IS_PASSWORD));
         }
         match rules {
             Ok(()) => None,
@@ -482,10 +486,10 @@ impl Draft {
             return Some(p);
         }
         if !self.verify.is_empty() && !self.password.starts_with(self.verify.as_str()) {
-            return Some((Field::Verify, "Passwords don't match."));
+            return Some((Field::Verify, NO_MATCH));
         }
         if !self.hint.is_empty() && self.hint == self.password {
-            return Some((Field::Hint, "The hint can't be the password."));
+            return Some((Field::Hint, HINT_IS_PASSWORD));
         }
         None
     }
@@ -669,11 +673,11 @@ impl Flow {
             }
             (Job::CreateAccount(_), Verdict::Denied) => Next::Stay(
                 None,
-                "That account name can't be used. Press Back and choose another one.".into(),
+                "That account name can’t be used. Press Back and choose another one.".into(),
             ),
             (Job::CreateAccount(_), Verdict::Error) => Next::Stay(
                 None,
-                "Your account couldn't be created just now. Press Continue to try again.".into(),
+                "Your account couldn’t be created just now. Press Continue to try again.".into(),
             ),
         }
     }

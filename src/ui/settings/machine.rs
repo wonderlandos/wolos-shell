@@ -74,6 +74,31 @@ pub trait Machine: Send + Sync {
     fn passwd(&self) -> String;
     /// Automatic updates: (download system updates, install app updates) (`wol_core::update::auto`).
     fn auto_updates(&self) -> (bool, bool);
+    /// `wol boot status` (Startup Security). None where `wol` cannot tell.
+    fn boot(&self) -> Option<wol_core::boot::Status> {
+        None
+    }
+    /// This computer's key waits for the firmware's key screen (boot-enroll's mark).
+    fn boot_key_pending(&self) -> bool {
+        false
+    }
+    /// `wol modules list --json` (ADR 0032). None where `wol` cannot tell.
+    fn modules(&self) -> Option<Vec<wol_core::modules::Status>> {
+        None
+    }
+    /// What modules-install gave up on and is still not installed (`super::modules::GAVE_UP_FILE`).
+    fn modules_gave_up(&self) -> Vec<super::modules::GaveUp> {
+        Vec::new()
+    }
+    /// A fixed sound state for previews; None on the running system, where the sound service
+    /// streams it (`super::sound`).
+    fn sound(&self) -> Option<super::sound::SoundState> {
+        None
+    }
+    /// Sound settings the sound service does not report (balance, autoswitch, user fragments).
+    fn sound_extras(&self) -> super::sound::Extras {
+        super::sound::Extras::default()
+    }
 }
 
 /// The running system.
@@ -212,6 +237,62 @@ impl Machine for Live {
     }
     fn passwd(&self) -> String {
         self.os().read_text("/etc/passwd").unwrap_or_default()
+    }
+    fn boot(&self) -> Option<wol_core::boot::Status> {
+        let out = self.os().run(&["wol", "boot", "status"])?;
+        serde_json::from_str(out.trim()).ok()
+    }
+    fn boot_key_pending(&self) -> bool {
+        std::path::Path::new(crate::install::MOK_PENDING).exists()
+    }
+    fn modules(&self) -> Option<Vec<wol_core::modules::Status>> {
+        let out = self.os().run(&["wol", "modules", "list", "--json"])?;
+        serde_json::from_str(out.trim()).ok()
+    }
+    fn modules_gave_up(&self) -> Vec<super::modules::GaveUp> {
+        let path = std::path::Path::new(super::modules::GAVE_UP_FILE);
+        let text =
+            shared::bounded::read_text(path, super::modules::GAVE_UP_MAX).unwrap_or_default();
+        // A package the person installed since (Retry, the Store) is no longer given up on; a
+        // module is checked against the module list (`super::modules::render`).
+        super::modules::parse_gave_up(&text)
+            .into_iter()
+            .filter(|g| {
+                g.module
+                    || self
+                        .os()
+                        .run(&["pacman", "-Q", "--", g.name.as_str()])
+                        .is_none()
+            })
+            .collect()
+    }
+    fn sound_extras(&self) -> super::sound::Extras {
+        use super::sound::{AWAKE_FILE, Extras, SOFT_VOLUME_FILE, parse_autoswitch, parse_balance};
+        let os = self.os();
+        let conf = |rel: &str| {
+            std::path::Path::new(&crate::kit::config_home())
+                .join(rel)
+                .is_file()
+        };
+        let setting = "bluetooth.autoswitch-to-headset-profile";
+        Extras {
+            balance: parse_balance(
+                &os.run(&["pactl", "get-sink-volume", "@DEFAULT_SINK@"])
+                    .unwrap_or_default(),
+            ),
+            autoswitch: parse_autoswitch(
+                &os.run(&["wpctl", "settings", setting]).unwrap_or_default(),
+            ),
+            keep_awake: conf(AWAKE_FILE),
+            soft_volume: conf(SOFT_VOLUME_FILE),
+            bluetooth: self
+                .bluetooth()
+                .devices
+                .into_iter()
+                .filter(|d| d.connected)
+                .map(|d| (d.name, d.addr))
+                .collect(),
+        }
     }
 }
 
@@ -433,7 +514,7 @@ impl Machine for Demo {
     }
     fn consent(&self) -> Vec<(String, String)> {
         vec![
-            ("/usr/bin/obs".into(), "screen-capture".into()),
+            ("/usr/bin/recorder".into(), "keep-awake".into()),
             ("/usr/bin/ydotoold".into(), "input-injection".into()),
             ("/usr/bin/hello".into(), "notifications".into()),
         ]
@@ -504,6 +585,182 @@ impl Machine for Demo {
          dinah:*:1002:1002:Dinah:/home/dinah:/usr/bin/zsh\n"
             .into()
     }
+    fn boot(&self) -> Option<wol_core::boot::Status> {
+        Some(wol_core::boot::Status {
+            secure_boot: true,
+            setup_mode: false,
+            tier: "mok".into(),
+            lockdown: "integrity".into(),
+            tpm2: true,
+            measured: true,
+            sealed: true,
+            epoch: Some(12),
+            floor: 12,
+        })
+    }
+    fn modules(&self) -> Option<Vec<wol_core::modules::Status>> {
+        let m = |id: &str, name: &str, summary: &str, size_mb, installed, enabled| {
+            wol_core::modules::Status {
+                id: id.into(),
+                name: name.into(),
+                summary: summary.into(),
+                category: String::new(),
+                size_mb,
+                package: format!("{}{id}", wol_core::modules::PACKAGE_PREFIX),
+                installed,
+                enabled,
+                pending: false,
+                needs_enable: true,
+                offline: false,
+                needs: Vec::new(),
+                backend: None,
+            }
+        };
+        Some(vec![
+            m(
+                "dev",
+                "Developer Tools",
+                "Compilers, Git and version managers",
+                900,
+                true,
+                true,
+            ),
+            m(
+                "ai-claude",
+                "Claude Code",
+                "The AI coding assistant in the terminal",
+                120,
+                true,
+                false,
+            ),
+            m(
+                "creative",
+                "Craft Suite",
+                "Photo, video and 3D apps",
+                2400,
+                false,
+                false,
+            ),
+            m(
+                "console",
+                "Console",
+                "A themed prompt and terminal tools",
+                60,
+                false,
+                false,
+            ),
+        ])
+    }
+    fn sound(&self) -> Option<super::sound::SoundState> {
+        Some(super::sound::SoundState::demo())
+    }
+    fn sound_extras(&self) -> super::sound::Extras {
+        super::sound::Extras::demo()
+    }
+}
+
+/// [`Demo`] at the edges that goldens and checks render: the module list cannot be read (or, with
+/// `gave_up`, it can and modules-install gave up on a module and a media format), and this
+/// computer's key still has to reach the firmware (`queued` turns true once the key is queued, as
+/// boot-enroll's mark does).
+#[derive(Default)]
+pub struct DemoEdge {
+    pub queued: std::sync::atomic::AtomicBool,
+    pub gave_up: bool,
+}
+
+impl Machine for DemoEdge {
+    fn storage(&self) -> Option<Storage> {
+        Demo.storage()
+    }
+    fn battery(&self) -> Option<BatteryInfo> {
+        Demo.battery()
+    }
+    fn profile(&self) -> Option<Profile> {
+        Demo.profile()
+    }
+    fn lid(&self) -> Option<Lid> {
+        Demo.lid()
+    }
+    fn zones(&self) -> Vec<String> {
+        Demo.zones()
+    }
+    fn zone(&self) -> String {
+        Demo.zone()
+    }
+    fn ntp(&self) -> Option<bool> {
+        Demo.ntp()
+    }
+    fn net(&self) -> NetInfo {
+        Demo.net()
+    }
+    fn known_networks(&self) -> Vec<String> {
+        Demo.known_networks()
+    }
+    fn bluetooth(&self) -> BtState {
+        Demo.bluetooth()
+    }
+    fn printers(&self) -> Option<Vec<Printer>> {
+        Demo.printers()
+    }
+    fn discover_printers(&self) -> Vec<String> {
+        Demo.discover_printers()
+    }
+    fn hardware(&self) -> HardwareSnapshot {
+        Demo.hardware()
+    }
+    fn sharing(&self) -> Sharing {
+        Demo.sharing()
+    }
+    fn consent(&self) -> Vec<(String, String)> {
+        Demo.consent()
+    }
+    fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App> {
+        Demo.flatpak_apps()
+    }
+    fn kernel(&self) -> Kernel {
+        Demo.kernel()
+    }
+    fn power(&self) -> Option<wol_core::power::policy::Status> {
+        Demo.power()
+    }
+    fn security(&self) -> Option<wol_core::security::Status> {
+        Demo.security()
+    }
+    fn updates(&self) -> Option<wol_core::update::check::Updates> {
+        Demo.updates()
+    }
+    fn passwd(&self) -> String {
+        Demo.passwd()
+    }
+    fn auto_updates(&self) -> (bool, bool) {
+        Demo.auto_updates()
+    }
+    fn boot(&self) -> Option<wol_core::boot::Status> {
+        Demo.boot().map(|b| wol_core::boot::Status {
+            tier: "firmware".into(),
+            ..b
+        })
+    }
+    fn boot_key_pending(&self) -> bool {
+        self.queued.load(std::sync::atomic::Ordering::Relaxed)
+    }
+    fn modules(&self) -> Option<Vec<wol_core::modules::Status>> {
+        if self.gave_up { Demo.modules() } else { None }
+    }
+    fn modules_gave_up(&self) -> Vec<super::modules::GaveUp> {
+        if self.gave_up {
+            super::modules::parse_gave_up("m creative\np gst-libav\n")
+        } else {
+            Vec::new()
+        }
+    }
+    fn sound(&self) -> Option<super::sound::SoundState> {
+        Demo.sound()
+    }
+    fn sound_extras(&self) -> super::sound::Extras {
+        Demo.sound_extras()
+    }
 }
 
 #[cfg(test)]
@@ -540,5 +797,15 @@ mod tests {
         );
         let linux = Live(Arc::new(wol_core::system::fake::FakeHost::new(false)));
         assert_eq!(linux.sharing(), Sharing::default());
+    }
+
+    #[test]
+    fn the_demo_grants_only_what_the_consent_file_may_hold() {
+        let grants = Demo.consent();
+        assert!(!grants.is_empty());
+        for (app, cap) in &grants {
+            assert!(wol_core::consent::is_valid_grant(app, cap), "{app} {cap}");
+            assert_eq!(wol_core::consent::refusal(cap), None, "{app} {cap}");
+        }
     }
 }

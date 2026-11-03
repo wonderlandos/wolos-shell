@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! System Settings on the HIG AppWindow: a searchable sidebar of panes (System Settings order) and
-//! grouped Section cards. Every control applies for real or is not shown: theme contract
+//! grouped Section cards. Search covers every pane and the rows on it (`search`): the sidebar keeps
+//! the panes with a hit and the content shows the hits, row by row, until the field is cleared. Every control applies for real or is not shown: theme contract
 //! (Appearance), desktop prefs applied live through one `hyprctl` batch and journaled (Desktop &
 //! Dock, Effects & Looks, Keyboard, Trackpad & Mouse, Accessibility), shell prefs + `reload`,
 //! `System` actions and wol-admind for root changes (the Authenticate sheet asks first). Machine
@@ -38,15 +39,18 @@ mod login_items;
 mod machine;
 mod malware;
 mod memory_saver;
+mod modules;
 mod network;
 mod notifications;
 mod printers;
 mod privacy;
 mod restore;
+mod search;
 mod sharing;
 mod shortcuts;
 mod software_update;
 mod sound;
+mod startup_security;
 mod storage;
 mod trackpad;
 mod wallpaper;
@@ -54,10 +58,15 @@ mod widgets;
 mod wifi;
 
 pub use accounts::{account_name, password_problem};
-pub use machine::{Demo, Kernel, Live, Machine, Sharing};
+pub use machine::{Demo, DemoEdge, Kernel, Live, Machine, Sharing};
 pub use malware::{full_section as malware_full_section, section as malware_section};
+pub use search::{Hit, hits};
 pub use shortcuts::KEY_LEGEND;
 pub use software_update::{UpdateState, parse_check, with_flatpaks};
+pub use sound::{
+    Extras as SoundExtras, Request as SoundRequest, SoundState, Source as SoundSource,
+    live as sound_live,
+};
 
 /// One sidebar pane: its title (also the `wol-settings <title>` name), icon and search words.
 pub struct Pane {
@@ -98,7 +107,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Sound",
             "audio-volume-high-symbolic",
-            "volume speakers headphones output mute audio",
+            "volume speakers headphones output input microphone mic mute audio balance codec latency",
         ),
     ],
     &[
@@ -162,7 +171,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Privacy & Security",
             "security-high-symbolic",
-            "permissions screen recording firewall consent privacy",
+            "permissions screen recording firewall consent privacy secure boot startup security tpm",
         ),
         pane(
             "Users & Groups",
@@ -199,6 +208,11 @@ pub const SIDEBAR: [&[Pane]; 6] = [
             "ai helpers mcp scripts automation permissions",
         ),
         pane(
+            "Modules",
+            "view-app-grid-symbolic",
+            "optional add-ons developer tools ai claude creative console install",
+        ),
+        pane(
             "Restore",
             "wolos-restore-symbolic",
             "undo history restore points boot environments",
@@ -207,7 +221,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
 ];
 
 /// Every sidebar pane title, in order (same as [`SIDEBAR`]).
-pub const PAGES: [&str; 24] = [
+pub const PAGES: [&str; 25] = [
     "Wi-Fi",
     "Bluetooth",
     "Network",
@@ -231,12 +245,14 @@ pub const PAGES: [&str; 24] = [
     "Printers",
     "Hardware",
     "Assistants & Automation",
+    "Modules",
     "Restore",
 ];
 
 /// Pages without a sidebar row, reached from a pane (`wol-settings "Storage"` works too).
-pub const SUBPAGES: [&str; 8] = [
+pub const SUBPAGES: [&str; 9] = [
     shortcuts::TITLE,
+    startup_security::TITLE,
     "About",
     "Software Update",
     "Storage",
@@ -264,18 +280,13 @@ pub fn canonical(name: &str) -> &str {
         .map_or(name, |a| a.1)
 }
 
-/// Panes whose title or search words contain every word of `query`.
+/// Sidebar panes with a hit for every word of `query` (a pane's title or words, a row on it or on
+/// one of its subpages); every pane for an empty query.
 pub fn search(query: &str) -> Vec<&'static str> {
-    let q: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
-    SIDEBAR
-        .iter()
-        .flat_map(|g| g.iter())
-        .filter(|p| {
-            let hay = format!("{} {}", p.title, p.words).to_lowercase();
-            q.iter().all(|w| hay.contains(w.as_str()))
-        })
-        .map(|p| p.title)
-        .collect()
+    if query.trim().is_empty() {
+        return PAGES.to_vec();
+    }
+    search::panes(query)
 }
 
 /// The page `wol-settings [page]` asks for, under today's name; None for the window as it was.
@@ -516,6 +527,22 @@ fn clear(b: &gtk::Box) {
     }
 }
 
+/// The control of type `T` inside a row (`form::slider_row`'s slider, `form::picker_row`'s menu),
+/// to put it back after a failed save.
+fn control_in<T: IsA<gtk::Widget>>(row: &gtk::Widget) -> Option<T> {
+    if let Ok(t) = row.clone().downcast::<T>() {
+        return Some(t);
+    }
+    let mut c = row.first_child();
+    while let Some(w) = c {
+        if let Some(t) = control_in(&w) {
+            return Some(t);
+        }
+        c = w.next_sibling();
+    }
+    None
+}
+
 /// Completion callback for one action.
 pub(crate) type Done = Rc<dyn Fn(Result<(), ActionError>)>;
 
@@ -680,7 +707,7 @@ fn build_page(env: &Rc<Env>, name: &str) -> Option<Build> {
         "Bluetooth" => Box::new(move || bluetooth::page(&e).upcast()),
         "Network" => Box::new(move || network::page(&e).upcast()),
         "Notifications" => Box::new(move || notifications::page(&e).upcast()),
-        "Sound" => Box::new(move || sound::page(&e.ctx).upcast()),
+        "Sound" => Box::new(move || sound::page(&e).upcast()),
         "General" => Box::new(move || general::page(&e).upcast()),
         "Appearance" => Box::new(move || appearance::page(&e).upcast()),
         "Accessibility" => Box::new(move || accessibility::page(&e).upcast()),
@@ -699,8 +726,10 @@ fn build_page(env: &Rc<Env>, name: &str) -> Option<Build> {
         "Printers" => Box::new(move || printers::page(&e).upcast()),
         "Hardware" => Box::new(move || hardware::page(&e).upcast()),
         "Assistants & Automation" => Box::new(move || assistants::page(&e).upcast()),
+        "Modules" => Box::new(move || modules::page(&e).upcast()),
         "Restore" => Box::new(move || restore::page(&e).upcast()),
         shortcuts::TITLE => Box::new(move || shortcuts::page(&e).upcast()),
+        startup_security::TITLE => Box::new(move || startup_security::page(&e).upcast()),
         "About" => Box::new(move || about::page(&e).upcast()),
         "Software Update" => Box::new(move || software_update::page(&e).upcast()),
         "Storage" => Box::new(move || storage::page(&e).upcast()),
@@ -714,6 +743,21 @@ fn build_page(env: &Rc<Env>, name: &str) -> Option<Build> {
 }
 
 pub fn content(sys: Rc<dyn System>, host: &Host) -> w::AppWindow {
+    build(sys, host).0
+}
+
+/// [`content`] with `query` typed into the search field: the hits page (golden renders).
+pub fn content_searching(sys: Rc<dyn System>, host: &Host, query: &str) -> w::AppWindow {
+    let (aw, field, on_query) = build(sys, host);
+    field.set_text(query);
+    on_query(query);
+    aw
+}
+
+/// What a typed query does: filter the sidebar, show the hits (or go back when cleared).
+type OnQuery = Rc<dyn Fn(&str)>;
+
+fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, OnQuery) {
     let aw = w::AppWindow::new(true, false);
     let ctx = Ctx::new(sys.clone(), "System Settings");
     let sheets = Sheets {
@@ -833,6 +877,12 @@ pub fn content(sys: Rc<dyn System>, host: &Host) -> w::AppWindow {
         .connect_visible_child_name_notify(move |s| ensure(s));
 
     // Search: rows whose title or words match; gaps hide while searching; Enter opens the first.
+    // The content shows every hit (pane and row) until the field is cleared.
+    let results = w::page("Search");
+    let results_body = w::vbox(w::S6);
+    results.append(&results_body);
+    aw.hidden_page(RESULTS, &results);
+    let before: Rc<RefCell<Option<String>>> = Default::default();
     let query: Rc<RefCell<String>> = Default::default();
     {
         let q = query.clone();
@@ -845,24 +895,107 @@ pub fn content(sys: Rc<dyn System>, host: &Host) -> w::AppWindow {
             !name.is_empty() && search(&q).contains(&name.as_str())
         });
     }
-    {
-        let (q, side) = (query.clone(), aw.sidebar.downgrade());
-        field.connect_search_changed(move |s| {
-            *q.borrow_mut() = s.text().to_string();
+    let on_query: OnQuery = {
+        let (q, side, stack) = (
+            query.clone(),
+            aw.sidebar.downgrade(),
+            aw.content.downgrade(),
+        );
+        let (env, body, before) = (
+            Rc::downgrade(&env),
+            results_body.downgrade(),
+            before.clone(),
+        );
+        Rc::new(move |text: &str| {
+            let text = text.to_string();
+            *q.borrow_mut() = text.clone();
             if let Some(side) = side.upgrade() {
                 side.invalidate_filter();
             }
-        });
+            let (Some(stack), Some(env), Some(body)) =
+                (stack.upgrade(), env.upgrade(), body.upgrade())
+            else {
+                return;
+            };
+            if text.trim().is_empty() {
+                if let Some(back) = before.borrow_mut().take() {
+                    env.open(&back);
+                }
+                return;
+            }
+            let showing = stack.visible_child_name().map(|n| n.to_string());
+            if showing.as_deref() != Some(RESULTS) {
+                *before.borrow_mut() = showing;
+            }
+            fill_results(&env, &body, &text);
+            // No sidebar row stays selected under the hits (a selected row would show its page).
+            if let Some(side) = side.upgrade() {
+                side.unselect_all();
+            }
+            stack.set_visible_child_name(RESULTS);
+        })
+    };
+    {
+        let f = on_query.clone();
+        field.connect_search_changed(move |s| f(&s.text()));
     }
     {
         let env = env.clone();
         field.connect_activate(move |s| {
-            if let Some(first) = search(&s.text()).first() {
-                env.open(first);
+            if let Some(page) = search::enter_target(&s.text()) {
+                env.open(page);
             }
         });
     }
-    aw
+    (aw, field, on_query)
+}
+
+/// The hidden page that lists search hits.
+const RESULTS: &str = "Search Results";
+
+/// Search hits for `query`, grouped by page: each opens its page (the row's page for a row hit).
+fn fill_results(env: &Rc<Env>, body: &gtk::Box, query: &str) {
+    clear(body);
+    let found = hits(query);
+    if found.is_empty() {
+        body.append(&w::footnote(crate::copy::settings::SEARCH_NONE));
+        return;
+    }
+    let mut pages: Vec<&'static str> = Vec::new();
+    for h in &found {
+        if !pages.contains(&h.page) {
+            pages.push(h.page);
+        }
+    }
+    for page in pages {
+        let rows: Vec<gtk::Widget> = found
+            .iter()
+            .filter(|h| h.page == page)
+            .map(|h| {
+                // A row on a subpage names the subpage; the section already names the pane.
+                let (title, sub) = match h.row {
+                    Some(r) if search::parent(page) != page => (r, page),
+                    Some(r) => (r, ""),
+                    None => (page, ""),
+                };
+                let b = form::nav_row(icon_of(page), title, sub);
+                let open = env.opener(page);
+                b.connect_clicked(move |_| open());
+                b.upcast()
+            })
+            .collect();
+        body.append(&w::section(search::parent(page), &rows));
+    }
+}
+
+/// The sidebar icon of `page`, or of the pane it is reached from.
+fn icon_of(page: &str) -> &'static str {
+    let pane = search::parent(page);
+    SIDEBAR
+        .iter()
+        .flat_map(|g| g.iter())
+        .find(|p| p.title == pane)
+        .map_or("emblem-system-symbolic", |p| p.icon)
 }
 
 /// After each journaled change: "Wallpaper changed · Undo". Undo reverts every change made while
@@ -979,25 +1112,38 @@ impl Desk {
     pub(crate) fn get(&self) -> wol_core::hyprprefs::DesktopPrefs {
         self.cur.borrow().clone()
     }
-    /// Changes the prefs, saves them and applies the difference live; a failure shows on `status`.
-    pub(crate) fn set(
-        &self,
+    /// Changes the prefs, saves them and applies the difference live; a failure shows on `status`
+    /// and reads the saved prefs back (the next change must not save this one too), then calls
+    /// `failed()`: the pane puts its controls back to the saved prefs. A change that changes
+    /// nothing is not saved.
+    pub(crate) fn set_or(
+        self: &Rc<Self>,
         status: &gtk::Label,
         f: impl FnOnce(&mut wol_core::hyprprefs::DesktopPrefs),
+        failed: impl FnOnce() + 'static,
     ) {
+        let before = self.get();
         f(&mut self.cur.borrow_mut());
-        let st = status.clone();
+        if *self.cur.borrow() == before {
+            return;
+        }
+        let (st, me, failed) = (status.clone(), self.clone(), RefCell::new(Some(failed)));
         self.ctx.act(
             Action::Desktop(Box::new(self.get())),
             Rc::new(move |r| {
                 say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
                 if r.is_ok() {
                     changed("desktop");
+                } else {
+                    me.reload();
+                    if let Some(f) = failed.borrow_mut().take() {
+                        f()
+                    }
                 }
             }),
         );
     }
-    /// [`Desk::set`] for a switch: `done(ok)` after the save; a failure also reads the saved
+    /// [`Desk::set_or`] for a switch: `done(ok)` after the save; a failure also reads the saved
     /// prefs back, so the switch and the file agree again.
     pub(crate) fn set_switch(
         self: &Rc<Self>,
@@ -1036,6 +1182,8 @@ pub(crate) struct Keys {
     ctx: Rc<Ctx>,
     pub(crate) defaults: Vec<wol_core::shortcuts::Shortcut>,
     over: RefCell<wol_core::shortcuts::Overrides>,
+    /// The Keyboard Shortcuts page's re-sync, run after a failed save read the file back.
+    resync: RefCell<std::rc::Weak<dyn Fn()>>,
 }
 
 impl Keys {
@@ -1044,6 +1192,7 @@ impl Keys {
             ctx: ctx.clone(),
             defaults: wol_core::shortcuts::load_defaults(|p| std::fs::read_to_string(p).ok()),
             over: RefCell::new(wol_core::hyprprefs::load_overrides(&config(""))),
+            resync: RefCell::new(std::rc::Weak::<fn()>::new() as std::rc::Weak<dyn Fn()>),
         })
     }
     /// Every shortcut as it is now (defaults with changes, then custom ones).
@@ -1053,26 +1202,38 @@ impl Keys {
     pub(crate) fn overrides(&self) -> wol_core::shortcuts::Overrides {
         self.over.borrow().clone()
     }
-    /// Applies `f` to a copy of the overrides; on success saves and rebinds live.
+    /// Applies `f` to a copy of the overrides; on success saves and rebinds live. A failed save
+    /// reads the saved changes back and re-syncs the page ([`Keys::on_resync`]).
     pub(crate) fn edit(
-        &self,
+        self: &Rc<Self>,
         status: &gtk::Label,
         f: impl FnOnce(&mut wol_core::shortcuts::Overrides) -> Result<(), wol_core::shortcuts::Refused>,
     ) -> Result<(), wol_core::shortcuts::Refused> {
         let mut o = self.overrides();
         f(&mut o)?;
         *self.over.borrow_mut() = o.clone();
-        let st = status.clone();
+        let (st, me) = (status.clone(), self.clone());
         self.ctx.act(
             Action::Shortcuts(Box::new(o)),
             Rc::new(move |r| {
                 say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
                 if r.is_ok() {
                     changed("shortcuts");
+                } else {
+                    me.reload();
+                    let resync = me.resync.borrow().upgrade();
+                    if let Some(f) = resync {
+                        f()
+                    }
                 }
             }),
         );
         Ok(())
+    }
+    /// What puts the page's controls back to [`Keys::list`] after a failed save (held weakly:
+    /// the page keeps it alive).
+    pub(crate) fn on_resync(&self, f: &Rc<dyn Fn()>) {
+        *self.resync.borrow_mut() = Rc::downgrade(f);
     }
     /// Reads the saved changes again (after an undo).
     fn reload(&self) {
@@ -1117,7 +1278,9 @@ fn dropdown(options: &[&str], selected: usize, changed: impl Fn(usize) + 'static
 
 /// Shell prefs file (shell.json), written then announced to the running shell (`reload`).
 fn save_shell(p: ShellPrefs) -> bool {
-    let ok = save_journaled("shell", prefs::SHELL_FILE, Some(&p.to_json())).is_ok();
+    // The bar and Dock layout (W2-C) is kept: only the prefs change.
+    let text = prefs::keep_layout(read(&config(prefs::SHELL_FILE)).as_deref(), p);
+    let ok = save_journaled("shell", prefs::SHELL_FILE, Some(&text)).is_ok();
     if ok {
         reload_shell();
     }
@@ -1174,7 +1337,16 @@ mod tests {
             assert!(search(q).contains(&want), "{q}: {:?}", search(q));
         }
         assert!(search("no such thing").is_empty());
-        assert_eq!(search("").len(), 24, "empty query lists every pane");
+        assert_eq!(
+            search("").len(),
+            PAGES.len(),
+            "empty query lists every pane"
+        );
+        assert!(search("balance").contains(&"Sound"), "a row finds its pane");
+        assert!(
+            search("secure boot").contains(&"Privacy & Security"),
+            "a subpage row finds the pane it is reached from"
+        );
     }
 
     #[test]

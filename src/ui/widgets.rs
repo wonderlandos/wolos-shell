@@ -1155,6 +1155,11 @@ const BATTERY_EVERY: u64 = 2 * 60;
 /// CPU samples a System chart shows (5 minutes).
 const CPU_SAMPLES: usize = 30;
 
+/// A desktop is covered (its widgets pause) by a maximized or full-screen window.
+fn covers(mode: crate::hypr::Fullscreen) -> bool {
+    mode != crate::hypr::Fullscreen::None
+}
+
 struct Live {
     board: Rc<Board>,
     sys: Rc<dyn crate::system::System>,
@@ -1571,19 +1576,53 @@ impl Live {
         }
     }
 
-    /// Pauses the widgets while a window covers the desktop (maximized or full screen). The
-    /// state comes from the shell's one Hyprland event reader (`ui::ipc::hypr_events`, read off
-    /// the GTK thread): no private `.socket2.sock` reader, no request here (R2A-14, R2A-17).
+    /// Pauses the widgets while a window covers this display's desktop (maximized or full
+    /// screen). Each display follows its own output's workspace (audit5 S6-2), not the focused
+    /// one. The state comes from the shell's one compositor event reader (`ui::ipc::hypr_events`,
+    /// read off the GTK thread): no private `.socket2.sock` reader, no request here (R2A-14,
+    /// R2A-17).
     fn watch_fullscreen(self: &Rc<Self>) {
-        use crate::hypr::Fullscreen;
-        self.set_paused(crate::hypr::fullscreen_state() != Fullscreen::None);
+        self.follow_fullscreen();
         let me = Rc::downgrade(self);
-        crate::hypr::on_fullscreen_change(move |mode| {
+        crate::hypr::on_fullscreen_change(move |_| {
             // A display's desktop unplugged: its hook does nothing from then on.
             if let Some(l) = me.upgrade() {
-                l.set_paused(mode != Fullscreen::None);
+                l.follow_fullscreen();
             }
         });
+        let me = Rc::downgrade(self);
+        crate::hypr::on_monitor_fullscreen_change(move || {
+            if let Some(l) = me.upgrade() {
+                l.follow_fullscreen();
+            }
+        });
+        // The connector is known once the surface is on an output (and changes when the main
+        // board moves with the main display): look again then, not only on the next change.
+        if let Some(win) = self.board.win.borrow().clone() {
+            let me = Rc::downgrade(self);
+            win.connect_realize(move |win| {
+                let Some(surf) = win.surface() else { return };
+                let me = me.clone();
+                surf.connect_enter_monitor(move |_, _| {
+                    if let Some(l) = me.upgrade() {
+                        l.follow_fullscreen();
+                    }
+                });
+            });
+        }
+    }
+
+    /// The output this board's surface is on (its connector); None before it is mapped.
+    fn connector(&self) -> Option<String> {
+        let win = self.board.win.borrow().clone()?;
+        let surf = win.surface()?;
+        let mon = gtk::prelude::WidgetExt::display(&win).monitor_at_surface(&surf)?;
+        Some(mon.connector()?.to_string())
+    }
+
+    fn follow_fullscreen(self: &Rc<Self>) {
+        let mode = crate::hypr::monitor_fullscreen(self.connector().as_deref());
+        self.set_paused(covers(mode));
     }
 
     fn read_system(self: &Rc<Self>) {
@@ -2101,5 +2140,22 @@ mod gallery_tests {
             (0, 444)
         );
         assert_eq!(gallery_margins(std::iter::empty(), 1920, 24), (0, 0));
+    }
+}
+
+#[cfg(test)]
+mod fullscreen_tests {
+    use super::covers;
+    use crate::hypr::{self, Fullscreen};
+
+    #[test]
+    fn each_display_follows_its_own_output() {
+        let modes = [
+            ("A".to_string(), Fullscreen::Maximized),
+            ("B".to_string(), Fullscreen::None),
+        ];
+        hypr::set_monitor_fullscreen(modes.into_iter().collect());
+        assert!(covers(hypr::monitor_fullscreen(Some("A"))));
+        assert!(!covers(hypr::monitor_fullscreen(Some("B"))), "B stays live");
     }
 }

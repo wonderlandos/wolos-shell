@@ -7,8 +7,9 @@ use wol_core::shortcuts::{Combo, Custom, Group, Refused, Shortcut};
 
 pub const TITLE: &str = "Keyboard Shortcuts";
 
-/// Recorders by shortcut id, re-synced after every change (a swap moves two at once).
-type Recorders = Rc<RefCell<Vec<(String, form::ShortcutRecorder)>>>;
+/// Recorders and their Reset buttons by shortcut id, re-synced after every change (a swap moves
+/// two at once; Restore Defaults moves all).
+type Recorders = Rc<RefCell<Vec<(String, form::ShortcutRecorder, gtk::Button)>>>;
 
 /// What each modifier symbol means on PC keyboards (Super acts as Command), shown once on top.
 pub const KEY_LEGEND: [(&str, &str); 4] = [
@@ -30,13 +31,11 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         let (keys, recorders) = (keys.clone(), recorders.clone());
         Rc::new(move || {
             let list = keys.list();
-            for (id, r) in recorders.borrow().iter() {
-                r.set(
-                    list.iter()
-                        .find(|s| &s.id == id)
-                        .and_then(|s| s.combo.as_ref()),
-                );
+            for (id, r, reset) in recorders.borrow().iter() {
+                let s = list.iter().find(|s| &s.id == id);
+                r.set(s.and_then(|s| s.combo.as_ref()));
                 r.set_conflict(false);
+                reset.set_visible(s.is_some_and(changed));
             }
         })
     };
@@ -91,14 +90,32 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&groups);
     fill_custom(ctx, keys, &custom, &recorders, &sync, &status);
     p.append(&custom);
-    let (k, st, sy, c, cu, rec) = (
-        keys.clone(),
-        status.clone(),
-        sync.clone(),
-        ctx.clone(),
-        custom.clone(),
-        recorders.clone(),
-    );
+    // Every row from Keys again: after Restore Defaults, and after a save that failed (Keys read
+    // the file back). Keys holds it weakly; the Restore Defaults button keeps it alive.
+    let resync: Rc<dyn Fn()> = {
+        let (k, st, sy, c, cu, rec) = (
+            Rc::downgrade(keys),
+            status.downgrade(),
+            sync.clone(),
+            Rc::downgrade(ctx),
+            custom.downgrade(),
+            Rc::downgrade(&recorders),
+        );
+        Rc::new(move || {
+            sy();
+            if let (Some(k), Some(st), Some(c), Some(cu), Some(rec)) = (
+                k.upgrade(),
+                st.upgrade(),
+                c.upgrade(),
+                cu.upgrade(),
+                rec.upgrade(),
+            ) {
+                fill_custom(&c, &k, &cu, &rec, &sy, &st);
+            }
+        })
+    };
+    keys.on_resync(&resync);
+    let (k, st) = (keys.clone(), status.clone());
     let restore = w::button("Restore Defaults", w::Kind::Default, move || {
         if k.edit(&st, |o| {
             o.restore_defaults();
@@ -106,8 +123,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         })
         .is_ok()
         {
-            sy();
-            fill_custom(&c, &k, &cu, &rec, &sy, &st);
+            resync();
         }
     });
     restore.set_halign(gtk::Align::End);
@@ -229,7 +245,7 @@ fn shortcut_row(
     trailing.append(&r.button);
     b.append(&form::row(&s.name, "", &trailing));
     b.append(&notice_slot);
-    recorders.borrow_mut().push((id, r));
+    recorders.borrow_mut().push((id, r, reset));
     b.upcast()
 }
 
@@ -259,7 +275,7 @@ fn fill_custom(
     clear(holder);
     recorders
         .borrow_mut()
-        .retain(|(id, _)| !id.starts_with("custom-"));
+        .retain(|(id, ..)| !id.starts_with("custom-"));
     let list = keys.list();
     let mut rows: Vec<gtk::Widget> = Vec::new();
     for s in list.iter().filter(|s| s.group == Group::Custom) {

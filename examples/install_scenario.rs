@@ -2,6 +2,8 @@
 //! For the VM tests (`wolos-iso/tests/test-installer.sh`): walks the installer's steps as a person would,
 //! on a real disk's probe, and writes the plan the app would.
 //! `install_scenario <scenario> <probe.json> <plan dir>`; prints the summary.
+//! Scenarios: erase, password, tpm, alongside, encrypted-alongside, manual, manual-ext4,
+//! replace (the partition named `linuxroot`), replace-wolos (the old WolOS partition).
 use shell::install::flow::{Flow, Found, Method, Next, Row, Step, Use, manual_lines};
 use shell::install::{Check, write_plan};
 use shell::setup::Hints;
@@ -16,6 +18,25 @@ fn part_labelled(f: &Flow, label: &str) -> String {
     p.unwrap_or_else(|| panic!("no partition {label}"))
         .uuid
         .clone()
+}
+
+/// The old WolOS, as a person finds it in Replace's list: the one candidate the installer
+/// knows as a WolOS system partition (`Part::is_wolos_root`: its GPT name or file system label).
+fn wolos_slot(f: &Flow) -> String {
+    let d = f.disk().unwrap();
+    let slots: Vec<String> = f
+        .replace_candidates()
+        .into_iter()
+        .map(|c| c.0)
+        .filter(|u| d.parts.iter().any(|p| &p.uuid == u && p.is_wolos_root()))
+        .collect();
+    assert_eq!(
+        slots.len(),
+        1,
+        "Replace lists {} WolOS partitions",
+        slots.len()
+    );
+    slots[0].clone()
 }
 
 fn esp(f: &Flow) -> String {
@@ -99,6 +120,12 @@ fn main() {
             f.replace = Some(old);
             must(&mut f, Step::Protect);
         }
+        "replace-wolos" => {
+            f.method = Method::Replace;
+            must(&mut f, Step::Replace);
+            f.replace = Some(wolos_slot(&f));
+            must(&mut f, Step::Protect);
+        }
         s => panic!("no scenario {s}"),
     }
     f.protect = match scenario {
@@ -112,6 +139,8 @@ fn main() {
     f.draft.set_full_name("Alice Liddell");
     f.draft.password = "curiouser".into();
     f.draft.verify = "curiouser".into();
+    // No module records here, so no Modules page; the media formats stay off.
+    must(&mut f, Step::Extras);
     must(&mut f, Step::Summary);
     for l in f.summary() {
         println!("summary: {l}");

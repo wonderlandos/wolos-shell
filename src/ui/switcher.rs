@@ -3,7 +3,7 @@
 //! Super+Tab opens/advances, Super+Shift+Tab goes back, releasing Super focuses (see `switcher::op`).
 use crate::kit::surface::{Keyboard, Spec};
 use crate::kit::widgets as w;
-use crate::switcher::{self, App, Cycle, Op};
+use crate::switcher::{self, App, CancelOpen, Cycle, Op};
 use gtk::{gdk, glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -35,7 +35,7 @@ impl Reopen {
 }
 
 /// Centred overlay that takes the keyboard on demand, not exclusively: with an exclusive layer
-/// mapped Hyprland refuses `focuswindow`, so the selection could only be focused 60 ms after the
+/// mapped the compositor refuses `focuswindow`, so the selection could only be focused 60 ms after the
 /// strip unmapped, and the old window came forward first (`switcher::commit`).
 pub const SPEC: Spec = Spec::panel("wol-panel-switcher", [false; 4], Keyboard::OnDemand);
 
@@ -87,7 +87,7 @@ impl Strip {
     }
 }
 
-/// Keys pressed while the strip waits for Hyprland's client list (read off the UI thread, audit2
+/// Keys pressed while the strip waits for the compositor's client list (read off the UI thread, audit2
 /// A2-10): Tabs move the selection once the list is there, a Super release commits at once.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Queued {
@@ -133,6 +133,8 @@ pub struct Switcher {
     /// Some while a commit focuses the selection (off the UI thread): an ⌘Tab meanwhile opens a
     /// fresh strip after the hide (audit3 R2A-3).
     committing: Cell<Option<Reopen>>,
+    /// A Super release that found nothing open cancels the show racing behind it (audit4 S5-3).
+    cancel: Cell<CancelOpen>,
 }
 
 impl Switcher {
@@ -147,6 +149,7 @@ impl Switcher {
             strip: Default::default(),
             opening: Cell::new(None),
             committing: Cell::new(None),
+            cancel: Cell::new(CancelOpen::default()),
         });
         // Fallback when the compositor forwards keys instead of running the binds.
         let keys = gtk::EventControllerKey::new();
@@ -191,7 +194,10 @@ impl Switcher {
         }
         // Opening counts as open: a Tab or the Super release during the read is queued.
         let open = self.window.is_visible() || self.opening.get().is_some();
-        self.run(switcher::op(verb, target, open));
+        let mut cancel = self.cancel.get();
+        let op = cancel.filter(verb, target, open, std::time::Instant::now());
+        self.cancel.set(cancel);
+        self.run(op);
         true
     }
 
@@ -274,7 +280,7 @@ impl Switcher {
 mod tests {
     use super::*;
 
-    /// Live Hyprland 0.56: an exclusive switcher could not hand focus to the selection while
+    /// Live on the compositor 0.56: an exclusive switcher could not hand focus to the selection while
     /// mapped; on demand it can, and the refocus after its unmap lands on the selection.
     #[test]
     fn the_switcher_takes_the_keyboard_on_demand() {

@@ -171,9 +171,44 @@ fn icon_theme(dirs: &[&str], exists: impl Fn(&str) -> bool) -> &'static str {
     }
 }
 
+/// Repo checkout of the icon set (dev, goldens): design/icons laid out as a theme named WolOS in
+/// a per-checkout temp dir (links to design/icons/*, index.theme = design/icons/dev.theme from
+/// design/tools/icons.py), so the shell draws our symbolics instead of Adwaita's of the same name.
+/// None on an installed system (/usr/share/icons/WolOS) or without the design/ tree.
+fn dev_icon_root() -> Option<std::path::PathBuf> {
+    use std::path::Path;
+    let icons = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons"));
+    let index = icons.join("dev.theme");
+    if Path::new("/usr/share/icons/WolOS/index.theme").is_file() || !index.is_file() {
+        return None;
+    }
+    let key = icons
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        });
+    let root = std::env::temp_dir().join(format!("wolos-dev-icons-{key:016x}"));
+    let theme = root.join(PRODUCT_ICONS);
+    std::fs::create_dir_all(&theme).ok()?;
+    for d in ["symbolic", "apps", "places", "devices", "mimetypes"] {
+        let link = theme.join(d);
+        if !link.exists() {
+            let _ = std::fs::remove_file(&link);
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(icons.join(d), &link);
+        }
+    }
+    std::fs::copy(&index, theme.join("index.theme")).ok()?;
+    Some(root)
+}
+
 /// WolOS icons: installed share dir, else the repo's design/ tree (dev).
 fn icons(display: &gdk::Display) {
     let theme = gtk::IconTheme::for_display(display);
+    if let Some(root) = dev_icon_root() {
+        theme.add_search_path(&root);
+    }
     let dirs: Vec<String> = theme
         .search_path()
         .iter()

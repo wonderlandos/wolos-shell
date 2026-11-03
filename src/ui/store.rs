@@ -13,7 +13,12 @@ use std::rc::Rc;
 use wol_core::package;
 use wol_core::store::{self, App, Category};
 
-pub const PAGES: [&str; 6] = ["Discover", "Create", "Work", "Play", "Develop", "Updates"];
+pub const PAGES: [&str; 8] = [
+    "Discover", "Create", "Work", "Play", "Develop", "Kits", "Plugins", "Updates",
+];
+
+#[path = "store_plugins.rs"]
+pub mod plugins;
 
 /// Machine facts the store reads (injected so goldens do not depend on the build host).
 #[derive(Clone, Debug)]
@@ -97,8 +102,10 @@ pub struct Store {
     show_package: Rc<dyn Fn(Option<PackageFile>)>,
     /// The details page: `None` reads the details off the UI thread first.
     show_details: Rc<dyn Fn(Subject, Option<Loaded>)>,
-    /// The AUR tab's lock.
+    /// The Community tab's lock.
     pub aur: Rc<AurGate>,
+    /// Shows a listing on the Plugins page.
+    show_plugins: Rc<dyn Fn(plugins::Listing)>,
 }
 
 impl Store {
@@ -143,6 +150,12 @@ impl Store {
     /// Details page with details already read (goldens).
     pub fn show_details(&self, s: Subject, l: Loaded) {
         (self.show_details)(s, Some(l));
+    }
+
+    /// The Plugins page with this listing, without downloading (goldens).
+    pub fn show_plugins(&self, l: plugins::Listing) {
+        (self.show_plugins)(l);
+        self.aw.select("Plugins");
     }
 
     /// Install page for an already checked file (goldens).
@@ -416,9 +429,9 @@ fn remove_action(target: &str, flathub: bool, system: bool) -> Action {
 
 fn launch(target: &str, flathub: bool, desktop: Option<&str>) {
     if flathub {
-        kit::spawn(&["flatpak".into(), "run".into(), target.into()]);
+        kit::spawn_app(&["flatpak".into(), "run".into(), target.into()]);
     } else if let Some(d) = desktop {
-        kit::spawn(&["gtk4-launch".into(), d.into()]);
+        kit::spawn_app(&["gtk4-launch".into(), d.into()]);
     }
 }
 
@@ -607,16 +620,16 @@ fn flathub_tile(sh: &Rc<Shared>, h: &wol_core::flatpak::Hit) -> gtk::Widget {
     t.root.upcast()
 }
 
-/// An AUR package: no Get button here, because building one is a decision made in Terminal.
+/// A community package: no Get button here, because building one is a decision made in Terminal.
 fn aur_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
     let t = w::AppTile::new(&w::store_icon(&h.name, w::ICON_L), &h.name, &h.summary);
-    t.set_source("AUR");
+    t.set_source("Community");
     t.action.set_visible(false);
     open_on_click(sh, &t.root, Subject::aur(h));
     t.root.upcast()
 }
 
-/// What the states and flags mean, under the AUR's results.
+/// What the states and flags mean, under the community results.
 fn legend() -> gtk::Box {
     use crate::packages::{FLAGS, SEVERITIES, STATES};
     let b = w::vbox(w::S6);
@@ -643,11 +656,11 @@ fn severity_icon(level: &str) -> &'static str {
     }
 }
 
-/// Why the AUR tab wants a password.
+/// Why the Community tab wants a password.
 const AUR_WHY: &str =
-    "The AUR holds packages nobody at WolOS reviewed. Enter your password to open it.";
+    "Community packages are not reviewed by WolOS. Enter your password to open them.";
 
-/// The AUR tab: the warning always, the packages only after wol-admind has checked a password.
+/// The Community tab: the warning always, the packages only after wol-admind has checked a password.
 pub struct AurGate {
     locked: gtk::Box,
     open: gtk::Box,
@@ -692,9 +705,9 @@ fn ask_aur(sh: &Rc<Shared>, gate: &Rc<AurGate>) {
     );
 }
 
-/// The AUR's own page: apart from the catalogue and from search, its risk before any name.
+/// The Community page: apart from the catalogue and from search, its risk before any name.
 fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
-    let p = w::page("AUR");
+    let p = w::page("Community");
     p.append(&w::section(
         "Before You Open",
         &[note_row(
@@ -705,7 +718,7 @@ fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
     ));
     let locked = w::vbox(w::S2);
     locked.append(&w::label(
-        "The AUR stays locked until you enter your password.",
+        "Community packages stay locked until you enter your password.",
         "secondary",
     ));
     let open = w::vbox(w::S2);
@@ -729,7 +742,7 @@ fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
     }
     let found = w::vbox(w::S2);
     let entry = gtk::SearchEntry::new();
-    entry.set_placeholder_text(Some("Search the AUR"));
+    entry.set_placeholder_text(Some("Search community packages"));
     let (sh2, f3) = (sh.clone(), found.clone());
     entry.connect_search_changed(move |e| {
         while let Some(c) = f3.first_child() {
@@ -794,7 +807,7 @@ pub fn audit_section(a: &crate::packages::Audit) -> gtk::Box {
     b
 }
 
-/// The AUR's part of a details page: the risk, the way to install it, and the check on request.
+/// A community package's part of a details page: the risk, the way to install it, and the check on request.
 fn aur_details(page: &gtk::Box, s: &Subject) {
     let how = format!(
         "To install it, run wopkg install {} in Terminal, where you can read what it does first.",
@@ -957,6 +970,159 @@ fn category(sh: &Rc<Shared>, c: Category) -> gtk::Box {
     p
 }
 
+/// What a kit's Get button says: like an app's, but a kit has nothing to open.
+pub fn kit_label(s: w::TileState) -> String {
+    match s {
+        w::TileState::Open => "Added".into(),
+        s => button_label(s),
+    }
+}
+
+/// A part's row icon: what kind of thing it lets people play or read.
+pub fn part_icon(k: &store::Kit, p: &store::KitPart) -> &'static str {
+    if k.source != store::KitSource::Packages {
+        "applications-graphics-symbolic"
+    } else if p
+        .packages
+        .iter()
+        .any(|n| n.starts_with("ttf-") || n.starts_with("noto-"))
+    {
+        "preferences-desktop-locale-symbolic"
+    } else if p
+        .packages
+        .iter()
+        .any(|n| matches!(*n, "x264" | "x265" | "libde265"))
+    {
+        "video-display-symbolic"
+    } else {
+        "audio-x-generic-symbolic"
+    }
+}
+
+/// Whether a kit is already here: a packages kit when every one of its packages is installed, a
+/// wopkg kit when its recipe is. `pacman` and `recipes` come from wopkg's installed view.
+pub fn kit_installed(
+    k: &store::Kit,
+    pacman: &std::collections::HashSet<String>,
+    recipes: &std::collections::HashSet<String>,
+) -> bool {
+    match k.source {
+        store::KitSource::Packages => {
+            let p = k.packages();
+            !p.is_empty() && p.iter().all(|n| pacman.contains(*n))
+        }
+        store::KitSource::Wopkg(r) => recipes.contains(r),
+    }
+}
+
+/// [`kit_installed`] on this computer (reads the package database folders; worker thread only).
+fn kit_installed_here(k: &store::Kit) -> bool {
+    wopkg::context::Context::new(Default::default())
+        .map(|c| {
+            let i = c.installed();
+            kit_installed(k, &i.pacman, &i.recipes)
+        })
+        .unwrap_or(false)
+}
+
+/// Get on a kit: one wol-admind `pkg-install <kit id>` (one approval for every part), or a wopkg
+/// install for this account. Nothing is ever ticked or installed before the person clicks.
+fn wire_kit(sh: &Rc<Shared>, k: &'static store::Kit, b: &gtk::Button) {
+    let b2 = b.clone();
+    let set: Rc<dyn Fn(w::TileState)> = Rc::new(move |s| {
+        b2.set_sensitive(!s.busy() && s != w::TileState::Open);
+        b2.set_label(&kit_label(s));
+    });
+    // The start state: worked out off the GTK thread, so a kit got before says Added.
+    {
+        let (tx, rx) = async_channel::bounded(1);
+        std::thread::spawn(move || {
+            let _ = tx.send_blocking(kit_installed_here(k));
+        });
+        let (set, b) = (set.clone(), b.clone());
+        glib::spawn_future_local(async move {
+            // Only over the untouched Get: a click made meanwhile owns the button.
+            if rx.recv().await.unwrap_or(false)
+                && b.is_sensitive()
+                && b.label().as_deref() == Some(kit_label(w::TileState::Get).as_str())
+            {
+                set(w::TileState::Open);
+            }
+        });
+    }
+    let sh = sh.clone();
+    b.connect_clicked(move |_| match k.wopkg_args() {
+        None => run_store_action(
+            &sh,
+            install_action(k.id, false, false),
+            progress_path(k.id, false),
+            set.clone(),
+            Rc::new(std::cell::Cell::new(false)),
+            true,
+            k.name.into(),
+        ),
+        Some(args) => {
+            set(w::TileState::Installing);
+            say(&sh.status, "");
+            let (tx, rx) = async_channel::bounded(1);
+            std::thread::spawn(move || {
+                let a: Vec<&str> = args.iter().map(String::as_str).collect();
+                let _ = tx.send_blocking(crate::packages::wopkg_verb(&a));
+            });
+            let (set, st) = (set.clone(), sh.status.clone());
+            glib::spawn_future_local(async move {
+                let ok = rx.recv().await.unwrap_or(false);
+                if !ok {
+                    say(&st, crate::copy::STORE_NOT_FINISHED);
+                }
+                set(if ok {
+                    w::TileState::Open
+                } else {
+                    w::TileState::Get
+                });
+            });
+        }
+    });
+}
+
+/// Kits (ADR 0032 B): a set of parts in one tile and one click, the most wanted part first.
+fn kits(sh: &Rc<Shared>) -> gtk::Box {
+    let p = w::page("Kits");
+    let intro = w::label(crate::copy::STORE_KITS_INTRO, "secondary");
+    intro.set_wrap(true);
+    p.append(&intro);
+    // Only kits that can apply here: a wopkg kit without its recipe is not shown.
+    let dirs = store::recipe_dirs(std::env::var("WOPKG_RECIPES").ok().as_deref());
+    for k in store::shown_kits(&dirs) {
+        let head = w::hbox(w::S3);
+        head.append(&w::app_icon(k.icon, w::ICON_L));
+        let text = w::vbox(0);
+        text.set_hexpand(true);
+        text.set_valign(gtk::Align::Center);
+        text.append(&w::label(k.name, "title"));
+        let sum = w::label(k.summary, "secondary");
+        sum.set_wrap(true);
+        text.append(&sum);
+        head.append(&text);
+        let get = gtk::Button::with_label(&kit_label(w::TileState::Get));
+        get.add_css_class("get-button");
+        get.set_valign(gtk::Align::Center);
+        wire_kit(sh, k, &get);
+        head.append(&get);
+        p.append(&head);
+        let parts: Vec<gtk::Widget> = k
+            .parts
+            .iter()
+            .map(|part| note_row(part_icon(k, part), part.name, part.why))
+            .collect();
+        p.append(&w::section("", &parts));
+        let note = w::label(k.note, "secondary");
+        note.set_wrap(true);
+        p.append(&note);
+    }
+    p
+}
+
 fn updates(sh: &Rc<Shared>) -> gtk::Box {
     let p = w::page("Updates");
     let ic = w::icon("software-update-available-symbolic", w::ICON_M);
@@ -1021,12 +1187,8 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
                         list.append(&w::list_row("package-x-generic-symbolic", n, "", None));
                     }
                     (
-                        format!(
-                            "{} update{} available",
-                            v.len(),
-                            if v.len() == 1 { "" } else { "s" }
-                        ),
-                        "WolOS saves a restore point before updating.".into(),
+                        crate::copy::updates_available(v.len()),
+                        crate::copy::UPDATE_RESTORE_POINT.into(),
                     )
                 }
                 UpdateState::Installing => (
@@ -1244,12 +1406,12 @@ fn fill_package(sh: &Rc<Shared>, page: &gtk::Box, f: Option<PackageFile>) {
             .map(|(i, l)| w::list_row(i, l, "", None).upcast())
             .collect()
     };
-    page.append(&w::section("What it uses", &rows));
+    page.append(&w::section("What It Uses", &rows));
     let installed = Rc::new(std::cell::Cell::new(s.button == "Open"));
     let (sh, id, path, label) = (sh.clone(), v.info.id.clone(), f.path.clone(), s.button);
     get.connect_clicked(move |b| {
         if installed.get() {
-            kit::spawn(&["gtk4-launch".into(), id.clone()]);
+            kit::spawn_app(&["gtk4-launch".into(), id.clone()]);
             return;
         }
         b.set_sensitive(false);
@@ -1294,7 +1456,7 @@ pub struct Subject {
     pub desktop: Option<&'static str>,
     /// The native package (`pacman -Si`, Arch's AppStream).
     pub pkg: Option<String>,
-    /// Only the AUR has it: built here, reviewed by nobody.
+    /// Only the community package collection has it: built here, reviewed by nobody.
     pub aur: bool,
 }
 
@@ -1448,7 +1610,7 @@ pub fn info_rows(s: &Subject, l: &Loaded) -> Vec<(&'static str, String)> {
     v.push((
         "Source",
         if s.aur {
-            "AUR"
+            "Community"
         } else if s.flathub {
             "Flathub"
         } else {
@@ -1874,7 +2036,7 @@ fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Loaded) {
                 w::list_row(crate::ui::flatpak_consent::perm_icon(p), &title, &sub, None).upcast()
             })
             .collect();
-        page.append(&w::section("What it can do", &rows));
+        page.append(&w::section("What It Can Do", &rows));
     }
 }
 
@@ -1905,13 +2067,16 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
     ] {
         aw.source_item(icon, c.name(), &category(&sh, c));
     }
+    aw.source_item("view-app-grid-symbolic", "Kits", &kits(&sh));
+    let (plugins_page, show_plugins) = plugins::page(&sh);
+    aw.source_item("wolos-widgets-symbolic", "Plugins", &plugins_page);
     aw.source_item(
         "software-update-available-symbolic",
         "Updates",
         &updates(&sh),
     );
     let (aur, aur_gate) = aur_page(&sh);
-    aw.source_item("package-x-generic-symbolic", "AUR", &aur);
+    aw.source_item("package-x-generic-symbolic", "Community", &aur);
     let results = w::vbox(w::S6);
     results.add_css_class("page");
     aw.hidden_page("Search", &results);
@@ -2029,6 +2194,7 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
     }
     Store {
         aur: aur_gate,
+        show_plugins,
         aw,
         search,
         show_results,
@@ -2082,6 +2248,63 @@ mod tests {
         assert_eq!(button_label(w::TileState::Open), "Open");
         assert!(w::TileState::Progress(0).busy() && w::TileState::Installing.busy());
         assert!(!w::TileState::Open.busy());
+    }
+
+    #[test]
+    fn kits_already_here_start_as_added() {
+        use std::collections::HashSet;
+        let codecs = store::kit("codecs-kit").unwrap();
+        let craft = store::kit("craft-suite").unwrap();
+        let all: HashSet<String> = codecs.packages().iter().map(|n| n.to_string()).collect();
+        let mut some = all.clone();
+        some.remove(codecs.packages()[0]);
+        let none = HashSet::new();
+        assert!(kit_installed(codecs, &all, &none));
+        assert!(!kit_installed(codecs, &some, &none));
+        let craft_recipe: HashSet<String> = ["craft-launcher".to_string()].into();
+        assert!(kit_installed(craft, &none, &craft_recipe));
+        assert!(!kit_installed(craft, &all, &none));
+    }
+
+    #[test]
+    fn kits_install_in_one_step_and_have_nothing_to_open() {
+        assert_eq!(kit_label(w::TileState::Get), "Get");
+        assert_eq!(kit_label(w::TileState::Progress(7)), "7%");
+        assert_eq!(kit_label(w::TileState::Open), "Added");
+        let codecs = store::kit("codecs-kit").unwrap();
+        // One wol-admind request for the whole kit: the daemon resolves the kit id itself.
+        assert_eq!(
+            install_action(codecs.id, false, false),
+            Action::PkgInstall("codecs-kit".into())
+        );
+        let icons: Vec<&str> = codecs.parts.iter().map(|p| part_icon(codecs, p)).collect();
+        assert_eq!(
+            icons,
+            [
+                "audio-x-generic-symbolic",
+                "audio-x-generic-symbolic",
+                "video-display-symbolic",
+                "video-display-symbolic",
+                "audio-x-generic-symbolic",
+                "preferences-desktop-locale-symbolic",
+            ]
+        );
+        let craft = store::kit("craft-suite").unwrap();
+        assert_eq!(
+            part_icon(craft, &craft.parts[0]),
+            "applications-graphics-symbolic"
+        );
+        assert!(PAGES.contains(&"Kits") && PAGES.contains(&"Plugins"));
+        // Every kit draws its own pixel tile, never the generic package icon.
+        for k in store::KITS {
+            assert!(k.icon.starts_with("wolos-kit-"), "{}", k.id);
+            assert!(
+                crate::kit::icon_file(k.icon).is_some(),
+                "{} has no {}.svg",
+                k.id,
+                k.icon
+            );
+        }
     }
 
     #[test]

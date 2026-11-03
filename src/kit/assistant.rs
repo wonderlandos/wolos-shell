@@ -349,6 +349,7 @@ pub struct Choice {
 pub struct ChoiceList {
     pub root: gtk::ScrolledWindow,
     checks: Rc<Vec<gtk::Image>>,
+    buttons: Vec<gtk::Button>,
 }
 
 fn check_only(checks: &[gtk::Image], i: usize) {
@@ -417,11 +418,22 @@ impl ChoiceList {
                 picked(i);
             });
         }
-        ChoiceList { root, checks }
+        ChoiceList {
+            root,
+            checks,
+            buttons,
+        }
     }
 
     pub fn select(&self, i: usize) {
         check_only(&self.checks, i);
+    }
+
+    /// Clicks row `i` as the person would: checks it and runs `picked` (goldens, tests).
+    pub fn pick(&self, i: usize) {
+        if let Some(b) = self.buttons.get(i) {
+            b.emit_clicked();
+        }
     }
 }
 
@@ -444,12 +456,6 @@ pub fn problem_line() -> gtk::Label {
     p.set_wrap(true);
     p.set_visible(false);
     p
-}
-
-/// Shows or hides a [`problem_line`].
-pub fn set_problem(p: &gtk::Label, text: &str) {
-    p.set_label(text);
-    p.set_visible(!text.is_empty());
 }
 
 /// Avatar CSS class for a tone (`AVATAR_TONES`), e.g. `avatar-tone-green`.
@@ -719,9 +725,15 @@ pub fn lines(texts: &[String]) -> gtk::ScrolledWindow {
         l.set_xalign(0.0);
         list.append(&l);
     }
+    list_scroller(&list)
+}
+
+/// The assistant's framed list box, [`ROWS`] rows tall, scrolling past that (the summary, the
+/// optional modules).
+pub fn list_scroller(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     let h = ROW * ROWS;
     let root = gtk::ScrolledWindow::builder()
-        .child(&list)
+        .child(child)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .min_content_height(h)
         .max_content_height(h)

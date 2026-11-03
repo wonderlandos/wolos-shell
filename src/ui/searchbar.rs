@@ -119,7 +119,7 @@ fn launch(exec: &[String]) {
                 crate::app_session::open_row(pid, key);
             }
         }
-        _ => kit::spawn(exec),
+        _ => kit::spawn_app(exec),
     }
 }
 

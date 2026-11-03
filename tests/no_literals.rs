@@ -18,12 +18,25 @@ const SIZED_CALLS: [&str; 12] = [
 ];
 const ICON_CALLS: [&str; 3] = ["icon(", "app_icon(", "avatar("];
 
+/// `rgb(`/`rgba(` written as a colour (`"rgba(0,0,0,.5)"`), not a method or function whose name
+/// ends in it (`ink.rgb()`, `cr.set_source_rgb(r, g, b)`: values from elsewhere).
+fn colour_call(code: &str) -> bool {
+    ["rgba(", "rgb("].iter().any(|c| {
+        code.match_indices(c).any(|(i, _)| {
+            !code[..i]
+                .chars()
+                .next_back()
+                .is_some_and(|b| b.is_alphanumeric() || b == '_' || b == '.')
+        })
+    })
+}
+
 fn violations(src: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (n, line) in src.lines().enumerate() {
         let code = line.split("//").next().unwrap_or("");
         let hit = |why: &str| format!("line {}: {why}: {}", n + 1, line.trim());
-        if code.contains("rgba(") || code.contains("rgb(") {
+        if colour_call(code) {
             out.push(hit("colour literal"));
         }
         if let Some(i) = code.find('#') {
@@ -70,6 +83,8 @@ fn detector_catches_literals() {
     assert_eq!(violations("i.set_pixel_size(48);").len(), 1);
     assert_eq!(violations("let c = \"#ff0000\";").len(), 1);
     assert_eq!(violations("w::icon(\"x\", 24)").len(), 1);
+    assert_eq!(violations("css(\"color: rgba(0, 0, 0, 0.5);\")").len(), 1);
+    assert!(violations("let (r, g, b) = ink.rgb(); cr.set_source_rgb(r, g, b);").is_empty());
     assert!(
         violations("let b = w::hbox(w::S2); let z = w::vbox(0); w::icon(\"x\", w::ICON)")
             .is_empty()

@@ -5,6 +5,7 @@ pub mod app_host;
 pub mod app_view;
 pub mod approval;
 pub mod capture;
+pub mod clipboard;
 pub mod control_center;
 pub mod displays;
 pub mod dock;
@@ -15,16 +16,19 @@ pub mod installer;
 pub mod ipc;
 pub mod lock;
 pub mod lua_widgets;
+pub mod maker;
 pub mod menubar;
 pub mod notify;
 pub mod overview;
 pub mod panels;
+pub mod plugins;
 pub mod searchbar;
 pub mod settings;
 pub mod setup;
 pub mod shortcut_sheet;
 pub mod store;
 pub mod switcher;
+pub mod theme_picker;
 pub mod transient;
 pub mod widgets;
 pub mod widgets_builtin;
@@ -126,12 +130,15 @@ pub fn run_shell() -> glib::ExitCode {
             });
             let mut p = panels.borrow_mut();
             p.insert("osd", osd.window.clone());
-            p.insert("clipboard", panels::clipboard(&app));
+            p.insert("clipboard", clipboard::panel(&app));
+            p.insert("themes", theme_picker::panel(&app));
             p.insert("session", panels::session(&app));
             let (center, dismiss) = notify::start(&app);
             // App windows and app notifications through libwol (ADR 0020).
             app_host::listen();
             crate::app_notices::start();
+            // Sessions (ADR 0032): offer last time's windows once, then keep the set saved.
+            crate::sessions::start(crate::sessions::ask_by_notification);
             p.insert("notifications", center);
             p.insert("overview", overview::build(&app));
             p.insert("control-center", control_center::panel(&app, sys.clone()));
@@ -196,7 +203,7 @@ fn keyboard_handler(
     })
 }
 
-/// First session after the setup assistant (ADR 0004): its keyboard layout becomes the Hyprland
+/// First session after the setup assistant (ADR 0004): its keyboard layout becomes the compositor
 /// input fragment (unless one exists), then `setup.json` is marked applied. Auto appearance needs
 /// nothing here: no theme file means Auto (`kit::style`).
 fn apply_setup() {

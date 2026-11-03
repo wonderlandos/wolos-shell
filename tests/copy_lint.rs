@@ -31,6 +31,10 @@ fn banned_patterns_are_caught() {
         "the change was refused (invalid request).",
         "Could not read ~/.config/wolos/shell.json.",
         "Error: Some(\"x\").",
+        "The AUR stays locked until you enter your password.",
+        "Search the aur.",
+        "Hyprland did not answer.",
+        "Omarchy themes are not supported.",
     ] {
         assert!(!copy::lint(raw).is_empty(), "lint let through: “{raw}”");
     }
@@ -46,6 +50,8 @@ fn friendly_sentences_pass() {
         "Firefox couldn't be installed. Check that you're online, then try again.",
         "Your Downloads folder is tidy.",
         "Restore points keep your last five updates.",
+        "The Aurora wallpaper is on. Your aura colour follows it.",
+        "Community packages stay locked until you enter your password.",
     ] {
         assert_clean("good sentence", ok);
     }
@@ -740,5 +746,31 @@ fn installer_sentences_pass() {
             .filter(|p| p.starts_with('“'))
             .collect();
         assert!(jargon.is_empty(), "{s}: {jargon:?}");
+    }
+}
+
+/// Every project credited in docs/THIRD-PARTY.md is banned on screen (its `## id` or the family
+/// name before the `-`), so a new credit cannot slip into the copy (docs/THIRD-PARTY.md:4-5).
+#[test]
+fn credited_projects_are_banned() {
+    let notice = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/THIRD-PARTY.md"),
+    )
+    .expect("docs/THIRD-PARTY.md");
+    let ids: Vec<&str> = notice
+        .lines()
+        .filter_map(|l| l.strip_prefix("## "))
+        .map(str::trim)
+        .collect();
+    assert!(ids.len() >= 4, "THIRD-PARTY.md lost its sections: {ids:?}");
+    for id in ids {
+        let id = id.to_lowercase();
+        assert!(
+            copy::BANNED
+                .iter()
+                .any(|b| b.1.starts_with("upstream:") && id.starts_with(b.0)),
+            "copy::BANNED has no upstream entry for the credited project {id}"
+        );
+        assert!(!copy::lint(&format!("Made with {id}.")).is_empty(), "{id}");
     }
 }

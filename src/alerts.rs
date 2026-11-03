@@ -144,35 +144,78 @@ thread_local! {
     static STATE: std::cell::RefCell<Alerts> = std::cell::RefCell::new(Alerts::default());
 }
 
-/// Menu bar poll hook: battery every time, disk and updates every few minutes.
-pub fn poll(b: Option<Battery>) {
-    let (battery, due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
-    let (disk, updates) = if due {
-        let u = Updates::read(std::path::Path::new(wol_core::update::check::DIR));
-        let online = std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
+/// What one poll read off the UI thread: the due checks (every [`DISK_EVERY_POLLS`]th poll)
+/// and the malware lists when they changed.
+#[derive(Debug, Default)]
+pub struct Reads {
+    /// None between the due polls.
+    pub due: Option<DueReads>,
+    /// The account's malware lists, only when a file changed since the last read.
+    pub malware: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default)]
+pub struct DueReads {
+    pub updates: Option<Updates>,
+    pub online: Option<shared::hardware::OnlineInstall>,
+    /// Free and total bytes of the startup disk.
+    pub disk: Option<(u64, u64)>,
+}
+
+/// Blocking: `df`, the update check's files, the online-install record and the malware lists.
+fn read(due: bool) -> Reads {
+    let due = due.then(|| DueReads {
+        updates: Updates::read(std::path::Path::new(wol_core::update::check::DIR)),
+        online: std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
             .ok()
-            .and_then(|t| wol_core::hardware::online::parse(&t));
-        let driver = STATE.with_borrow_mut(|a| a.online(online));
-        if let Some(n) = driver {
-            act(n);
-        }
-        let disk = startup_disk();
-        STATE.with_borrow_mut(|a| (disk.and_then(|(f, t)| a.disk(f, t)), a.updates(u)))
-    } else {
-        (None, None)
-    };
-    for n in battery.into_iter().chain(disk).chain(updates) {
-        act(n);
-    }
-    for n in malware_poll() {
-        act(n);
+            .and_then(|t| wol_core::hardware::online::parse(&t)),
+        disk: startup_disk(),
+    });
+    Reads {
+        due,
+        malware: malware_read(),
     }
 }
 
-/// The account's list, read only when it changed: a stat every poll, no read at rest.
-fn malware_poll() -> Vec<Notice> {
-    thread_local!(static SEEN: std::cell::Cell<Option<std::time::SystemTime>> =
-        const { std::cell::Cell::new(None) });
+/// The notices for what a poll read, in the order they are shown: a driver install first, then
+/// the disk, updates and each stopped file.
+pub fn notices(a: &mut Alerts, r: Reads) -> Vec<Notice> {
+    let mut out = Vec::new();
+    if let Some(d) = r.due {
+        out.extend(a.online(d.online));
+        out.extend(d.disk.and_then(|(f, t)| a.disk(f, t)));
+        out.extend(a.updates(d.updates));
+    }
+    if let Some(texts) = r.malware {
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        out.extend(a.malware(&wol_core::malware::merge(&refs)));
+    }
+    out
+}
+
+/// Menu bar poll hook: battery every time (a reading already in hand), the rest read in
+/// `gio::spawn_blocking`: `df` hung the menu bar, dock and panels for its 2 s timeout on a
+/// stale network mount (audit4 S3-6). The GTK thread only applies the result.
+pub fn poll(b: Option<Battery>) {
+    let (battery, due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
+    if let Some(n) = battery {
+        act(n);
+    }
+    gtk::glib::spawn_future_local(async move {
+        let Ok(r) = gtk::gio::spawn_blocking(move || read(due)).await else {
+            return;
+        };
+        for n in STATE.with_borrow_mut(|a| notices(a, r)) {
+            act(n);
+        }
+    });
+}
+
+/// The newest change seen on the malware lists (read off the UI thread).
+static MALWARE_SEEN: std::sync::Mutex<Option<std::time::SystemTime>> = std::sync::Mutex::new(None);
+
+/// The account's lists, read only when they changed: a stat every poll, no read at rest.
+fn malware_read() -> Option<Vec<String>> {
     let uid = wol_core::malware::my_uid();
     let dir = std::path::Path::new(wol_core::malware::STATE_DIR);
     let files = [
@@ -183,15 +226,17 @@ fn malware_poll() -> Vec<Notice> {
         .iter()
         .filter_map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok())
         .max();
-    if newest.is_none() || SEEN.replace(newest) == newest {
-        return Vec::new();
+    let mut seen = MALWARE_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if newest.is_none() || std::mem::replace(&mut *seen, newest) == newest {
+        return None;
     }
-    let texts: Vec<String> = files
-        .iter()
-        .filter_map(|f| std::fs::read_to_string(f).ok())
-        .collect();
-    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    STATE.with_borrow_mut(|a| a.malware(&wol_core::malware::merge(&refs)))
+    drop(seen);
+    Some(
+        files
+            .iter()
+            .filter_map(|f| std::fs::read_to_string(f).ok())
+            .collect(),
+    )
 }
 
 fn act(n: Notice) {
@@ -383,6 +428,38 @@ mod tests {
             None,
             "up to date"
         );
+    }
+
+    /// Audit4 S3-6: what the blocking read found becomes notices on the UI thread, in order;
+    /// a poll between the due ones reads no disk.
+    #[test]
+    fn a_polls_reads_become_notices_in_order() {
+        use shared::hardware::OnlineInstall;
+        const G: u64 = 1_000_000_000;
+        let mut a = Alerts::default();
+        assert!(notices(&mut a, Reads::default()).is_empty());
+        let r = Reads {
+            due: Some(DueReads {
+                updates: Updates::parse("100", "curl 8.1-1 -> 8.2-1\n", "", ""),
+                online: Some(OnlineInstall {
+                    at: 7,
+                    packages: vec!["nvidia-drm-kmod".into()],
+                    ok: true,
+                    graphics: true,
+                }),
+                disk: Some((2 * G, 100 * G)),
+            }),
+            malware: Some(vec![]),
+        };
+        let got = notices(&mut a, r);
+        assert_eq!(got.len(), 3, "{got:?}");
+        assert!(matches!(got[0], Notice::Restart(..)), "driver first");
+        let Notice::Show(disk, ..) = &got[1] else {
+            panic!("{got:?}")
+        };
+        assert_eq!(disk, &crate::copy::disk_full("2 GB").0);
+        assert!(matches!(&got[2], Notice::Show(s, ..) if s == "Updates Available"));
+        assert!(read(false).due.is_none(), "no df between the due polls");
     }
 
     #[test]
