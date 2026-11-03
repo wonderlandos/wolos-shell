@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Lock screen (ext-session-lock, ADR 0022/0023) and login window (ADR 0024): clock, avatar, password.
+use crate::kit::anim::{Animated, Motion};
+use crate::kit::motion::{Curve, Duration, Stagger};
 use crate::kit::{self, reveal, widgets as w};
 use crate::login::{self, Power, Verdict};
 use gtk::{glib, prelude::*};
@@ -208,7 +210,164 @@ fn body(middle: &impl IsA<gtk::Widget>, footer: Option<&gtk::Widget>) -> gtk::Bo
 
 /// The lock screen for one user panel.
 pub fn lock_screen(panel: &w::UserPanel) -> gtk::Widget {
-    screen(&body(&panel.root, None))
+    let b = body(&panel.root, None);
+    Entrance::new(&b, panel, None);
+    screen(&b)
+}
+
+/// Gap between the lock's entering groups: the clock, then the avatar and name, then the
+/// password field (a [`Stagger`] of three).
+pub const ENTER_GAP_MS: u64 = 60;
+
+/// The lock's content entering: `ease` (kit.css `--ease-out`) over `--motion-normal`.
+pub fn enter_motion() -> Motion {
+    Motion::enter(Duration::Normal)
+}
+
+/// The lock's content leaving on a right password, before the unlock shows the desktop: `ease`
+/// too (it eases out, the session is already on its way) over `--motion-fast`, the field first.
+pub fn leave_motion() -> Motion {
+    Motion::tween(Curve::Ease, Duration::Fast)
+}
+
+/// The entering order: clock, avatar and name, password field.
+pub fn enter_stagger() -> Stagger {
+    Stagger::new(3, ENTER_GAP_MS)
+}
+
+/// Milliseconds a [`Motion::Tween`] lasts (0 for a spring: the caller's grace covers it).
+fn tween_ms(m: Motion) -> u64 {
+    match m {
+        Motion::Tween { ms, .. } => ms,
+        Motion::Spring(_) => 0,
+    }
+}
+
+/// The lock screen's content on the window's motion clock (`docs/modules/hig.md` section 7):
+/// the clock, the avatar and the password field fade in one after another when the screen
+/// maps (at start-up, once the [`reveal::Reveal`] starts fading in from black: the same clock),
+/// and fade out the other way round on a right password. Opacity only: no relayout per frame.
+/// Reduce motion snaps both (the clock jumps to the targets); golden renders show the end state.
+pub(crate) struct Entrance {
+    /// Entering order; each group moves together.
+    groups: Vec<Vec<gtk::Widget>>,
+    /// One handle per widget, made on first use (the widgets are in their window by then).
+    fades: RefCell<Vec<(usize, Animated)>>,
+}
+
+impl Entrance {
+    /// `extra` joins the field's group (the lock's Restart row).
+    fn new(b: &gtk::Box, panel: &w::UserPanel, extra: Option<&gtk::Widget>) -> Rc<Entrance> {
+        let mut field: Vec<gtk::Widget> = vec![
+            panel.pill.clone().upcast(),
+            panel.caps.clone().upcast(),
+            panel.message.clone().upcast(),
+        ];
+        field.extend(extra.cloned());
+        let e = Rc::new(Entrance {
+            groups: vec![
+                b.first_child().into_iter().collect(),
+                panel
+                    .root
+                    .first_child()
+                    .into_iter()
+                    .chain([panel.name.clone().upcast()])
+                    .collect(),
+                field,
+            ],
+            fades: RefCell::new(Vec::new()),
+        });
+        if std::env::var_os("WOL_FAKE_NOW").is_some() {
+            return e;
+        }
+        let (e2, started) = (e.clone(), std::cell::Cell::new(false));
+        b.connect_map(move |b| {
+            if started.replace(true) {
+                return;
+            }
+            for w in e2.groups.iter().flatten() {
+                w.set_opacity(0.0);
+            }
+            // As `Reveal::show_when`: after a frame is on screen (a first frame that takes long
+            // would eat the whole move) and over the blurred wallpaper, not the bare window.
+            let (e3, b2) = (e2.clone(), b.downgrade());
+            reveal::when_shown(b, move || {
+                let Some(b) = b2.upgrade() else { return };
+                let frames = std::cell::Cell::new(0u32);
+                b.add_tick_callback(move |_, _| {
+                    frames.set(frames.get() + 1);
+                    if frames.get() < 2
+                        || (!backdrop_ready() && frames.get() < reveal::MAX_WAIT_FRAMES)
+                    {
+                        return glib::ControlFlow::Continue;
+                    }
+                    e3.enter();
+                    glib::ControlFlow::Break
+                });
+            });
+        });
+        e
+    }
+
+    fn fades(&self) -> Vec<(usize, Animated)> {
+        let mut f = self.fades.borrow_mut();
+        if f.is_empty() {
+            for (i, g) in self.groups.iter().enumerate() {
+                for w in g {
+                    let weak = w.downgrade();
+                    f.push((
+                        i,
+                        Animated::new(w, w.opacity() as f32, move |v| {
+                            if let Some(w) = weak.upgrade() {
+                                w.set_opacity(v.into());
+                            }
+                        }),
+                    ));
+                }
+            }
+        }
+        f.clone()
+    }
+
+    fn enter(&self) {
+        let st = enter_stagger();
+        for (i, a) in self.fades() {
+            a.retarget_after(1.0, enter_motion(), st.delay_ms(i));
+        }
+    }
+
+    /// Fades the content out (field first, clock last), then `then` once: when the clock lands
+    /// at once (reduce motion, an unmapped screen) and after the fade's length plus a grace when
+    /// the frame clock stalls, so the unlock is never held up by motion.
+    fn leave_then(&self, then: impl FnOnce() + 'static) {
+        let then = Rc::new(RefCell::new(Some(then)));
+        let once = move || {
+            // Taken before the call: `f` may land here again (the unlock unmaps the window and
+            // its clock settles the same fade), which must find nothing, not a held borrow.
+            let f = then.borrow_mut().take();
+            if let Some(f) = f {
+                f()
+            }
+        };
+        let mapped = self.groups.iter().flatten().any(|w| w.is_mapped());
+        let fades = if mapped { self.fades() } else { Vec::new() };
+        let Some((_, last)) = fades.iter().find(|(i, _)| *i == 0).or(fades.first()) else {
+            return once();
+        };
+        let st = enter_stagger();
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(st.total_ms(tween_ms(leave_motion())) + 250),
+            once.clone(),
+        );
+        last.connect_settled(move |v| {
+            if v == 0.0 {
+                once()
+            }
+        });
+        for (i, a) in &fades {
+            a.retarget_after(0.0, leave_motion(), st.delay_rev_ms(*i));
+        }
+    }
 }
 
 /// Restart the way the menu does (`wol power restart`, through wol-admind); true when it was
@@ -255,7 +414,7 @@ fn finished_ok(mut child: std::process::Child, limit: std::time::Duration) -> bo
 /// appears under it, so nobody is stuck behind it. It goes through `wol power restart` like the
 /// menu's, and says so when the restart was not taken (audit4 S3-9: a BSD `shutdown -r now` as
 /// the session user failed silently); nothing of the session is shown or kept.
-fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box) {
+fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box, Rc<Entrance>) {
     let message = panel.message.clone();
     let (restart, button) = action(
         login::power_icon(login::Power::Restart),
@@ -280,7 +439,9 @@ fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box) {
     foot.set_halign(gtk::Align::Center);
     foot.append(&restart);
     foot.set_visible(false);
-    (screen(&body(&panel.root, Some(foot.upcast_ref()))), foot)
+    let b = body(&panel.root, Some(foot.upcast_ref()));
+    let entrance = Entrance::new(&b, panel, Some(foot.upcast_ref()));
+    (screen(&b), foot, entrance)
 }
 
 /// Login window: user tiles, then the picked user's password pill; power row at the foot.
@@ -577,7 +738,7 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
         if let (Some(tone), Some(av)) = (login::read_avatar(&user), panel.root.first_child()) {
             kit::assistant::set_tone(&av, tone);
         }
-        let (screen, restart) = lock_screen_with_restart(&panel);
+        let (screen, restart, entrance) = lock_screen_with_restart(&panel);
         let shown = reveal::Reveal::new(&screen, startup);
         win.set_child(Some(&shown.root));
         if startup {
@@ -585,28 +746,34 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
         }
         kit::snapshot_on_map(&win, "lock");
         let unlock = lock_surface(app, &win);
-        let app2 = app.clone();
+        let (app2, p_ok) = (app.clone(), panel.clone());
         wire(
             panel.clone(),
             || login::authcheck_owned,
-            move |password| {
-                unlock();
-                println!("{}", login::UNLOCKED);
-                if !startup {
-                    app2.quit();
-                    return;
-                }
-                let app3 = app2.clone();
-                glib::spawn_future_local(async move {
-                    let _ = gtk::gio::spawn_blocking(move || {
-                        let r = zbus::blocking::Connection::session()
-                            .and_then(|c| login::unlock_login_keyring(&c, &password));
-                        if let Err(e) = r {
-                            eprintln!("wol-lock: login keyring: {e}");
-                        }
-                    })
-                    .await;
-                    app3.quit();
+            move |password: String| {
+                // The content eases out over the blurred wallpaper, then the desktop shows; no
+                // second Enter while it does.
+                p_ok.field.set_sensitive(false);
+                let (app2, unlock) = (app2.clone(), unlock.clone());
+                entrance.leave_then(move || {
+                    unlock();
+                    println!("{}", login::UNLOCKED);
+                    if !startup {
+                        app2.quit();
+                        return;
+                    }
+                    let app3 = app2.clone();
+                    glib::spawn_future_local(async move {
+                        let _ = gtk::gio::spawn_blocking(move || {
+                            let r = zbus::blocking::Connection::session()
+                                .and_then(|c| login::unlock_login_keyring(&c, &password));
+                            if let Err(e) = r {
+                                eprintln!("wol-lock: login keyring: {e}");
+                            }
+                        })
+                        .await;
+                        app3.quit();
+                    });
                 });
             },
             {
@@ -815,6 +982,51 @@ mod tests {
         );
         let w = restart_wait();
         assert!(w > std::time::Duration::from_secs(5) && w < std::time::Duration::from_secs(600));
+    }
+
+    /// DT-7 (hig.md section 7): the lock's content enters with a staggered `ease` on the
+    /// contract's durations, the whole entrance inside the 400 ms ceiling, first group first;
+    /// it leaves the other way round, faster, and the unlock waits only for that.
+    #[test]
+    fn the_lock_enters_staggered_and_leaves_quickly() {
+        use crate::kit::anim::Value;
+        let st = enter_stagger();
+        assert_eq!(st.len(), 3, "clock, avatar and name, password field");
+        assert_eq!(
+            (0..3).map(|i| st.delay_ms(i)).collect::<Vec<_>>(),
+            [0, ENTER_GAP_MS, 2 * ENTER_GAP_MS]
+        );
+        assert_eq!(
+            (0..3).map(|i| st.delay_rev_ms(i)).collect::<Vec<_>>(),
+            [2 * ENTER_GAP_MS, ENTER_GAP_MS, 0],
+            "the field leaves first"
+        );
+        assert_eq!(enter_motion(), Motion::tween(Curve::Ease, Duration::Normal));
+        assert_eq!(leave_motion(), Motion::tween(Curve::Ease, Duration::Fast));
+        assert!(st.total_ms(tween_ms(enter_motion())) <= Duration::Slow.ms());
+        let leave = st.total_ms(tween_ms(leave_motion()));
+        assert!(leave < st.total_ms(tween_ms(enter_motion())) && leave <= 300);
+        // The field's opacity on the pure clock: nothing before its delay, eased (ahead of
+        // linear) on the way, exactly 1 at the end.
+        const MS: u64 = 1_000_000;
+        let mut v = Value::new(0.0);
+        assert!(v.retarget(1.0, enter_motion(), st.delay_ms(2)));
+        v.tick(0);
+        v.tick(100 * MS);
+        assert_eq!(v.value(), 0.0, "still waiting its turn");
+        v.tick(120 * MS + 125 * MS);
+        assert!(v.value() > 0.5, "ease-out is past half at half time");
+        assert!(v.tick(120 * MS + 250 * MS));
+        assert_eq!(v.value(), 1.0);
+        // The unlock path goes through the fade, and only the lock screen's own code calls it.
+        let src = include_str!("lock.rs");
+        let run =
+            &src[src.find("fn run_lock_screen").unwrap()..src.find("fn lock_surface").unwrap()];
+        let (fade, unlock) = (
+            run.find("leave_then").unwrap(),
+            run.find("unlock();").unwrap(),
+        );
+        assert!(fade < unlock, "the content fades, then the session unlocks");
     }
 
     #[test]
