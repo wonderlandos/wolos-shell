@@ -15,7 +15,8 @@ pub const HINT: &str = crate::copy::PART_STOPPED;
 /// Layer namespace of the stand-in window for a panel that stopped.
 pub const NAMESPACE: &str = "wol-panel-stopped";
 /// Fault injection for tests and VM journeys: `WOL_SHELL_BREAK=clipboard,themes` makes those
-/// parts panic as they are built, so the card and the rest of the shell can be checked.
+/// parts stop as they are built (as if they had panicked), so the card and the rest of the shell
+/// can be checked.
 pub const BREAK_ENV: &str = "WOL_SHELL_BREAK";
 
 /// Is part `name` in the [`BREAK_ENV`] list `list`?
@@ -66,7 +67,7 @@ pub fn install_hook() {
                 part.as_deref(),
                 &format!("{}{at}", panic_text(info.payload())),
             );
-            if std::env::var_os(crate::supervise::UI_ENV).is_some() {
+            if crate::envv::is_set(crate::supervise::UI_ENV) {
                 // Not waited for: the hook runs on the toolkit thread, and an abort may follow.
                 let _ = std::process::Command::new("logger")
                     .args(["-t", "wol-shell", "-p", "user.err", "--", &line])
@@ -77,16 +78,22 @@ pub fn install_hook() {
     });
 }
 
-/// Runs `f` as part `name`: its value, or None when it panicked (the part is then marked).
+/// Runs `f` as part `name`: its value, or None when it panicked or was asked to stop by
+/// [`BREAK_ENV`] (the part is then marked).
 pub fn guard<T>(name: &str, f: impl FnOnce() -> T) -> Option<T> {
     INSIDE.with(|s| s.borrow_mut().push(name.to_string()));
-    let asked = broken(std::env::var(BREAK_ENV).ok().as_deref(), name);
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if asked {
-            panic!("{BREAK_ENV} asked {name} to stop");
-        }
-        f()
-    }));
+    let asked = broken(crate::envv::var(BREAK_ENV).as_deref(), name);
+    // An injected stop ends the part without unwinding (no panic is made for it): the same card,
+    // the same record, the same list of stopped parts.
+    let r = if asked {
+        crate::diag::say!(
+            "{}",
+            journal_line(Some(name), &format!("{BREAK_ENV} asked {name} to stop"))
+        );
+        Err(())
+    } else {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).map_err(|_| ())
+    };
     INSIDE.with(|s| s.borrow_mut().pop());
     match r {
         Ok(v) => Some(v),

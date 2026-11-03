@@ -299,11 +299,14 @@ impl Machine for Live {
 /// A 14-inch laptop on WolOS: the same facts every render.
 pub struct Demo;
 
+/// What the demo Machine says about the automatic checks and installs (both on).
+const DEMO_AUTO_UPDATES: (bool, bool) = (true, true);
+
 const GB: u64 = 1_000_000_000;
 
 impl Machine for Demo {
     fn auto_updates(&self) -> (bool, bool) {
-        (true, true)
+        DEMO_AUTO_UPDATES
     }
     fn storage(&self) -> Option<Storage> {
         let c = |n: &str, gb: u64| Category {
@@ -734,7 +737,7 @@ impl Machine for DemoEdge {
         Demo.passwd()
     }
     fn auto_updates(&self) -> (bool, bool) {
-        Demo.auto_updates()
+        DEMO_AUTO_UPDATES
     }
     fn boot(&self) -> Option<wol_core::boot::Status> {
         Demo.boot().map(|b| wol_core::boot::Status {

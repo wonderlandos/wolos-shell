@@ -6,6 +6,7 @@ use shell::notify_store::{self as store, Kept, Saved};
 use shell::supervise::{self, Exit};
 use shell::ui::notify::{CENTER_MAX, Note};
 use std::os::unix::net::UnixListener;
+use std::path::Path;
 use std::process::{Command, ExitStatus};
 use std::time::{Duration, Instant};
 
@@ -65,10 +66,11 @@ fn display_alive_needs_a_listening_socket() {
     let l = UnixListener::bind(&sock).unwrap();
     assert!(supervise::display_alive(&sock));
     drop(l);
-    // Another test's fork may hold the socket until its exec (close-on-exec): give it a moment.
+    // Another test's fork may hold the socket until its exec (close-on-exec): it lets go within
+    // microseconds, so the check is simply repeated (no sleeping in tests, RR-049).
     let t = Instant::now();
     while supervise::display_alive(&sock) && t.elapsed() < Duration::from_secs(2) {
-        std::thread::sleep(ms(10));
+        std::thread::yield_now();
     }
     assert!(!supervise::display_alive(&sock), "stale file after a crash");
 }
@@ -154,9 +156,29 @@ fn binary_supervises_and_holds_one_guard_per_session() {
             .stderr(std::process::Stdio::piped());
         c
     };
-    let child = cmd().spawn().unwrap();
-    // Two restarts at least (0 + 100 ms waits), then the session ends.
-    std::thread::sleep(ms(900));
+    let mut child = cmd().spawn().unwrap();
+    // The supervisor's stderr, line by line from a reader thread: the test waits for what it
+    // needs (two restarts, then the end of the stream) instead of sleeping.
+    let pipe = child.stderr.take().unwrap();
+    let (tx, lines) = std::sync::mpsc::channel::<String>();
+    std::thread::Builder::new()
+        .name("supervise-stderr".into())
+        .spawn(move || {
+            use std::io::BufRead;
+            for l in std::io::BufReader::new(pipe).lines().map_while(Result::ok) {
+                let _ = tx.send(l);
+            }
+        })
+        .unwrap();
+    let (mut err, mut restarts) = (String::new(), 0);
+    while restarts < 2 {
+        let l = lines
+            .recv_timeout(Duration::from_secs(20))
+            .unwrap_or_else(|_| panic!("{restarts} restarts in 20 s: {err}"));
+        restarts += usize::from(l.contains("starting a new one"));
+        err.push_str(&l);
+        err.push('\n');
+    }
     let second = cmd().output().unwrap();
     assert!(second.status.success());
     assert!(
@@ -166,15 +188,274 @@ fn binary_supervises_and_holds_one_guard_per_session() {
     );
     drop(listener);
     let t = Instant::now();
-    let out = child.wait_with_output().unwrap();
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{err}");
+    for l in lines.iter() {
+        err.push_str(&l);
+        err.push('\n');
+    }
+    let status = child.wait().unwrap();
+    assert_eq!(status.code(), Some(1), "{err}");
     assert!(
         t.elapsed() < Duration::from_secs(5),
         "left within one back-off"
     );
-    let restarts = err.matches("starting a new one").count();
-    assert!(restarts >= 2, "{restarts} restarts: {err}");
+}
+
+/// Stability S2: a shell that dies 21 s after each start (past [`supervise::HEALTHY`]) used to
+/// come back at once, forever. Now: never at once after the first restart, [`supervise::SLOW`]
+/// apart after [`supervise::SLOW_AFTER`] restarts in ten minutes, and no more after the ceiling.
+#[test]
+fn a_shell_that_keeps_ending_is_slowed_then_left_down() {
+    let s = |n: u64| Duration::from_secs(n);
+    let mut r = supervise::Respawns::new();
+    assert_eq!(r.ended(true, true, s(1), s(1)), Exit::Done, "clean");
+    assert_eq!(
+        r.ended(false, false, s(1), s(1)),
+        Exit::Done,
+        "display gone"
+    );
+    assert_eq!(r.count(), 0);
+    let (mut at, mut delays) = (Duration::ZERO, Vec::new());
+    loop {
+        at += s(21);
+        match r.ended(false, true, s(21), at) {
+            Exit::Respawn(d) => {
+                delays.push(d);
+                at += d;
+            }
+            Exit::GiveUp => break,
+            Exit::Done => panic!("done while the display lives"),
+        }
+        assert!(delays.len() < 1000, "no ceiling");
+    }
+    assert_eq!(
+        delays[0],
+        Duration::ZERO,
+        "the first crash restarts at once"
+    );
+    assert!(
+        delays[1..].iter().all(|d| *d >= supervise::FIRST),
+        "{delays:?}"
+    );
+    assert!(
+        delays[supervise::SLOW_AFTER..]
+            .iter()
+            .all(|d| *d >= supervise::SLOW)
+    );
+    assert_eq!(delays.len(), supervise::CEILING, "{delays:?}");
+    assert_eq!(r.count() as usize, supervise::CEILING);
+}
+
+/// The windows slide: a shell that crashes now and then (more than ten minutes apart) is always
+/// started again, after [`supervise::FIRST`].
+#[test]
+fn old_restarts_leave_the_window() {
+    let mut r = supervise::Respawns::new();
+    let mut at = Duration::ZERO;
+    for n in 0..100 {
+        at += supervise::WINDOW + Duration::from_secs(1);
+        let want = if n == 0 {
+            Duration::ZERO
+        } else {
+            supervise::FIRST
+        };
+        assert_eq!(
+            r.ended(false, true, supervise::WINDOW, at),
+            Exit::Respawn(want),
+            "restart {n}"
+        );
+        assert_eq!(r.recent(), 1);
+    }
+    // Crashes at start, in a row: the back-off doubles up to 3 s, then the slow-down, then the end.
+    let mut r = supervise::Respawns::new();
+    let mut delays = Vec::new();
+    let mut at = Duration::ZERO;
+    while let Exit::Respawn(d) = r.ended(false, true, ms(50), at) {
+        delays.push(d.as_millis() as u64);
+        at += d + ms(50);
+    }
+    assert_eq!(
+        delays,
+        [
+            0, 100, 200, 400, 800, 1600, 3000, 3000, 3000, 3000, 30000, 30000, 30000, 30000, 30000,
+            30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000, 30000,
+            30000, 30000, 30000
+        ]
+    );
+}
+
+/// `run` itself with a fake clock: every shell runs 21 s and crashes; the supervisor notes the
+/// slow-down once, waits in steps of at most [`supervise::TICK`], and stops at the ceiling.
+#[test]
+fn run_stops_at_the_ceiling_with_a_fake_clock() {
+    let clock = std::cell::Cell::new(Duration::ZERO);
+    let (mut notes, mut waited, mut starts) = (Vec::new(), Duration::ZERO, 0);
+    let mut longest = Duration::ZERO;
+    let code = supervise::run_timed(
+        |_| {
+            starts += 1;
+            clock.set(clock.get() + Duration::from_secs(21));
+            Command::new("sh").args(["-c", "exit 1"]).status()
+        },
+        || true,
+        |n| notes.push(n.to_string()),
+        |d| {
+            longest = longest.max(d);
+            waited += d;
+            clock.set(clock.get() + d);
+        },
+        || clock.get(),
+    );
+    assert_eq!(code, 1);
+    assert_eq!(starts, supervise::CEILING + 1);
+    assert!(waited >= supervise::SLOW, "{waited:?}");
+    assert!(longest <= supervise::TICK, "{longest:?}");
+    let slow: Vec<&String> = notes
+        .iter()
+        .filter(|n| n.contains("between restarts"))
+        .collect();
+    assert_eq!(slow.len(), 1, "{notes:?}");
+    let last = notes.last().unwrap();
+    assert!(last.contains("not starting it again"), "{last}");
+}
+
+/// A slowed supervisor whose display goes away mid-wait leaves at the next step.
+#[test]
+fn a_long_wait_ends_with_the_display() {
+    let clock = std::cell::Cell::new(Duration::ZERO);
+    let alive = std::cell::Cell::new(true);
+    let mut sleeps = 0;
+    let code = supervise::run_timed(
+        |_| {
+            clock.set(clock.get() + ms(10));
+            Command::new("sh").args(["-c", "exit 1"]).status()
+        },
+        || alive.get(),
+        |_| {},
+        |d| {
+            clock.set(clock.get() + d);
+            if d == supervise::TICK {
+                sleeps += 1;
+                alive.set(false);
+            }
+        },
+        || clock.get(),
+    );
+    assert_eq!(
+        (code, sleeps),
+        (1, 1),
+        "left after one step of the first long wait"
+    );
+}
+
+/// Stability S7: a guard that cannot be made is not a guard that is free.
+#[test]
+fn the_guard_is_taken_once_and_missing_is_not_free() {
+    let d = tmp("guard");
+    let rt = d.to_str().unwrap();
+    let first = supervise::take_guard(rt, "g.lock");
+    assert!(matches!(first, supervise::Guard::Held(_)), "{first:?}");
+    let second = supervise::take_guard(rt, "g.lock");
+    assert!(matches!(second, supervise::Guard::Busy), "{second:?}");
+    drop(first);
+    // Another test's fork may hold the descriptor until its exec (close-on-exec): a moment, repeated.
+    let t = Instant::now();
+    let mut again = supervise::take_guard(rt, "g.lock");
+    while matches!(again, supervise::Guard::Busy) && t.elapsed() < Duration::from_secs(2) {
+        std::thread::yield_now();
+        again = supervise::take_guard(rt, "g.lock");
+    }
+    assert!(matches!(again, supervise::Guard::Held(_)), "{again:?}");
+    for bad in ["", "relative/dir", "/nonexistent/wol-sp1"] {
+        let g = supervise::take_guard(bad, "g.lock");
+        assert!(
+            matches!(g, supervise::Guard::Unavailable(_)),
+            "{bad}: {g:?}"
+        );
+    }
+    assert!(!Path::new("relative/dir/g.lock").exists());
+}
+
+#[test]
+fn a_supervisor_without_a_guard_does_not_start() {
+    let out = Command::new(env!("CARGO_BIN_EXE_wol-shell"))
+        .arg("--supervised")
+        .env("XDG_RUNTIME_DIR", "/nonexistent/wol-sp1")
+        .env_remove(supervise::UI_ENV)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("not starting a supervisor"), "{err}");
+    assert!(
+        !err.contains("starting a new one"),
+        "no shell was started: {err}"
+    );
+}
+
+/// Stability S3: the stderr file stays small: only an appending file is cut, its lines move to
+/// `<file>.1`, and a writer that appends goes on at the start.
+#[test]
+fn the_stderr_file_is_capped() {
+    assert!(supervise::appending(
+        "pos:\t0\nflags:\t0102001\nmnt_id:\t30\n"
+    ));
+    assert!(!supervise::appending("pos:\t0\nflags:\t0100001\n"));
+    assert!(!supervise::appending("pos:\t0\n"));
+    let d = tmp("log");
+    let log = d.join("wol-shell.log");
+    assert_eq!(supervise::kept_log(&log), d.join("wol-shell.log.1"));
+    let mut w = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+        .unwrap();
+    use std::io::Write;
+    w.write_all(&vec![b'x'; 2048]).unwrap();
+    assert!(!supervise::cap_log(&log, 4096).unwrap(), "under the cap");
+    w.write_all(&vec![b'y'; 4096]).unwrap();
+    assert!(supervise::cap_log(&log, 4096).unwrap());
+    assert_eq!(
+        std::fs::metadata(supervise::kept_log(&log)).unwrap().len(),
+        6144
+    );
+    w.write_all(b"next\n").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "next\n",
+        "no hole before it"
+    );
+    assert_eq!(supervise::LOG_CAP, 1 << 20);
+}
+
+/// The real binary on a session start line's `2>>` file: the previous run's lines move to
+/// `<file>.1` before the first shell starts.
+#[test]
+fn the_supervisor_starts_a_fresh_stderr_file() {
+    let run = tmp("fresh");
+    let log = run.join("wol-shell.log");
+    std::fs::write(&log, "a line of the last session\n").unwrap();
+    let err = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_wol-shell"))
+        .arg("--supervised")
+        .env("XDG_RUNTIME_DIR", &run)
+        .env("WAYLAND_DISPLAY", "wayland-none")
+        .env("GDK_BACKEND", "x11")
+        .env_remove("DISPLAY")
+        .env_remove(supervise::UI_ENV)
+        .stdin(std::process::Stdio::null())
+        .stderr(err)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "no display: one shell, then done"
+    );
+    let now = std::fs::read_to_string(&log).unwrap();
+    assert!(!now.contains("last session"), "{now}");
+    let kept = std::fs::read_to_string(supervise::kept_log(&log)).unwrap();
+    assert_eq!(kept, "a line of the last session\n");
 }
 
 #[test]
@@ -322,4 +603,14 @@ fn the_session_starts_the_supervised_shell() {
         lines,
         [r#"exec-once = sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#]
     );
+}
+
+/// RR-064: a saved Center with a field this shell does not know is not taken (a typo or a file
+/// from another version is an empty Center, like any broken file).
+#[test]
+fn a_saved_list_with_an_unknown_field_is_an_empty_center() {
+    let known = r#"[{"app":"Files","summary":"Done"}]"#;
+    assert_eq!(store::decode(known).len(), 1);
+    let unknown = r#"[{"app":"Files","summary":"Done","surprise":1}]"#;
+    assert!(store::decode(unknown).is_empty());
 }

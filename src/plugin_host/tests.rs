@@ -556,7 +556,7 @@ fn runner_answers_later_without_blocking() {
     assert!(r.busy());
     drop(held);
     while r.busy() {
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::yield_now();
     }
     assert!(r.take_fresh());
     assert!(!r.take_fresh());
@@ -781,5 +781,63 @@ fn wrong_calls_are_sentences_and_only_failures_count() {
     assert!(!h.has(Kind::Ipc, "alice.music", "next"));
     assert_eq!(h.take_toasts().len(), 1);
     assert!(!cp::load_enabled(&paths.config_home).is_enabled("alice.music"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Stability S6: the `call` host's read rule: at first, after a change, and always without a watch.
+#[test]
+fn the_call_host_reads_again_only_after_a_change() {
+    let f = Fresh::new();
+    assert!(f.take(), "first call");
+    assert!(f.take(), "no watch yet: every call reads");
+    f.watching(true);
+    assert!(!f.take(), "watched and unchanged");
+    f.changed();
+    assert!(f.take());
+    assert!(!f.take());
+    f.watching(false);
+    assert!(f.take());
+}
+
+/// Stability S6: two calls in a row read the plugin folders once; an edit the watch sees makes the
+/// next call read again and run the new script.
+#[test]
+fn two_calls_read_the_disk_once_until_a_plugin_changes() {
+    let (paths, root) = ipc_setup("fresh");
+    let ctx = glib::MainContext::new();
+    ctx.with_thread_default(|| {
+        let ipc = Ipc::new(Host::with_services(
+            paths.clone(),
+            IPC_KINDS,
+            Rc::new(IpcQuiet),
+        ));
+        let call = |t: &str| {
+            let v: serde_json::Value =
+                serde_json::from_str(&ctx.block_on(call_with(&ipc, t.into()))).unwrap();
+            v["value"]["track"].clone()
+        };
+        assert_eq!(call("alice.music next"), serde_json::json!(1));
+        assert_eq!(
+            call("alice.music next"),
+            serde_json::json!(2),
+            "Lua state kept"
+        );
+        assert_eq!(ipc.reads.get(), 1, "the second call read nothing");
+        let script = root.join("user").join("alice.music").join("ipc.lua");
+        std::fs::write(&script, IPC_LUA.replace("local n = 0", "local n = 10")).unwrap();
+        let t = std::time::Instant::now();
+        while !ipc.fresh.stale.get() && t.elapsed() < Duration::from_secs(5) {
+            ctx.iteration(false);
+            std::thread::yield_now();
+        }
+        assert!(ipc.fresh.stale.get(), "the watch saw the edit");
+        assert_eq!(
+            call("alice.music next"),
+            serde_json::json!(11),
+            "the new script"
+        );
+        assert_eq!(ipc.reads.get(), 2);
+    })
+    .unwrap();
     let _ = std::fs::remove_dir_all(root);
 }

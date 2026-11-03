@@ -63,7 +63,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 37] = [
+const BASELINE: [(&str, usize); 38] = [
     // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
     // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
     // cannot follow a call into another file); each row only shrinks.
@@ -83,6 +83,9 @@ const BASELINE: [(&str, usize); 37] = [
     ("sessions.rs", 1),
     ("setup.rs", 1),
     ("software_update.rs", 1),
+    // The `--supervised` parent (SP-1): std only, no GTK main loop to stall. Runs the shell
+    // (`.status()`), journals restarts, checks the display socket and reads where its stderr goes.
+    ("supervise.rs", 4),
     ("system.rs", 8),
     ("widgets/weather.rs", 1),
     // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).
@@ -99,18 +102,16 @@ const BASELINE: [(&str, usize); 37] = [
     ("ui/app_view.rs", 1),
     // downloads_dir: user-dirs.dirs once when the Dock is built.
     ("ui/dock.rs", 1),
-    // One Image::from_file of the app's icon (audit4 S3-3 count).
-    ("ui/flatpak_consent.rs", 2),
+    ("ui/flatpak_consent.rs", 1),
     ("ui/installer.rs", 4),
     ("ui/ipc.rs", 1),
     ("ui/lock.rs", 5),
     // remove_sandbox: the preview's few named files, once, after `app.run()` returned (the
     // SandboxGuard drops when no window or main loop is left), so nothing waits on it.
     ("ui/maker/preview.rs", 1),
-    ("ui/mod.rs", 3),
+    ("ui/mod.rs", 2),
     ("ui/settings/login_items.rs", 2),
-    // + the demo Machine's `Demo.auto_updates()` delegation (S7-7 token; no I/O there).
-    ("ui/settings/machine.rs", 2),
+    ("ui/settings/machine.rs", 1),
     ("ui/settings/privacy.rs", 1),
     ("ui/shortcut_sheet.rs", 1),
     // The analysis graph Picture (audit4 S3-3 count).

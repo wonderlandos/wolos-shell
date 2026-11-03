@@ -233,7 +233,7 @@ pub fn argb_to_rgba(width: i32, height: i32, argb: &[u8]) -> Option<Pixmap> {
     if !(1..=MAX_PIXMAP).contains(&width) || !(1..=MAX_PIXMAP).contains(&height) {
         return None;
     }
-    if argb.len() != (width * height * 4) as usize {
+    if usize::try_from(width * height * 4) != Ok(argb.len()) {
         return None;
     }
     let rgba = argb
@@ -439,10 +439,30 @@ fn build_node(
     })
 }
 
+/// `d` rounded to a whole number (halves away from zero); 0 when it is not a number or is outside
+/// plus or minus 2^20, far beyond any wheel. Found by halving the range: a float is never cast.
+pub fn whole(d: f64) -> i32 {
+    const LIMIT: i32 = 1 << 20;
+    if !(-f64::from(LIMIT)..=f64::from(LIMIT)).contains(&d) {
+        return 0;
+    }
+    let r = d.round();
+    let (mut lo, mut hi) = (-LIMIT, LIMIT);
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if f64::from(mid) < r {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
+}
+
 /// `Scroll(delta, orientation)` for a wheel step `(dx, dy)` as the toolkit reports it (down and
 /// right positive): one notch is 120, up and left positive as the protocol's hosts send it.
 pub fn scroll_args(dx: f64, dy: f64) -> Option<(i32, &'static str)> {
-    let notch = |d: f64| -((d * 120.0).round() as i32);
+    let notch = |d: f64| -whole(d * 120.0);
     if dy != 0.0 && notch(dy) != 0 {
         Some((notch(dy), "vertical"))
     } else if dx != 0.0 && notch(dx) != 0 {
@@ -639,6 +659,17 @@ async fn fetch(conn: &zbus::Connection, id: &str) -> zbus::Result<(Item, String)
     Ok((item_from_props(id, &props), owner))
 }
 
+/// Tries of a watcher start while the name is still taken (a watcher just stopped, or the last
+/// shell's connection is not gone yet), [`SERVE_GAP`] apart.
+pub const SERVE_TRIES: u32 = 5;
+pub const SERVE_GAP: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Whether a watcher start that failed with `e` after `tries` tries is tried again: only while
+/// the name is taken, at most [`SERVE_TRIES`] in all.
+pub fn serve_again(e: &zbus::Error, tries: u32) -> bool {
+    matches!(e, zbus::Error::NameTaken) && tries < SERVE_TRIES
+}
+
 /// The running watcher and host. Clones share it; [`Tray::stop`] ends it for all.
 #[derive(Clone)]
 pub struct Tray {
@@ -706,7 +737,7 @@ impl Tray {
         std::thread::Builder::new()
             .name("wol-tray-bus".into())
             .spawn(move || t.follow(iter))
-            .map_err(|e| zbus::Error::Failure(e.to_string()))?;
+            .map_err(|e| zbus::Error::InputOutput(Arc::new(e)))?;
         if let Ok(e) = SignalEmitter::new(&tray.conn, WATCHER_PATH) {
             let _ = Watcher::status_notifier_host_registered(&e).await;
         }

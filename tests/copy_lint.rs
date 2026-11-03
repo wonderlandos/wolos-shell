@@ -113,7 +113,7 @@ fn setup_account_problems_pass() {
 }
 
 /// Surfaces never format an error's own text into a label: `{e}`, `e.to_string()` and the like
-/// only appear in log lines (eprintln!/println! within a line of them), and `copy.rs` is the one
+/// only appear in log lines (eprintln!/println!/diag::say! within a line of them), and `copy.rs` is the one
 /// place that maps errors.
 #[test]
 fn no_raw_error_text_on_screen() {
@@ -163,7 +163,9 @@ fn no_raw_error_text_on_screen() {
             }
             let logged = lines[i.saturating_sub(2)..(i + 2).min(lines.len())]
                 .iter()
-                .any(|x| x.contains("eprintln!") || x.contains("println!"));
+                .any(|x| {
+                    x.contains("eprintln!") || x.contains("println!") || x.contains("diag::say!")
+                });
             if !logged {
                 bad.push(format!(
                     "{}:{}: {}",

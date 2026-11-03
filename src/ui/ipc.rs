@@ -19,6 +19,59 @@ pub const CLIENT_TIMEOUT_SECS: u64 = 10;
 /// Bytes one shell-socket connection may send in total (commands are short; `approve` carries
 /// one JSON request).
 pub const CLIENT_QUOTA: u64 = 4 * shared::portal::MAX_LINE as u64;
+/// Shell-socket connections open at once; one more lets the oldest go (a client that loops
+/// connecting must not run the shell out of descriptors).
+pub const MAX_CLIENTS: usize = 64;
+
+/// Wait after `failures` failed accepts in a row (out of descriptors, an aborted connection):
+/// 200 ms more each time, at most 2 s. The socket is never given up (stability S1).
+fn accept_wait(failures: u32) -> std::time::Duration {
+    std::time::Duration::from_millis(200 * u64::from(failures.clamp(1, 10)))
+}
+
+/// The open shell-socket connections, oldest first, at most `cap`.
+struct Clients<T> {
+    cap: usize,
+    next: u64,
+    open: std::collections::VecDeque<(u64, T)>,
+}
+
+impl<T> Clients<T> {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap: cap.max(1),
+            next: 0,
+            open: Default::default(),
+        }
+    }
+
+    /// Takes a new connection: its id, and the oldest one when that made one too many (the caller
+    /// shuts it).
+    fn admit(&mut self, c: T) -> (u64, Option<T>) {
+        let id = self.next;
+        self.next += 1;
+        let out = (self.open.len() >= self.cap)
+            .then(|| self.open.pop_front().map(|o| o.1))
+            .flatten();
+        self.open.push_back((id, c));
+        (id, out)
+    }
+
+    /// Connection `id` ended.
+    fn leave(&mut self, id: u64) {
+        self.open.retain(|o| o.0 != id);
+    }
+}
+
+/// Takes a connection out of [`Clients`] when its task ends, however it ends.
+struct Leave(Rc<std::cell::RefCell<Clients<gio::Socket>>>, u64);
+
+// Drop: frees the connection's place in the shell socket's open list.
+impl Drop for Leave {
+    fn drop(&mut self) {
+        self.0.borrow_mut().leave(self.1);
+    }
+}
 
 /// Next bounded UTF-8 line of a shell-socket client, newline stripped. None at EOF, after
 /// [`CLIENT_TIMEOUT_SECS`] of silence, or when the client broke a bound: the caller drops it.
@@ -69,7 +122,7 @@ pub fn shell_socket(
         gio::SocketProtocol::Default,
         None::<&glib::Object>,
     ) {
-        eprintln!("wol-shell: {}: {e}", path.display());
+        crate::diag::say!("wol-shell: {}: {e}", path.display());
         return;
     }
     {
@@ -82,14 +135,40 @@ pub fn shell_socket(
             }
         })));
     }
+    let clients: Rc<std::cell::RefCell<Clients<gio::Socket>>> =
+        Rc::new(std::cell::RefCell::new(Clients::new(MAX_CLIENTS)));
+    let calls: Rc<super::plugins::Calls> = Default::default();
     glib::spawn_future_local(async move {
-        while let Ok((conn, _)) = listener.accept_future().await {
-            let (panels, osd, sys, handlers, approver) = (
+        let mut failures = 0u32;
+        loop {
+            // One failed accept (EMFILE, ECONNABORTED) must not end the socket for the session.
+            let conn = match listener.accept_future().await {
+                Ok((conn, _)) => {
+                    failures = 0;
+                    conn
+                }
+                Err(e) => {
+                    failures = failures.saturating_add(1);
+                    if failures == 1 {
+                        crate::diag::say!("wol-shell: shell socket: {e}; trying again");
+                    }
+                    glib::timeout_future(accept_wait(failures)).await;
+                    continue;
+                }
+            };
+            let (id, oldest) = clients.borrow_mut().admit(conn.socket());
+            if let Some(old) = oldest {
+                // Its pending read ends (EOF) and its task drops it.
+                let _ = old.shutdown(true, true);
+            }
+            let leave = Leave(clients.clone(), id);
+            let (panels, osd, sys, handlers, approver, calls) = (
                 panels.clone(),
                 osd.clone(),
                 sys.clone(),
                 handlers.clone(),
                 approver.clone(),
+                calls.clone(),
             );
             // Who connected, read now (STANDARDS 7.1 B1): `/proc/<pid>` is pinned as a
             // descriptor at accept and the executable is only ever read through it (R2C-12), so a
@@ -98,6 +177,7 @@ pub fn shell_socket(
             let pinned = peer_of(&conn).map(|(uid, pid)| Pinned::capture(uid, pid));
             let at_accept = pinned.as_ref().map(|p| (p.uid, p.pid, p.exe.clone()));
             glib::spawn_future_local(async move {
+                let _leave = leave;
                 let input = conn.input_stream();
                 // A client that connects and says nothing is dropped after a while (it would
                 // otherwise hold its stream for the session); a line is at most MAX_LINE bytes
@@ -106,13 +186,24 @@ pub fn shell_socket(
                     shared::bounded::LineSplitter::new(shared::portal::MAX_LINE, CLIENT_QUOTA);
                 while let Some(line) = next_line(&input, &mut split).await {
                     let Some(cmd) = protocol::parse(&line) else {
-                        eprintln!("wol-shell: bad command '{line}'");
+                        crate::diag::say!("wol-shell: bad command '{line}'");
                         continue;
                     };
                     // `call` and `status`: one JSON line back on this connection, then it closes.
                     if matches!(cmd.verb, protocol::Verb::Call | protocol::Verb::Status) {
                         let reply = if cmd.verb == protocol::Verb::Call {
-                            super::plugins::call_line(cmd.target).await
+                            // A plugin function runs with the plugin's grants: only for the
+                            // account's own processes, checked like `approve` (stability S6).
+                            let exe = |_: i32| pinned.as_ref().and_then(Pinned::exe_now);
+                            let own = shared::sys::euid();
+                            if may_call(at_accept.as_ref(), peer_of(&conn), own, exe) {
+                                super::plugins::call_line(&calls, cmd.target).await
+                            } else {
+                                crate::diag::say!(
+                                    "wol-shell: refused a call from an unexpected peer"
+                                );
+                                protocol::reply_err(crate::copy::PLUGIN_CALL_REFUSED)
+                            }
                         } else {
                             status_line(&panels)
                         };
@@ -137,7 +228,9 @@ pub fn shell_socket(
                             approver(cmd.target, conn.clone(), requester);
                         } else {
                             // R2C-6: an answer, not a silent close, so the requester says why.
-                            eprintln!("wol-shell: refused an approval from an unexpected peer");
+                            crate::diag::say!(
+                                "wol-shell: refused an approval from an unexpected peer"
+                            );
                             let out = conn.output_stream();
                             let deny = shared::shell::Answer::Deny.line().into_bytes();
                             let _ = out.write_all_future(deny, glib::Priority::DEFAULT).await;
@@ -297,6 +390,18 @@ fn exe_through(dir: &std::fs::File) -> Option<String> {
     (s.len() < 4096).then_some(s)
 }
 
+/// A `call` line is taken from the peer that connected (uid, pid and executable unchanged since
+/// accept, [`still_same`]) and only when it runs as this account: a plugin function runs with the
+/// plugin's grants (run, notify).
+fn may_call(
+    at_accept: Option<&(u32, i32, Option<String>)>,
+    now: Option<(u32, i32)>,
+    own_uid: u32,
+    exe: impl Fn(i32) -> Option<String>,
+) -> bool {
+    now.is_some_and(|(uid, _)| uid == own_uid) && still_same(at_accept, now, exe)
+}
+
 /// An `approve` line is taken only when `super::approval::may_approve` allows its kernel-reported
 /// peer (uid, pid -> executable) to ask for that request; an unparsable request is refused too.
 fn may_ask(
@@ -438,8 +543,21 @@ pub fn problems() -> Vec<String> {
     PROBLEMS.with_borrow(|p| p.values().cloned().collect())
 }
 
+/// The error of config file `name` now, read again; None when it loads (or is not one [`reload`]
+/// reads: the style sheet is checked by applying it).
+fn still_bad(name: &str) -> Option<ConfigError> {
+    match name {
+        wol_core::prefs::SHELL_NAME => load_shell().err(),
+        wol_core::prefs::WIDGETS_NAME => config_text(shared::widgets::DESKTOP_FILE)
+            .as_deref()
+            .and_then(wol_core::prefs::widgets_error),
+        _ => None,
+    }
+}
+
 /// Records how applying `files` went: a new error shows one notice (the same error again does
-/// not), a file that loads again clears its notice.
+/// not), a file that loads again clears its notice. [`reload`] stops at the first file that does
+/// not load, so the others are read again before their notice goes (stability S8).
 fn report(files: &[&'static str], r: Result<(), ConfigError>) {
     let shown = match r {
         Ok(()) => {
@@ -451,12 +569,15 @@ fn report(files: &[&'static str], r: Result<(), ConfigError>) {
             return;
         }
         Err(e) => {
-            eprintln!("wol-shell: not applied: {e}");
+            crate::diag::say!("wol-shell: not applied: {e}");
             let text = notice_text(&e);
             PROBLEMS.with_borrow_mut(|p| {
-                files.iter().filter(|f| **f != e.file).for_each(|f| {
-                    p.remove(f);
-                });
+                files
+                    .iter()
+                    .filter(|f| **f != e.file && still_bad(f).is_none())
+                    .for_each(|f| {
+                        p.remove(f);
+                    });
                 (p.insert(e.file, text.clone()).as_ref() != Some(&text)).then_some(text)
             })
         }
@@ -499,7 +620,7 @@ pub fn watch_prefs() {
         .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
     {
         Ok(m) => m,
-        Err(e) => return eprintln!("wol-shell: {}: no live reload: {e}", dir.display()),
+        Err(e) => return crate::diag::say!("wol-shell: {}: no live reload: {e}", dir.display()),
     };
     m.set_rate_limit(i32::try_from(DEBOUNCE_MS).unwrap_or(i32::MAX));
     let due: Rc<std::cell::RefCell<(Option<glib::SourceId>, [bool; WATCHED.len()])>> =
@@ -602,7 +723,7 @@ fn run(
     }
     match panels.borrow().get(cmd.target.as_str()) {
         Some(w) => w.set_visible(protocol::apply(cmd.verb, w.is_visible())),
-        None => eprintln!("wol-shell: no panel '{}'", cmd.target),
+        None => crate::diag::say!("wol-shell: no panel '{}'", cmd.target),
     }
 }
 
@@ -734,9 +855,6 @@ fn after_blank(active: Option<(String, String)>, panel_has_keys: bool) -> Option
 /// another app in front or a workspace switch closes the transient panels. Reconnects with
 /// [`backoff`] and reseeds from `j/activewindow` + `j/clients` (off the UI thread) each time.
 pub fn hypr_events(dock: Rc<Dock>, panels: Panels) {
-    let Some(path) = hypr::socket(".socket2.sock") else {
-        return;
-    };
     glib::spawn_future_local(async move {
         installed().await;
         let show: Show = Rc::new(move |class: &str, title: &str| {
@@ -747,6 +865,17 @@ pub fn hypr_events(dock: Rc<Dock>, panels: Panels) {
         });
         let mut failures = 0u32;
         loop {
+            // Looked up on every try: a socket the environment does not name may appear later
+            // (stability S4). Off the UI thread: without the instance it reads the runtime folder.
+            let found = hypr::find_socket_off_thread(crate::envv::var, ".socket2.sock").await;
+            let Some(path) = found else {
+                if failures == 0 {
+                    crate::diag::say!("wol-shell: no compositor event socket yet, looking again");
+                }
+                glib::timeout_future(backoff(failures)).await;
+                failures = failures.saturating_add(1);
+                continue;
+            };
             let addr = gio::UnixSocketAddress::new(&path);
             match gio::SocketClient::new().connect_future(&addr).await {
                 Ok(conn) => {
@@ -757,9 +886,9 @@ pub fn hypr_events(dock: Rc<Dock>, panels: Panels) {
                         failures = 0;
                         handle(&line, &dock, &panels, &show).await;
                     }
-                    eprintln!("wol-shell: compositor event socket closed, reconnecting");
+                    crate::diag::say!("wol-shell: compositor event socket closed, reconnecting");
                 }
-                Err(e) => eprintln!("wol-shell: compositor event socket: {e}"),
+                Err(e) => crate::diag::say!("wol-shell: compositor event socket: {e}"),
             }
             glib::timeout_future(backoff(failures)).await;
             failures = failures.saturating_add(1);
@@ -1082,5 +1211,65 @@ mod tests {
         let secs: Vec<u64> = (0..8).map(|n| backoff(n).as_secs()).collect();
         assert_eq!(secs, [1, 2, 4, 8, 16, 30, 30, 30]);
         assert_eq!(backoff(u32::MAX).as_secs(), 30, "no shift overflow");
+    }
+
+    /// Stability S1: failed accepts wait a little more each time, never long, never forever.
+    #[test]
+    fn failed_accepts_wait_and_go_on() {
+        let ms: Vec<u128> = (0..13).map(|n| accept_wait(n).as_millis()).collect();
+        assert_eq!(
+            ms,
+            [
+                200, 200, 400, 600, 800, 1000, 1200, 1400, 1600, 1800, 2000, 2000, 2000
+            ]
+        );
+        assert_eq!(accept_wait(u32::MAX).as_millis(), 2000);
+    }
+
+    /// Stability S1: at most `cap` connections; one more lets the oldest go, and a connection
+    /// that ended frees its place.
+    #[test]
+    fn connections_are_capped_oldest_first() {
+        let mut c = Clients::new(3);
+        assert_eq!(c.admit('a'), (0, None));
+        assert_eq!(c.admit('b'), (1, None));
+        assert_eq!(c.admit('c'), (2, None));
+        assert_eq!(c.admit('d'), (3, Some('a')), "the oldest goes");
+        c.leave(2);
+        assert_eq!(c.admit('e'), (4, None), "a place came free");
+        assert_eq!(c.admit('f'), (5, Some('b')));
+        c.leave(0);
+        c.leave(99);
+        let left: Vec<char> = c.open.iter().map(|o| o.1).collect();
+        assert_eq!(left, ['d', 'e', 'f']);
+        assert_eq!(MAX_CLIENTS, 64);
+    }
+
+    /// Stability S6: `call` takes only the account's own peer, unchanged since accept.
+    #[test]
+    fn calls_come_only_from_the_own_account_unchanged() {
+        let bin = |_: i32| Some("/usr/bin/wol".to_string());
+        let other = |_: i32| Some("/usr/bin/other".to_string());
+        let at = Some((1000, 7, Some("/usr/bin/wol".to_string())));
+        assert!(may_call(at.as_ref(), Some((1000, 7)), 1000, bin));
+        assert!(
+            !may_call(at.as_ref(), Some((1000, 7)), 1000, other),
+            "exec'd"
+        );
+        assert!(
+            !may_call(at.as_ref(), Some((1000, 8)), 1000, bin),
+            "another pid"
+        );
+        assert!(!may_call(at.as_ref(), None, 1000, bin), "no credentials");
+        assert!(
+            !may_call(None, Some((1000, 7)), 1000, bin),
+            "none at accept"
+        );
+        let root = Some((0, 7, Some("/usr/bin/wol".to_string())));
+        assert!(
+            !may_call(root.as_ref(), Some((0, 7)), 1000, bin),
+            "another account"
+        );
+        assert!(crate::copy::lint(crate::copy::PLUGIN_CALL_REFUSED).is_empty());
     }
 }

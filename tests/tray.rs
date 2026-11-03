@@ -84,6 +84,18 @@ fn menu_labels_lose_their_access_marks() {
 
 #[test]
 fn wheel_steps_are_notches_up_positive() {
+    for (d, n) in [
+        (0.0, 0),
+        (0.4, 0),
+        (0.5, 1),
+        (-0.5, -1),
+        (1.6, 2),
+        (-120.4, -120),
+        (1e9, 0),
+        (f64::NAN, 0),
+    ] {
+        assert_eq!(tray::whole(d), n, "{d}");
+    }
     assert_eq!(tray::scroll_args(0.0, -1.0), Some((120, "vertical")));
     assert_eq!(tray::scroll_args(0.0, 1.0), Some((-120, "vertical")));
     assert_eq!(tray::scroll_args(1.0, 0.0), Some((-120, "horizontal")));
@@ -181,6 +193,7 @@ fn menus_parse_three_levels_deep() {
 // ---------------------------------------------------------------- on a bus
 
 struct Daemon(std::process::Child, String);
+// Drop: kills and reaps the private bus daemon.
 impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -550,5 +563,51 @@ fn an_item_that_cannot_be_read_does_not_stay() {
         assert!(left.is_empty(), "still listed: {left:?}");
         assert!(tray.items().is_empty());
         tray.stop().await;
+    });
+}
+
+/// Stability S5: the tray turned off and on within one debounce. The new watcher asks for the
+/// name while the old one is still giving it up: it is refused with `NameTaken`, tries again
+/// [`tray::SERVE_GAP`] later, and gets it.
+#[test]
+fn a_watcher_started_while_the_last_one_stops_gets_the_name() {
+    let Some(d) = daemon() else {
+        eprintln!("skipped: no dbus-daemon");
+        return;
+    };
+    let other = zbus::Error::Failure("no bus".into());
+    assert!(
+        !tray::serve_again(&other, 1),
+        "only a taken name is tried again"
+    );
+    assert!(!tray::serve_again(
+        &zbus::Error::NameTaken,
+        tray::SERVE_TRIES
+    ));
+    async_io::block_on(async {
+        let (old, _rx) = Tray::serve(Some(&d.1), spawn()).await.expect("serve");
+        let e = Tray::serve(Some(&d.1), spawn()).await.err().expect("taken");
+        assert!(matches!(e, zbus::Error::NameTaken), "{e}");
+        assert!(tray::serve_again(&e, 1));
+        let stopping = async {
+            async_io::Timer::after(Duration::from_millis(250)).await;
+            old.stop().await;
+        };
+        let start = async {
+            let mut tries = 1;
+            loop {
+                match Tray::serve(Some(&d.1), spawn()).await {
+                    Ok(x) => break (x, tries),
+                    Err(e) if tray::serve_again(&e, tries) => {
+                        tries += 1;
+                        async_io::Timer::after(tray::SERVE_GAP).await;
+                    }
+                    Err(e) => panic!("not served after {tries} tries: {e}"),
+                }
+            }
+        };
+        let ((), ((new, _rx), tries)) = futures_lite::future::zip(stopping, start).await;
+        assert!(tries > 1, "the first try met the old watcher");
+        new.stop().await;
     });
 }

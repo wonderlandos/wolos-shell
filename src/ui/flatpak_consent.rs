@@ -75,8 +75,16 @@ pub fn lookup(req: &Request, home: &str) -> (String, String) {
 
 fn app_image(icon: &str) -> gtk::Image {
     if icon.starts_with('/') {
-        let i = gtk::Image::from_file(icon);
+        // The app's own picture is decoded off the GTK thread and drawn when it is ready.
+        let i = gtk::Image::new();
         i.set_pixel_size(w::ICON_L);
+        let (path, shown) = (icon.to_owned(), i.downgrade());
+        gtk::glib::spawn_future_local(async move {
+            let decoded = gtk::gio::spawn_blocking(move || gtk::gdk::Texture::from_filename(path));
+            if let (Ok(Ok(texture)), Some(image)) = (decoded.await, shown.upgrade()) {
+                image.set_paintable(Some(&texture));
+            }
+        });
         i
     } else if gtk::IconTheme::for_display(&gtk::gdk::Display::default().expect("display"))
         .has_icon(icon)

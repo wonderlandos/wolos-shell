@@ -85,6 +85,7 @@ fn the_notice_names_the_key_in_plain_words() {
 
 /// Kills the private display server on every exit path.
 struct Kill(std::process::Child);
+// Drop: kills and reaps the display server.
 impl Drop for Kill {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -138,11 +139,13 @@ fn display() -> Kill {
     );
     let sock = Path::new(&std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()))
         .join(format!("broadway{}.socket", n + 1));
-    for _ in 0..100 {
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
         if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
             break;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        // The server is a process that is starting: the connect is simply tried again.
+        std::thread::yield_now();
     }
     unsafe {
         std::env::set_var("GDK_BACKEND", "broadway");
@@ -273,6 +276,24 @@ fn saves_apply_within_200_ms_and_bad_ones_keep_the_last_good_state() {
     run_until(Duration::from_secs(2), || calls() >= 6);
     assert!(calls() == 6 && ipc::problems().is_empty());
 
+    // 4b. Stability S8: a bad shell.json, then a bad widgets.json: both notices stand (the second
+    // save is stopped at widgets.json, and shell.json is read again before its notice goes).
+    // Fixing widgets.json leaves shell.json's; fixing shell.json applies.
+    save(&shell_json, bad, false);
+    run_until(QUIET, || false);
+    save(&widgets_json, r#"{"widgets": {}}"#, false);
+    run_until(QUIET, || false);
+    let p = ipc::problems();
+    assert_eq!(p.len(), 2, "{p:?}");
+    save(&widgets_json, "{\"version\":1,\"widgets\":[]}\n", false);
+    run_until(QUIET, || false);
+    let p = ipc::problems();
+    assert!(p.len() == 1 && p[0].contains("“dock_tile_size”"), "{p:?}");
+    assert_eq!(calls(), 6, "shell.json still does not load");
+    save(&shell_json, &good.to_json(), false);
+    run_until(Duration::from_secs(2), || calls() >= 7);
+    assert!(calls() == 7 && ipc::problems().is_empty());
+
     // 5. kit.css: good rules apply within 200 ms; a mistake keeps them and names the property.
     assert_eq!(style::user_css_text(), "", "no user file yet");
     save(&kit_css, ".sp2-probe { color: red; }\n", false);
@@ -297,18 +318,22 @@ fn saves_apply_within_200_ms_and_bad_ones_keep_the_last_good_state() {
         p.len() == 1 && p[0].contains("“colr” on line 3 of your style sheet"),
         "{p:?}"
     );
-    assert_eq!(calls(), 6, "a style sheet runs no prefs hook");
+    assert_eq!(calls(), 7, "a style sheet runs no prefs hook");
     std::fs::remove_file(&kit_css).unwrap();
     let took = run_until(Duration::from_secs(2), || style::user_css_text().is_empty());
     assert!(took < APPLY_WITHIN, "removed kit.css after {took:?}");
     assert!(ipc::problems().is_empty());
     let n = notices();
-    assert_eq!(n.len(), 3, "shell.json, widgets.json, kit.css: {n:?}");
+    assert_eq!(
+        n.len(),
+        5,
+        "shell.json, widgets.json, both again, kit.css: {n:?}"
+    );
 
     // 6. 100 reloads add no hook.
     for _ in 0..100 {
         ipc::reload().unwrap();
     }
-    assert_eq!(calls(), 106);
+    assert_eq!(calls(), 107);
     assert_eq!(ipc::reload_hooks(), hooks, "hook count after 100 reloads");
 }

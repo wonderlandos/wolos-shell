@@ -915,9 +915,45 @@ pub fn theme_from_plugin(theme: &str, plugin: &str) -> String {
 /// `wol.open` of a plugin found no app for the file, folder or link.
 pub const PLUGIN_OPEN_FAILED: &str = "No app here opens this.";
 
+/// The `call` answer to a shell-socket peer that is not this account's own program (ui/ipc.rs).
+pub const PLUGIN_CALL_REFUSED: &str = "Only your own programs can call plugin functions.";
+
+/// The `call` answer to a line that does not name a plugin and a function.
+pub const PLUGIN_CALL_USAGE: &str =
+    "A call names a plugin, a function and, if the function takes one, a value.";
+
+/// The `call` answer when the plugin folders could not be read.
+pub const PLUGIN_READ_FAILED: &str = "The plugins could not be read.";
+
+/// The `call` answer for a plugin that is not turned on.
+pub fn plugin_not_on(plugin: &str) -> String {
+    format!("No plugin {plugin} is turned on (wol plugin list shows them).")
+}
+
 /// A shell part that panicked while it was built (`kit::fence` card, SP-1).
 pub const PART_STOPPED: &str =
     "Everything else keeps working. Sign out and in again to bring it back.";
+
+// ---- Files an app hands the desktop (libwol 1.15, app_session.rs) ----
+
+/// Under the file's name on the share sheet.
+pub const FILE_SHEET_DETAIL: &str = "Choose where this file goes.";
+/// Under "Open “name” With" on the chooser.
+pub const OPEN_WITH_DETAIL: &str = "Choose the app that opens it.";
+/// No app of this computer opens the file's kind.
+pub const OPEN_WITH_NONE: &str = "No app on this computer opens this kind of file.";
+/// The chosen app did not start with the file.
+pub const OPEN_WITH_NOT_OPENED: &str = "That app could not open the file.";
+/// The path an app named is gone.
+pub const FILE_GONE: &str = "That file is not there any more.";
+/// The home folder, or a folder holding it or the Trash.
+pub const TRASH_KEEPS: &str = "That folder cannot go to the Trash.";
+pub const TRASH_ALREADY: &str = "That is in the Trash already.";
+pub const TRASH_NOT_MOVED: &str = "That could not be moved to the Trash.";
+/// Shared or opened with an app: a file, never a folder.
+pub const SHARE_ONLY_FILES: &str = "Only a file can be shared.";
+pub const CLIPBOARD_UNCHANGED: &str = "The clipboard could not be changed.";
+pub const COPY_NOT_SAVED: &str = "That copy could not be saved.";
 
 #[cfg(test)]
 mod tests {

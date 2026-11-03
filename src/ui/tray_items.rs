@@ -11,10 +11,9 @@ use crate::kit::{fence, widgets as w};
 use crate::tray::{self, Item, MenuNode, Toggle, Tray};
 use gtk::{gdk, glib, prelude::*};
 use std::cell::RefCell;
-use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
 struct State {
     /// [`start`] ran (the real shell, not a preview).
     started: bool,
@@ -23,33 +22,51 @@ struct State {
     /// The running watcher (None: off, starting, or another process owns the name).
     tray: Option<Tray>,
     starting: bool,
+    /// Watchers being stopped: each sends (or drops) once its name is given up. A start waits
+    /// for them, so turning the tray off and on again does not race its own name (stability S5).
+    stopping: Vec<async_channel::Receiver<()>>,
     /// Bumped on every start: an older run's list is not applied.
     run: u64,
     items: Vec<Item>,
-    strips: Vec<Weak<Strip>>,
     /// Folders added to the icon theme (`IconThemePath`).
     theme_paths: Vec<String>,
 }
 
-thread_local! {
-    static STATE: RefCell<State> = RefCell::new(State { enabled: true, ..Default::default() });
+/// The watcher's state: one per process (one session, one name on the bus). Plain data, so it is
+/// no thread-local: the strips that show it are the menu bars' ([`super::menubar::tray_strips`]).
+static STATE: Mutex<State> = Mutex::new(State {
+    started: false,
+    enabled: true,
+    tray: None,
+    starting: false,
+    stopping: Vec::new(),
+    run: 0,
+    items: Vec::new(),
+    theme_paths: Vec::new(),
+});
+
+/// Runs `f` on the state (briefly: never across an await).
+fn state<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    f(&mut STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner))
 }
 
 fn tray_now() -> Option<Tray> {
-    STATE.with_borrow(|s| s.tray.clone())
+    state(|s| s.tray.clone())
 }
 
 /// Starts the session's watcher behind `shell.json` `"tray"` (once; later calls do nothing).
 /// Only the shell's own bar calls this ([`super::menubar::build`]); previews draw an empty strip.
 pub fn start() {
-    if STATE.with_borrow_mut(|s| std::mem::replace(&mut s.started, true)) {
+    if state(|s| std::mem::replace(&mut s.started, true)) {
         return;
     }
     fence::guard("tray", || super::ipc::on_reload(|p| set_enabled(p.tray)));
 }
 
 fn set_enabled(on: bool) {
-    let (launch, stop) = STATE.with_borrow_mut(|s| {
+    let (launch, stop) = state(|s| {
         s.enabled = on;
         let launch = on && s.tray.is_none() && !s.starting;
         let stop = if on { None } else { s.tray.take() };
@@ -59,7 +76,12 @@ fn set_enabled(on: bool) {
         (launch, stop)
     });
     if let Some(t) = stop {
-        glib::spawn_future_local(async move { t.stop().await });
+        let (done, wait) = async_channel::bounded(1);
+        state(|s| s.stopping.push(wait));
+        glib::spawn_future_local(async move {
+            t.stop().await;
+            let _ = done.try_send(());
+        });
     }
     if launch {
         run();
@@ -70,7 +92,7 @@ fn set_enabled(on: bool) {
 /// Previews and goldens: the bars made from now on show `items`, as if apps had sent them (bars
 /// there are keep theirs). Ignored once the real watcher was asked for ([`start`]).
 pub fn preview(items: Vec<Item>) {
-    STATE.with_borrow_mut(|s| {
+    state(|s| {
         if !s.started {
             s.items = items;
         }
@@ -79,7 +101,7 @@ pub fn preview(items: Vec<Item>) {
 
 /// Owns the watcher name and applies every list it sends until it stops.
 fn run() {
-    let run = STATE.with_borrow_mut(|s| {
+    let run = state(|s| {
         s.starting = true;
         s.run += 1;
         s.run
@@ -88,15 +110,26 @@ fn run() {
         let spawn: tray::Spawn = Arc::new(|f| {
             glib::MainContext::default().spawn(f);
         });
-        let (t, rx) = match Tray::serve(None, spawn).await {
-            Ok(x) => x,
-            Err(e) => {
-                STATE.with_borrow_mut(|s| s.starting = false);
-                eprintln!("wol-shell: tray: {e}");
-                return;
+        // The last watcher gives its name up first.
+        for w in state(|s| std::mem::take(&mut s.stopping)) {
+            let _ = w.recv().await;
+        }
+        let mut tries = 1;
+        let (t, rx) = loop {
+            match Tray::serve(None, spawn.clone()).await {
+                Ok(x) => break x,
+                Err(e) if tray::serve_again(&e, tries) => {
+                    tries += 1;
+                    glib::timeout_future(tray::SERVE_GAP).await;
+                }
+                Err(e) => {
+                    state(|s| s.starting = false);
+                    crate::diag::say!("wol-shell: tray: {e}");
+                    return;
+                }
             }
         };
-        let keep = STATE.with_borrow_mut(|s| {
+        let keep = state(|s| {
             s.starting = false;
             let keep = s.enabled && s.run == run;
             if keep {
@@ -112,7 +145,7 @@ fn run() {
             while let Ok(newer) = rx.try_recv() {
                 items = newer;
             }
-            if !STATE.with_borrow_mut(|s| {
+            if !state(|s| {
                 let current = s.run == run && s.enabled;
                 if current {
                     s.items = items;
@@ -127,18 +160,8 @@ fn run() {
 }
 
 fn render_all() {
-    let (items, on, strips) = STATE.with_borrow_mut(|s| {
-        s.strips.retain(|x| x.strong_count() > 0);
-        (
-            s.items.clone(),
-            s.enabled,
-            s.strips
-                .iter()
-                .filter_map(Weak::upgrade)
-                .collect::<Vec<_>>(),
-        )
-    });
-    for st in strips {
+    let (items, on) = state(|s| (s.items.clone(), s.enabled));
+    for st in super::menubar::tray_strips() {
         st.update(&items, on);
     }
 }
@@ -162,8 +185,7 @@ pub fn strip() -> Rc<Strip> {
             root: w::hbox(0),
             slots: RefCell::default(),
         });
-        STATE.with_borrow_mut(|s| s.strips.push(Rc::downgrade(&st)));
-        let (items, on) = STATE.with_borrow(|s| (s.items.clone(), s.enabled));
+        let (items, on) = state(|s| (s.items.clone(), s.enabled));
         st.update(&items, on);
         st
     });
@@ -249,7 +271,7 @@ fn icon(it: &Item) -> gtk::Widget {
     if let Some(display) = gdk::Display::default() {
         let theme = gtk::IconTheme::for_display(&display);
         if !it.theme_path.is_empty()
-            && STATE.with_borrow_mut(|s| {
+            && state(|s| {
                 let new = !s.theme_paths.contains(&it.theme_path);
                 if new {
                     s.theme_paths.push(it.theme_path.clone());
@@ -275,7 +297,7 @@ fn icon(it: &Item) -> gtk::Widget {
                 p.height,
                 gdk::MemoryFormat::R8g8b8a8,
                 &glib::Bytes::from(&p.rgba),
-                p.width as usize * 4,
+                usize::try_from(p.width).map_or(0, |w| w * 4),
             )
             .upcast()
         })

@@ -16,7 +16,7 @@
 //!
 //! Each surface (menu bar, Dock, desktop) owns its own [`Host`] for the kinds it draws; tiles and
 //! hotkeys need no Lua and are free functions ([`tiles`], [`set_tile`], [`hotkeys`]). `[[ipc]]`
-//! functions run in one more host the shell socket keeps ([`call_line`], [`Host::call_ipc`]).
+//! functions run in one more host the shell socket keeps ([`Calls`], [`call_line`], [`Host::call_ipc`]).
 use crate::kit::{self, lifetime::Lifetime, widgets as w};
 use crate::ui::app_view::{Act, Sink, View};
 use gtk::{gio, glib, prelude::*};
@@ -673,9 +673,7 @@ impl Host {
         let arg_type = {
             let snap = self.snap.borrow();
             let Some((_, m)) = snap.manifest(plugin) else {
-                return Err(format!(
-                    "No plugin {plugin} is turned on (wol plugin list shows them)."
-                ));
+                return Err(crate::copy::plugin_not_on(plugin));
             };
             let Some(e) = m.ipc.iter().find(|e| e.id == id) else {
                 let names: Vec<&str> = m.ipc.iter().map(|e| e.id.as_str()).collect();
@@ -1222,32 +1220,136 @@ pub fn load(host: &Rc<RefCell<Host>>, changed: Rc<dyn Fn()>) {
     });
 }
 
-thread_local! {
-    /// The shell socket's `[[ipc]]` host, made at the first `call`.
-    static IPC: RefCell<Option<Rc<RefCell<Host>>>> = const { RefCell::new(None) };
+/// Whether the `call` host reads the plugins again before a call (stability S6: every call read
+/// every plugin folder): at first, after a change the folder watch saw, and every time while some
+/// folder could not be watched.
+#[derive(Debug)]
+struct Fresh {
+    stale: Cell<bool>,
+    watching: Cell<bool>,
 }
 
-/// The reply line to a `call` line's target (`<plugin> <fn> [json]`): the plugins are read off
-/// the GTK thread first, so a plugin turned on or edited a moment ago answers; when nothing
-/// changed, the loaded scripts (and what their Lua keeps) stay.
-pub async fn call_line(target: String) -> String {
+impl Fresh {
+    fn new() -> Self {
+        Fresh {
+            stale: Cell::new(true),
+            watching: Cell::new(false),
+        }
+    }
+
+    /// The watch saw a change in a plugin folder or the enable list.
+    fn changed(&self) {
+        self.stale.set(true);
+    }
+
+    fn watching(&self, on: bool) {
+        self.watching.set(on);
+    }
+
+    /// A call is about to run: true = read the plugins first. A change seen while that read runs
+    /// makes the next call read again.
+    fn take(&self) -> bool {
+        self.stale.replace(false) || !self.watching.get()
+    }
+}
+
+/// The shell socket's `[[ipc]]` host and the watch that tells it when to read again.
+struct Ipc {
+    host: Rc<RefCell<Host>>,
+    fresh: Rc<Fresh>,
+    monitors: RefCell<Vec<gio::FileMonitor>>,
+    /// Reads of the plugin folders so far.
+    reads: Cell<u32>,
+}
+
+impl Ipc {
+    fn new(host: Host) -> Rc<Ipc> {
+        Rc::new(Ipc {
+            host: Rc::new(RefCell::new(host)),
+            fresh: Rc::new(Fresh::new()),
+            monitors: RefCell::default(),
+            reads: Cell::new(0),
+        })
+    }
+
+    /// Watches the user plugin folder, each user plugin folder in it and the folder of
+    /// `plugins.json` (again after every read: plugin folders come and go).
+    fn arm(&self) {
+        let mut dirs = {
+            let h = self.host.borrow();
+            let mut d = h.paths.watched();
+            d.extend(
+                h.snap
+                    .borrow()
+                    .plugins
+                    .iter()
+                    .filter(|p| !p.system)
+                    .map(|p| p.dir.clone()),
+            );
+            d
+        };
+        dirs.dedup();
+        let mut ms = self.monitors.borrow_mut();
+        for m in ms.drain(..) {
+            m.cancel();
+        }
+        let mut all = !dirs.is_empty();
+        for d in dirs {
+            let _ = std::fs::create_dir_all(&d);
+            match gio::File::for_path(&d)
+                .monitor_directory(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            {
+                Ok(m) => {
+                    let fresh = Rc::downgrade(&self.fresh);
+                    m.connect_changed(move |_, _, _, _| {
+                        if let Some(f) = fresh.upgrade() {
+                            f.changed();
+                        }
+                    });
+                    ms.push(m);
+                }
+                Err(_) => all = false,
+            }
+        }
+        self.fresh.watching(all);
+    }
+}
+
+/// The shell socket's `[[ipc]]` host, made at the first `call`; the socket owns it and hands it to
+/// every connection.
+#[derive(Default)]
+pub struct Calls(RefCell<Option<Rc<Ipc>>>);
+
+/// The reply line to a `call` line's target (`<plugin> <fn> [json]`). The plugins are read off
+/// the GTK thread at the first call and again once the folder watch saw a change (a plugin
+/// turned on or edited answers as soon as the watch saw it); otherwise the loaded scripts (and
+/// what their Lua keeps) answer without touching the disk.
+pub async fn call_line(calls: &Calls, target: String) -> String {
+    let ipc = calls
+        .0
+        .borrow_mut()
+        .get_or_insert_with(|| Ipc::new(Host::new(Paths::user(), IPC_KINDS)))
+        .clone();
+    call_with(&ipc, target).await
+}
+
+async fn call_with(ipc: &Rc<Ipc>, target: String) -> String {
     use crate::protocol::{Call, reply_err, reply_ok};
     let Some(c) = Call::of(&target) else {
-        return reply_err("A call is: <plugin id> <function> [one JSON value].");
+        return reply_err(crate::copy::PLUGIN_CALL_USAGE);
     };
-    let host = IPC.with_borrow_mut(|h| {
-        h.get_or_insert_with(|| Rc::new(RefCell::new(Host::new(Paths::user(), IPC_KINDS))))
-            .clone()
-    });
-    let paths = host.borrow().paths.clone();
-    let Ok(snap) = gio::spawn_blocking(move || read_snapshot(&paths, IPC_KINDS)).await else {
-        return reply_err("The plugins could not be read.");
-    };
-    let r = {
-        let mut h = host.borrow_mut();
-        h.apply(snap);
-        h.call_ipc(&c.plugin, &c.entry, &c.args)
-    };
+    let host = ipc.host.clone();
+    if ipc.fresh.take() {
+        let paths = host.borrow().paths.clone();
+        ipc.reads.set(ipc.reads.get() + 1);
+        let Ok(snap) = gio::spawn_blocking(move || read_snapshot(&paths, IPC_KINDS)).await else {
+            ipc.fresh.changed();
+            return reply_err(crate::copy::PLUGIN_READ_FAILED);
+        };
+        host.borrow_mut().apply(snap);
+        ipc.arm();
+    }
+    let r = host.borrow_mut().call_ipc(&c.plugin, &c.entry, &c.args);
     toast(&host);
     match r {
         Ok(v) => reply_ok(v),

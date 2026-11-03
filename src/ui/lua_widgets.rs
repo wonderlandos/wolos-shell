@@ -49,6 +49,7 @@ pub struct Lua {
     life: crate::kit::lifetime::Lifetime,
 }
 
+// Drop: ends the lifetime that owns this widget's timers and monitors.
 impl Drop for Lua {
     fn drop(&mut self) {
         self.life.end();

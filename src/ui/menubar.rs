@@ -873,6 +873,11 @@ pub fn bars() -> Vec<Rc<Bar>> {
     BARS.with_borrow(|b| b.iter().filter_map(|x| x.upgrade()).collect())
 }
 
+/// The status-item strip of every live menu bar (`ui::tray_items`).
+pub fn tray_strips() -> Vec<Rc<super::tray_items::Strip>> {
+    bars().iter().map(|b| b.items.tray.clone()).collect()
+}
+
 /// The app in front changed: every bar shows it.
 pub fn set_app_all(name: String, class: String) {
     LAST_APP.set(Some((name.clone(), class.clone())));

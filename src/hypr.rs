@@ -121,6 +121,46 @@ pub fn socket(name: &str) -> Option<PathBuf> {
     shared::sys::hypr_socket(|k| std::env::var(k).ok(), name)
 }
 
+/// `name` of the compositor instance under `<runtime>/hypr/` that started last and has it; None
+/// when there is none. For the event socket of a shell whose environment does not name the
+/// instance (a wrapper that dropped it, a dev run): it is looked for again on every reconnect.
+pub fn newest_socket(runtime: &std::path::Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(runtime.join("hypr"))
+        .ok()?
+        .filter_map(|e| {
+            let sock = e.ok()?.path().join(name);
+            let made = std::fs::symlink_metadata(&sock).ok()?.modified().ok()?;
+            Some((made, sock))
+        })
+        .max_by_key(|(made, _)| *made)
+        .map(|(_, sock)| sock)
+}
+
+/// [`find_socket`] for the GTK thread: the environment names the instance, or the runtime folder
+/// is read on a worker thread.
+pub async fn find_socket_off_thread(
+    var: impl Fn(&str) -> Option<String>,
+    name: &'static str,
+) -> Option<PathBuf> {
+    if let Some(named) = shared::sys::hypr_socket(&var, name) {
+        return Some(named);
+    }
+    let rt = var("XDG_RUNTIME_DIR").filter(|r| r.starts_with('/'))?;
+    gtk::gio::spawn_blocking(move || newest_socket(std::path::Path::new(&rt), name))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// The compositor's socket `name` as `var` gives the environment: the instance it names
+/// ([`socket`]), else the newest one in the runtime directory ([`newest_socket`]).
+pub fn find_socket(var: impl Fn(&str) -> Option<String>, name: &str) -> Option<PathBuf> {
+    shared::sys::hypr_socket(&var, name).or_else(|| {
+        let rt = var("XDG_RUNTIME_DIR").filter(|r| r.starts_with('/'))?;
+        newest_socket(std::path::Path::new(&rt), name)
+    })
+}
+
 /// Longest a request waits on the compositor: a stalled compositor must not stall the shell.
 pub const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -536,6 +576,48 @@ pub fn running_classes(clients: &[Client]) -> std::collections::HashSet<String> 
 
 #[cfg(test)]
 mod tests {
+    /// Stability S4: the event socket is found without the instance in the environment, and
+    /// only once it is there; the instance named in the environment wins.
+    #[test]
+    fn the_event_socket_is_found_once_it_appears() {
+        let rt = std::env::temp_dir().join(format!("wol-hypr-find-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&rt);
+        let rts = rt.to_str().unwrap().to_string();
+        let var = |sig: Option<&'static str>| {
+            let rts = rts.clone();
+            move |k: &str| match k {
+                "XDG_RUNTIME_DIR" => Some(rts.clone()),
+                "HYPRLAND_INSTANCE_SIGNATURE" => sig.map(String::from),
+                _ => None,
+            }
+        };
+        let name = ".socket2.sock";
+        assert_eq!(
+            super::find_socket(var(None), name),
+            None,
+            "no runtime folder yet"
+        );
+        std::fs::create_dir_all(rt.join("hypr/old")).unwrap();
+        assert_eq!(super::find_socket(var(None), name), None, "no socket yet");
+        std::fs::write(rt.join("hypr/old").join(name), "").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::create_dir_all(rt.join("hypr/new")).unwrap();
+        std::fs::write(rt.join("hypr/new").join(name), "").unwrap();
+        assert_eq!(
+            super::find_socket(var(None), name),
+            Some(rt.join("hypr/new").join(name)),
+            "the newest instance"
+        );
+        assert_eq!(
+            super::find_socket(var(Some("old")), name),
+            Some(rt.join("hypr/old").join(name)),
+            "the named instance"
+        );
+        let relative = |k: &str| (k == "XDG_RUNTIME_DIR").then(|| "run".to_string());
+        assert_eq!(super::find_socket(relative, name), None);
+        let _ = std::fs::remove_dir_all(&rt);
+    }
+
     #[test]
     fn urgent_names_the_window_address() {
         assert_eq!(

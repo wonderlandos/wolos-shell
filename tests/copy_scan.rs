@@ -35,11 +35,11 @@ const NOT_ON_SCREEN: [&str; 9] = [
 ];
 
 /// Sentence literals outside copy.rs, per file. Only shrinks.
-const BASELINE: [(&str, usize); 48] = [
+const BASELINE: [(&str, usize); 47] = [
     ("app_session.rs", 13),
     ("login.rs", 1),
     ("packages.rs", 22),
-    ("setup.rs", 22),
+    ("setup.rs", 20),
     ("system.rs", 1),
     ("ui/approval.rs", 5),
     ("ui/drop_shelf.rs", 1),
@@ -53,7 +53,6 @@ const BASELINE: [(&str, usize); 48] = [
     ("ui/settings/bluetooth.rs", 3),
     ("ui/settings/control_center.rs", 1),
     ("ui/settings/datetime.rs", 2),
-    ("ui/settings/displays.rs", 1),
     ("ui/settings/effects.rs", 9),
     ("ui/settings/general.rs", 1),
     ("ui/settings/hardware.rs", 4),
@@ -67,11 +66,11 @@ const BASELINE: [(&str, usize); 48] = [
     ("ui/settings/network.rs", 1),
     ("ui/settings/notifications.rs", 2),
     ("ui/settings/printers.rs", 5),
-    ("ui/settings/privacy.rs", 34),
+    ("ui/settings/privacy.rs", 33),
     ("ui/settings/restore.rs", 3),
     ("ui/settings/sharing.rs", 3),
     ("ui/settings/shortcuts.rs", 3),
-    ("ui/settings/software_update.rs", 10),
+    ("ui/settings/software_update.rs", 9),
     ("ui/settings/storage.rs", 2),
     ("ui/settings/trackpad.rs", 4),
     ("ui/settings/wallpaper.rs", 2),
@@ -87,10 +86,9 @@ const BASELINE: [(&str, usize); 48] = [
 ];
 
 /// Of those, the ones `copy::lint` rejects. Only shrinks.
-const LINT_BASELINE: [(&str, usize); 8] = [
+const LINT_BASELINE: [(&str, usize); 7] = [
     ("ui/settings/accounts.rs", 1),
     ("ui/settings/assistants.rs", 1),
-    ("ui/settings/displays.rs", 1),
     ("ui/settings/printers.rs", 2),
     ("ui/settings/software_update.rs", 2),
     ("ui/setup.rs", 2),

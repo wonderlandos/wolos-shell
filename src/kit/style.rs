@@ -12,7 +12,7 @@ use wol_core::theme::accent;
 pub fn install(extra: &'static str) {
     // No display (lost before the theme loads): nothing to style; GTK reports it itself.
     let Some(display) = gdk::Display::default() else {
-        eprintln!("wol-shell: no display, theme not installed");
+        crate::diag::say!("wol-shell: no display, theme not installed");
         return;
     };
     let provider = gtk::CssProvider::new();
@@ -118,7 +118,7 @@ pub fn install(extra: &'static str) {
             .await
             .unwrap_or_default();
         if let Err(e) = user_css(&text) {
-            eprintln!("wol-shell: {e} (the user style sheet is left out)");
+            crate::diag::say!("wol-shell: {e} (the user style sheet is left out)");
         }
     });
     let _ = glib::MainContext::default();
@@ -206,7 +206,7 @@ pub fn set_active(id: &str) -> std::io::Result<()> {
     std::thread::spawn(move || {
         let home = wol_core::theme::config_home();
         if let Err(e) = wol_core::theme::apps::apply(&id, &home) {
-            eprintln!("wol: app themes: {e}");
+            crate::diag::say!("wol: app themes: {e}");
         }
     });
     Ok(())
@@ -333,7 +333,7 @@ thread_local! { static FIXED: std::cell::OnceCell<gtk::CssProvider> = const { st
 /// Loads one theme, no file watch (golden renders).
 pub fn apply(t: &theme::Theme, extra: &str) {
     let Some(display) = gdk::Display::default() else {
-        eprintln!("wol-shell: no display, theme not applied");
+        crate::diag::say!("wol-shell: no display, theme not applied");
         return;
     };
     FIXED.with(|c| {

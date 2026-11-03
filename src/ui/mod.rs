@@ -56,7 +56,7 @@ pub fn window(app: &gtk::Application, class: &str, spec: surface::Spec) -> gtk::
 /// `WOL_SHELL_TIMING=1`: startup stage times on stderr, plus CLOCK_MONOTONIC ms (`at`) so a
 /// session-start script can measure from login (design/tools/perf/session_start.py).
 fn mark(t0: std::time::Instant, stage: &str) {
-    if std::env::var_os("WOL_SHELL_TIMING").is_some() {
+    if crate::envv::is_set("WOL_SHELL_TIMING") {
         let at = glib::monotonic_time() as f64 / 1000.0;
         eprintln!("wol-shell: {stage} {:?} at {at:.1}", t0.elapsed());
     }
@@ -93,7 +93,7 @@ pub fn run_shell() -> glib::ExitCode {
         bar_win.connect_map(move |_| {
             mark(t0, "first map");
             // WOL_SHELL_TIMING=exit: measure startup only (10-run median script).
-            if std::env::var("WOL_SHELL_TIMING").as_deref() == Ok("exit") {
+            if crate::envv::var("WOL_SHELL_TIMING").as_deref() == Some("exit") {
                 std::process::exit(0);
             }
         });
@@ -155,45 +155,7 @@ pub fn run_shell() -> glib::ExitCode {
                 glib::spawn_future_local(async {
                     let _ = gtk::gio::spawn_blocking(crate::hypr::ensure_key_forwarding).await;
                 });
-                let mut p = panels.borrow_mut();
-                p.insert("osd", osd.window.clone());
-                let panel = |name: &str, build: &dyn Fn() -> gtk::Window| {
-                    fence::fence_window(&app, name, build)
-                };
-                p.insert("clipboard", panel("clipboard", &|| clipboard::panel(&app)));
-                p.insert("themes", panel("themes", &|| theme_picker::panel(&app)));
-                p.insert("session", panel("session", &|| panels::session(&app)));
-                let (center, dismiss) = fence::guard("notifications", || notify::start(&app))
-                    .unwrap_or_else(|| (fence::stand_in(&app, "notifications"), Rc::new(|| ())));
-                // App windows and app notifications through libwol (ADR 0020).
-                fence::guard("app host", app_host::listen);
-                fence::guard("app notices", crate::app_notices::start);
-                // Sessions (ADR 0032): offer last time's windows once, then keep the set saved.
-                fence::guard("sessions", || {
-                    crate::sessions::start(crate::sessions::ask_by_notification)
-                });
-                p.insert("notifications", center);
-                p.insert("overview", panel("overview", &|| overview::build(&app)));
-                let cc = panel("control-center", &|| {
-                    control_center::panel(&app, sys.clone())
-                });
-                p.insert("control-center", cc);
-                p.insert(
-                    "force-quit",
-                    panel("force-quit", &|| force_quit::build(&app)),
-                );
-                p.insert(
-                    "shortcuts",
-                    panel("shortcuts", &|| shortcut_sheet::build(&app)),
-                );
-                p.insert("shelf", panel("shelf", &|| drop_shelf::build(&app)));
-                let (shot, record) = fence::guard("screenshot", || capture::build(&app))
-                    .unwrap_or_else(|| {
-                        let none: capture::Handler = Rc::new(|_| false);
-                        (fence::stand_in(&app, "screenshot"), none)
-                    });
-                p.insert("screenshot", shot);
-                drop(p);
+                let (record, dismiss) = build_panels(&app, &sys, &osd, &panels);
                 if let Some(board) = &board {
                     let b = board.clone();
                     transient::also_close(Rc::new(move || b.set_edit(false)));
@@ -229,6 +191,54 @@ pub fn run_shell() -> glib::ExitCode {
         });
     });
     app.run_with_args::<&str>(&[])
+}
+
+/// The panels `wol shell show <name>` opens, each built under its own fence (one that panics
+/// stops alone and shows a card), and the parts that serve them. Returns the screenshot handler
+/// and the banner dismisser for the socket's handlers.
+fn build_panels(
+    app: &gtk::Application,
+    sys: &Rc<dyn crate::system::System>,
+    osd: &Rc<panels::Osd>,
+    panels: &Panels,
+) -> (capture::Handler, Rc<dyn Fn()>) {
+    let mut p = panels.borrow_mut();
+    p.insert("osd", osd.window.clone());
+    let panel = |name: &str, build: &dyn Fn() -> gtk::Window| fence::fence_window(app, name, build);
+    p.insert("clipboard", panel("clipboard", &|| clipboard::panel(app)));
+    p.insert("themes", panel("themes", &|| theme_picker::panel(app)));
+    p.insert("session", panel("session", &|| panels::session(app)));
+    let (center, dismiss) = fence::guard("notifications", || notify::start(app))
+        .unwrap_or_else(|| (fence::stand_in(app, "notifications"), Rc::new(|| ())));
+    // App windows and app notifications through libwol (ADR 0020).
+    fence::guard("app host", app_host::listen);
+    fence::guard("app notices", crate::app_notices::start);
+    // Sessions (ADR 0032): offer last time's windows once, then keep the set saved.
+    fence::guard("sessions", || {
+        crate::sessions::start(crate::sessions::ask_by_notification)
+    });
+    p.insert("notifications", center);
+    p.insert("overview", panel("overview", &|| overview::build(app)));
+    let cc = panel("control-center", &|| {
+        control_center::panel(app, sys.clone())
+    });
+    p.insert("control-center", cc);
+    p.insert(
+        "force-quit",
+        panel("force-quit", &|| force_quit::build(app)),
+    );
+    p.insert(
+        "shortcuts",
+        panel("shortcuts", &|| shortcut_sheet::build(app)),
+    );
+    p.insert("shelf", panel("shelf", &|| drop_shelf::build(app)));
+    let (shot, record) = fence::guard("screenshot", || capture::build(app)).unwrap_or_else(|| {
+        let none: capture::Handler = Rc::new(|_| false);
+        (fence::stand_in(app, "screenshot"), none)
+    });
+    p.insert("screenshot", shot);
+    drop(p);
+    (record, dismiss)
 }
 
 /// `wol shell show menubar|dock` (⌃F2, ⌃F3) moves the keyboard into that bar, `hide` gives it
@@ -273,11 +283,13 @@ fn apply_setup() {
     let dir = home.join(prefs::HYPR_DIR);
     let kb = home.join(prefs::KEYBOARD_FILE);
     if let (false, Some(lua)) = (kb.exists(), prefs::setup_keyboard(&json)) {
-        let user = home.join(prefs::HYPR_USER);
-        let cur = std::fs::read_to_string(&user).ok();
-        let ok = std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&kb, lua).is_ok();
-        if let (true, Some(t)) = (ok, prefs::ensure_require(cur.as_deref())) {
-            let _ = std::fs::write(&user, t);
+        // Atomic writes, and the user hyprland.lua under the journal lock: the theme switch and
+        // the upgrade carry edit it at the start of the same session, and none may lose another's
+        // line (a lost system `require` is no desktop at the next login).
+        let ok = std::fs::create_dir_all(&dir).is_ok()
+            && shared::atomic::atomic_write(&kb, 0o644, lua.as_bytes()).is_ok();
+        if ok && let Err(e) = wol_core::hyprprefs::edit_user_lua(&home, prefs::ensure_require) {
+            crate::diag::say!("wol-shell: {}: {e}", prefs::HYPR_USER);
         }
         let _ = std::process::Command::new("hyprctl").arg("reload").spawn();
     }
@@ -320,7 +332,7 @@ pub fn run_panel_app(
         mark(t0, "built");
         w.connect_map(move |_| {
             mark(t0, "first map");
-            if std::env::var("WOL_SHELL_TIMING").as_deref() == Ok("exit") {
+            if crate::envv::var("WOL_SHELL_TIMING").as_deref() == Some("exit") {
                 std::process::exit(0);
             }
         });

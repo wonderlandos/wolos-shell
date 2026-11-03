@@ -138,7 +138,7 @@ pub(crate) fn backdrop() -> gtk::Picture {
             pic.set_paintable(Some(&t));
             BACKDROPS.with_borrow_mut(|c| c.insert(path, t));
         };
-        if std::env::var_os("WOL_FAKE_NOW").is_some() {
+        if crate::envv::is_set("WOL_FAKE_NOW") {
             if let Some(t) = blurred_wallpaper(&path) {
                 store(path, t, &pic);
             }
@@ -277,7 +277,7 @@ impl Entrance {
             ],
             fades: RefCell::new(Vec::new()),
         });
-        if std::env::var_os("WOL_FAKE_NOW").is_some() {
+        if crate::envv::is_set("WOL_FAKE_NOW") {
             return e;
         }
         let (e2, started) = (e.clone(), std::cell::Cell::new(false));
@@ -373,12 +373,7 @@ impl Entrance {
 /// Restart the way the menu does (`wol power restart`, through wol-admind); true when it was
 /// taken. Blocking: handed to `gio::spawn_blocking`. Waits at most [`restart_wait`].
 fn restart_now() -> bool {
-    std::process::Command::new("wol")
-        .args(["power", "restart"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .is_ok_and(|c| finished_ok(c, restart_wait()))
+    finished_ok("wol", &["power", "restart"], restart_wait())
 }
 
 /// As long as `wol` itself waits for wol-admind's answer to a restart (`admin::reply_secs`;
@@ -391,23 +386,20 @@ fn restart_wait() -> std::time::Duration {
     std::time::Duration::from_secs(u64::from(wol_core::admin::reply_secs(&req)) + 5)
 }
 
-/// True when `child` exited successfully within `limit`; one still running then is killed and
-/// counts as not taken, so the lock screen's Restart always answers (SP-5: no stuck state).
-fn finished_ok(mut child: std::process::Child, limit: std::time::Duration) -> bool {
-    let end = std::time::Instant::now() + limit;
-    loop {
-        match child.try_wait() {
-            Ok(Some(s)) => return s.success(),
-            Ok(None) if std::time::Instant::now() < end => {
-                std::thread::sleep(std::time::Duration::from_millis(50))
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-        }
-    }
+/// True when `program args` exits successfully within `limit`. One still running then is killed
+/// (by `timeout`, which waits for it: nothing here polls) and counts as not taken, so the lock
+/// screen's Restart always answers (SP-5: no stuck state).
+fn finished_ok(program: &str, args: &[&str], limit: std::time::Duration) -> bool {
+    std::process::Command::new("timeout")
+        .arg("--signal=KILL")
+        .arg(format!("{:.3}s", limit.as_secs_f32()))
+        .arg(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .and_then(|mut c| c.wait())
+        .is_ok_and(|s| s.success())
 }
 
 /// Lock screen whose password can't be checked (wol-authcheck missing or broken): Restart
@@ -442,6 +434,78 @@ fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box, Rc<
     let b = body(&panel.root, Some(foot.upcast_ref()));
     let entrance = Entrance::new(&b, panel, Some(foot.upcast_ref()));
     (screen(&b), foot, entrance)
+}
+
+/// The avatar in `tone`, or in no tone at all (the plain avatar).
+fn show_tone(av: &gtk::Widget, tone: Option<&str>) {
+    match tone {
+        Some(t) => kit::assistant::set_tone(av, t),
+        None => {
+            for t in shared::login::AVATAR_TONES {
+                av.remove_css_class(&kit::assistant::tone_class(t));
+            }
+        }
+    }
+}
+
+/// `wol power <verb>` (through wol-admind, like the menu's); true when it was taken. Blocking:
+/// handed to `gio::spawn_blocking`.
+fn power_now(p: Power) -> bool {
+    std::process::Command::new("wol")
+        .args(["power", p.verb()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// What a power button of the lock screen says once `wol power` answered: Restart names the way
+/// out of its refusal (someone else signed in), the others say they were not taken.
+pub fn lock_power_caption(p: Power, taken: bool) -> (&'static str, bool) {
+    if p == Power::Restart {
+        restart_caption(taken)
+    } else {
+        caption((!taken).then(|| crate::copy::power_refused(p)))
+    }
+}
+
+/// The login window of a computer with one account: that account's lock screen at boot (ADR
+/// 0004), with the login window's Sleep, Restart and Shut Down row at the foot (parity with the
+/// login window of several accounts). The buttons go through `wol power` as the session's
+/// account; a refusal is said under the row.
+pub fn startup_lock_screen(panel: &w::UserPanel) -> gtk::Widget {
+    startup_screen(panel).0
+}
+
+/// [`startup_lock_screen`] with its [`Entrance`]: the power row enters and leaves with the
+/// password field.
+fn startup_screen(panel: &w::UserPanel) -> (gtk::Widget, Rc<Entrance>) {
+    let foot = w::hbox(w::S8);
+    foot.set_halign(gtk::Align::Center);
+    foot.add_css_class("login-power");
+    let refused = w::centered("", "lock-caption");
+    refused.set_visible(false);
+    for p in Power::ALL {
+        let r = refused.clone();
+        let run = move || {
+            let r = r.clone();
+            glib::spawn_future_local(async move {
+                let taken = gtk::gio::spawn_blocking(move || power_now(p))
+                    .await
+                    .unwrap_or(false);
+                let (text, shown) = lock_power_caption(p, taken);
+                r.set_label(text);
+                r.set_visible(shown);
+            });
+        };
+        foot.append(&action(login::power_icon(p), login::power_label(p), run).0);
+    }
+    let footer = w::vbox(w::S2);
+    footer.append(&foot);
+    footer.append(&refused);
+    let b = body(&panel.root, Some(footer.upcast_ref()));
+    let entrance = Entrance::new(&b, panel, Some(footer.upcast_ref()));
+    (screen(&b), entrance)
 }
 
 /// Login window: user tiles, then the picked user's password pill; power row at the foot.
@@ -556,6 +620,15 @@ impl Login {
         *self.selected.borrow_mut() = user.to_string();
         self.failures.set(0);
         self.panel.set_user(shown);
+        // The account's colour, as on its tile and on its lock screen (parity, vt-lock journey):
+        // the one picked in Setup, else the one its name gives (w::avatar), never the colour of
+        // the first account the panel was made for.
+        if let Some(av) = self.panel.root.first_child() {
+            show_tone(
+                &av,
+                login::read_avatar(user).or_else(|| w::name_tone(shown)),
+            );
+        }
         self.stack.set_visible_child_name("password");
         self.panel.field.grab_focus();
     }
@@ -610,7 +683,7 @@ pub fn power_note(p: Power, v: Verdict) -> Option<&'static str> {
 /// The session's login name: `$USER`, else the `passwd` entry of this process's uid (audit4
 /// S3-9: a lock screen started without `USER` showed "user", no avatar tone and no hint).
 pub fn user_name(passwd: &str) -> String {
-    user_name_from(std::env::var("USER").ok(), shared::sys::euid(), passwd)
+    user_name_from(crate::envv::var("USER"), shared::sys::euid(), passwd)
 }
 
 fn user_name_from(env: Option<String>, uid: u32, passwd: &str) -> String {
@@ -664,23 +737,27 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
 /// unlock (ADR 0012). A crashed lock screen leaves the session locked (ext-session-lock) and the next
 /// one takes it over (`misc:allow_session_lock_restore`). Nothing here ever unlocks.
 pub fn run_lock() -> glib::ExitCode {
-    if std::env::var_os(login::LOCK_UI_ENV).is_some() {
+    if crate::envv::is_set(login::LOCK_UI_ENV) {
         let startup = std::env::args().any(|a| a == login::STARTUP);
         return run_lock_screen(startup);
     }
     let ui_args = login::lock_ui_args(&std::env::args().skip(1).collect::<Vec<_>>());
     let exe = std::env::current_exe().unwrap_or_else(|_| "wol-lock".into());
-    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    let var = |k: &str| crate::envv::var(k).unwrap_or_default();
     let runtime = var("XDG_RUNTIME_DIR");
     let socket = login::wayland_socket(&runtime, &var("WAYLAND_DISPLAY"));
     // One supervisor per session: a second Super+L, or the restarted compositor's --locked-cmd
     // while the previous supervisor already brings a lock screen back.
-    let guard = std::fs::File::create(std::path::Path::new(&runtime).join(login::LOCK_GUARD));
-    if let Ok(g) = &guard
-        && g.try_lock().is_err()
-    {
-        return glib::ExitCode::SUCCESS;
-    }
+    // Without a guard (no runtime directory, no permission) the lock screen still comes up: a
+    // second lock screen is better than none, so this one goes on, and says so.
+    let _guard = match crate::supervise::take_guard(&runtime, login::LOCK_GUARD) {
+        crate::supervise::Guard::Held(g) => Some(g),
+        crate::supervise::Guard::Busy => return glib::ExitCode::SUCCESS,
+        crate::supervise::Guard::Unavailable(e) => {
+            crate::diag::say!("wol-lock: no session guard in '{runtime}' ({e}); locking anyway");
+            None
+        }
+    };
     let mut attempt = 0;
     loop {
         let started = std::time::Instant::now();
@@ -738,7 +815,16 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
         if let (Some(tone), Some(av)) = (login::read_avatar(&user), panel.root.first_child()) {
             kit::assistant::set_tone(&av, tone);
         }
-        let (screen, restart, entrance) = lock_screen_with_restart(&panel);
+        // At boot this is the login window: the power row is always there (Restart included),
+        // so the Restart that only appears when the password can't be checked is not needed.
+        // Both screens enter and leave on the same motion (`Entrance`, DT-7).
+        let (screen, restart, entrance) = if startup {
+            let (s, e) = startup_screen(&panel);
+            (s, None, e)
+        } else {
+            let (s, r, e) = lock_screen_with_restart(&panel);
+            (s, Some(r), e)
+        };
         let shown = reveal::Reveal::new(&screen, startup);
         win.set_child(Some(&shown.root));
         if startup {
@@ -779,7 +865,9 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
             {
                 let (failures, p) = (std::cell::Cell::new(0), panel.clone());
                 move |v| {
-                    restart.set_visible(v == Verdict::Error);
+                    if let Some(r) = &restart {
+                        r.set_visible(v == Verdict::Error);
+                    }
                     if let Some(h) = login::wrong_password(&failures, v, || login::read_hint(&user))
                     {
                         p.message.set_label(&h);
@@ -929,6 +1017,19 @@ mod tests {
             "listed shells: the normal rule"
         );
         assert!(login_accounts("root:*:0:0::/root:/bin/sh\n", "").is_empty());
+        // The one-account login window's power row (lock_power_caption): Restart names the way
+        // out, Sleep and Shut Down say they were not taken; a taken request says nothing.
+        for p in Power::ALL {
+            assert_eq!(lock_power_caption(p, true), ("", false), "{p:?}");
+        }
+        assert_eq!(
+            lock_power_caption(Power::Restart, false),
+            (crate::copy::LOCK_RESTART_REFUSED, true)
+        );
+        assert_eq!(
+            lock_power_caption(Power::Sleep, false),
+            (crate::copy::power_refused(Power::Sleep), true)
+        );
         assert_eq!(power_note(Power::ShutDown, Verdict::Ok), None);
         // Audit6 S6-5: a refusal and then a taken request: the caption goes away.
         let refused = caption(power_note(Power::ShutDown, Verdict::Error));
@@ -953,29 +1054,20 @@ mod tests {
     /// comes back), a quick answer is read as it is.
     #[test]
     fn the_restart_wait_is_bounded() {
-        let run = |sh: &str| {
-            std::process::Command::new("sh")
-                .args(["-c", sh])
-                .spawn()
-                .expect("sh")
-        };
+        fn run(sh: &str) -> (&'static str, [&str; 2]) {
+            ("sh", ["-c", sh])
+        }
         let t = std::time::Instant::now();
-        assert!(!finished_ok(
-            run("sleep 30"),
-            std::time::Duration::from_millis(200)
-        ));
+        let (p, a) = run("sleep 30");
+        assert!(!finished_ok(p, &a, std::time::Duration::from_millis(200)));
         assert!(
             t.elapsed() < std::time::Duration::from_secs(5),
             "killed, not waited out"
         );
-        assert!(finished_ok(
-            run("exit 0"),
-            std::time::Duration::from_secs(5)
-        ));
-        assert!(!finished_ok(
-            run("exit 1"),
-            std::time::Duration::from_secs(5)
-        ));
+        let (p, a) = run("exit 0");
+        assert!(finished_ok(p, &a, std::time::Duration::from_secs(5)));
+        let (p, a) = run("exit 1");
+        assert!(!finished_ok(p, &a, std::time::Duration::from_secs(5)));
         assert_eq!(
             caption(Some(crate::copy::LOCK_RESTART_REFUSED)),
             restart_caption(false)

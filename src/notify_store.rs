@@ -16,7 +16,7 @@ pub const MAX_BYTES: u64 = 1 << 20;
 
 /// One Center row as saved.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Saved {
     pub app: String,
     pub icon: String,
@@ -117,7 +117,7 @@ pub fn saver(file: PathBuf) -> std::sync::mpsc::Sender<Vec<Saved>> {
                     notes = newer;
                 }
                 if let Err(e) = write(&file, &notes) {
-                    eprintln!("wol-shell: notification center not saved: {e}");
+                    crate::diag::say!("wol-shell: notification center not saved: {e}");
                 }
             }
         });
@@ -137,11 +137,7 @@ impl Kept {
     /// ([`restores`]) gets last time's notes from [`Kept::restored`]; a first one drops them.
     pub fn start() -> (std::rc::Rc<Kept>, Vec<Note>) {
         let file = path(&wol_core::journal::state_home());
-        let back = restores(
-            std::env::var(crate::supervise::RESPAWNS_ENV)
-                .ok()
-                .as_deref(),
-        );
+        let back = restores(crate::envv::var(crate::supervise::RESPAWNS_ENV).as_deref());
         // Small (at most MAX_BYTES), read once, and only after a crash.
         let old = if back { read(&file) } else { Vec::new() };
         let kept = std::rc::Rc::new(Kept {

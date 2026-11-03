@@ -9,7 +9,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 24] = [
+pub(crate) const KINDS: [(&str, &str, &str); 25] = [
     (
         "notifications",
         "Notifications",
@@ -123,12 +123,17 @@ pub(crate) const KINDS: [(&str, &str, &str); 24] = [
     (
         "share",
         "Sharing",
-        "Can offer text for you to copy or save. Nothing leaves until you choose.",
+        "Can offer text and files for you to copy, save or open in another app. Nothing leaves until you choose.",
     ),
     (
         "background",
         "Background Activity",
         "Can keep running parts of itself after you close it.",
+    ),
+    (
+        "trash",
+        "Move to Trash",
+        "Can move your files to the Trash. You can put them back from there.",
     ),
 ];
 
