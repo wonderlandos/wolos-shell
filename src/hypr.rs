@@ -37,7 +37,7 @@ pub fn parse_event(line: &str) -> Option<Event> {
         "activewindow" => {
             let (class, title) = data.split_once(',').unwrap_or((data, ""));
             Event::ActiveWindow {
-                class: class.into(),
+                class: crate::appmenu::app_id(class).into(),
                 title: title.into(),
             }
         }
@@ -47,7 +47,7 @@ pub fn parse_event(line: &str) -> Option<Event> {
             let _ws = p.next()?;
             Event::OpenWindow {
                 address,
-                class: p.next()?.into(),
+                class: crate::appmenu::app_id(p.next()?).into(),
             }
         }
         "closewindow" => Event::CloseWindow {
@@ -296,7 +296,7 @@ pub fn dispatch(d: &Dispatch) -> Option<String> {
 pub fn parse_active(json: &str) -> Option<(String, String)> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let s = |k: &str| v[k].as_str().unwrap_or_default().to_string();
-    Some((s("class"), s("title")))
+    Some((crate::appmenu::app_id(&s("class")).to_string(), s("title")))
 }
 
 /// `j/activewindow` as a client (address, class, size, tags); None on the empty desktop.
@@ -528,7 +528,10 @@ pub fn set_fullscreen_state(mode: Fullscreen) -> bool {
 
 /// Running classes, lowercase, for the dock's running dot.
 pub fn running_classes(clients: &[Client]) -> std::collections::HashSet<String> {
-    clients.iter().map(|c| c.class.to_lowercase()).collect()
+    clients
+        .iter()
+        .map(|c| crate::appmenu::app_id(&c.class).to_lowercase())
+        .collect()
 }
 
 #[cfg(test)]
@@ -810,10 +813,35 @@ mod tests {
     }
 
     #[test]
+    fn a_glass_window_is_its_apps_window_in_events_and_replies() {
+        assert_eq!(
+            parse_event("activewindow>>org.wolos.todos.glass,Todos"),
+            Some(Event::ActiveWindow {
+                class: "org.wolos.todos".into(),
+                title: "Todos".into()
+            })
+        );
+        assert_eq!(
+            parse_event("openwindow>>0xa,1,org.wolos.todos.glass,Todos"),
+            Some(Event::OpenWindow {
+                address: "0xa".into(),
+                class: "org.wolos.todos".into()
+            })
+        );
+        assert_eq!(
+            parse_active(r#"{"class":"org.wolos.todos.glass","title":"Todos"}"#),
+            Some(("org.wolos.todos".into(), "Todos".into()))
+        );
+    }
+
+    #[test]
     fn parses_clients_json() {
         let c = parse_clients(r#"[{"address":"0x1","class":"Foot","title":"t","pid":3}]"#);
         assert_eq!(c[0].class, "Foot");
         assert!(running_classes(&c).contains("foot"));
+        // A window that asked for glass is its app's window (the id carries `.glass`).
+        let g = parse_clients(r#"[{"address":"0x1","class":"org.wolos.todos.glass","title":"t"}]"#);
+        assert!(running_classes(&g).contains("org.wolos.todos"));
         assert!(parse_clients("not json").is_empty());
         let c = parse_clients(
             r#"[{"address":"0x2","class":"a","title":"","focusHistoryID":1,"workspace":{"id":2,"name":"2"},"at":[10,20],"size":[300,200]}]"#,

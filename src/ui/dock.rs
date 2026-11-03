@@ -165,7 +165,8 @@ pub fn focus_target(p: &apps::Pin) -> String {
     {
         alts.push(escape(prog));
     }
-    format!("class:^(?i)({})$", alts.join("|"))
+    // A Wolkit window that asked for glass carries the suffix on its class (`appmenu::GLASS_SUFFIX`).
+    format!("class:^(?i)({})(\\.glass)?$", alts.join("|"))
 }
 
 /// A tile click: a running app comes forward; otherwise it launches and the icon bounces until
@@ -753,7 +754,7 @@ mod click_tests {
         assert_eq!(click(&files, false), Click::Launch);
         assert_eq!(
             click(&files, true),
-            Click::Focus("class:^(?i)(org\\.gnome\\.Nautilus|nautilus)$".into())
+            Click::Focus("class:^(?i)(org\\.gnome\\.Nautilus|nautilus)(\\.glass)?$".into())
         );
         let same = apps::Pin {
             id: "helium",
@@ -763,12 +764,15 @@ mod click_tests {
         };
         assert_eq!(
             focus_target(&same),
-            "class:^(?i)(helium)$",
+            "class:^(?i)(helium)(\\.glass)?$",
             "program = id: once"
         );
         for p in apps::PINS {
             let t = focus_target(p);
-            assert!(t.starts_with("class:^(?i)(") && t.ends_with(")$"), "{t}");
+            assert!(
+                t.starts_with("class:^(?i)(") && t.ends_with(")(\\.glass)?$"),
+                "{t}"
+            );
         }
     }
 
