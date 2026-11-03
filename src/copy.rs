@@ -24,7 +24,7 @@ pub mod maker;
 /// Fragments a user must never read (case-insensitive, at a word start; the [`WHOLE_WORD`] ones
 /// as whole words only), and what to do instead. Upstream projects are never named on screen
 /// (docs/THIRD-PARTY.md:4-5): the reasons starting "upstream:" mark them for RU-006.
-pub const BANNED: [(&str, &str); 41] = [
+pub const BANNED: [(&str, &str); 42] = [
     ("failed", "say what happened and what to do"),
     ("error", "say what happened and what to do"),
     ("errno", "raw OS error"),
@@ -58,6 +58,7 @@ pub const BANNED: [(&str, &str); 41] = [
     ("aether", "upstream: credited project"),
     ("omapager", "upstream: credited project"),
     ("omarchy", "upstream: credited project"),
+    ("servo", "upstream: say the web engine"),
     ("nmcli", "program name"),
     ("bectl", "program name"),
     ("pkg", "say app or update"),
