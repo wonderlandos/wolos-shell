@@ -301,9 +301,6 @@ const SAFE_FILTER: &[&str] = &[
     "feMergeNode",
     "feColorMatrix",
     "feTurbulence",
-    "feSpecularLighting",
-    "feDiffuseLighting",
-    "feDistantLight",
     "feBlend",
 ];
 
@@ -549,10 +546,13 @@ fn safe_filter_list_matches_the_generator_checks() {
     );
 }
 
-/// GTK 4 draws SVG icons itself; a filter chain librsvg draws right can come out as a grey or
-/// dark block there. design/tools/icons/gtkcheck/check.sh draws every full-colour icon through
-/// GtkIconPaintable and compares it with librsvg (RMSE <= 0.02 at 48 and 128 px). Without a C
-/// compiler, the gtk4 headers, gtk4-broadwayd or rsvg-convert it is skipped, loudly.
+/// Filters are allowed in the full-colour icons only because gtkcheck proves GTK draws them like
+/// librsvg. GTK 4 draws SVG icons itself, and a filter chain librsvg draws right can come out
+/// there as a grey or dark block (what the retired tests/icon_filters.rs banned filters for).
+/// design/tools/icons/gtkcheck/check.sh draws every full-colour icon through GtkIconPaintable and
+/// compares it with librsvg (RMSE <= 0.02 at 48 and 128 px). Without a C compiler, the gtk4
+/// headers, gtk4-broadwayd or rsvg-convert it is skipped, loudly; a toolkit that loads SVG icons
+/// through librsvg itself (nothing to compare) is skipped the same way.
 #[test]
 fn gtk_draws_every_full_colour_icon_like_librsvg() {
     use std::io::Write;
@@ -572,4 +572,172 @@ fn gtk_draws_every_full_colour_icon_like_librsvg() {
         return;
     }
     assert!(out.status.success(), "{text}");
+}
+
+/// The full-colour icon sets (design/icons/{apps,apps/small,places,devices,mimetypes}).
+fn full_colour_svgs() -> Vec<PathBuf> {
+    let d = root().join("design/icons");
+    let mut all = Vec::new();
+    for sub in ["apps", "apps/small", "places", "devices", "mimetypes"] {
+        all.extend(svgs(&d.join(sub)));
+    }
+    all
+}
+
+/// `s` without its `filter="url(#..)"` attributes: what a renderer that ignores filters draws.
+fn strip_filters(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(" filter=\"url(#") {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + 1..];
+        let end = tail[8..].find('"').map_or(tail.len(), |j| j + 9);
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Premultiplied RGBA of a PNG, each channel in 0..1.
+fn premultiplied(p: &Path) -> Vec<f64> {
+    let b = gtk::gdk_pixbuf::Pixbuf::from_file(p).unwrap();
+    assert!(
+        b.has_alpha() && b.n_channels() == 4,
+        "{}: not RGBA",
+        p.display()
+    );
+    let (w, h, stride) = (
+        b.width() as usize,
+        b.height() as usize,
+        b.rowstride() as usize,
+    );
+    let px = b.read_pixel_bytes();
+    let mut v = Vec::with_capacity(w * h * 4);
+    for y in 0..h {
+        for x in 0..w {
+            let o = y * stride + x * 4;
+            let a = px[o + 3] as f64 / 255.0;
+            v.extend([
+                px[o] as f64 / 255.0 * a,
+                px[o + 1] as f64 / 255.0 * a,
+                px[o + 2] as f64 / 255.0 * a,
+                a,
+            ]);
+        }
+    }
+    v
+}
+
+fn rsvg(svg: &Path, size: u32, png: &Path) {
+    let ok = std::process::Command::new("rsvg-convert")
+        .args(["-w", &size.to_string(), "-h", &size.to_string(), "-o"])
+        .arg(png)
+        .arg(svg)
+        .status()
+        .is_ok_and(|s| s.success());
+    assert!(ok, "rsvg-convert {}", svg.display());
+}
+
+/// Icons still allowed to draw a shape only through a filter (empty: the grain is svgk.grained, an
+/// invisible shape whose noise is clipped). Shrink-only: a listed icon that passes fails the test.
+const FILTER_ONLY_KNOWN: &[&str] = &[];
+
+/// A renderer that ignores SVG filters (Qt's) still draws every full-colour icon recognisably:
+/// with its filter attributes removed an icon stays within RMSE 0.08 of its normal render at 48
+/// and 128 px (premultiplied RGBA), so no shape is drawn only by a filter.
+#[test]
+fn full_colour_icons_read_with_their_filters_ignored() {
+    use std::io::Write;
+    if std::process::Command::new("rsvg-convert")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        let _ = writeln!(
+            std::io::stderr(),
+            "\n*** SKIPPED full_colour_icons_read_with_their_filters_ignored: needs rsvg-convert ***\n"
+        );
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("wol-nofilter-{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let mut scores = Vec::new();
+    for p in full_colour_svgs() {
+        let s = std::fs::read_to_string(&p).unwrap();
+        let stripped = tmp.join("stripped.svg");
+        std::fs::write(&stripped, strip_filters(&s)).unwrap();
+        for size in [48, 128] {
+            let (a, b) = (tmp.join("a.png"), tmp.join("b.png"));
+            rsvg(&p, size, &a);
+            rsvg(&stripped, size, &b);
+            let (a, b) = (premultiplied(&a), premultiplied(&b));
+            let sum: f64 = a.iter().zip(&b).map(|(x, y)| (x - y) * (x - y)).sum();
+            let rel = p
+                .strip_prefix(root().join("design/icons"))
+                .unwrap()
+                .display()
+                .to_string();
+            scores.push(((sum / a.len() as f64).sqrt(), size, rel));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+    scores.sort_by(|x, y| y.0.total_cmp(&x.0));
+    let unlisted: Vec<_> = scores
+        .iter()
+        .filter(|s| !FILTER_ONLY_KNOWN.contains(&s.2.as_str()))
+        .take(5)
+        .collect();
+    let _ = writeln!(
+        std::io::stderr(),
+        "filters ignored, worst RMSE: {:?}; worst not listed: {unlisted:?}",
+        &scores[..5.min(scores.len())]
+    );
+    assert!(scores.len() > 140, "only {} renders", scores.len());
+    let fails = |s: &(f64, u32, String)| s.0 > 0.08;
+    let bad: Vec<_> = scores
+        .iter()
+        .filter(|s| fails(s) && !FILTER_ONLY_KNOWN.contains(&s.2.as_str()))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "drawn only by a filter (RMSE > 0.08 with filters ignored): {bad:#?}"
+    );
+    let fixed: Vec<_> = FILTER_ONLY_KNOWN
+        .iter()
+        .filter(|k| !scores.iter().any(|s| fails(s) && s.2 == **k))
+        .collect();
+    assert!(
+        fixed.is_empty(),
+        "now read with filters ignored, remove from FILTER_ONLY_KNOWN: {fixed:?}"
+    );
+}
+
+/// Outside the full-colour sets (symbolic, store, the rest) no icon uses an SVG filter: gtkcheck
+/// does not look at them, and GTK recolours symbolic icons.
+#[test]
+fn icons_outside_the_full_colour_sets_have_no_filter() {
+    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "svg") {
+                out.push(p);
+            }
+        }
+    }
+    let mut all = Vec::new();
+    walk(&root().join("design/icons"), &mut all);
+    let full = full_colour_svgs();
+    let bad: Vec<_> = all
+        .iter()
+        .filter(|p| !full.contains(p))
+        .filter(|p| {
+            let s = std::fs::read_to_string(p).unwrap();
+            s.contains("<filter") || s.contains("filter:url") || s.contains("filter=\"url")
+        })
+        .map(|p| p.display().to_string())
+        .collect();
+    assert!(all.len() > 100, "found only {} icons", all.len());
+    assert!(bad.is_empty(), "{bad:?}");
 }
