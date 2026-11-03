@@ -1565,6 +1565,95 @@ fn untitled_icon_buttons(w: &gtk::Widget) -> Vec<String> {
     out
 }
 
+/// One icon source (audit A6-ux 0.2): every themed icon a golden draws comes from the repo's
+/// `design/` tree (the WolOS theme kit/style.rs lays out from it) or from GTK's own built-in
+/// resources, never from an icon theme of the machine that renders. A host Adwaita or hicolor
+/// icon would make the golden depend on what that machine has installed.
+fn host_icons(w: &gtk::Widget) -> Vec<String> {
+    let design = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../design"))
+        .canonicalize()
+        .expect("the design/ tree");
+    let theme = gtk::IconTheme::for_display(&w.display());
+    let mut images = vec![];
+    find_type::<gtk::Image>(w, &mut images);
+    let mut out = vec![];
+    for i in images.iter().filter(|i| i.is_drawable()) {
+        let size = if i.pixel_size() > 0 {
+            i.pixel_size()
+        } else {
+            16
+        };
+        let (scale, dir, flags) = (
+            i.scale_factor(),
+            i.direction(),
+            gtk::IconLookupFlags::empty(),
+        );
+        // The lookup GtkImage itself makes: a name as is, a GIcon with its fallback names.
+        let (name, found) = if let Some(name) = i.icon_name() {
+            let found = theme.lookup_icon(&name, &[], size, scale, dir, flags);
+            (name.to_string(), found)
+        } else if let Some(g) = i.gicon() {
+            let found = theme.lookup_by_gicon(&g, size, scale, dir, flags);
+            (
+                gtk::gio::prelude::IconExt::to_string(&g)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
+                found,
+            )
+        } else {
+            continue;
+        };
+        let Some(file) = found.file() else {
+            out.push(format!("icon {name} has no file"));
+            continue;
+        };
+        if file.uri_scheme().as_deref() == Some("resource") {
+            continue;
+        }
+        let path = file.path().and_then(|p| p.canonicalize().ok());
+        if !path.as_deref().is_some_and(|p| p.starts_with(&design)) {
+            out.push(format!(
+                "icon {name} comes from outside design/: {}",
+                file.uri()
+            ));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The golden renderer sees the shipped icon set and nothing else. kit/style.rs lays the WolOS
+/// theme out from design/ and leaves the machine's own icon directories (/usr/share/icons,
+/// ~/.local/share/icons, flatpak exports) on the search path, and that theme inherits Adwaita and
+/// hicolor: an app icon such as org.gimp.GIMP then resolves on a machine that has the app and
+/// falls back on one that has not, and the golden follows the machine. Keep only the directories
+/// that are the design/ tree or the theme root made from it; GTK's built-in resource icons stay.
+fn pin_icon_search_path() {
+    let design = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../design"))
+        .canonicalize()
+        .expect("the design/ tree");
+    let temp = std::env::temp_dir()
+        .canonicalize()
+        .expect("the temp directory");
+    let theme = gtk::IconTheme::for_display(&gdk::Display::default().unwrap());
+    let own: Vec<PathBuf> = theme
+        .search_path()
+        .into_iter()
+        .filter(|p| {
+            let p = p.canonicalize().unwrap_or_else(|_| p.clone());
+            p.starts_with(&design) || p.starts_with(&temp)
+        })
+        .collect();
+    assert!(
+        own.iter().any(|p| p.join("WolOS/index.theme").is_file()),
+        "no WolOS theme made from design/ on the icon search path: {:?}",
+        theme.search_path()
+    );
+    let own: Vec<&Path> = own.iter().map(PathBuf::as_path).collect();
+    theme.set_search_path(&own);
+}
+
 fn find_class(w: &gtk::Widget, class: &str, out: &mut Vec<gtk::Widget>) {
     if w.is_drawable() && w.has_css_class(class) {
         out.push(w.clone());
@@ -1694,7 +1783,19 @@ thread_local! {
 }
 
 fn main() {
-    let n = 40 + std::process::id() % 200;
+    // Several golden runs share a build machine (one per checkout): start at a pid-based display
+    // and take the first whose port and socket nobody holds, or broadwayd cannot bind and
+    // gtk::init fails.
+    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+    let n = (0..200)
+        .map(|i| 40 + (std::process::id() + i) % 200)
+        .find(|n| {
+            !Path::new(&runtime)
+                .join(format!("broadway{}.socket", n + 1))
+                .exists()
+                && std::net::TcpListener::bind(("0.0.0.0", (18000 + n) as u16)).is_ok()
+        })
+        .expect("a free Broadway display (ports 18040-18239)");
     let display = format!(":{n}");
     let port = (18000 + n).to_string();
     /// Kills the private broadwayd on every exit path (panics included).
@@ -1713,8 +1814,7 @@ fn main() {
             .spawn()
             .expect("gtk4-broadwayd (GTK 4 package) is required"),
     );
-    let sock = Path::new(&std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into()))
-        .join(format!("broadway{}.socket", n + 1));
+    let sock = Path::new(&runtime).join(format!("broadway{}.socket", n + 1));
     // gtk::init races broadwayd start-up: wait (up to 5 s) until its socket accepts a connection.
     for _ in 0..100 {
         if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
@@ -1743,11 +1843,16 @@ fn main() {
                     .and_then(|f| f.value_str().map(str::to_owned))
                     .unwrap_or_default();
                 // Known noise, not style bugs: GTK 4.24's deprecation notice for the
-                // `gtk-application-prefer-dark-theme` set once per variant (kit/style.rs), and
-                // Broadway's frame-timing warning that lands on a random case.
-                const NOISE: [&str; 2] = [
+                // `gtk-application-prefer-dark-theme` set once per variant (kit/style.rs),
+                // Broadway's frame-timing warning that lands on a random case, and the layer-shell
+                // library (1.3, `--features layer-shell`): its `gtk_layer_is_supported()` asserts
+                // a Wayland display before answering no, so every `is_supported()` in
+                // kit/surface.rs logs it under Broadway (first from the dock regression's
+                // `set_keyboard`); the surface stays a dev toplevel, which is what a golden draws.
+                const NOISE: [&str; 3] = [
                     "Use GtkSettings:gtk-interface-color-scheme instead",
                     "Duplicate call to gdk_frame_timings_submitted",
+                    "init_and_get_layer_shell_global: assertion 'GDK_IS_WAYLAND_DISPLAY(gdk_display)' failed",
                 ];
                 if !NOISE.iter().any(|n| msg.contains(n)) {
                     WARNINGS.with_borrow_mut(|v| v.push(format!("{level:?}: {msg}")));
@@ -1781,6 +1886,15 @@ fn main() {
     let update = std::env::var_os("WOL_GOLDEN_UPDATE").is_some();
     let only = std::env::var("WOL_GOLDEN_ONLY").ok();
     let mut failures = Vec::new();
+    // What the checks above logged is theirs: left in WARNINGS it would fail the first case of
+    // the loop (menubar-light, or whichever WOL_GOLDEN_ONLY picks) for a reason it never had.
+    let setup = WARNINGS.with_borrow_mut(std::mem::take);
+    for i in &setup {
+        eprintln!("setup: {i}");
+    }
+    if !setup.is_empty() {
+        failures.push("setup (the checks before the cases)".to_string());
+    }
     for variant in [Variant::Light, Variant::Dark] {
         let t = theme::resolve(
             Some(if variant == Variant::Light {
@@ -1795,6 +1909,7 @@ fn main() {
         );
         kit::style::apply(&t, &extra);
         if variant == Variant::Light {
+            pin_icon_search_path();
             // Once, with the kit stylesheet on: a golden in the fallback type locks the wrong glyphs.
             font_cases::ui_family_is_inter();
         }
@@ -1869,6 +1984,7 @@ fn main() {
             issues.extend(WARNINGS.with_borrow_mut(std::mem::take));
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             issues.extend(untitled_icon_buttons(win.upcast_ref()));
+            issues.extend(host_icons(win.upcast_ref()));
             let png = out.join(format!("{name}.png"));
             tex.save_to_png(&png).unwrap();
             let gold = golden.join(format!("{name}.png"));
