@@ -16,10 +16,14 @@ pub fn live_ticks() -> usize {
     TICKS.get()
 }
 
+/// One end action, with the key [`Lifetime::child`] drops it by.
+type Action = (u64, Box<dyn FnOnce()>);
+
 #[derive(Default)]
 struct Inner {
     ended: Cell<bool>,
-    on_end: RefCell<Vec<Box<dyn FnOnce()>>>,
+    on_end: RefCell<Vec<Action>>,
+    next: Cell<u64>,
 }
 
 /// Removes a source from the context it runs on (the thread's default one).
@@ -56,11 +60,45 @@ impl Lifetime {
 
     /// Runs `f` when this ends (at once if it already has).
     pub fn on_end(&self, f: impl FnOnce() + 'static) {
-        if self.alive() {
-            self.0.on_end.borrow_mut().push(Box::new(f));
-        } else {
+        self.push(Box::new(f));
+    }
+
+    /// Adds an end action; its key, or None when it ran at once (already ended).
+    fn push(&self, f: Box<dyn FnOnce()>) -> Option<u64> {
+        if !self.alive() {
             f();
+            return None;
         }
+        let key = self.0.next.get();
+        self.0.next.set(key + 1);
+        self.0.on_end.borrow_mut().push((key, f));
+        Some(key)
+    }
+
+    /// End actions waiting now (the leak test counts them).
+    pub fn pending(&self) -> usize {
+        self.0.on_end.borrow().len()
+    }
+
+    /// A lifetime that ends with this one, or earlier on its own: then it leaves nothing behind
+    /// here (audit5 S8-11: a bar re-arranged all session kept one closure per arrange).
+    pub fn child(&self) -> Lifetime {
+        let child = Lifetime::new();
+        let weak = Rc::downgrade(&child.0);
+        let Some(key) = self.push(Box::new(move || {
+            if let Some(c) = weak.upgrade() {
+                Lifetime(c).end();
+            }
+        })) else {
+            return child;
+        };
+        let parent = Rc::downgrade(&self.0);
+        child.on_end(move || {
+            if let Some(p) = parent.upgrade() {
+                p.on_end.borrow_mut().retain(|(k, _)| *k != key);
+            }
+        });
+        child
     }
 
     pub fn end(&self) {
@@ -68,7 +106,7 @@ impl Lifetime {
             return;
         }
         let fs = std::mem::take(&mut *self.0.on_end.borrow_mut());
-        for f in fs {
+        for (_, f) in fs {
             f();
         }
     }
@@ -132,6 +170,27 @@ mod tests {
         let c = n.clone();
         l.on_end(move || c.set(c.get() + 10));
         assert_eq!(n.get(), 11, "an action added after the end runs at once");
+    }
+
+    /// Audit5 S8-11: a child that ends first unlinks itself; one alive ends with its parent.
+    #[test]
+    fn children_end_with_the_parent_and_leave_nothing_when_they_end_first() {
+        let parent = Lifetime::new();
+        let base = parent.pending();
+        let mut child = parent.child();
+        for _ in 0..50 {
+            child.end();
+            child = parent.child();
+        }
+        assert_eq!(parent.pending(), base + 1, "only the live child is held");
+        let n = Rc::new(Cell::new(0));
+        let c = n.clone();
+        child.on_end(move || c.set(c.get() + 1));
+        parent.end();
+        assert!(!child.alive());
+        assert_eq!(n.get(), 1);
+        let late = parent.child();
+        assert!(!late.alive(), "a child of an ended lifetime is born ended");
     }
 
     #[test]

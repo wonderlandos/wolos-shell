@@ -3,7 +3,7 @@
 //! that are covered or on other desktops, unlike screen-region copies).
 //! `wol-window-shot <address>` writes `WOLSHOT <w> <h> <stride> <format>\n` + raw rows to stdout.
 
-/// The protocol's toplevel handle: the low 32 bits of Hyprland's window address.
+/// The protocol's toplevel handle: the low 32 bits of the compositor's window address.
 pub fn handle(address: &str) -> Option<u32> {
     let hex = address.trim_start_matches("0x");
     u64::from_str_radix(hex, 16).ok().map(|a| a as u32)

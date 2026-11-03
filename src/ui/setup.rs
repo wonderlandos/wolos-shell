@@ -31,6 +31,73 @@ struct WifiUi {
     pw_row: gtk::Box,
 }
 
+/// The Language page of both assistants (setup and the installer), titled `title`/`subtitle`
+/// (each assistant's own words): the language list, the
+/// keyboard list under it, and with `try_it` a field to type into. `pick_language(i)` records
+/// language `i` and returns the keyboard the draft now holds (None when the page is gone); the
+/// keyboard list then follows it inside a guard, so `keyboard_shown(i, by_person)` tells a
+/// person's pick (`true`, even of the suggested layout) from the page following a language
+/// (`false`, already in the draft; audit3 R2B-8, B8). Every shown layout is applied to the
+/// session at once so the keys type what the list says.
+pub(crate) struct LanguagePage {
+    pub card: Card,
+    pub list: ChoiceList,
+}
+
+pub(crate) fn language_page(
+    (title, subtitle): (&str, &str),
+    language: usize,
+    keyboard: usize,
+    try_it: bool,
+    pick_language: impl Fn(usize) -> Option<usize> + 'static,
+    keyboard_shown: impl Fn(usize, bool) + 'static,
+) -> LanguagePage {
+    let body = w::vbox(w::S4);
+    let names: Vec<&str> = KEYBOARDS.iter().map(|k| k.1).collect();
+    let kb = w::dropdown(&names, keyboard as u32);
+    let filling = Rc::new(Cell::new(false));
+    let rows = LANGUAGES
+        .iter()
+        .map(|l| Choice {
+            icon: None,
+            title: l.name.into(),
+            detail: l.region.into(),
+            trail: None,
+        })
+        .collect();
+    let (dd, guard) = (kb.downgrade(), filling.clone());
+    let list = ChoiceList::new(rows, Some(language), move |i| {
+        if let (Some(k), Some(dd)) = (pick_language(i), dd.upgrade()) {
+            // The page moves the list: not the person's pick.
+            guard.set(true);
+            dd.set_selected(k as u32);
+            guard.set(false);
+        }
+    });
+    body.append(&list.root);
+    kb.connect_selected_notify(move |dd| {
+        let i = (dd.selected() as usize).min(KEYBOARDS.len() - 1);
+        keyboard_shown(i, !filling.get());
+        if std::env::var_os("WOL_FAKE_NOW").is_none() {
+            kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
+        }
+    });
+    body.append(&a::form_row("Keyboard", &kb));
+    if try_it {
+        // Somewhere to see that the keys type what they say, before any password does.
+        let test = w::text_field("Type here to try the keyboard");
+        test.add_css_class("assistant-field");
+        body.append(&a::form_row("Try it", &test));
+    }
+    let card = Card::new(
+        Art::Icon("preferences-desktop-locale-symbolic"),
+        title,
+        subtitle,
+        &body,
+    );
+    LanguagePage { card, list }
+}
+
 /// `holder` shows `child` only.
 fn replace_child(holder: &gtk::Box, child: &impl IsA<gtk::Widget>) {
     while let Some(c) = holder.first_child() {
@@ -47,7 +114,7 @@ pub struct Setup {
     editors: RefCell<Vec<(Field, gtk::Widget)>>,
     caps: RefCell<Option<gtk::Label>>,
     avatar: RefCell<Option<gtk::Label>>,
-    keyboard: RefCell<Option<gtk::DropDown>>,
+    languages: RefCell<Option<ChoiceList>>,
     wifi_ui: RefCell<Option<WifiUi>>,
     scanning: Cell<bool>,
     busy: Cell<bool>,
@@ -81,7 +148,7 @@ impl Setup {
             editors: Default::default(),
             caps: Default::default(),
             avatar: Default::default(),
-            keyboard: Default::default(),
+            languages: Default::default(),
             wifi_ui: Default::default(),
             scanning: Cell::new(false),
             busy: Cell::new(false),
@@ -269,48 +336,43 @@ impl Setup {
 
     fn language(self: &Rc<Self>) -> Card {
         let d = self.flow.borrow().draft.clone();
-        let body = w::vbox(w::S4);
-        let rows = LANGUAGES
-            .iter()
-            .map(|l| Choice {
-                icon: None,
-                title: l.name.into(),
-                detail: l.region.into(),
-                trail: None,
-            })
-            .collect();
-        let me = Rc::downgrade(self);
-        let list = ChoiceList::new(rows, Some(d.language), move |i| {
-            if let Some(s) = me.upgrade() {
+        let (me, me2) = (Rc::downgrade(self), Rc::downgrade(self));
+        let page = language_page(
+            (Step::Language.title(), Step::Language.subtitle()),
+            d.language,
+            d.keyboard,
+            false,
+            move |i| {
+                let s = me.upgrade()?;
                 s.flow.borrow_mut().draft.set_language(i);
                 let k = s.flow.borrow().draft.keyboard;
-                if let Some(dd) = &*s.keyboard.borrow() {
-                    dd.set_selected(k as u32);
+                Some(k)
+            },
+            move |i, by_person| {
+                // Only the person's pick stays through language changes; the page following a
+                // language is already in the draft (dedup A9, as the installer's R2B-8/B8).
+                if let Some(s) = me2.upgrade()
+                    && by_person
+                {
+                    s.flow.borrow_mut().draft.set_keyboard(i);
                 }
-            }
-        });
-        body.append(&list.root);
-        let names: Vec<&str> = KEYBOARDS.iter().map(|k| k.1).collect();
-        let kb = w::dropdown(&names, d.keyboard as u32);
-        let me = Rc::downgrade(self);
-        kb.connect_selected_notify(move |dd| {
-            let Some(s) = me.upgrade() else {
-                return;
-            };
-            let i = (dd.selected() as usize).min(KEYBOARDS.len() - 1);
-            s.flow.borrow_mut().draft.set_keyboard(i);
-            if std::env::var_os("WOL_FAKE_NOW").is_none() {
-                kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
-            }
-        });
-        body.append(&a::form_row("Keyboard", &kb));
-        *self.keyboard.borrow_mut() = Some(kb);
-        Card::new(
-            Art::Icon("preferences-desktop-locale-symbolic"),
-            Step::Language.title(),
-            Step::Language.subtitle(),
-            &body,
-        )
+            },
+        );
+        *self.languages.borrow_mut() = Some(page.list);
+        page.card
+    }
+
+    /// Picks language row `i` as the person would (goldens, tests).
+    pub fn pick_language(&self, i: usize) {
+        if let Some(l) = &*self.languages.borrow() {
+            l.pick(i);
+        }
+    }
+
+    /// The draft's (language, keyboard) indexes (goldens, tests).
+    pub fn language_and_keyboard(&self) -> (usize, usize) {
+        let f = self.flow.borrow();
+        (f.draft.language, f.draft.keyboard)
     }
 
     fn wifi(self: &Rc<Self>, sys: &dyn System) -> Card {

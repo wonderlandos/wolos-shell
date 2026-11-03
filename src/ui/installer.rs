@@ -3,19 +3,18 @@
 //! what will change, then `install-run` as root. The same cards as the Setup Assistant; the steps
 //! and every word are `install::flow`. `--boot` is the first screen of the live image: Install or
 //! Try, in a session that holds nothing else.
+mod disks;
 use crate::copy;
-use crate::install::flow::{
-    self, DiskTitle, FILE_SYSTEMS, Flow, Found, Method, Next, Row, STEPS, SWAPS, Step, USES, Use,
-};
+use crate::install::flow::{self, Flow, Found, Next, Row, STEPS, SecureOffer, Step};
 use crate::install::{self, Check, Report, Stage};
 use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList, DiskBar, Seg, Tone};
 use crate::kit::{self, reveal, widgets as w};
-use crate::setup::{Field, Hints, KEYBOARDS, LANGUAGES};
+use crate::setup::{Field, Hints};
 use gtk::{glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::io::BufRead;
 use std::path::PathBuf;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use wol_core::boot::{MOK_PASSWORD, key_screen_steps};
 use wol_core::install::disk::Disk;
@@ -60,7 +59,6 @@ pub struct Installer {
     flow: RefCell<Flow>,
     cards: RefCell<Vec<(Step, Card)>>,
     zones: Vec<String>,
-    keyboard: RefCell<Option<gtk::DropDown>>,
     zone_search: RefCell<Option<gtk::SearchEntry>>,
     zone_list: gtk::Box,
     disk_list: gtk::Box,
@@ -95,14 +93,27 @@ pub struct Installer {
     recovery_key: gtk::Label,
     /// "I wrote the key down": Restart waits for it.
     ack: RefCell<Option<gtk::Switch>>,
+    /// "Restart Later" (live desktop only): waits for the same toggle as Restart (audit6 I6-5).
+    later: RefCell<Option<gtk::Button>>,
     /// What the startup setup had to say (one or two lines).
     done_notes: gtk::Box,
     /// The Secure Boot sheet's BitLocker lines (R2B-9), filled when the sheet shows.
     secure_boot_notes: gtk::Box,
     /// The firmware's key screen comes after the restart: the steps, and the password in large type.
     key_screen: gtk::Box,
-    /// The install log's tail on the Failed page, behind Details.
+    /// The Secure Boot page: its switch (a choice only), the key screen pictured before it is
+    /// chosen, and the own-keys notes (the install medium, BitLocker).
+    secure_row: gtk::Box,
+    secure_screen: gtk::Box,
+    secure_notes: gtk::Box,
+    /// The Modules page's rows and the download size under them.
+    modules_list: gtk::Box,
+    modules_size: gtk::Label,
+    /// The Extras page's switch.
+    codecs_switch: RefCell<Option<gtk::Switch>>,
+    /// The Failed page's Details: the tool's own error line, then the install log's tail.
     failed_details: gtk::Box,
+    failed_tool: gtk::Label,
     failed_log: gtk::Box,
     /// A refused plan's sentence, full width over the buttons (the foot's status is too narrow).
     failed_refusal: gtk::Label,
@@ -118,6 +129,9 @@ pub struct Installer {
     probed: Cell<bool>,
     /// How disks are looked at, off the main thread ([`system_disks`]; tests hand in their own).
     probe: Cell<fn() -> Vec<Found>>,
+    /// Whether a default route is up now, off the main thread ([`flow::online_now`]). Given
+    /// disks (previews, goldens) mean a fixed world, which is online.
+    online: Cell<fn() -> bool>,
     /// With the security chip the account password also opens the disk: said on the Protect
     /// and Account pages while the chip is chosen.
     protect_tpm_note: gtk::Label,
@@ -178,12 +192,16 @@ impl Installer {
         secure_boot_notes.set_visible(false);
         let key_screen = w::vbox(w::S2);
         key_screen.set_visible(false);
+        let secure_notes = w::vbox(w::S1);
+        secure_notes.set_visible(false);
         let done_body = w::vbox(w::S4);
         done_body.append(&done_notes);
         done_body.append(&key_screen);
         done_body.append(&recovery);
+        let failed_tool = a::wrapped("", "assistant-subtitle");
         let failed_log = w::vbox(0);
         let failed_details = w::vbox(0);
+        failed_details.append(&failed_tool);
         failed_details.append(&failed_log);
         failed_details.set_visible(false);
         let failed_refusal = a::wrapped("", "assistant-status");
@@ -204,7 +222,6 @@ impl Installer {
             flow: RefCell::new(flow),
             cards: Default::default(),
             zones,
-            keyboard: Default::default(),
             zone_search: Default::default(),
             zone_list: holder(),
             disk_list: holder(),
@@ -235,10 +252,18 @@ impl Installer {
             recovery,
             recovery_key,
             ack: Default::default(),
+            later: Default::default(),
             done_notes,
             secure_boot_notes,
             key_screen,
+            secure_row: w::vbox(0),
+            secure_screen: w::vbox(w::S2),
+            secure_notes,
+            modules_list: holder(),
+            modules_size: a::wrapped("", "assistant-subtitle"),
+            codecs_switch: Default::default(),
             failed_details,
+            failed_tool,
             failed_log,
             failed_refusal,
             unread_details,
@@ -248,6 +273,11 @@ impl Installer {
             began: Cell::new(None),
             probed: Cell::new(probed),
             probe: Cell::new(system_disks),
+            online: Cell::new(if probed {
+                (|| true) as fn() -> bool
+            } else {
+                flow::online_now
+            }),
             protect_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
             account_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
             awake: RefCell::new(install::Awake::default()),
@@ -265,7 +295,10 @@ impl Installer {
                 Step::Manual => s.manual(),
                 Step::Edit => s.edit_page(),
                 Step::Protect => s.protect(),
+                Step::SecureBootChoice => s.secure_choice(),
                 Step::Account => s.account(),
+                Step::Modules => s.modules(),
+                Step::Extras => s.extras(),
                 Step::Summary => s.summary(),
                 Step::SecureBoot => s.secure_boot(),
                 Step::Installing => s.installing(),
@@ -292,6 +325,11 @@ impl Installer {
         self.probe.set(f);
     }
 
+    /// Looks for a network with `f` instead of the route tables (goldens, tests).
+    pub fn set_online_probe(&self, f: fn() -> bool) {
+        self.online.set(f);
+    }
+
     /// Shows `step` at once (goldens, tests).
     pub fn jump(self: &Rc<Self>, step: Step) {
         self.pager
@@ -312,6 +350,15 @@ impl Installer {
             .and_then(|(_, e)| e.clone().dynamic_cast::<gtk::Editable>().ok())
         {
             e.set_text(text);
+        }
+    }
+
+    /// Restart and Restart Later move together: the recovery key is deleted once shown, so
+    /// neither may leave the page before the toggle is on (audit6 I6-5).
+    fn set_leave(&self, on: bool) {
+        self.with_card(Step::Done, |c| c.next.set_sensitive(on));
+        if let Some(b) = &*self.later.borrow() {
+            b.set_sensitive(on);
         }
     }
 
@@ -345,6 +392,12 @@ impl Installer {
         for (_, c) in self.cards.borrow().iter() {
             c.say("", false);
         }
+        // Every page's paragraph: its line, what it means, what comes next (the Failed page
+        // says why it stopped instead).
+        if step != Step::Failed {
+            let intro = self.flow.borrow().intro(step);
+            self.with_card(step, |c| c.subtitle.set_label(&intro));
+        }
         match step {
             Step::Language => {
                 let cancel = !self.flow.borrow().boot;
@@ -367,9 +420,20 @@ impl Installer {
                     e.grab_focus();
                 }
             }
-            Step::Summary => self.fill_summary(),
+            Step::Summary => {
+                self.fill_summary();
+                self.look_online();
+            }
+            Step::SecureBootChoice => self.fill_secure_choice(),
+            Step::Modules => self.fill_modules(),
+            Step::Extras => {
+                let on = self.flow.borrow().codecs;
+                if let Some(sw) = &*self.codecs_switch.borrow() {
+                    sw.set_active(on);
+                }
+            }
             Step::SecureBoot => {
-                let notes = self.flow.borrow().bitlocker_notes(false);
+                let notes = self.flow.borrow().secure_boot_notes();
                 fill_notes(&self.secure_boot_notes, &notes);
             }
             _ => {}
@@ -400,9 +464,9 @@ impl Installer {
         );
     }
 
-    /// Failed page, stopped during `at`: a plain sentence for the stage, the tool's own words
-    /// (`message`) on the status line. The log behind Details follows when the run has ended
-    /// ([`Self::set_failed_log`]).
+    /// Failed page, stopped during `at`: a plain sentence for the stage, one line pointing to
+    /// Details, where the tool's own words (`message`) come first. The log behind Details follows
+    /// when the run has ended ([`Self::set_failed_log`]).
     pub fn show_failed(self: &Rc<Self>, at: Stage, message: &str) {
         self.show_failed_with(at, message, "");
     }
@@ -417,6 +481,9 @@ impl Installer {
     /// [`Self::show_failed`] with the log given (goldens).
     pub fn show_failed_with(self: &Rc<Self>, at: Stage, message: &str, log: &str) {
         self.set_failed_log(log);
+        let tool = message.trim();
+        self.failed_tool.set_label(tool);
+        self.failed_tool.set_visible(!tool.is_empty());
         self.failed_details.set_visible(false);
         self.flow.borrow_mut().jump(Step::Failed);
         self.show(Step::Failed);
@@ -436,15 +503,32 @@ impl Installer {
             } else {
                 install::stopped_text(at)
             });
+            // The tool's words are behind Details; the foot keeps one plain sentence.
             c.say(
-                if refused.is_some() {
+                if refused.is_some() || tool.is_empty() {
                     ""
                 } else {
-                    message.trim()
+                    copy::installer::FAILED_SEE_DETAILS
                 },
                 true,
             );
         });
+    }
+
+    /// The Failed page's foot sentence and the tool's own line in Details (the golden case checks
+    /// that the tool's words are not on the foot).
+    pub fn failed_texts(&self) -> (String, String) {
+        // The label's own `visible` flag: `is_visible` also asks the parents, and Details is closed.
+        let own = |w: &gtk::Label| {
+            if w.property::<bool>("visible") {
+                w.label().to_string()
+            } else {
+                String::new()
+            }
+        };
+        let mut foot = String::new();
+        self.with_card(Step::Failed, |c| foot = own(&c.status));
+        (foot, own(&self.failed_tool))
     }
 
     /// Shows or hides the Failed page's log (goldens; the Details button does the same).
@@ -476,17 +560,35 @@ impl Installer {
             let f = self.flow.borrow();
             notes.extend(f.windows_start());
             notes.extend(f.bitlocker_notes(true).into_iter().map(String::from));
+            notes.extend(f.deferred_line().map(String::from));
         }
         fill_notes(&self.done_notes, &notes);
-        self.key_screen.set_visible(key_screen);
+        // Repeated here only when it was chosen (or the computer's own Secure Boot made it so).
+        let chosen = self.flow.borrow().key_screen_chosen();
+        self.key_screen.set_visible(key_screen && chosen);
         self.recovery.set_visible(key.is_some());
         self.recovery_key.set_label(key.unwrap_or_default());
         if let Some(ack) = &*self.ack.borrow() {
             ack.set_active(false);
         }
-        self.with_card(Step::Done, |c| c.next.set_sensitive(key.is_none()));
+        self.set_leave(install::done_may_leave(key.is_some(), false));
         self.flow.borrow_mut().jump(Step::Done);
         self.show(Step::Done);
+    }
+
+    /// The Done page's leaving actions: (Restart, Restart Later). None: no Restart Later on this
+    /// page (the installed machine's first start, `boot`). The golden case checks them.
+    pub fn leave_buttons(&self) -> (bool, Option<bool>) {
+        let mut next = false;
+        self.with_card(Step::Done, |c| next = c.next.is_sensitive());
+        (next, self.later.borrow().as_ref().map(|b| b.is_sensitive()))
+    }
+
+    /// "I wrote the key down", flipped as the person would.
+    pub fn set_acknowledged(&self, on: bool) {
+        if let Some(ack) = &*self.ack.borrow() {
+            ack.set_active(on);
+        }
     }
 
     pub fn is_installing(&self) -> bool {
@@ -498,11 +600,9 @@ impl Installer {
         let step = self.flow.borrow().step;
         match step {
             Step::Done => {
-                let acked = self
-                    .ack
-                    .borrow()
-                    .as_ref()
-                    .is_none_or(|a| !self.recovery.is_visible() || a.is_active());
+                let acked = self.ack.borrow().as_ref().is_none_or(|a| {
+                    install::done_may_leave(self.recovery.is_visible(), a.is_active())
+                });
                 if acked {
                     kit::spawn(&install::restart_command());
                 }
@@ -579,63 +679,32 @@ impl Installer {
         Card::new(Art::Icon(icon), st.title(), st.subtitle(), body)
     }
 
+    /// The shared Language page (ui::setup::language_page, with "Try it"): the page following a
+    /// language is not the person's keyboard pick (R2B-8, B8).
     fn language(self: &Rc<Self>) -> Card {
         let (language, keyboard) = {
             let f = self.flow.borrow();
             (f.draft.language, f.draft.keyboard)
         };
-        let body = w::vbox(w::S4);
-        let rows = LANGUAGES
-            .iter()
-            .map(|l| Choice {
-                icon: None,
-                title: l.name.into(),
-                detail: l.region.into(),
-                trail: None,
-            })
-            .collect();
-        let me = Rc::downgrade(self);
-        let list = ChoiceList::new(rows, Some(language), move |i| {
-            if let Some(s) = me.upgrade() {
+        let (me, me2) = (Rc::downgrade(self), Rc::downgrade(self));
+        super::setup::language_page(
+            (Step::Language.title(), Step::Language.subtitle()),
+            language,
+            keyboard,
+            true,
+            move |i| {
+                let s = me.upgrade()?;
                 s.flow.borrow_mut().set_language(i);
                 let k = s.flow.borrow().draft.keyboard;
-                if let Some(dd) = &*s.keyboard.borrow() {
-                    // The page moves the list: not the person's pick (R2B-8).
-                    s.filling.set(true);
-                    dd.set_selected(k as u32);
-                    s.filling.set(false);
+                Some(k)
+            },
+            move |i, by_person| {
+                if let Some(s) = me2.upgrade() {
+                    s.flow.borrow_mut().keyboard_shown(i, by_person);
                 }
-            }
-        });
-        body.append(&list.root);
-        let names: Vec<&str> = KEYBOARDS.iter().map(|k| k.1).collect();
-        let kb = w::dropdown(&names, keyboard as u32);
-        let me = Rc::downgrade(self);
-        kb.connect_selected_notify(move |dd| {
-            let Some(s) = me.upgrade() else {
-                return;
-            };
-            let i = (dd.selected() as usize).min(KEYBOARDS.len() - 1);
-            // The language list sets this one inside `filling`: everything else is the person's
-            // pick, the suggested layout included, so only then do languages stop moving it (B8).
-            let by_person = !s.filling.get();
-            s.flow.borrow_mut().keyboard_shown(i, by_person);
-            if std::env::var_os("WOL_FAKE_NOW").is_none() {
-                kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
-            }
-        });
-        body.append(&a::form_row("Keyboard", &kb));
-        // Somewhere to see that the keys type what they say, before any password does.
-        let test = w::text_field("Type here to try the keyboard");
-        test.add_css_class("assistant-field");
-        body.append(&a::form_row("Try it", &test));
-        *self.keyboard.borrow_mut() = Some(kb);
-        Card::new(
-            Art::Icon("preferences-desktop-locale-symbolic"),
-            Step::Language.title(),
-            Step::Language.subtitle(),
-            &body,
+            },
         )
+        .card
     }
 
     fn zone(self: &Rc<Self>) -> Card {
@@ -698,440 +767,6 @@ impl Installer {
         replace_child(&self.zone_list, &list.root);
     }
 
-    /// The disk page: the disks at once when known, else a look at them off the main thread.
-    /// No disk yet: every visit looks again (the target may have been plugged in since).
-    fn enter_disks(self: &Rc<Self>) {
-        if self.probed.get() && !self.flow.borrow().disks.is_empty() {
-            return self.fill_disks();
-        }
-        replace_child(
-            &self.disk_list,
-            &a::waiting(copy::installer::LOOKING_AT_DISKS),
-        );
-        let me = Rc::downgrade(self);
-        let probe = self.probe.get();
-        glib::spawn_future_local(async move {
-            let found = gtk::gio::spawn_blocking(probe).await.unwrap_or_default();
-            if let Some(s) = me.upgrade() {
-                s.probed.set(true);
-                s.flow.borrow_mut().set_disks(found);
-                s.fill_disks();
-            }
-        });
-    }
-
-    fn fill_disks(self: &Rc<Self>) {
-        let (rows, selected): (Vec<Choice>, _) = {
-            let f = self.flow.borrow();
-            let rows = f
-                .disks
-                .iter()
-                .map(|d| Choice {
-                    icon: Some("drive-harddisk-symbolic".into()),
-                    title: d.disk.title_text(),
-                    detail: flow::disk_detail(&d.disk),
-                    trail: None,
-                })
-                .collect();
-            (rows, f.chosen)
-        };
-        if rows.is_empty() {
-            let me = Rc::downgrade(self);
-            let again = w::button("Look Again", w::Kind::Default, move || {
-                if let Some(s) = me.upgrade() {
-                    s.probed.set(false);
-                    s.enter_disks();
-                }
-            });
-            replace_child(
-                &self.disk_list,
-                &w::empty_state(
-                    "drive-harddisk-symbolic",
-                    copy::installer::NO_DISK.0,
-                    copy::installer::NO_DISK.1,
-                    Some(again),
-                ),
-            );
-            return;
-        }
-        let me = Rc::downgrade(self);
-        let list = ChoiceList::new(rows, selected, move |i| {
-            if let Some(s) = me.upgrade() {
-                s.flow.borrow_mut().pick_disk(i);
-            }
-        });
-        replace_child(&self.disk_list, &list.root);
-    }
-
-    fn method(self: &Rc<Self>) -> Card {
-        let body = w::vbox(w::S4);
-        body.append(&self.method_list);
-        let names: Vec<&str> = SWAPS.iter().map(|s| s.1).collect();
-        let swap = w::dropdown(&names, 0);
-        let me = Rc::downgrade(self);
-        swap.connect_selected_notify(move |dd| {
-            if let Some(s) = me.upgrade() {
-                let i = (dd.selected() as usize).min(SWAPS.len() - 1);
-                s.flow.borrow_mut().swap = SWAPS[i].0;
-            }
-        });
-        self.swap_row.append(&a::form_row("Swap", &swap));
-        *self.swap.borrow_mut() = Some(swap);
-        body.append(&self.swap_row);
-        body.append(&self.method_warn);
-        Card::new(
-            Art::Icon("drive-multidisk-symbolic"),
-            Step::Method.title(),
-            Step::Method.subtitle(),
-            &body,
-        )
-    }
-
-    /// The methods in the order the page lists them.
-    const METHODS: [Method; 4] = [
-        Method::Alongside,
-        Method::Replace,
-        Method::Erase,
-        Method::Manual,
-    ];
-
-    fn fill_method(self: &Rc<Self>) {
-        let (rows, selected, swap): (Vec<Choice>, _, _) = {
-            let f = self.flow.borrow();
-            let row = |title: String, detail: &str| Choice {
-                icon: None,
-                title,
-                detail: detail.into(),
-                trail: None,
-            };
-            (
-                vec![
-                    row(f.alongside_title(), "Keeps what's there"),
-                    row(
-                        Step::Replace.title().into(),
-                        "Erases one partition, keeps the rest",
-                    ),
-                    row("Erase Disk".into(), "Starts clean"),
-                    row("Manual".into(), "For experts"),
-                ],
-                Self::METHODS.iter().position(|m| *m == f.method),
-                SWAPS
-                    .iter()
-                    .position(|s| std::mem::discriminant(&s.0) == std::mem::discriminant(&f.swap))
-                    .unwrap_or(0),
-            )
-        };
-        let me = Rc::downgrade(self);
-        let list = ChoiceList::new(rows, selected, move |i| {
-            if let Some(s) = me.upgrade() {
-                s.flow.borrow_mut().method = Self::METHODS[i];
-                s.say_method();
-            }
-        });
-        replace_child(&self.method_list, &list.root);
-        if let Some(dd) = &*self.swap.borrow() {
-            dd.set_selected(swap as u32);
-        }
-        self.say_method();
-    }
-
-    fn say_method(&self) {
-        let (warn, manual) = {
-            let f = self.flow.borrow();
-            (f.method_warning(), f.method == Method::Manual)
-        };
-        self.method_warn.set_visible(warn.is_some());
-        self.method_warning
-            .set_label(warn.as_deref().unwrap_or_default());
-        // Manual has its own Swap use on the edit page.
-        self.swap_row.set_visible(!manual);
-    }
-
-    fn replace(self: &Rc<Self>) -> Card {
-        let body = w::vbox(w::S2);
-        body.append(&self.replace_list);
-        Card::new(
-            Art::Icon("drive-harddisk-symbolic"),
-            Step::Replace.title(),
-            Step::Replace.subtitle(),
-            &body,
-        )
-    }
-
-    fn fill_replace(self: &Rc<Self>) {
-        let (cands, chosen) = {
-            let f = self.flow.borrow();
-            (f.replace_candidates(), f.replace.clone())
-        };
-        let selected = chosen.and_then(|u| cands.iter().position(|c| c.0 == u));
-        let rows = cands
-            .iter()
-            .map(|(_, title, detail)| Choice {
-                icon: None,
-                title: title.clone(),
-                detail: detail.clone(),
-                trail: None,
-            })
-            .collect();
-        let uuids: Vec<String> = cands.iter().map(|c| c.0.clone()).collect();
-        let me = Rc::downgrade(self);
-        let list = ChoiceList::new(rows, selected, move |i| {
-            if let Some(s) = me.upgrade() {
-                s.flow.borrow_mut().replace = Some(uuids[i].clone());
-            }
-        });
-        replace_child(&self.replace_list, &list.root);
-    }
-
-    fn alongside(self: &Rc<Self>) -> Card {
-        let body = &self.along_box;
-        body.append(&self.along_bar.root);
-        let me = Rc::downgrade(self);
-        let slider = w::row_slider(50.0, move |v| {
-            if let Some(s) = me.upgrade() {
-                s.slide(v);
-            }
-        });
-        body.append(&slider);
-        *self.along_slider.borrow_mut() = Some(slider);
-        body.append(&self.along_warn);
-        Card::new(
-            Art::Icon("drive-multidisk-symbolic"),
-            Step::Alongside.title(),
-            Step::Alongside.subtitle(),
-            body,
-        )
-    }
-
-    /// The slider runs from the most the other system can keep, on the left, to the least.
-    fn slide(self: &Rc<Self>, v: f64) {
-        if self.filling.get() {
-            return;
-        }
-        let range = self.flow.borrow().alongside_slider();
-        if let Some((_, _, lo, hi)) = range {
-            self.flow.borrow_mut().keep = keep_at(lo, hi, v);
-            self.fill_along_bar();
-        }
-    }
-
-    fn fill_alongside(self: &Rc<Self>) {
-        let f = self.flow.borrow();
-        if let (Some((_, _, lo, hi)), Some(sl)) =
-            (f.alongside_slider(), &*self.along_slider.borrow())
-        {
-            self.filling.set(true);
-            sl.set_value((hi - f.keep.clamp(lo, hi)) as f64 * 100.0 / (hi - lo).max(1) as f64);
-            self.filling.set(false);
-        }
-        drop(f);
-        self.fill_along_bar();
-    }
-
-    fn fill_along_bar(&self) {
-        let f = self.flow.borrow();
-        let Some((_, name, ..)) = f.alongside_slider() else {
-            return;
-        };
-        let wolos = f.alongside_room().unwrap_or(0);
-        self.along_bar.set(&[
-            Seg::new(Tone::Other, &name, f.keep),
-            Seg::new(Tone::Wolos, "WolOS", wolos),
-        ]);
-        let low = wolos < wol_core::install::layout::ROOMY_ROOT;
-        self.along_warn.set_visible(low);
-        self.along_warning
-            .set_label(&copy::install_low_space(wolos));
-    }
-
-    fn manual(self: &Rc<Self>) -> Card {
-        let body = w::vbox(w::S2);
-        body.append(&self.manual_bar.root);
-        body.append(&self.manual_list);
-        Card::new(
-            Art::Icon("drive-harddisk-symbolic"),
-            Step::Manual.title(),
-            Step::Manual.subtitle(),
-            &body,
-        )
-    }
-
-    fn fill_manual(self: &Rc<Self>) {
-        let f = self.flow.borrow();
-        let Some(d) = f.disk().cloned() else {
-            return;
-        };
-        let lines = flow::manual_lines(&f.manual, &d);
-        self.manual_bar.set(&manual_segments(&lines, &d, &f));
-        drop(f);
-        let rows = lines
-            .iter()
-            .map(|(_, title, detail)| Choice {
-                icon: None,
-                title: title.clone(),
-                detail: detail.clone(),
-                trail: None,
-            })
-            .collect();
-        let me = Rc::downgrade(self);
-        let list = ChoiceList::new(rows, None, move |i| {
-            if let Some(s) = me.upgrade() {
-                let n = s.flow.borrow_mut().open_edit(&lines[i].0);
-                s.apply(Step::Manual, n);
-            }
-        });
-        replace_child(&self.manual_list, &list.root);
-    }
-
-    fn edit_page(self: &Rc<Self>) -> Card {
-        let body = w::vbox(w::S2);
-        let on_flow = |me: Weak<Installer>, f: fn(&mut flow::Edit, &Installer)| {
-            move || {
-                if let Some(s) = me.upgrade() {
-                    if s.filling.get() {
-                        return;
-                    }
-                    if let Some(e) = s.flow.borrow_mut().edit.as_mut() {
-                        f(e, &s);
-                    }
-                    s.show_edit_rows();
-                }
-            }
-        };
-        let names: Vec<&str> = USES.iter().map(|u| u.1).collect();
-        let usage = w::dropdown(&names, 0);
-        let go = on_flow(Rc::downgrade(self), |e, s| {
-            if let Some(ui) = &*s.edit.borrow() {
-                e.usage = USES[(ui.usage.selected() as usize).min(USES.len() - 1)].0;
-            }
-        });
-        usage.connect_selected_notify(move |_| go());
-        body.append(&a::form_row("Use for", &usage));
-        let folder = w::text_field("Folder name");
-        let go = on_flow(Rc::downgrade(self), |e, s| {
-            if let Some(ui) = &*s.edit.borrow() {
-                e.folder = ui.folder.text().to_string();
-            }
-        });
-        folder.connect_changed(move |_| go());
-        let folder_row = a::form_row("Folder", &folder);
-        body.append(&folder_row);
-        let go = on_flow(Rc::downgrade(self), |e, s| {
-            if let Some(ui) = &*s.edit.borrow() {
-                e.erase = ui.erase.is_active();
-            }
-        });
-        let erase = w::toggle(false, move |_| go());
-        erase.set_halign(gtk::Align::Start);
-        let erase_row = a::form_row("Erase", &erase);
-        body.append(&erase_row);
-        let fs_names: Vec<&str> = FILE_SYSTEMS.iter().map(|f| f.1).collect();
-        let fs = w::dropdown(&fs_names, 0);
-        let go = on_flow(Rc::downgrade(self), |e, s| {
-            if let Some(ui) = &*s.edit.borrow() {
-                e.fs = FILE_SYSTEMS[(ui.fs.selected() as usize).min(FILE_SYSTEMS.len() - 1)].0;
-            }
-        });
-        fs.connect_selected_notify(move |_| go());
-        let fs_row = a::form_row("File system", &fs);
-        body.append(&fs_row);
-        let me = Rc::downgrade(self);
-        let size = w::row_slider(100.0, move |v| {
-            if let Some(s) = me.upgrade() {
-                s.edit_size(v);
-            }
-        });
-        let size_text = w::label("", "assistant-subtitle");
-        let row = w::hbox(w::S2);
-        row.append(&size);
-        row.append(&size_text);
-        let size_row = a::form_row("Size", &row);
-        body.append(&size_row);
-        let c = Card::new(
-            Art::Icon("drive-harddisk-symbolic"),
-            Step::Edit.title(),
-            Step::Edit.subtitle(),
-            &body,
-        );
-        let me = Rc::downgrade(self);
-        let delete = w::button("Delete", w::Kind::Default, move || {
-            if let Some(s) = me.upgrade() {
-                s.flow.borrow_mut().delete_edited();
-                let st = s.flow.borrow().step;
-                s.show(st);
-            }
-        });
-        c.add_action(&delete);
-        c.next.set_label("Done");
-        *self.edit.borrow_mut() = Some(EditUi {
-            usage,
-            folder_row,
-            folder,
-            erase_row,
-            erase,
-            fs_row,
-            fs,
-            size_row,
-            size,
-            size_text,
-            delete,
-        });
-        c
-    }
-
-    fn edit_size(&self, v: f64) {
-        if self.filling.get() {
-            return;
-        }
-        let mut f = self.flow.borrow_mut();
-        if let Some(e) = f.edit.as_mut() {
-            e.bytes = bytes_at(e.min, e.max, v);
-            if let Some(ui) = &*self.edit.borrow() {
-                ui.size_text.set_label(&install::size_text(e.bytes));
-            }
-        }
-    }
-
-    /// Which rows the page shows for what it's set to.
-    fn show_edit_rows(&self) {
-        let f = self.flow.borrow();
-        let (Some(e), Some(ui)) = (f.edit.as_ref(), &*self.edit.borrow()) else {
-            return;
-        };
-        let existing = matches!(e.row, Row::Part(_));
-        let plain = matches!(e.usage, Use::System | Use::Home | Use::Folder);
-        ui.folder_row.set_visible(e.usage == Use::Folder);
-        ui.erase_row
-            .set_visible(existing && e.usage != Use::Nothing);
-        ui.fs_row.set_visible(plain && (e.erase || !existing));
-        ui.size_row.set_visible(e.min < e.max);
-        ui.delete.set_visible(!matches!(e.row, Row::Free(_)));
-    }
-
-    fn fill_edit(&self) {
-        {
-            let f = self.flow.borrow();
-            let (Some(e), Some(ui)) = (f.edit.as_ref(), &*self.edit.borrow()) else {
-                return;
-            };
-            self.filling.set(true);
-            let at = USES.iter().position(|u| u.0 == e.usage).unwrap_or(0);
-            ui.usage.set_selected(at as u32);
-            ui.folder.set_text(&e.folder);
-            ui.erase.set_active(e.erase);
-            let fs = FILE_SYSTEMS.iter().position(|x| x.0 == e.fs).unwrap_or(0);
-            ui.fs.set_selected(fs as u32);
-            ui.size.set_value(percent_of(e.min, e.max, e.bytes));
-            ui.size_text.set_label(&install::size_text(e.bytes));
-            self.filling.set(false);
-            self.with_card(Step::Edit, |c| {
-                c.subtitle
-                    .set_label(&format!("{}. {}", e.title, Step::Edit.subtitle()))
-            });
-        }
-        self.show_edit_rows();
-    }
-
     fn protect(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S4);
         let (tpm, chosen) = {
@@ -1152,7 +787,7 @@ impl Installer {
         }
         rows.push(row("Password", "Asked at every start"));
         kinds.push(Protect::Password);
-        rows.push(row("Don't Encrypt", "Anyone with the disk can read it"));
+        rows.push(row("Don’t Encrypt", "Anyone with the disk can read it"));
         kinds.push(Protect::Off);
         let selected = kinds.iter().position(|k| *k == chosen);
         *self.protect_rows.borrow_mut() = kinds;
@@ -1303,6 +938,162 @@ impl Installer {
         )
     }
 
+    /// Secure Boot, opt-in: a switch where it is a choice, the key screen pictured before it is
+    /// chosen (what it looks like, the exact keys, the password), the own-keys notes.
+    fn secure_choice(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S3);
+        body.append(&self.secure_row);
+        let mut lines = vec![copy::installer::KEY_SCREEN_LOOKS.to_string()];
+        lines.extend(
+            key_screen_steps()
+                .iter()
+                .enumerate()
+                .map(|(i, st)| format!("{}. {st}", i + 1)),
+        );
+        self.secure_screen
+            .append(&a::caption(copy::INSTALL_KEY_SCREEN_TITLE));
+        self.secure_screen.append(&a::lines(&lines));
+        body.append(&self.secure_screen);
+        body.append(&self.secure_notes);
+        Card::new(
+            Art::Icon("security-high-symbolic"),
+            Step::SecureBootChoice.title(),
+            Step::SecureBootChoice.subtitle(),
+            &body,
+        )
+    }
+
+    fn fill_secure_choice(self: &Rc<Self>) {
+        let (offer, on, own_keys) = {
+            let f = self.flow.borrow();
+            (f.secure_offer(), f.secure, f.tier() == Some("own-keys"))
+        };
+        // The switch, only where it is a choice; under it, what turning it on costs.
+        let me = Rc::downgrade(self);
+        let sw = w::toggle(on, move |on| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().secure = on;
+                s.say_secure_notes();
+            }
+        });
+        let detail = if own_keys {
+            copy::installer::SECURE_SWITCH_OWN_KEYS
+        } else {
+            copy::installer::SECURE_SWITCH_SCREEN
+        };
+        let row = w::list_row(
+            "",
+            copy::installer::SECURE_SWITCH,
+            detail,
+            Some(sw.upcast_ref()),
+        );
+        row.add_css_class("assistant-row");
+        replace_child(&self.secure_row, &row);
+        self.secure_row
+            .set_visible(matches!(offer, SecureOffer::Choice { .. }));
+        // The key screen is pictured wherever it is how Secure Boot turns on.
+        self.secure_screen.set_visible(!own_keys);
+        self.say_secure_notes();
+    }
+
+    /// Own keys: the install medium stops starting here, said before the choice. BitLocker's
+    /// recovery key (R2B-9) only while Secure Boot is on: off leaves Windows' keys alone.
+    fn say_secure_notes(&self) {
+        let (own_keys, bitlocker) = {
+            let f = self.flow.borrow();
+            (
+                f.tier() == Some("own-keys"),
+                f.secure_wanted() && f.bitlocker_stays(),
+            )
+        };
+        let mut notes: Vec<&str> = Vec::new();
+        if own_keys {
+            notes.push(copy::INSTALL_OWN_KEYS_MEDIA);
+            if bitlocker {
+                notes.extend(copy::installer::bitlocker("own-keys", true));
+            }
+        }
+        fill_notes(&self.secure_notes, &notes);
+    }
+
+    /// Optional modules (ADR 0032 B): one switch each, none on, the download size under them.
+    fn modules(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S3);
+        body.append(&a::list_scroller(&self.modules_list));
+        body.append(&self.modules_size);
+        Card::new(
+            Art::Icon("view-app-grid-symbolic"),
+            Step::Modules.title(),
+            Step::Modules.subtitle(),
+            &body,
+        )
+    }
+
+    fn say_modules_size(&self) {
+        let mb = self.flow.borrow().modules_mb();
+        self.modules_size
+            .set_label(&copy::installer::modules_download(mb));
+    }
+
+    fn fill_modules(self: &Rc<Self>) {
+        let rows = w::vbox(0);
+        rows.set_valign(gtk::Align::Start);
+        let list = self.flow.borrow().module_list.clone();
+        for m in list {
+            let on = self.flow.borrow().modules.contains(&m.id);
+            let me = Rc::downgrade(self);
+            let id = m.id.clone();
+            let sw = w::toggle(on, move |on| {
+                if let Some(s) = me.upgrade() {
+                    s.flow.borrow_mut().tick_module(&id, on);
+                    s.say_modules_size();
+                }
+            });
+            let row = w::list_row("", m.title, m.detail, Some(sw.upcast_ref()));
+            row.add_css_class("assistant-row");
+            rows.append(&row);
+        }
+        replace_child(&self.modules_list, &rows);
+        self.say_modules_size();
+    }
+
+    /// Media formats, prioritised as the Store's codecs kit lists them; one switch, off.
+    fn extras(self: &Rc<Self>) -> Card {
+        let body = w::vbox(w::S3);
+        let me = Rc::downgrade(self);
+        let sw = w::toggle(false, move |on| {
+            if let Some(s) = me.upgrade() {
+                s.flow.borrow_mut().codecs = on;
+            }
+        });
+        let kit = wol_core::store::kit(flow::CODECS_KIT);
+        let row = w::list_row(
+            "",
+            copy::installer::CODECS_SWITCH,
+            kit.map_or("", |k| k.summary),
+            Some(sw.upcast_ref()),
+        );
+        row.add_css_class("assistant-row");
+        body.append(&row);
+        *self.codecs_switch.borrow_mut() = Some(sw);
+        if let Some(k) = kit {
+            let parts: Vec<String> = k
+                .parts
+                .iter()
+                .map(|p| format!("{}: {}", p.name, p.why))
+                .collect();
+            body.append(&a::lines(&parts));
+            let note = a::wrapped(k.note, "assistant-subtitle");
+            body.append(&note);
+        }
+        Card::new(
+            Art::Icon("media-playback-start-symbolic"),
+            Step::Extras.title(),
+            Step::Extras.subtitle(),
+            &body,
+        )
+    }
+
     fn summary(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S4);
         body.append(&self.summary_list);
@@ -1315,6 +1106,25 @@ impl Installer {
         );
         c.next.set_label("Install");
         c
+    }
+
+    /// Looks for a network off the main thread; when that changes what waits for the first
+    /// start, the Summary (if still shown) says it again. Done says what the last look found.
+    fn look_online(self: &Rc<Self>) {
+        let me = Rc::downgrade(self);
+        let probe = self.online.get();
+        glib::spawn_future_local(async move {
+            let online = gtk::gio::spawn_blocking(probe).await.unwrap_or(true);
+            let Some(s) = me.upgrade() else { return };
+            let changed = {
+                let mut f = s.flow.borrow_mut();
+                let was = std::mem::replace(&mut f.offline, !online);
+                was != f.offline && f.step == Step::Summary
+            };
+            if changed {
+                s.fill_summary();
+            }
+        });
     }
 
     fn fill_summary(&self) {
@@ -1376,7 +1186,7 @@ impl Installer {
         let me = Rc::downgrade(self);
         let ack = w::toggle(false, move |on| {
             if let Some(s) = me.upgrade() {
-                s.with_card(Step::Done, |c| c.next.set_sensitive(on));
+                s.set_leave(install::done_may_leave(true, on));
             }
         });
         ack.set_halign(gtk::Align::Start);
@@ -1395,9 +1205,9 @@ impl Installer {
         c.next.set_label("Restart");
         if !self.flow.borrow().boot {
             // From the live desktop: the person may go on trying WolOS and restart later.
-            c.add_action(&w::button("Restart Later", w::Kind::Default, || {
-                reveal::exit_faded()
-            }));
+            let later = w::button("Restart Later", w::Kind::Default, reveal::exit_faded);
+            c.add_action(&later);
+            *self.later.borrow_mut() = Some(later);
         }
         c
     }
@@ -1491,18 +1301,7 @@ impl Installer {
                 install::write_plan(&dir, &p, &f.plan_extras(), disk_pw, &f.draft.password)
             })
         };
-        let Some(Ok(plan)) = written else {
-            return self.show_failed(Stage::Prepare, "");
-        };
-        let argv = install::install_command(&plan);
-        eprintln!("wol-installer: {}", argv.join(" "));
-        let child = std::process::Command::new(&argv[0])
-            .args(&argv[1..])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .spawn();
-        let Ok(mut child) = child else {
+        let Some(mut child) = launch(&dir, written, install::install_command) else {
             return self.show_failed(Stage::Prepare, "");
         };
         let out = child.stdout.take();
@@ -1586,7 +1385,7 @@ impl Installer {
                 return;
             };
             if let Some(d) = dir {
-                let _ = std::fs::remove_dir_all(d);
+                install::remove_plan(&d);
             }
             let r = install::parse_result(&out);
             if s.flow.borrow().key_unread(r.key.as_deref()) {
@@ -1768,6 +1567,9 @@ pub fn run() -> glib::ExitCode {
         // The same check install-run makes: a chip that exists but can't be used is no chip.
         let tpm = install::tpm_from_decide(&output(&install::tpm_command()));
         let s = Installer::new(&hints, boot, tpm, system_zones(), None);
+        // The optional modules this image offers (a few small records, read once at start).
+        let records = install::modules_on_image();
+        s.with_flow(|f| f.set_modules(&records));
         if let Some(mem) = std::fs::read_to_string("/proc/meminfo")
             .ok()
             .and_then(|t| flow::meminfo_bytes(&t))
@@ -1783,6 +1585,10 @@ pub fn run() -> glib::ExitCode {
             if s2.is_installing() {
                 glib::Propagation::Stop
             } else {
+                // A failed install leaves no password file behind (audit6 S6-4).
+                if s2.flow.borrow().step == Step::Failed {
+                    install::remove_plan(&Installer::plan_dir());
+                }
                 glib::Propagation::Proceed
             }
         });
@@ -1810,6 +1616,32 @@ pub fn run() -> glib::ExitCode {
         let s3 = s.clone();
         a::keys(win, move || s.next(), move || s3.back());
     })
+}
+
+/// Starts `command(plan)` for the plan just written. When there is no plan (it could not be
+/// written) or the command cannot start, the plan folder goes: it already holds the account and
+/// disk passwords, and only `install-run` removes them (audit6 S6-4).
+fn launch(
+    dir: &std::path::Path,
+    written: Option<std::io::Result<PathBuf>>,
+    command: impl Fn(&std::path::Path) -> Vec<String>,
+) -> Option<std::process::Child> {
+    let Some(Ok(plan)) = written else {
+        install::remove_plan(dir);
+        return None;
+    };
+    let argv = command(&plan);
+    eprintln!("wol-installer: {}", argv.join(" "));
+    let child = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn();
+    if child.is_err() {
+        install::remove_plan(dir);
+    }
+    child.ok()
 }
 
 /// `org.freedesktop.ScreenSaver.Inhibit` on the session bus (hypridle serves it) until the sender
@@ -1846,18 +1678,4 @@ fn screensaver_inhibit() -> std::sync::mpsc::Sender<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_sliders_land_on_whole_mib_inside_their_range() {
-        let (lo, hi) = (10u64 << 30, 100u64 << 30);
-        assert_eq!(keep_at(lo, hi, 0.0), hi);
-        assert_eq!(keep_at(lo, hi, 100.0), lo);
-        assert_eq!(keep_at(lo, hi, 50.0) % (1 << 20), 0);
-        assert_eq!(bytes_at(lo, hi, 100.0), hi);
-        assert_eq!(bytes_at(lo, hi, 0.0), lo);
-        assert_eq!(percent_of(lo, hi, hi), 100.0);
-        assert_eq!(percent_of(hi, hi, hi), 100.0);
-    }
-}
+mod tests;

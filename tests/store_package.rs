@@ -86,7 +86,7 @@ fn every_capability_has_a_row_and_the_copy_is_clean() {
     for label in [
         "Checking the app…",
         "Nothing beyond its own windows",
-        "What it uses",
+        "What It Uses",
     ] {
         clean(&format!("{label}."));
     }

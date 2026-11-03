@@ -2,6 +2,10 @@
 //! For the VM tests (`wolos-iso/tests/test-installer.sh`): walks the installer's steps as a person would,
 //! on a real disk's probe, and writes the plan the app would.
 //! `install_scenario <scenario> <probe.json> <plan dir>`; prints the summary.
+//! Scenarios: erase, password, tpm, alongside, encrypted-alongside, manual, manual-ext4,
+//! replace (the partition named `linuxroot`), replace-wolos (the old WolOS partition),
+//! modules (Erase, with the smallest module the Modules page offers ticked; its id is printed
+//! as `e2e-module: <id>` for the harness's drain checks).
 use shell::install::flow::{Flow, Found, Method, Next, Row, Step, Use, manual_lines};
 use shell::install::{Check, write_plan};
 use shell::setup::Hints;
@@ -16,6 +20,25 @@ fn part_labelled(f: &Flow, label: &str) -> String {
     p.unwrap_or_else(|| panic!("no partition {label}"))
         .uuid
         .clone()
+}
+
+/// The old WolOS, as a person finds it in Replace's list: the one candidate the installer
+/// knows as a WolOS system partition (`Part::is_wolos_root`: its GPT name or file system label).
+fn wolos_slot(f: &Flow) -> String {
+    let d = f.disk().unwrap();
+    let slots: Vec<String> = f
+        .replace_candidates()
+        .into_iter()
+        .map(|c| c.0)
+        .filter(|u| d.parts.iter().any(|p| &p.uuid == u && p.is_wolos_root()))
+        .collect();
+    assert_eq!(
+        slots.len(),
+        1,
+        "Replace lists {} WolOS partitions",
+        slots.len()
+    );
+    slots[0].clone()
 }
 
 fn esp(f: &Flow) -> String {
@@ -81,7 +104,7 @@ fn main() {
         must(&mut f, s);
     }
     match scenario {
-        "erase" | "password" | "tpm" => {
+        "erase" | "password" | "tpm" | "modules" => {
             f.method = Method::Erase;
             must(&mut f, Step::Protect);
         }
@@ -99,6 +122,12 @@ fn main() {
             f.replace = Some(old);
             must(&mut f, Step::Protect);
         }
+        "replace-wolos" => {
+            f.method = Method::Replace;
+            must(&mut f, Step::Replace);
+            f.replace = Some(wolos_slot(&f));
+            must(&mut f, Step::Protect);
+        }
         s => panic!("no scenario {s}"),
     }
     f.protect = match scenario {
@@ -108,10 +137,36 @@ fn main() {
     };
     f.disk_password = "white rabbit".into();
     f.disk_verify = "white rabbit".into();
+    // The image's module records give the Modules page (the live system has them); the plain
+    // scenarios tick nothing. "modules" ticks one, so the plan carries a module to install.
+    f.set_modules(&shell::install::modules_on_image());
     must(&mut f, Step::Account);
     f.draft.set_full_name("Alice Liddell");
     f.draft.password = "curiouser".into();
     f.draft.verify = "curiouser".into();
+    if f.module_list.is_empty() {
+        assert_ne!(scenario, "modules", "the image has no module records");
+    } else {
+        must(&mut f, Step::Modules);
+        if scenario == "modules" {
+            // What a person can tick: the page's rows, not every record on the image (a record
+            // the page has no words for, such as ai-sessions, is not offered). ai-claude when the
+            // page offers it: its root side is a few MiB (its large part is a user-side recipe), so
+            // the e2e stays small; else the smallest row.
+            let id = f
+                .module_list
+                .iter()
+                .find(|m| m.id == "ai-claude")
+                .or_else(|| f.module_list.iter().min_by_key(|m| m.size_mb))
+                .map(|m| m.id.clone())
+                .unwrap();
+            f.tick_module(&id, true);
+            assert_eq!(f.modules, std::slice::from_ref(&id), "{id} is not offered");
+            println!("e2e-module: {id}");
+        }
+    }
+    // The media formats stay off.
+    must(&mut f, Step::Extras);
     must(&mut f, Step::Summary);
     for l in f.summary() {
         println!("summary: {l}");

@@ -10,7 +10,7 @@ use wol_core::memsaver::{self as ms, Prefs};
 /// What Memory Saver does, in plain words, with the memory it is saving right now.
 pub(crate) fn summary(enabled: bool, st: Option<&Status>) -> String {
     const WHAT: &str =
-        "Apps you aren't using give their memory back and get it back the moment you return.";
+        "Apps you aren’t using give their memory back and get it back the moment you return.";
     match st.filter(|s| enabled && s.enabled && s.saved > 0) {
         Some(s) => format!("Saving {} now. {WHAT}", ms::size(s.saved)),
         None => WHAT.to_string(),
@@ -105,7 +105,7 @@ pub(super) fn section() -> gtk::Box {
     let (nap, nap_line) = form::status_row(
         "",
         "App Nap",
-        "Pauses apps hidden for 10 minutes that aren't playing sound. They may show notifications late.",
+        "Pauses apps hidden for 10 minutes that aren’t playing sound. They may show notifications late.",
         &nap_toggle,
     );
     nap_line.set_wrap(true);
@@ -175,7 +175,7 @@ mod tests {
         };
         let s = summary(true, Some(&st));
         assert!(
-            s.starts_with("Saving 1.4 GB now. Apps you aren't using"),
+            s.starts_with("Saving 1.4 GB now. Apps you aren’t using"),
             "{s}"
         );
         assert!(

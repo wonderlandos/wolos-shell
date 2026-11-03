@@ -45,9 +45,9 @@ pub fn grid(sizes: &[(i32, i32)], area: Rect, gap: f64) -> Vec<Rect> {
         .unwrap_or_default()
 }
 
-/// Desktops to show, ascending, positive only: always 1..=[`crate::appmenu::DESKTOPS`] (macOS
-/// shows every Space, empty ones too; ⌃⌥1..4 and Move to Desktop name them), plus any other
-/// workspace with windows and the current one.
+/// Desktops to show, ascending, positive only: always 1..=[`crate::appmenu::DESKTOPS`] (the
+/// Overview shows every Space, empty ones too; ⌃⌥1..4 and Move to Desktop name them), plus any
+/// other workspace with windows and the current one.
 pub fn desktops(clients: &[Client], current: i64) -> Vec<i64> {
     let mut v: Vec<i64> = clients
         .iter()

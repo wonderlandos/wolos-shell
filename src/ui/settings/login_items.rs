@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! General > Login Items: apps that open when you log in (desktop prefs `login_items`, written to
-//! the managed Hyprland include as `exec-once`; journaled).
+//! the managed compositor include as `exec-once`; journaled).
 use super::*;
 use wol_core::hyprprefs::is_valid_command;
 
@@ -19,6 +19,17 @@ pub(crate) fn describe(entries: &[crate::desktop::Entry], cmd: &str) -> (String,
         .unwrap_or_else(|| (String::new(), cmd.to_string()))
 }
 
+/// After a failed save (Desk read the saved prefs back): the list shows the saved login items
+/// again, if the page is still there.
+fn refill(holder: &gtk::Box, e: &Rc<Env>, status: &gtk::Label) -> impl FnOnce() + 'static {
+    let (h, env, st) = (holder.downgrade(), Rc::downgrade(e), status.downgrade());
+    move || {
+        if let (Some(h), Some(env), Some(st)) = (h.upgrade(), env.upgrade(), st.upgrade()) {
+            fill(&h, &env, &st);
+        }
+    }
+}
+
 fn fill(holder: &gtk::Box, e: &Rc<Env>, status: &gtk::Label) {
     clear(holder);
     let items = e.desk.get().login_items;
@@ -29,7 +40,11 @@ fn fill(holder: &gtk::Box, e: &Rc<Env>, status: &gtk::Label) {
             let (icon, name) = describe(&entries, cmd);
             let (h, env, st, c) = (holder.clone(), e.clone(), status.clone(), cmd.clone());
             let remove = w::icon_button("list-remove-symbolic", "Remove", move || {
-                env.desk.set(&st, |p| p.login_items.retain(|x| *x != c));
+                env.desk.set_or(
+                    &st,
+                    |p| p.login_items.retain(|x| *x != c),
+                    refill(&h, &env, &st),
+                );
                 fill(&h, &env, &st);
             });
             let sub = if name == *cmd { "" } else { cmd.as_str() };
@@ -64,7 +79,11 @@ fn fill(holder: &gtk::Box, e: &Rc<Env>, status: &gtk::Label) {
             .map(|(name, c)| {
                 let (h, env, st, c) = (h.clone(), env.clone(), st.clone(), c.clone());
                 let act: Box<dyn Fn()> = Box::new(move || {
-                    env.desk.set(&st, |p| p.login_items.push(c.clone()));
+                    env.desk.set_or(
+                        &st,
+                        |p| p.login_items.push(c.clone()),
+                        refill(&h, &env, &st),
+                    );
                     fill(&h, &env, &st);
                 });
                 (name.as_str(), act)

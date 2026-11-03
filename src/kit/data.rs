@@ -697,15 +697,54 @@ pub fn launch_app(id: &str) {
     } else {
         format!("{id}.desktop")
     };
-    match gtk::gio::AppInfo::all()
+    let Some(a) = gtk::gio::AppInfo::all()
         .into_iter()
         .find(|a| a.id().is_some_and(|i| i == id.as_str()))
-    {
-        Some(a) => {
-            if let Err(e) = a.launch(&[], None::<&gtk::gio::AppLaunchContext>) {
-                eprintln!("wol: launch {id}: {e}");
-            }
+    else {
+        eprintln!("wol: no app {id}");
+        return;
+    };
+    // The app gets the X11 scale wol-x11-env exported (read off the main thread), not the
+    // shell's session-start environment.
+    gtk::glib::spawn_future_local(async move {
+        let env = gtk::gio::spawn_blocking(super::user_scale_env)
+            .await
+            .unwrap_or_default();
+        if let Err(e) = a.launch(&[], Some(&launch_context(&env))) {
+            eprintln!("wol: launch {id}: {e}");
         }
-        None => eprintln!("wol: no app {id}"),
+    });
+}
+
+/// A launch context that sets `env` (name, value) in the started app.
+pub fn launch_context(env: &[(String, String)]) -> gtk::gio::AppLaunchContext {
+    let ctx = gtk::gio::AppLaunchContext::new();
+    for (k, v) in env {
+        ctx.setenv(k, v);
+    }
+    ctx
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Dock/Apps launch hands the app the X11 scale (no display needed for a plain context).
+    #[test]
+    fn launch_context_sets_the_x11_scale() {
+        let env = [
+            ("GDK_SCALE".to_string(), "2".to_string()),
+            ("STEAM_FORCE_DESKTOPUI_SCALING".into(), "2".into()),
+        ];
+        let got: Vec<String> = launch_context(&env)
+            .environment()
+            .iter()
+            .map(|e| e.to_string_lossy().into_owned())
+            .collect();
+        assert!(got.iter().any(|e| e == "GDK_SCALE=2"), "{got:?}");
+        assert!(
+            got.iter().any(|e| e == "STEAM_FORCE_DESKTOPUI_SCALING=2"),
+            "{got:?}"
+        );
     }
 }

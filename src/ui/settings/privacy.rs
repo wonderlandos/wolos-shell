@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Privacy & Security: which apps may record the screen, post notifications (libwol, ADR 0020),
-//! control input, read the clipboard history or see the window list (consent through wol-admind
-//! `consent`) and how each choice is
-//! enforced, the firewall (pf, `firewall`), the kernel protections WolOS ships, disk encryption,
-//! and the way to Assistants & Automation (`wol_core::security`).
+//! Privacy & Security: which apps may post notifications (libwol, ADR 0020), control input, read
+//! the clipboard history or see the window list (consent through wol-admind `consent`) and how
+//! each choice is enforced; that apps ask each time they share the screen (no grant, the portal
+//! asks; `wol_core::consent::SCREEN_CAPTURE`), the firewall (pf, `firewall`), the kernel protections WolOS ships, disk encryption,
+//! and the ways to Startup Security (`super::startup_security`) and Assistants & Automation
+//! (`wol_core::security`).
 use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 25] = [
-    (
-        "screen-capture",
-        "Screen Recording",
-        "Can see and record everything on your screen.",
-    ),
+pub(crate) const KINDS: [(&str, &str, &str); 24] = [
     (
         "notifications",
         "Notifications",
@@ -67,7 +63,7 @@ pub(crate) const KINDS: [(&str, &str, &str); 25] = [
     (
         "app-preferences",
         "Preferences",
-        "Can keep its own preferences. No app can read another's.",
+        "Can keep its own preferences. No app can read another’s.",
     ),
     (
         "file-panels",
@@ -174,6 +170,16 @@ pub(crate) fn enforcement_note(caps: &[&str]) -> String {
     note.join(" ")
 }
 
+/// The Privacy footnote: how the screen is guarded, then [`enforcement_note`] for the grants shown.
+pub(crate) fn footnote(caps: &[&str]) -> String {
+    let note = enforcement_note(caps);
+    if note.is_empty() {
+        crate::copy::settings::PRIVACY_SCREEN_NOTE.to_string()
+    } else {
+        format!("{} {note}", crate::copy::settings::PRIVACY_SCREEN_NOTE)
+    }
+}
+
 /// "On", "4 of 6 on"; None when the kernel could not be asked.
 pub(crate) fn protections_line(checks: &[Check]) -> Option<String> {
     let known: Vec<&Check> = checks.iter().filter(|c| c.now.is_some()).collect();
@@ -208,32 +214,8 @@ struct Facts {
     security: Option<security::Status>,
     malware: Option<wol_core::malware::Status>,
     encrypted: Option<bool>,
-    /// `wol boot status`: Secure Boot and this computer's key. None where `wol` is not here.
+    /// `wol boot status`: Secure Boot and this computer's key. None where `wol` cannot tell.
     boot: Option<wol_core::boot::Status>,
-    /// The key still waits for the firmware's key screen (boot-enroll's mark).
-    key_pending: bool,
-}
-
-/// `wol boot status` as JSON, off the UI thread.
-fn boot_status() -> Option<wol_core::boot::Status> {
-    let out = wol_core::system::run_with_timeout(
-        &["wol", "boot", "status"],
-        wol_core::system::RUN_TIMEOUT,
-    )?;
-    serde_json::from_str(out.trim()).ok()
-}
-
-/// The Startup security row's words: `wol boot status`'s summary, and that the key screen is
-/// still to come when it is.
-pub(crate) fn startup_security_text(s: &wol_core::boot::Status, key_pending: bool) -> String {
-    if key_pending {
-        format!(
-            "{}. This computer's key is queued: a blue screen asks once at the next restart.",
-            s.summary()
-        )
-    } else {
-        s.summary()
-    }
 }
 
 /// What a grant for one peer app or one device allows.
@@ -305,18 +287,29 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
             &[w::list_row(
                 "security-high-symbolic",
                 "No app has extra access",
-                "Apps you allow to record the screen, send notifications or control input are listed here.",
+                crate::copy::settings::PRIVACY_NONE,
                 None,
             )
             .upcast()],
         ));
     }
+    // Not a grant: the compositor's rules are static and the portal asks each time.
+    into.append(&w::section(
+        "Screen Recording",
+        &[w::list_row(
+            "wolos-capture-screen-symbolic",
+            "Screen sharing",
+            crate::copy::settings::PRIVACY_SCREEN,
+            None,
+        )
+        .upcast()],
+    ));
     let shown: Vec<&str> = KINDS
         .iter()
         .map(|k| k.0)
         .filter(|c| f.grants.is_empty() || f.grants.iter().any(|g| g.1 == *c))
         .collect();
-    into.append(&w::footnote(&enforcement_note(&shown)));
+    into.append(&w::footnote(&footnote(&shown)));
     let mut rows = Vec::new();
     let sec = f.security.as_ref();
     if let (Some(on), Some(_)) = (sec.and_then(|s| s.firewall), admin("firewall", &[])) {
@@ -342,7 +335,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
             form::status_row(
                 "",
                 "System protections",
-                "Accounts cannot see each other's programs or link to each other's files.",
+                "Accounts cannot see each other’s programs or link to each other’s files.",
                 &value,
             )
             .0,
@@ -352,21 +345,15 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
         rows.push(info("Disk encryption", if enc { "On" } else { "Off" }));
     }
     if let Some(b) = &f.boot {
-        let text = startup_security_text(b, f.key_pending);
-        // Finish Secure Boot setup: `wol boot enroll` through wol-admind (the key is queued as
-        // root). Without the verb the row still says where things stand.
-        match admin("boot-enroll", &[]).filter(|_| f.key_pending) {
-            Some(a) => {
-                let (ctx, st) = (e.ctx.clone(), status.clone());
-                rows.push(form::button_row(
-                    "Startup security",
-                    &text,
-                    "Finish Secure Boot Setup",
-                    move || ctx.act_say(a.clone(), &st),
-                ));
-            }
-            None => rows.push(info("Startup security", &text)),
-        }
+        // Secure Boot, the key and Finish Secure Boot Setup live on their own page.
+        let startup = form::nav_row(
+            "system-lock-screen-symbolic",
+            super::startup_security::TITLE,
+            &b.summary(),
+        );
+        let open = e.opener(super::startup_security::TITLE);
+        startup.connect_clicked(move |_| open());
+        rows.push(startup.upcast());
     }
     if !rows.is_empty() {
         into.append(&w::section("Security", &rows));
@@ -487,8 +474,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             security: m.security(),
             malware: m.malware(),
             encrypted: m.storage().and_then(|s| s.encrypted),
-            boot: boot_status(),
-            key_pending: std::path::Path::new(crate::install::MOK_PENDING).exists(),
+            boot: m.boot(),
         },
         move |into, f| render(&e2, into, f, &status),
     );
@@ -518,6 +504,12 @@ mod tests {
         for c in wol_core::consent::CAPABILITIES {
             assert!(KINDS.iter().any(|k| k.0 == c), "{c}");
         }
+        // Screen recording is the explanation row, never an on/off row per app.
+        assert!(
+            KINDS
+                .iter()
+                .all(|k| k.0 != wol_core::consent::SCREEN_CAPTURE)
+        );
         assert_eq!(
             app_of(&[], "/usr/bin/obs"),
             ("obs".into(), w::PACKAGE_ICON.into())
@@ -535,14 +527,23 @@ mod tests {
             .collect();
         assert_eq!(
             enforcement_note(&all),
-            "WolOS enforces Screen Recording, Notifications, Install Apps, Remove Apps, System \
-             Updates and Unreviewed Apps. For Remote Control, Clipboard History and Window List, \
+            "WolOS enforces Notifications, Install Apps, Remove Apps, System Updates and \
+             Unreviewed Apps. For Remote Control, Clipboard History and Window List, \
              WolOS passes on your choice but cannot stop an app that ignores it."
         );
+        // Screen recording is no grant: it never reads as one WolOS "enforces".
+        assert_eq!(enforcement_note(&["screen-capture"]), "");
         assert_eq!(
-            enforcement_note(&["screen-capture"]),
-            "WolOS enforces Screen Recording."
+            footnote(&["screen-capture"]),
+            crate::copy::settings::PRIVACY_SCREEN_NOTE
         );
+        let f = footnote(&["notifications"]);
+        assert!(
+            f.starts_with(crate::copy::settings::PRIVACY_SCREEN_NOTE)
+                && f.ends_with("WolOS enforces Notifications."),
+            "{f}"
+        );
+        assert!(!f.contains("enforces Screen"), "{f}");
         assert!(!enforcement_note(&["window-list"]).contains("enforces"));
         assert_eq!(
             enforcement_note(&["notifications"]),

@@ -93,11 +93,27 @@ impl Fx {
 
     /// One change from a control: saved, applied live, the picture and the gallery follow.
     fn change(self: &Rc<Self>, f: impl FnOnce(&mut Looks)) {
-        self.env.desk.set(&self.status, |p| {
-            f(&mut p.looks);
-            p.looks = p.looks.normalized();
-        });
+        self.env.desk.set_or(
+            &self.status,
+            |p| {
+                f(&mut p.looks);
+                p.looks = p.looks.normalized();
+            },
+            self.put_back(),
+        );
         self.after();
+    }
+
+    /// After a failed save (Desk read the file back): every control, the picture and the gallery
+    /// show what is saved again.
+    fn put_back(self: &Rc<Self>) -> impl FnOnce() + 'static {
+        let me = Rc::downgrade(self);
+        move || {
+            if let Some(me) = me.upgrade() {
+                me.after();
+                me.build_controls();
+            }
+        }
     }
 
     /// [`Self::change`] for a switch: `done(ok)` after the save (a failure reads the file back).
@@ -122,7 +138,9 @@ impl Fx {
     /// A whole look at once (preset, import, Restore Defaults): controls are rebuilt to match.
     fn apply(self: &Rc<Self>, l: &Looks) {
         let l = l.normalized();
-        self.env.desk.set(&self.status, |p| p.looks = l.clone());
+        self.env
+            .desk
+            .set_or(&self.status, |p| p.looks = l.clone(), self.put_back());
         self.after();
         self.build_controls();
     }

@@ -4,6 +4,12 @@
 use super::*;
 use wol_core::region::zone_label;
 
+/// Row titles, as the page shows them and Settings search finds them (`super::search::ROWS`).
+pub(super) mod rows {
+    pub const AUTOMATIC: &str = "Set time and date automatically";
+    pub const ZONE: &str = "Time zone";
+}
+
 struct Facts {
     zones: Vec<String>,
     zone: String,
@@ -51,7 +57,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     if let (Some(on), Some(_)) = (f.ntp, admin("ntp", &[])) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
         rows.push(form::pending_toggle_row(
-            "Set time and date automatically",
+            rows::AUTOMATIC,
             "From time servers on the internet.",
             on,
             move |v, done| match admin("ntp", &[if v { "on" } else { "off" }]) {
@@ -62,7 +68,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     }
     into.append(&w::section("", &rows));
     if f.zones.is_empty() || admin("timezone", &[]).is_none() {
-        into.append(&w::section("", &[info("Time zone", &zone_label(&f.zone))]));
+        into.append(&w::section("", &[info(rows::ZONE, &zone_label(&f.zone))]));
         return;
     }
     let labels: Vec<String> = f.zones.iter().map(|z| zone_label(z)).collect();
@@ -72,7 +78,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     into.append(&w::section(
         "",
         &[form::search_picker_row(
-            "Time zone",
+            rows::ZONE,
             "Type a city to find it.",
             &names,
             at,

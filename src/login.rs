@@ -19,7 +19,7 @@ impl Verdict {
         match self {
             Verdict::Ok => "",
             Verdict::Denied => "Incorrect password",
-            Verdict::Error => "Your password can't be checked right now. Try again, or restart.",
+            Verdict::Error => "Your password can’t be checked right now. Try again, or restart.",
         }
     }
 }
@@ -116,21 +116,9 @@ pub fn initials(name: &str) -> String {
         .collect()
 }
 
-/// Login users: uid >= 1000, not nobody, shell listed in /etc/shells.
+/// Login users: [`shared::login::login_names`], the same rule wol-login accepts (audit5 S9-1).
 pub fn users(passwd: &str, shells: &str) -> Vec<String> {
-    let ok: Vec<&str> = shells
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with('/'))
-        .collect();
-    passwd
-        .lines()
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split(':').collect();
-            let uid: u32 = f.get(2)?.parse().ok()?;
-            (uid >= 1000 && uid != 65534 && ok.contains(f.last()?)).then(|| f[0].to_string())
-        })
-        .collect()
+    shared::login::login_names(passwd, shells)
 }
 
 /// Login users as (login name, name shown): the shown name is the full name when passwd has one.
@@ -161,9 +149,6 @@ pub fn display_name(user: &str, passwd: &str) -> String {
 }
 
 pub use shared::login::Power;
-
-/// Restart from the lock screen when passwords can't be checked (operator group, no root).
-pub const RESTART_NOW: [&str; 3] = ["shutdown", "-r", "now"];
 
 pub fn power_label(p: Power) -> &'static str {
     match p {
@@ -258,9 +243,9 @@ pub enum LockExit {
     Respawn(std::time::Duration),
 }
 
-/// A lock screen that ended without [`UNLOCKED`] crashed: Hyprland keeps the session locked
+/// A lock screen that ended without [`UNLOCKED`] crashed: the compositor keeps the session locked
 /// (`misc:allow_session_lock_restore`) and a new one takes over, 100 ms .. 3 s apart. Never gives
-/// up while the compositor lives: a supervisor that stopped left Hyprland's crash page for good.
+/// up while the compositor lives: a supervisor that stopped left the compositor's crash page for good.
 pub fn lock_exit(unlocked: bool, compositor_alive: bool, attempt: u32) -> LockExit {
     if unlocked || !compositor_alive {
         return LockExit::Done;

@@ -138,7 +138,7 @@ pub fn status_row(
     control: &impl IsA<gtk::Widget>,
 ) -> (gtk::Widget, gtk::Label) {
     let r = w::list_row(icon_name, title, "", Some(control.upcast_ref()));
-    let sub = w::label(subtitle, "secondary");
+    let sub = w::row_subtitle(subtitle);
     let text = if icon_name.is_empty() {
         r.first_child()
     } else {
@@ -565,7 +565,7 @@ impl ShortcutRecorder {
                     recorded(None);
                     return glib::Propagation::Stop;
                 }
-                // Hyprland matches the unshifted key (⇧⌘4 is SHIFT+4, not "dollar").
+                // The compositor matches the unshifted key (⇧⌘4 is SHIFT+4, not "dollar").
                 let base = ctl
                     .widget()
                     .map(|wd| wd.display())

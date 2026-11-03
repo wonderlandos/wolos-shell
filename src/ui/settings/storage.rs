@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! General > Storage: how full the disk is and what uses it (ZFS datasets grouped), encryption and
+//! General > Storage: how full the disk is and what uses it (the root slots grouped), encryption and
 //! restore points (`wol_core::storage`).
 use super::*;
 use wol_core::storage::{Storage, human};

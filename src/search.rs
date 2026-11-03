@@ -47,9 +47,15 @@ impl Item {
         }
     }
 
-    /// Also found when a query of [`WORDS_FROM`]+ letters starts one of `words` (rank 2).
+    /// Also found when a query of [`WORDS_FROM`]+ letters starts one of `words` (rank 2). A word with a
+    /// hyphen is also found without it: `Wi-Fi` answers `wifi` too, so the words keep the glossary spelling.
     pub fn with_words(mut self, words: &str) -> Self {
-        self.words = format!(" {}", words.to_lowercase());
+        let lower = words.to_lowercase();
+        self.words = format!(" {lower}");
+        for w in lower.split_whitespace().filter(|w| w.contains('-')) {
+            self.words.push(' ');
+            self.words.push_str(&w.replace('-', ""));
+        }
         self
     }
 
@@ -320,5 +326,16 @@ mod tests {
         assert_eq!(first("Menu Bar"), Some("Desktop & Dock"));
         assert_eq!(first("enu"), None, "word starts only");
         assert_eq!(first("th"), None, "too short for words");
+    }
+
+    /// A word spelled with a hyphen in the glossary (`Wi-Fi`) is found with and without it.
+    #[test]
+    fn a_hyphenated_search_word_is_found_without_its_hyphen() {
+        let items = [Item::new("Network", "", "", vec![]).with_words("Wi-Fi wireless")];
+        let first = |q| search(&items, q, 1).first().map(|i| i.title.as_str());
+        assert_eq!(first("wifi"), Some("Network"));
+        assert_eq!(first("wi-fi"), Some("Network"));
+        assert_eq!(first("wireless"), Some("Network"));
+        assert_eq!(first("ifi"), None, "word starts only");
     }
 }

@@ -87,10 +87,6 @@ pub fn menubar_network(n: Network, wifi_on: Option<bool>) -> &'static str {
     }
 }
 
-pub fn brightness_icon() -> &'static str {
-    "display-brightness-symbolic"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

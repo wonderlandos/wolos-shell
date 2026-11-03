@@ -18,7 +18,7 @@ pub const DESKTOP_NAME: &str = "";
 pub const TRASH: &[&str] = &["nautilus", "trash:///"];
 
 /// Default dock (WolOS design icons). Apps are mature ports (desktop/packages.txt): `id` is the app's
-/// Wayland app-id, which Hyprland reports as the window class (running dot, menu bar name).
+/// Wayland app-id, which the compositor reports as the window class (running dot, menu bar name).
 pub const PINS: &[Pin] = &[
     Pin {
         id: "org.gnome.Nautilus",
@@ -95,7 +95,7 @@ pub const LIVE_MARK: &str = "/etc/wolos-live";
 pub const INSTALL: Pin = Pin {
     id: "org.wolos.installer",
     name: "Install WolOS",
-    icon: "wolos-mark",
+    icon: "wolos-installer",
     exec: &["/usr/lib/wolos/wol-install"],
 };
 

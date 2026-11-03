@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Layer-shell placement. Without the `layer-shell` feature windows are plain toplevels (dev on any desktop).
 use gtk::prelude::*;
+pub use shared::layout::{Edge, Orientation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layer {
@@ -66,20 +67,27 @@ impl Spec {
             Keyboard::None,
         )
     }
+    /// The menu bar on today's edge (top): [`Spec::bar`] with [`Edge::Top`].
     pub const fn menubar() -> Self {
+        Self::bar(Edge::Top)
+    }
+    /// The bar on `edge` (ADR 0031 `Layout::bar`): spans that edge and reserves its height (or
+    /// width on a side). The namespace stays `wol-menubar` on every edge (blur rules).
+    pub const fn bar(edge: Edge) -> Self {
         Spec {
             namespace: "wol-menubar",
             layer: Layer::Top,
-            anchor: [true, false, true, true],
+            anchor: span(edge),
             exclusive: true,
             keyboard: Keyboard::None,
         }
     }
-    pub const fn dock() -> Self {
+    /// The Dock on `edge` (ADR 0031 `Layout::dock`): centred on that edge, reserving its shelf.
+    pub const fn dock(edge: Edge) -> Self {
         Spec {
             namespace: "wol-dock",
             layer: Layer::Top,
-            anchor: [false, true, false, false],
+            anchor: only(edge),
             exclusive: true,
             keyboard: Keyboard::None,
         }
@@ -125,9 +133,9 @@ impl Spec {
         }
     }
     /// Notification banners: top right, never take the keyboard. On the Top layer, not Overlay,
-    /// so a zoomed window's menu bar band stays theirs. Hyprland draws a Top layer mapped after a
+    /// so a zoomed window's menu bar band stays theirs. The compositor draws a Top layer mapped after a
     /// window went full screen above it, so the shell holds banners while the active workspace
-    /// is in full screen and shows them after (`ui::notify::held`, audit3 R2A-9), as macOS does.
+    /// is in full screen and shows them after (`ui::notify::held`, audit3 R2A-9).
     pub const fn banners() -> Self {
         Spec {
             layer: Layer::Top,
@@ -137,6 +145,46 @@ impl Spec {
                 Keyboard::None,
             )
         }
+    }
+}
+
+/// Anchors (top, bottom, left, right) of a surface pinned to `edge` alone (the Dock).
+pub const fn only(edge: Edge) -> [bool; 4] {
+    match edge {
+        Edge::Top => [true, false, false, false],
+        Edge::Bottom => [false, true, false, false],
+        Edge::Left => [false, false, true, false],
+        Edge::Right => [false, false, false, true],
+    }
+}
+
+/// Anchors of a surface that runs the whole length of `edge` (the bar): the edge and both
+/// edges across it.
+pub const fn span(edge: Edge) -> [bool; 4] {
+    match edge {
+        Edge::Top => [true, false, true, true],
+        Edge::Bottom => [false, true, true, true],
+        Edge::Left => [true, true, true, false],
+        Edge::Right => [true, true, false, true],
+    }
+}
+
+/// How an autohidden surface on `edge` slides into view: out of its edge, toward the screen.
+pub fn reveal_from(edge: Edge) -> gtk::RevealerTransitionType {
+    use gtk::RevealerTransitionType as T;
+    match edge {
+        Edge::Top => T::SlideDown,
+        Edge::Bottom => T::SlideUp,
+        Edge::Left => T::SlideRight,
+        Edge::Right => T::SlideLeft,
+    }
+}
+
+/// Box orientation of the items of a bar or Dock on `edge`.
+pub fn orientation(edge: Edge) -> gtk::Orientation {
+    match edge.orientation() {
+        Orientation::Horizontal => gtk::Orientation::Horizontal,
+        Orientation::Vertical => gtk::Orientation::Vertical,
     }
 }
 
@@ -229,6 +277,24 @@ pub fn place(w: &impl IsA<gtk::Window>, s: Spec) {
     });
 }
 
+/// Moves a placed surface to the anchors of `s` (the layout's bar or Dock edge changed).
+#[cfg(feature = "layer-shell")]
+pub fn reanchor(w: &impl IsA<gtk::Window>, s: Spec) {
+    use gtk4_layer_shell::{Edge, LayerShell};
+    if !gtk4_layer_shell::is_supported() {
+        return;
+    }
+    for (e, on) in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right]
+        .into_iter()
+        .zip(s.anchor)
+    {
+        w.set_anchor(e, on);
+    }
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn reanchor(_w: &impl IsA<gtk::Window>, _s: Spec) {}
+
 /// Puts `w` on `display` (None: the compositor picks). A mapped surface moves at once.
 #[cfg(feature = "layer-shell")]
 pub fn set_monitor(w: &impl IsA<gtk::Window>, display: Option<&gtk::gdk::Monitor>) {
@@ -260,7 +326,8 @@ fn dev(w: &impl IsA<gtk::Window>, s: Spec) {
     w.set_title(Some(s.namespace));
     w.set_decorated(false);
     match s.anchor {
-        [true, false, true, true] => w.set_default_size(1280, 28),
+        [true, false, true, true] | [false, true, true, true] => w.set_default_size(1280, 28),
+        [true, true, true, false] | [true, true, false, true] => w.set_default_size(28, 800),
         [true, true, true, true] => w.set_default_size(1280, 800),
         _ => {}
     }
@@ -355,6 +422,12 @@ fn monitor_of(w: &gtk::Widget) -> Option<gtk::gdk::Monitor> {
         .and_then(|s| d.monitor_at_surface(&s))
 }
 
+/// The connector name (`eDP-1`) of the output `w` is on; None before it has a surface or when the
+/// output has none. The one place that asks the display which monitor a surface is on.
+pub fn connector_of(w: &impl IsA<gtk::Widget>) -> Option<String> {
+    Some(monitor_of(w.as_ref())?.connector()?.to_string())
+}
+
 /// [`reserved_bottom`] for the display `on` is on only: a Dock on another display does not
 /// shorten a panel here (audit3 R2A-4).
 #[cfg(feature = "layer-shell")]
@@ -364,11 +437,14 @@ pub fn reserved_bottom_on(on: &impl IsA<gtk::Widget>) -> i32 {
         return 0;
     }
     let ours = monitor_of(on.as_ref());
-    let tops = gtk::Window::list_toplevels();
+    let tops = gtk::Window::toplevels();
     (0..tops.n_items())
         .filter_map(|i| tops.item(i).and_downcast::<gtk::Window>())
         .filter(|w| {
-            w.is_layer_window() && w.is_mapped() && w.anchor(Edge::Bottom) && !w.anchor(Edge::Top)
+            w.is_layer_window()
+                && w.is_mapped()
+                && w.is_anchor(Edge::Bottom)
+                && !w.is_anchor(Edge::Top)
         })
         .filter(|w| {
             let theirs = LayerShell::monitor(w).or_else(|| monitor_of(w.upcast_ref()));
@@ -392,11 +468,14 @@ pub fn reserved_bottom() -> i32 {
     if !gtk4_layer_shell::is_supported() {
         return 0;
     }
-    let tops = gtk::Window::list_toplevels();
+    let tops = gtk::Window::toplevels();
     (0..tops.n_items())
         .filter_map(|i| tops.item(i).and_downcast::<gtk::Window>())
         .filter(|w| {
-            w.is_layer_window() && w.is_mapped() && w.anchor(Edge::Bottom) && !w.anchor(Edge::Top)
+            w.is_layer_window()
+                && w.is_mapped()
+                && w.is_anchor(Edge::Bottom)
+                && !w.is_anchor(Edge::Top)
         })
         .map(|w| w.exclusive_zone().max(0))
         .sum()
@@ -430,7 +509,7 @@ pub fn set_layer(w: &impl IsA<gtk::Window>, layer: Layer, keyboard: Keyboard) {
 #[cfg(not(feature = "layer-shell"))]
 pub fn set_layer(_w: &impl IsA<gtk::Window>, _layer: Layer, _keyboard: Keyboard) {}
 
-/// Keyboard mode of the menu bar and the Dock while invoked (⌃F2, ⌃F3). Hyprland 0.56 gives a
+/// Keyboard mode of the menu bar and the Dock while invoked (⌃F2, ⌃F3). The compositor 0.56 gives a
 /// mapped layer the keyboard on a None -> Exclusive change only (LayerSurface.cpp), not OnDemand.
 pub const INVOKED: Keyboard = Keyboard::Exclusive;
 
@@ -470,7 +549,11 @@ pub fn keyboard_access(
             set_keyboard(&win, if take { INVOKED } else { Keyboard::None });
             win.set_focus_visible(take);
             if take {
-                first.grab_focus();
+                // A container (the Dock's shelf, rebuilt with its layout) hands the focus to
+                // its first focusable child.
+                if !first.grab_focus() {
+                    first.child_focus(gtk::DirectionType::TabForward);
+                }
             } else {
                 GtkWindowExt::set_focus(&win, None::<&gtk::Widget>);
             }
@@ -548,11 +631,11 @@ mod tests {
     }
 
     /// J13: the menu bar and the Dock never take the keyboard by themselves (typing stays in the
-    /// app), and ⌃F2/⌃F3 must take it at once: Exclusive, the only mode Hyprland focuses on change.
+    /// app), and ⌃F2/⌃F3 must take it at once: Exclusive, the only mode the compositor focuses on change.
     #[test]
     fn menu_bar_and_dock_take_the_keyboard_only_when_invoked() {
         assert_eq!(Spec::menubar().keyboard, Keyboard::None);
-        assert_eq!(Spec::dock().keyboard, Keyboard::None);
+        assert_eq!(Spec::dock(Edge::Bottom).keyboard, Keyboard::None);
         assert_eq!(INVOKED, Keyboard::Exclusive);
     }
 
@@ -578,15 +661,48 @@ mod tests {
         }
     }
 
+    /// ADR 0031: the bar and the Dock take their anchors from the layout's edges; today's
+    /// desktop is unchanged, the namespaces stay, and the Dock slides in from its own edge.
+    #[test]
+    fn bar_and_dock_follow_the_layout_edges() {
+        assert_eq!(Spec::menubar(), Spec::bar(Edge::Top));
+        assert_eq!(Spec::bar(Edge::Top).anchor, [true, false, true, true]);
+        assert_eq!(Spec::dock(Edge::Bottom).anchor, [false, true, false, false]);
+        for e in Edge::ALL {
+            let (bar, dock) = (Spec::bar(e), Spec::dock(e));
+            let i = Edge::ALL.iter().position(|x| *x == e).unwrap();
+            assert!(bar.anchor[i] && dock.anchor[i], "{e:?}");
+            assert_eq!(bar.anchor.iter().filter(|a| **a).count(), 3, "spans {e:?}");
+            assert_eq!(
+                dock.anchor.iter().filter(|a| **a).count(),
+                1,
+                "centred on {e:?}"
+            );
+            assert!(!bar.anchor[Edge::ALL.iter().position(|x| *x == e.opposite()).unwrap()]);
+            assert_eq!((bar.namespace, dock.namespace), ("wol-menubar", "wol-dock"));
+            assert_eq!((bar.zone(), dock.zone()), (Zone::Reserve, Zone::Reserve));
+        }
+        assert_eq!(
+            reveal_from(Edge::Bottom),
+            gtk::RevealerTransitionType::SlideUp
+        );
+        assert_eq!(
+            reveal_from(Edge::Left),
+            gtk::RevealerTransitionType::SlideRight
+        );
+        assert_eq!(orientation(Edge::Right), gtk::Orientation::Vertical);
+        assert_eq!(orientation(Edge::Top), gtk::Orientation::Horizontal);
+    }
+
     #[test]
     fn shell_surfaces_match_compositor_glass_namespaces() {
         assert_eq!(Spec::menubar().namespace, "wol-menubar");
-        assert_eq!(Spec::dock().namespace, "wol-dock");
-        assert!(Spec::menubar().exclusive && Spec::dock().exclusive);
+        assert_eq!(Spec::dock(Edge::Bottom).namespace, "wol-dock");
+        assert!(Spec::menubar().exclusive && Spec::dock(Edge::Bottom).exclusive);
         assert_eq!(Spec::wallpaper().layer, Layer::Background);
     }
 
-    /// Live Hyprland: the screenshot bar sat at the left edge, the thumbnail bottom-left.
+    /// Live on the compositor: the screenshot bar sat at the left edge, the thumbnail bottom-left.
     #[test]
     fn screenshot_surfaces_sit_bottom_centre_and_bottom_right() {
         // [top, bottom, left, right]
@@ -602,7 +718,7 @@ mod tests {
     fn surfaces_survive_their_display_going_away() {
         for s in [
             Spec::menubar(),
-            Spec::dock(),
+            Spec::dock(Edge::Bottom),
             Spec::wallpaper(),
             Spec::desktop(),
         ] {
@@ -654,12 +770,12 @@ mod tests {
         assert_eq!(b.on_output_lost(), OutputLost::Hide);
     }
 
-    /// Live Hyprland: the wallpaper stopped at the menu bar and dock zones (black strips).
+    /// Live on the compositor: the wallpaper stopped at the menu bar and dock zones (black strips).
     #[test]
     fn full_screen_surfaces_ignore_reserved_zones() {
         for (spec, want) in [
             (Spec::menubar(), Zone::Reserve),
-            (Spec::dock(), Zone::Reserve),
+            (Spec::dock(Edge::Bottom), Zone::Reserve),
             (Spec::wallpaper(), Zone::Ignore),
             (Spec::desktop(), Zone::Respect),
             (Spec::catcher(), Zone::Respect),

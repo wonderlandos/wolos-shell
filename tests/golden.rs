@@ -11,10 +11,28 @@ use std::rc::Rc;
 
 #[path = "golden_cases/app_view.rs"]
 mod app_view_cases;
+#[path = "golden_cases/controlcenter.rs"]
+mod controlcenter_cases;
+#[path = "golden_cases/font.rs"]
+mod font_cases;
+#[path = "golden_cases/form_kit.rs"]
+mod form_kit;
 #[path = "golden_cases/installer.rs"]
 mod installer_cases;
+#[path = "golden_cases/maker.rs"]
+mod maker_cases;
+#[path = "golden_cases/offers.rs"]
+mod offer_cases;
 #[path = "golden_cases/store_package.rs"]
 mod package_cases;
+#[path = "golden_cases/plugin_host.rs"]
+mod plugin_host_cases;
+#[path = "golden_cases/regressions.rs"]
+mod regressions;
+#[path = "golden_cases/settings.rs"]
+mod settings_cases;
+#[path = "golden_cases/theme_picker.rs"]
+mod theme_picker_cases;
 #[path = "golden_cases/widgets.rs"]
 mod widget_cases;
 #[path = "golden_cases/wol_file.rs"]
@@ -45,7 +63,25 @@ fn analyze_full() -> wol_core::malware::Full {
     }
 }
 
-/// Files' "Analyze with ClamAV" window in one state.
+/// dedup A9: Setup's language list moves the keyboard every time (the page following a language
+/// is not the person's pick, as in the installer). It used to stop after the first language,
+/// because the list's own move counted as a pick. Ends on the language it started with.
+fn keyboard_follows_languages(s: &ui::setup::Setup) {
+    use shell::setup::{KEYBOARDS, LANGUAGES};
+    let kb = |i: usize| {
+        KEYBOARDS
+            .iter()
+            .position(|k| k.0 == LANGUAGES[i].keymap)
+            .unwrap_or(0)
+    };
+    let (start, _) = s.language_and_keyboard();
+    for i in [2, 5, start] {
+        s.pick_language(i);
+        assert_eq!(s.language_and_keyboard(), (i, kb(i)), "after language {i}");
+    }
+}
+
+/// Files' "Check for Malware" window in one state.
 fn analyze_case(tag: &str, view: ui::analyze::View) -> Case {
     Case {
         name: format!("analyze-{tag}"),
@@ -70,7 +106,7 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
-            // A display without the focus: its menu bar dimmed (macOS).
+            // A display without the focus: its menu bar dimmed.
             name: "menubar-inactive".into(),
             size: (900, 28),
             class: "preview",
@@ -131,6 +167,27 @@ fn cases() -> Vec<Case> {
                         request: shared::shell::ApprovalRequest::Change {
                             capability: "appearance".into(),
                             what: "switch to Dark appearance".into(),
+                        },
+                    },
+                )
+            }),
+        },
+        Case {
+            // Any program using `wol` asks to install a repo package: the sheet leads with the
+            // change and the package name, not with "wol" (audit P6-4).
+            name: "approval-via-wol".into(),
+            size: (400, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                ui::approval::content(
+                    Rc::new(shell::system::Fake),
+                    shared::shell::Approval {
+                        helper: shared::portal::HELPER_GATE.into(),
+                        tool: "wol: packages-install".into(),
+                        request: shared::shell::ApprovalRequest::Packages {
+                            verb: "install".into(),
+                            names: vec!["gimp".into()],
                         },
                     },
                 )
@@ -347,7 +404,7 @@ fn cases() -> Vec<Case> {
             build: Box::new(|| {
                 let p = w::UserPanel::new("Alice Liddell");
                 p.field.set_text("CURIOUSER");
-                p.field.set_position(-1); // typed, not selected
+                p.field.set_position(-1); // typed; focus selects it (selection contrast checked)
                 p.set_caps_lock(true);
                 ui::lock::lock_screen(&p)
             }),
@@ -543,6 +600,29 @@ fn cases() -> Vec<Case> {
                 b.upcast()
             }),
         },
+        // Markup (ADR 0031 W5): pens, Undo, Copy, Save over the picture, two strokes drawn.
+        Case {
+            name: "capture-markup".into(),
+            size: (900, 600),
+            class: "preview",
+            wallpaper: false,
+            build: Box::new(|| {
+                let t = gdk::Texture::from_filename(Path::new(WALL)).expect("wallpaper");
+                let v = ui::capture::MarkupView::new(&t).expect("markup view");
+                {
+                    let mut m = v.markup.borrow_mut();
+                    let (w0, h0) = m.size;
+                    m.begin(shell::capture::Ink::Red, (w0 * 0.2, h0 * 0.3));
+                    for i in 1..=20 {
+                        let f = f64::from(i) / 20.0;
+                        m.extend((w0 * (0.2 + 0.4 * f), h0 * (0.3 + 0.2 * (f * 6.0).sin())));
+                    }
+                    m.begin(shell::capture::Ink::Blue, (w0 * 0.7, h0 * 0.7));
+                    m.extend((w0 * 0.85, h0 * 0.75));
+                }
+                v.root.clone().upcast()
+            }),
+        },
         Case {
             name: "banners".into(),
             size: (420, 360),
@@ -641,6 +721,9 @@ fn cases() -> Vec<Case> {
                 wallpaper: false,
                 build: Box::new(move || {
                     let s = ui::setup::Setup::new(&shell::system::Fake);
+                    if st == shell::setup::Step::Language {
+                        keyboard_follows_languages(&s);
+                    }
                     s.show(st);
                     s.root.clone()
                 }),
@@ -728,6 +811,7 @@ fn cases() -> Vec<Case> {
                             data_dirs: vec![],
                             pkg_search: false,
                             flatpaks: vec![],
+                            installed: Some(Default::default()),
                         },
                     );
                     if p == "Search" {
@@ -739,6 +823,31 @@ fn cases() -> Vec<Case> {
                 }),
             });
         }
+        // A kit got before says Added: its packages are in the (injected) installed set.
+        v.push(Case {
+            name: format!("store-kits-added-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                let codecs = wol_core::store::kit("codecs-kit").expect("the codecs kit");
+                let mut installed = wopkg::context::Installed::default();
+                installed
+                    .pacman
+                    .extend(codecs.packages().iter().map(|p| p.to_string()));
+                let s = ui::store::content(
+                    Rc::new(shell::system::Fake),
+                    ui::store::Env {
+                        data_dirs: vec![],
+                        pkg_search: false,
+                        flatpaks: vec![],
+                        installed: Some(installed),
+                    },
+                );
+                s.aw.select("Kits");
+                s.aw.root.clone().upcast()
+            }),
+        });
         v.push(Case {
             // Search with repo and Flathub hits: Flathub apps carry a badge, one tile per app.
             name: format!("store-search-flathub-{tag}"),
@@ -752,6 +861,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec!["com.github.maoschanz.drawing".into()],
+                        installed: Some(Default::default()),
                     },
                 );
                 let hit = |id: &str, name: &str, summary: &str| wol_core::flatpak::Hit {
@@ -795,10 +905,13 @@ fn cases() -> Vec<Case> {
                             data_dirs: vec![],
                             pkg_search: false,
                             flatpaks: vec![],
+                            installed: Some(Default::default()),
                         },
                     );
+                    // Fixed art, never another golden: a golden made from goldens changes
+                    // with every re-bake of those (an update run would not settle).
                     let shot = |n: &str| {
-                        format!("{}/tests/golden/{n}", env!("CARGO_MANIFEST_DIR"))
+                        format!("{}/../../design/wallpapers/{n}", env!("CARGO_MANIFEST_DIR"))
                     };
                     let perm = |p: &str| wol_core::flatpak::Perm::parse(p).unwrap();
                     let (subject, loaded) = if kind == "flathub" {
@@ -819,8 +932,8 @@ fn cases() -> Vec<Case> {
                                         "• Layers and adjustments".into(),
                                     ],
                                     screenshots: vec![
-                                        shot("store-discover-wide-light.png"),
-                                        shot("store-work-wide-dark.png"),
+                                        shot("wonderland-day.svg"),
+                                        shot("wonderland-night.svg"),
                                     ],
                                     ..Default::default()
                                 }),
@@ -847,7 +960,7 @@ fn cases() -> Vec<Case> {
                 }),
             });
         }
-        // An AUR package: the risk first, no Get button, and what reading it found.
+        // A community package: the risk first, no Get button, and what reading it found.
         v.push(Case {
             name: format!("store-aur-details-{tag}"),
             size: (sw, sh),
@@ -860,6 +973,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
                 let hit = wol_core::store::PkgHit {
@@ -884,6 +998,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
                 let src = |origin: &str, kind: &str, version: &str, installed| AppSource {
@@ -913,7 +1028,7 @@ fn cases() -> Vec<Case> {
                 s.aw.root.clone().upcast()
             }),
         });
-        // The AUR apart from the catalogue, locked: the warning and the way in, no package.
+        // The Community page apart from the catalogue, locked: the warning and the way in, no package.
         v.push(Case {
             name: format!("store-aur-tab-{tag}"),
             size: (sw, sh),
@@ -926,9 +1041,10 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
-                s.aw.open("AUR");
+                s.aw.open("Community");
                 s.aw.root.clone().upcast()
             }),
         });
@@ -945,16 +1061,18 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
                 s.aur.show_open();
-                s.aw.open("AUR");
+                s.aw.open("Community");
                 s.aw.root.clone().upcast()
             }),
         });
         v.push(Case {
+            // A section of the details page's scroller: as tall as it reads (natural height).
             name: format!("store-aur-audit-{tag}"),
-            size: (sw, sh + 60),
+            size: (sw, 1),
             class: "preview-app",
             wallpaper: false,
             build: Box::new(move || {
@@ -1015,18 +1133,40 @@ fn cases() -> Vec<Case> {
             a.root.clone().upcast()
         }),
     });
+    // Clipboard history (⇧⌘V): a pinned snippet first, then the recent copies, newest first.
+    // The list scrolls, so the panel's minimum height is less than it shows: its natural height.
+    v.push(Case {
+        name: "clipboard".into(),
+        size: (360, 280),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(|| {
+            let mut h =
+                shell::clipboard::History::with_pins(vec!["alice@wonderland.example".into()]);
+            for t in [
+                "sudo pacman -Syu",
+                "https://wolos.org/docs/install",
+                "Meet at the Mad Hatter’s at four",
+            ] {
+                h.push(t);
+            }
+            ui::clipboard::Panel::new(h).root.upcast()
+        }),
+    });
     // Session menu and the Restart / Shut Down / Log Out question (60 s countdown).
     v.push(Case {
+        // Natural width: the panel is as wide as its five actions (453 since the Inter type scale).
         name: "session".into(),
-        size: (443, 142),
+        size: (453, 142),
         class: "preview",
         wallpaper: true,
         build: Box::new(|| ui::panels::SessionMenu::new().root.upcast()),
     });
-    for (action, width) in [("shutdown", 448), ("logout", 440)] {
+    // Natural sizes: the question sets the width and the countdown line wraps under it.
+    for (action, size) in [("shutdown", (432, 157)), ("logout", (314, 157))] {
         v.push(Case {
             name: format!("session-confirm-{action}"),
-            size: (width, 144),
+            size,
             class: "preview",
             wallpaper: true,
             build: Box::new(move || {
@@ -1087,10 +1227,17 @@ fn cases() -> Vec<Case> {
         }),
     });
     v.extend(control_center_cases());
-    v.extend(form_kit_cases());
+    v.extend(form_kit::cases());
+    v.extend(audit4_shell_cases());
     v.extend(widget_cases::cases());
+    v.extend(settings_cases::cases());
+    v.extend(plugin_host_cases::cases());
     v.extend(package_cases::cases());
     v.extend(app_view_cases::cases());
+    v.extend(offer_cases::cases());
+    v.extend(controlcenter_cases::cases());
+    v.extend(theme_picker_cases::cases());
+    v.extend(maker_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-malware-{tag}"),
@@ -1156,415 +1303,6 @@ fn cases() -> Vec<Case> {
         });
     }
     v
-}
-
-/// Settings-style Kit components (`kit::form` and the pickers panes share), on the app surface.
-fn form_kit_cases() -> Vec<Case> {
-    use shell::kit::form as f;
-    use wol_core::shortcuts::Combo;
-    let case = |name: &str, build: fn() -> gtk::Widget| Case {
-        name: format!("kit-{name}"),
-        size: (w::APP_NARROW.0, 1),
-        class: "preview-app",
-        wallpaper: false,
-        build: Box::new(move || {
-            let p = w::vbox(w::S4);
-            p.add_css_class("page");
-            p.add_css_class("app-window");
-            p.append(&build());
-            p.upcast()
-        }),
-    };
-    fn combo(m: &str, k: &str) -> Combo {
-        Combo::parse(m, k).unwrap()
-    }
-    vec![
-        case("form-rows", || {
-            w::section(
-                "Windows",
-                &[
-                    f::toggle_row(
-                        "Tile windows",
-                        "New windows fill the screen side by side",
-                        true,
-                        |_| {},
-                    ),
-                    f::picker_row("Layout", "", &["Dwindle", "Master"], 0, |_| {}),
-                    f::segmented_row("Appearance", "", &["Light", "Dark", "Auto"], 2, |_| {}),
-                    f::stepper_row("Gaps", "", 12, (0, 32, 4), |v| format!("{v} pt"), |_| {}),
-                    f::info_row("Processor", "Intel Core i5 (8 cores)"),
-                    f::entry_row("Computer name", "wonderland", "Name", |_| {}),
-                    f::nav_row("help-about-symbolic", "About", "Name, hardware, serial").upcast(),
-                ],
-            )
-            .upcast()
-        }),
-        case("slider-row", || {
-            w::section(
-                "",
-                &[
-                    f::slider_row(
-                        "Key repeat rate",
-                        (5.0, 60.0, 5.0),
-                        25.0,
-                        ("Slow", "Fast"),
-                        |_| {},
-                    ),
-                    f::slider_row(
-                        "Delay until repeat",
-                        (150.0, 1000.0, 50.0),
-                        400.0,
-                        ("Long", "Short"),
-                        |_| {},
-                    ),
-                ],
-            )
-            .upcast()
-        }),
-        case("shortcut-recorder", || {
-            let c = combo("SUPER", "Space");
-            let ok = f::ShortcutRecorder::new(Some(&c), |_| {}, |_| {});
-            let taken = f::ShortcutRecorder::new(Some(&combo("SUPER SHIFT", "4")), |_| {}, |_| {});
-            taken.set_conflict(true);
-            let off = f::ShortcutRecorder::new(None, |_| {}, |_| {});
-            let fixed =
-                f::ShortcutRecorder::new(Some(&combo("SUPER", "mouse:272")), |_| {}, |_| {});
-            fixed.set_editable(false);
-            let swap = w::button("Swap", w::Kind::Default, || {});
-            let cancel = w::button("Cancel", w::Kind::Plain, || {});
-            w::section(
-                "Screenshots",
-                &[
-                    f::row("Show Search", "", &ok.button),
-                    f::row("Capture the screen", "", &taken.button),
-                    f::notice("⇧⌘4 is used by “Capture a selection”.", &[swap, cancel]).upcast(),
-                    f::row("Record the screen", "", &off.button),
-                    f::row("Move window", "", &fixed.button),
-                ],
-            )
-            .upcast()
-        }),
-        case("permission-row", || {
-            w::section(
-                "Screen Recording",
-                &[
-                    f::permission_row(
-                        "wolos-browser",
-                        "Browser",
-                        "Can record the screen",
-                        true,
-                        |_| {},
-                    ),
-                    f::permission_row(
-                        "wolos-terminal",
-                        "Terminal",
-                        "Asked yesterday",
-                        false,
-                        |_| {},
-                    ),
-                ],
-            )
-            .upcast()
-        }),
-        case("wallpaper-tile", || {
-            let r = w::wrap_row(w::S3, 3);
-            let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers");
-            for (i, n) in ["wonderland-day", "wonderland-dusk", "wonderland-night"]
-                .iter()
-                .enumerate()
-            {
-                let p = std::path::PathBuf::from(format!("{dir}/{n}.svg"));
-                r.insert(&f::wallpaper_tile(Some(&p), n, i == 1), -1);
-            }
-            r.upcast()
-        }),
-        case("empty-state", || {
-            w::empty_state(
-                "bluetooth-disabled-symbolic",
-                "No Bluetooth Hardware",
-                "This computer has no Bluetooth adapter. Plug in a USB adapter to use wireless devices.",
-                None,
-            )
-            .upcast()
-        }),
-        case("search-field", || w::search_field("Search").upcast()),
-        case("preset-card", || {
-            use shell::kit::pickers::{PresetCard, Tokens};
-            use wol_core::looks::Looks;
-            let r = w::wrap_row(w::S3, 2);
-            let soft = Looks {
-                rounding: 18,
-                ..Looks::default()
-            };
-            for (name, about, l, on) in [
-                (
-                    "WolOS",
-                    "Soft glass, gentle motion.",
-                    Looks::default(),
-                    true,
-                ),
-                ("Rounded", "Round corners and wide gaps.", soft, false),
-            ] {
-                let c = PresetCard::new(name, about, &l, Tokens::current(), on);
-                r.insert(&c.button, -1);
-            }
-            r.upcast()
-        }),
-        case("color-well", || {
-            use shell::kit::pickers::{ColorWell, Tokens};
-            let row = w::hbox(w::S2);
-            for hex in ["#7c5cffff", "#33ccffee", "#ffffff40"] {
-                row.append(&ColorWell::new(hex, &[], Tokens::current(), |_| {}).button);
-            }
-            w::section("", &[f::row("Border colours", "", &row)]).upcast()
-        }),
-        case("usage-bar", || {
-            let parts: Vec<(String, String, f64)> = [
-                ("Documents", "61 GB", 0.12),
-                ("Apps", "38 GB", 0.07),
-                ("System", "24 GB", 0.05),
-                ("Restore points", "12 GB", 0.02),
-                ("Other", "8 GB", 0.02),
-            ]
-            .iter()
-            .map(|(n, s, f)| ((*n).into(), (*s).into(), *f))
-            .collect();
-            shell::kit::pickers::usage_bar(&parts).upcast()
-        }),
-        case("key-legend", || {
-            shell::kit::pickers::key_legend(&ui::settings::KEY_LEGEND)
-        }),
-        case("toast", || {
-            let aw = w::AppWindow::new(false, false);
-            let t = shell::kit::toast::Toast::new(&aw);
-            t.show("Wallpaper changed", "Undo", || {});
-            t.revealer.set_transition_duration(0);
-            aw.root.set_size_request(-1, 160);
-            aw.root.upcast()
-        }),
-    ]
-}
-
-/// Settings > Effects & Looks keeps its state alive once built: picking a look and then Restore
-/// Defaults checks the WolOS card again (every card, control and button did nothing when the
-/// page's state was dropped at the end of building it).
-fn effects_page_answers_after_it_is_built() {
-    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
-    a.open("Effects & Looks");
-    pump(50);
-    let root: gtk::Widget = a.root.clone().upcast();
-    let mut cards: Vec<gtk::ToggleButton> = Vec::new();
-    find_type(&root, &mut cards);
-    let card = |name: &str| {
-        cards
-            .iter()
-            .filter(|b| b.has_css_class("preset-card"))
-            .find(|b| b.tooltip_text().as_deref() == Some(name))
-            .unwrap_or_else(|| panic!("no {name} card in {}", cards.len()))
-            .clone()
-    };
-    card("Compact").set_active(true);
-    let mut all = Vec::new();
-    find_type::<gtk::Button>(&root, &mut all);
-    let restore = all
-        .into_iter()
-        .find(|b| {
-            let mut l = Vec::new();
-            find_type::<gtk::Label>(b.upcast_ref(), &mut l);
-            b.label().as_deref() == Some("Restore Defaults")
-                || l.iter().any(|l| l.label() == "Restore Defaults")
-        })
-        .expect("Restore Defaults");
-    restore.emit_clicked();
-    pump(50);
-    assert!(card("WolOS").is_active(), "Restore Defaults did nothing");
-    assert!(!card("Compact").is_active());
-}
-
-/// Return is Continue, unless the keyboard ring is on a button: then it is that button's.
-fn return_belongs_to_the_button_with_the_keyboard_ring() {
-    use shell::kit::assistant::return_is_the_buttons;
-    let win = gtk::Window::new();
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    let button = gtk::Button::with_label("Try");
-    let entry = gtk::Entry::new();
-    body.append(&button);
-    body.append(&entry);
-    win.set_child(Some(&body));
-    win.present();
-    pump(20);
-    GtkWindowExt::set_focus(&win, Some(&button));
-    win.set_focus_visible(true);
-    assert!(return_is_the_buttons(&win), "a ringed button takes Return");
-    win.set_focus_visible(false);
-    assert!(
-        !return_is_the_buttons(&win),
-        "focus nobody can see: Continue"
-    );
-    GtkWindowExt::set_focus(&win, Some(&entry));
-    win.set_focus_visible(true);
-    assert!(!return_is_the_buttons(&win), "a field: Continue");
-    win.close();
-}
-
-/// A switch whose change takes time: insensitive while it runs, flipped back when it fails.
-fn a_toggle_waits_for_its_change_and_reverts_when_it_fails() {
-    type Done = Box<dyn FnOnce(bool)>;
-    let pending: Rc<std::cell::RefCell<Option<Done>>> = Default::default();
-    let p = pending.clone();
-    let s = w::pending_toggle(false, move |_on, done| *p.borrow_mut() = Some(done));
-    s.set_active(true);
-    assert!(
-        !s.is_sensitive(),
-        "the switch must wait while the change runs"
-    );
-    (pending.borrow_mut().take().expect("change started"))(false);
-    assert!(s.is_sensitive());
-    assert!(
-        !s.is_active() && !s.state(),
-        "a failed change must flip the switch back"
-    );
-    s.set_active(true);
-    (pending.borrow_mut().take().expect("change started"))(true);
-    assert!(s.is_active() && s.state());
-}
-
-/// Setup's cross-fade froze half way when the compositor stopped answering frame callbacks, and
-/// the old page stayed drawn until the window closed. No tick is delivered here (the loop does
-/// not run between the page change and the check), which is the same state: `settle` must leave
-/// only the new page, fully shown.
-/// A display plugged in and out over and over: its wallpaper and menu bar leave no minute tick,
-/// reload hook or registered bar behind (a docking laptop must not grow all day).
-fn displays_coming_and_going_leave_nothing_behind() {
-    let base = (
-        shell::kit::lifetime::live_ticks(),
-        ui::ipc::reload_hooks(),
-        ui::menubar::bars().len(),
-    );
-    for _ in 0..25 {
-        let wall = gtk::Window::new();
-        ui::panels::dress_wallpaper(&wall);
-        let bar_win = gtk::Window::new();
-        let bar = ui::menubar::content(&shell::system::Fake);
-        bar.life.tie(&bar_win);
-        bar_win.set_child(Some(&bar.root));
-        drop(bar);
-        wall.present();
-        bar_win.present();
-        pump(10);
-        wall.destroy();
-        bar_win.destroy();
-        pump(10);
-    }
-    let now = (
-        shell::kit::lifetime::live_ticks(),
-        ui::ipc::reload_hooks(),
-        ui::menubar::bars().len(),
-    );
-    assert_eq!(
-        now, base,
-        "(minute ticks, reload hooks, bars) after 25 plug/unplug cycles"
-    );
-}
-
-fn a_stalled_page_fade_settles() {
-    use shell::kit::assistant as a;
-    let pager = a::pager();
-    for n in ["a", "b", "c"] {
-        pager.add_named(&gtk::Label::new(Some(n)), Some(n));
-    }
-    let win = gtk::Window::builder()
-        .default_width(300)
-        .default_height(200)
-        .build();
-    win.set_child(Some(&pager));
-    win.present();
-    pump(300);
-    pager.set_visible_child_name("b");
-    assert!(pager.is_transition_running(), "the fade has started");
-    a::settle(&pager);
-    assert!(!pager.is_transition_running(), "a stalled fade must end");
-    let shown: Vec<bool> = ["a", "b", "c"]
-        .iter()
-        .map(|n| pager.child_by_name(n).unwrap().is_child_visible())
-        .collect();
-    assert_eq!(shown, [false, true, false], "only the new page stays drawn");
-    assert_eq!(pager.visible_child_name().as_deref(), Some("b"));
-    assert_eq!(pager.transition_type(), gtk::StackTransitionType::Crossfade);
-    win.destroy();
-}
-
-/// Audit2 A2-4: below 640 px the sidebar collapsed with no way back. The toolbar toggle shows it in
-/// place of the content, picking a row returns to the content, and widening the window brings the
-/// two-pane layout back.
-fn a_narrow_window_can_bring_the_sidebar_back() {
-    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
-    let (aw, ah) = w::APP_NARROW;
-    let win = gtk::Window::builder()
-        .decorated(false)
-        .default_width(aw)
-        .default_height(ah)
-        .build();
-    win.set_child(Some(&a.root));
-    win.present();
-    pump(300);
-    let side = a
-        .sidebar
-        .parent()
-        .and_then(|v| v.parent())
-        .expect("sidebar scroller");
-    assert!(
-        a.sidebar_toggle.is_visible(),
-        "narrow: the toolbar offers the sidebar"
-    );
-    assert!(
-        a.sidebar_toggle.is_focusable(),
-        "the toggle takes the keyboard"
-    );
-    assert!(
-        !side.is_visible() && a.content.is_visible(),
-        "narrow starts on the content"
-    );
-    a.sidebar_toggle.emit_clicked();
-    assert!(
-        side.is_visible() && !a.content.is_visible(),
-        "the toggle shows the sidebar"
-    );
-    assert!(
-        a.sidebar_toggle.is_visible(),
-        "the sidebar alone still offers the way back to the page"
-    );
-    a.sidebar_toggle.emit_clicked();
-    assert!(
-        !side.is_visible() && a.content.is_visible(),
-        "the toggle goes back to the content"
-    );
-    a.sidebar_toggle.emit_clicked();
-    assert!(side.is_visible(), "and shows the sidebar again");
-    let mut i = 0;
-    let row = loop {
-        let r = a.sidebar.row_at_index(i).expect("a Sound row");
-        if r.widget_name() == "Sound" {
-            break r;
-        }
-        i += 1;
-    };
-    a.sidebar.select_row(Some(&row));
-    row.emit_activate();
-    assert!(
-        !side.is_visible() && a.content.is_visible(),
-        "picking a row shows its page"
-    );
-    assert_eq!(a.content.visible_child_name().as_deref(), Some("Sound"));
-    assert!(a.sidebar_toggle.is_visible());
-    win.set_default_size(900, 600);
-    pump(300);
-    assert!(
-        side.is_visible() && a.content.is_visible(),
-        "wide: both panes"
-    );
-    assert!(!a.sidebar_toggle.is_visible(), "wide: no toggle");
-    win.destroy();
 }
 
 fn find_type<T: IsA<gtk::Widget>>(w: &gtk::Widget, out: &mut Vec<T>) {
@@ -2028,12 +1766,15 @@ fn main() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../design/icons/symbolic"
     ));
-    effects_page_answers_after_it_is_built();
-    a_stalled_page_fade_settles();
-    a_narrow_window_can_bring_the_sidebar_back();
-    displays_coming_and_going_leave_nothing_behind();
-    a_toggle_waits_for_its_change_and_reverts_when_it_fails();
-    return_belongs_to_the_button_with_the_keyboard_ring();
+    regressions::effects_page_answers_after_it_is_built();
+    settings_cases::checks();
+    regressions::a_stalled_page_fade_settles();
+    regressions::a_narrow_window_can_bring_the_sidebar_back();
+    regressions::displays_coming_and_going_leave_nothing_behind();
+    regressions::a_toggle_waits_for_its_change_and_reverts_when_it_fails();
+    regressions::return_belongs_to_the_button_with_the_keyboard_ring();
+    regressions::the_dock_takes_a_new_layout();
+    regressions::an_app_tile_keeps_one_source_badge();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
@@ -2053,6 +1794,10 @@ fn main() {
             "window.preview {{ background: url(\"file://{WALL}\") center / cover; }} window.preview-app {{ background: none; }}"
         );
         kit::style::apply(&t, &extra);
+        if variant == Variant::Light {
+            // Once, with the kit stylesheet on: a golden in the fallback type locks the wrong glyphs.
+            font_cases::ui_family_is_inter();
+        }
         for c in cases() {
             let name = format!(
                 "{}-{}",
@@ -2163,4 +1908,15 @@ fn main() {
         eprintln!("golden failures: {failures:?}");
         std::process::exit(1);
     }
+}
+
+/// Audit4 S3-7: the login window with no account that can sign in says so.
+fn audit4_shell_cases() -> Vec<Case> {
+    vec![Case {
+        name: "login-empty".into(),
+        size: (900, 600),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| ui::lock::Login::new(&[]).root.clone()),
+    }]
 }

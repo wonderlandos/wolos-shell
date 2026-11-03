@@ -211,14 +211,33 @@ pub fn lock_screen(panel: &w::UserPanel) -> gtk::Widget {
     screen(&body(&panel.root, None))
 }
 
+/// Restart the way the menu does (`wol power restart`, through wol-admind); true when it was
+/// taken. Blocking: handed to `gio::spawn_blocking`.
+fn restart_now() -> bool {
+    std::process::Command::new("wol")
+        .args(["power", "restart"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// Lock screen whose password can't be checked (wol-authcheck missing or broken): Restart
-/// appears under it, so nobody is stuck behind it. `shutdown` is the operator group's (every
-/// WolOS account); nothing of the session is shown or kept.
+/// appears under it, so nobody is stuck behind it. It goes through `wol power restart` like the
+/// menu's, and says so when the restart was not taken (audit4 S3-9: a BSD `shutdown -r now` as
+/// the session user failed silently); nothing of the session is shown or kept.
 fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box) {
+    let message = panel.message.clone();
     let (restart, _) = action(
         login::power_icon(login::Power::Restart),
         login::power_label(login::Power::Restart),
-        || kit::spawn(&login::RESTART_NOW.map(String::from)),
+        move || {
+            let m = message.clone();
+            glib::spawn_future_local(async move {
+                let taken = gtk::gio::spawn_blocking(restart_now).await.unwrap_or(false);
+                m.set_label(restart_caption(taken).0);
+            });
+        },
     );
     let foot = w::hbox(0);
     foot.add_css_class("login-power");
@@ -258,16 +277,41 @@ impl Login {
         let (back_box, back) = action("go-previous-symbolic", "Back", || {});
         pw.append(&back_box);
         stack.add_named(&pw, Some("password"));
+        // No account can sign in: say so instead of an empty row (audit4 S3-7).
+        if users.is_empty() {
+            let (title, hint) = crate::copy::LOGIN_NO_ACCOUNTS;
+            stack.add_named(
+                &w::empty_state("system-users-symbolic", title, hint, None),
+                Some("none"),
+            );
+            stack.set_visible_child_name("none");
+        }
         let foot = w::hbox(w::S8);
         foot.set_halign(gtk::Align::Center);
         foot.add_css_class("login-power");
+        // A power request wol-login did not take is said under the row (it was dropped).
+        let refused = w::centered("", "lock-caption");
+        refused.set_visible(false);
         for p in Power::ALL {
+            let r = refused.clone();
             let run = move || {
-                gtk::gio::spawn_blocking(move || login::power(login::LOGIN_SOCKET, p));
+                let r = r.clone();
+                glib::spawn_future_local(async move {
+                    let v = gtk::gio::spawn_blocking(move || login::power(login::LOGIN_SOCKET, p))
+                        .await
+                        .unwrap_or(Verdict::Error);
+                    // A later answer replaces an earlier refusal: a taken request clears it.
+                    let (text, shown) = caption(power_note(p, v));
+                    r.set_label(text);
+                    r.set_visible(shown);
+                });
             };
             foot.append(&action(login::power_icon(p), login::power_label(p), run).0);
         }
-        let root = screen(&body(&stack, Some(foot.upcast_ref())));
+        let footer = w::vbox(w::S2);
+        footer.append(&foot);
+        footer.append(&refused);
+        let root = screen(&body(&stack, Some(footer.upcast_ref())));
         let l = Rc::new(Login {
             root,
             stack,
@@ -347,8 +391,47 @@ fn action(icon: &str, label: &str, run: impl Fn() + 'static) -> (gtk::Box, gtk::
     (v, b)
 }
 
-pub fn user_name() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "user".into())
+/// The caption under a power row for `note` (what [`power_note`] returned): its text and whether
+/// it is shown. No note clears the caption (audit6 S6-5: a refusal stayed after a later
+/// request was taken).
+pub fn caption(note: Option<&'static str>) -> (&'static str, bool) {
+    (note.unwrap_or(""), note.is_some())
+}
+
+/// What the lock screen's Restart says once `wol power restart` answered. The restart is
+/// refused while another account is signed in (wol-admind's rule, `user_level_ok`), and the lock
+/// screen cannot ask for more rights, so the caption names that way out (audit6 S6-5).
+pub fn restart_caption(taken: bool) -> (&'static str, bool) {
+    caption((!taken).then_some(crate::copy::LOCK_RESTART_REFUSED))
+}
+
+/// What a power button's answer shows: nothing when it was taken.
+pub fn power_note(p: Power, v: Verdict) -> Option<&'static str> {
+    (v != Verdict::Ok).then(|| crate::copy::power_refused(p))
+}
+
+/// The session's login name: `$USER`, else the `passwd` entry of this process's uid (audit4
+/// S3-9: a lock screen started without `USER` showed "user", no avatar tone and no hint).
+pub fn user_name(passwd: &str) -> String {
+    user_name_from(std::env::var("USER").ok(), shared::sys::euid(), passwd)
+}
+
+fn user_name_from(env: Option<String>, uid: u32, passwd: &str) -> String {
+    env.filter(|u| !u.is_empty())
+        .or_else(|| {
+            passwd.lines().find_map(|l| {
+                let f: Vec<&str> = l.split(':').collect();
+                let id: u32 = f.get(2)?.parse().ok()?;
+                (id == uid).then(|| f[0].to_string())
+            })
+        })
+        .unwrap_or_else(|| "user".into())
+}
+
+/// The accounts the login window offers: [`login::login_users`], which uses the same rule
+/// wol-login accepts (shared `login_names`, with the no-`/etc/shells` fallback; audit5 S9-1).
+pub fn login_accounts(passwd: &str, shells: &str) -> Vec<(String, String)> {
+    login::login_users(passwd, shells)
 }
 
 /// Wires Enter -> blocking check off the main thread -> `ok(password)` or shake.
@@ -451,13 +534,11 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
         kit::style::install("");
         let win = gtk::ApplicationWindow::new(app);
         win.add_css_class("lock-window");
-        let panel = Rc::new(w::UserPanel::new(&login::display_name(
-            &user_name(),
-            &std::fs::read_to_string("/etc/passwd").unwrap_or_default(),
-        )));
+        let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+        let user = user_name(&passwd);
+        let panel = Rc::new(w::UserPanel::new(&login::display_name(&user, &passwd)));
         // The avatar in the colour picked in Setup, as on the login window.
-        if let (Some(tone), Some(av)) = (login::read_avatar(&user_name()), panel.root.first_child())
-        {
+        if let (Some(tone), Some(av)) = (login::read_avatar(&user), panel.root.first_child()) {
             kit::assistant::set_tone(&av, tone);
         }
         let (screen, restart) = lock_screen_with_restart(&panel);
@@ -496,8 +577,7 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
                 let (failures, p) = (std::cell::Cell::new(0), panel.clone());
                 move |v| {
                     restart.set_visible(v == Verdict::Error);
-                    if let Some(h) =
-                        login::wrong_password(&failures, v, || login::read_hint(&user_name()))
+                    if let Some(h) = login::wrong_password(&failures, v, || login::read_hint(&user))
                     {
                         p.message.set_label(&h);
                     }
@@ -561,7 +641,7 @@ pub fn run_login() -> glib::ExitCode {
         win.add_css_class("lock-window");
         let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
         let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
-        let l = Login::new(&login::login_users(&passwd, &shells));
+        let l = Login::new(&login_accounts(&passwd, &shells));
         // Fades in from the compositor's black, and out to black for the session (ADR 0012).
         let shown = reveal::Reveal::new(&l.root, true);
         win.set_child(Some(&shown.root));
@@ -607,6 +687,62 @@ mod tests {
         for (user, want) in [("kim", "Kim Lee"), ("bo", "bo"), ("ghost", "ghost")] {
             assert_eq!(login::display_name(user, pw), want);
         }
+    }
+
+    /// Audit4 S3-9: without `$USER` the lock screen looked up "user"; the uid finds the account.
+    #[test]
+    fn the_lock_screen_finds_its_user_without_the_environment() {
+        let pw = "root:*:0:0::/root:/bin/sh\nkim:*:1001:1001:Kim Lee:/home/kim:/bin/sh\n";
+        assert_eq!(user_name_from(None, 1001, pw), "kim");
+        assert_eq!(user_name_from(Some(String::new()), 1001, pw), "kim");
+        assert_eq!(user_name_from(Some("bo".into()), 1001, pw), "bo");
+        assert_eq!(
+            user_name_from(None, 4242, pw),
+            "user",
+            "no entry: still a name"
+        );
+        assert_eq!(
+            login::display_name(&user_name_from(None, 1001, pw), pw),
+            "Kim Lee"
+        );
+    }
+
+    /// Audit4 S3-7: with `/etc/shells` missing or a login shell not listed, nobody could sign
+    /// in; the fallback keeps service accounts out. Power answers that were dropped are said.
+    #[test]
+    fn the_login_window_lists_accounts_without_etc_shells() {
+        let pw = "root:*:0:0::/root:/bin/sh\n\
+                  bo:*:1002:1002:Bo Peep:/home/bo:/usr/bin/fish\n\
+                  svc:*:1003:1003::/var/svc:/usr/sbin/nologin\n\
+                  off:*:1004:1004::/home/off:/bin/false\n\
+                  nobody:*:65534:65534::/:/bin/sh\n";
+        assert_eq!(
+            login_accounts(pw, ""),
+            [("bo".to_string(), "Bo Peep".to_string())]
+        );
+        assert_eq!(
+            login_accounts(pw, "/bin/sh\n/usr/bin/fish\n"),
+            login::login_users(pw, "/bin/sh\n/usr/bin/fish\n"),
+            "listed shells: the normal rule"
+        );
+        assert!(login_accounts("root:*:0:0::/root:/bin/sh\n", "").is_empty());
+        assert_eq!(power_note(Power::ShutDown, Verdict::Ok), None);
+        // Audit6 S6-5: a refusal and then a taken request: the caption goes away.
+        let refused = caption(power_note(Power::ShutDown, Verdict::Error));
+        assert_eq!(refused, (crate::copy::power_refused(Power::ShutDown), true));
+        assert_eq!(caption(power_note(Power::Sleep, Verdict::Ok)), ("", false));
+        // The lock screen's Restart names the other signed-in account when it is refused,
+        // and clears the text when taken.
+        assert_eq!(
+            restart_caption(false),
+            (crate::copy::LOCK_RESTART_REFUSED, true)
+        );
+        assert!(crate::copy::LOCK_RESTART_REFUSED.contains("signed in"));
+        assert_eq!(restart_caption(true), ("", false));
+        assert_eq!(
+            power_note(Power::ShutDown, Verdict::Error),
+            Some(crate::copy::power_refused(Power::ShutDown))
+        );
     }
 
     #[test]

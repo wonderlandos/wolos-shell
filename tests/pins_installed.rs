@@ -2,7 +2,7 @@
 //! Every Dock pin launches a program the image installs, and its window class names it.
 //! Real-GPU run: the Dock pinned wol-files/wol-mail/wol-music/... ("No such file or directory").
 //! WolOS apps are mature ports: each pin maps to a package in desktop/packages.txt (or a WolOS binary)
-//! and its id is the app's Wayland app-id (= Hyprland class), so the running dot and menu bar name work.
+//! and its id is the app's Wayland app-id (= compositor class), so the running dot and menu bar name work.
 use shell::apps::{PINS, TRASH, frontmost_name, icon_for, is_running};
 use std::path::PathBuf;
 
@@ -34,7 +34,7 @@ fn sibling(var: &str, dir: &str, p: &str) -> PathBuf {
 
 fn packages() -> Vec<String> {
     // The installed system's lists live in wolos-iso (profile/).
-    ["profile/packages-base.txt", "profile/packages.desktop"]
+    ["profile/packages.x86_64", "profile/packages.desktop"]
         .iter()
         .flat_map(|f| {
             std::fs::read_to_string(sibling("WOLOS_ISO", "wolos-iso", f))
@@ -91,7 +91,7 @@ fn packaged_pins_are_named_by_their_window_class() {
             continue;
         };
         assert_eq!(pin.id, *app_id, "{} pin id must be the app-id", pin.name);
-        // Hyprland reports the app-id as the class; the Dock compares lowercased classes.
+        // The compositor reports the app-id as the class; the Dock compares lowercased classes.
         assert_eq!(frontmost_name(app_id, "x", PINS, &[]), pin.name, "{app_id}");
         assert_eq!(icon_for(app_id, PINS, &[]), pin.icon, "{app_id}");
         assert!(
@@ -103,7 +103,7 @@ fn packaged_pins_are_named_by_their_window_class() {
 
 #[test]
 fn browser_pin_is_helium() {
-    // Helium is the WolOS browser: /usr/bin/helium sets its Wayland app-id (Hyprland class) to `helium`.
+    // Helium is the WolOS browser: /usr/bin/helium sets its Wayland app-id (compositor class) to `helium`.
     let b = PINS.iter().find(|p| p.name == "Browser").unwrap();
     assert_eq!((b.id, b.exec), ("helium", &["helium"][..]));
 }
@@ -132,7 +132,7 @@ fn pins_keep_wolos_names_and_icons() {
 
 #[test]
 fn app_store_is_pinned_installed_and_opens_wol_packages() {
-    // macOS Dock: App Store sits before System Settings.
+    // Dock: App Store sits before System Settings.
     let p = PINS.iter().find(|p| p.name == "App Store").unwrap();
     assert_eq!(
         (p.id, p.icon, p.exec),

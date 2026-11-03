@@ -18,6 +18,10 @@ pub enum Step {
 }
 
 /// Welcome, the key screen when it is pending, four questions, Done.
+/// The account form's two problems that both checks report.
+const NO_MATCH: &str = "Passwords don’t match.";
+const HINT_IS_PASSWORD: &str = "The hint can’t be the password.";
+
 pub const STEPS: [Step; 7] = [
     Step::Welcome,
     Step::KeyScreen,
@@ -44,13 +48,13 @@ impl Step {
     /// One sentence under the title: what this page is for.
     pub fn subtitle(self) -> &'static str {
         match self {
-            Step::Welcome => "Let's get you set up.",
+            Step::Welcome => "Let’s get you set up.",
             Step::KeyScreen => {
-                "This computer hasn't accepted its WolOS key yet. At the next restart a blue screen asks once."
+                "This computer hasn’t accepted its WolOS key yet. At the next restart a blue screen asks once."
             }
             Step::Language => "WolOS uses this language and keyboard. You can change them later.",
             Step::Wifi => "Choose a network to get online. You can skip this and join later.",
-            Step::Account => "You'll use this name and password to sign in.",
+            Step::Account => "You’ll use this name and password to sign in.",
             Step::Appearance => "Choose a look. You can change it any time in System Settings.",
             Step::Done => "Your account is ready.",
         }
@@ -315,10 +319,10 @@ impl Appearance {
 pub const THEMES: [(&str, &str); 3] = [
     ("violet", "Wonderland"),
     ("blue", "Ocean"),
-    ("graphite", "Graphite"),
+    ("graphite", "Slate"),
 ];
 
-/// Account name macOS-style: lowercase ASCII letters and digits of the full name, accents folded,
+/// Account name: lowercase ASCII letters and digits of the full name, accents folded,
 /// starting with a letter, at most 32.
 pub fn account_name(full: &str) -> String {
     let fold = |c: char| -> Option<char> {
@@ -461,10 +465,10 @@ impl Draft {
             ));
         }
         if self.password != self.verify {
-            return Some((Field::Verify, "Passwords don't match."));
+            return Some((Field::Verify, NO_MATCH));
         }
         if !self.hint.is_empty() && self.hint == self.password {
-            return Some((Field::Hint, "The hint can't be the password."));
+            return Some((Field::Hint, HINT_IS_PASSWORD));
         }
         match rules {
             Ok(()) => None,
@@ -482,10 +486,10 @@ impl Draft {
             return Some(p);
         }
         if !self.verify.is_empty() && !self.password.starts_with(self.verify.as_str()) {
-            return Some((Field::Verify, "Passwords don't match."));
+            return Some((Field::Verify, NO_MATCH));
         }
         if !self.hint.is_empty() && self.hint == self.password {
-            return Some((Field::Hint, "The hint can't be the password."));
+            return Some((Field::Hint, HINT_IS_PASSWORD));
         }
         None
     }
@@ -657,11 +661,11 @@ impl Flow {
             }
             (Job::JoinWifi { ssid, .. }, Verdict::Denied) => Next::Stay(
                 None,
-                format!("“{ssid}” didn't accept that password. Check it and try again."),
+                format!("“{ssid}” didn’t accept that password. Check it and try again."),
             ),
             (Job::JoinWifi { ssid, .. }, Verdict::Error) => Next::Stay(
                 None,
-                format!("“{ssid}” didn't answer. Try again, or choose Not Now and join later."),
+                format!("“{ssid}” didn’t answer. Try again, or choose Not Now and join later."),
             ),
             (Job::CreateAccount(_), Verdict::Ok) => {
                 self.created = true;
@@ -669,11 +673,11 @@ impl Flow {
             }
             (Job::CreateAccount(_), Verdict::Denied) => Next::Stay(
                 None,
-                "That account name can't be used. Press Back and choose another one.".into(),
+                "That account name can’t be used. Press Back and choose another one.".into(),
             ),
             (Job::CreateAccount(_), Verdict::Error) => Next::Stay(
                 None,
-                "Your account couldn't be created just now. Press Continue to try again.".into(),
+                "Your account couldn’t be created just now. Press Continue to try again.".into(),
             ),
         }
     }
@@ -896,13 +900,13 @@ mod tests {
         d.verify = "curiouserr".into();
         assert_eq!(
             d.account_problem(),
-            Some((Verify, "Passwords don't match."))
+            Some((Verify, "Passwords don’t match."))
         );
         d.verify = "curiouser".into();
         d.hint = "curiouser".into();
         assert_eq!(
             d.account_problem(),
-            Some((Hint, "The hint can't be the password."))
+            Some((Hint, "The hint can’t be the password."))
         );
         d.hint = "white rabbit".into();
         assert_eq!(d.account_problem(), None);
@@ -949,7 +953,7 @@ mod tests {
         d.verify = "curi".into();
         assert_eq!(d.typing_problem(), None, "verify is still a prefix");
         d.verify = "curx".into();
-        assert_eq!(d.typing_problem(), Some((Verify, "Passwords don't match.")));
+        assert_eq!(d.typing_problem(), Some((Verify, "Passwords don’t match.")));
         d.verify = "curiouserr".into();
         assert_eq!(d.typing_problem().map(|p| p.0), Some(Verify));
         d.verify = "curiouser".into();
@@ -1022,7 +1026,7 @@ mod tests {
         let n = f.drive(&fake);
         assert_eq!(
             said(&n),
-            "“Rabbit Hole” didn't accept that password. Check it and try again."
+            "“Rabbit Hole” didn’t accept that password. Check it and try again."
         );
         assert_eq!(f.step, Step::Wifi);
         assert_eq!(f.drive(&fake), Next::Go(Step::Account));

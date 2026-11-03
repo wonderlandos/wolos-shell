@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Wallpaper, OSD, clipboard, session menu, window switcher.
+//! Wallpaper, OSD, session menu, window switcher (the clipboard panel is ui/clipboard.rs).
 use crate::kit::{
     self,
     surface::{Keyboard, Layer, Spec},
@@ -112,7 +112,8 @@ pub(super) fn panel_on(
     win.upcast()
 }
 
-/// About <App> card: close light, 64 px icon, name, app id. Glass, centred (HIG panel).
+/// About <App> card: close light (top right, where the compositor puts close), 64 px icon, name,
+/// app id. Glass, centred (HIG panel).
 pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
     let g = w::glass_panel(w::S6);
     g.set_size_request(w::ABOUT_WIDTH, -1);
@@ -121,7 +122,6 @@ pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
         close.add_css_class(c);
     }
     close.set_tooltip_text(Some("Close"));
-    close.set_halign(gtk::Align::Start);
     close.connect_clicked(|b| {
         if let Some(win) = b.root().and_downcast::<gtk::Window>() {
             win.close();
@@ -129,6 +129,7 @@ pub fn about_card(name: &str, icon: &str, class: &str) -> gtk::Box {
     });
     let lights = w::hbox(0);
     lights.add_css_class("traffic-lights");
+    lights.set_halign(gtk::Align::End);
     lights.append(&close);
     g.append(&lights);
     let i = w::icon(icon, w::ICON_XL);
@@ -194,7 +195,7 @@ impl Osd {
         row.append(&icon);
         row.append(&bar);
         g.append(&row);
-        // Top layer (kit::surface::Spec::banners), shown over full screen too (macOS HUD). No
+        // Top layer (kit::surface::Spec::banners), shown over full screen too (a HUD). No
         // keyboard: an on-demand layer takes the keys from the app on map.
         let window = panel_on(
             app,
@@ -214,7 +215,7 @@ impl Osd {
     }
 
     /// Shows for 1.5 s; a newer show extends it. Also over a window in full screen, like the
-    /// macOS volume HUD (brief; banners are the ones held, `notify::held`).
+    /// Volume HUD (brief; banners are the ones held, `notify::held`).
     pub fn show(self: &Rc<Self>, icon: &str, level: u8) {
         self.icon.set_icon_name(Some(icon));
         self.bar.set_fraction(level as f64 / 100.0);
@@ -230,72 +231,7 @@ impl Osd {
     }
 }
 
-/// Clipboard history: watches the display clipboard (event-driven), click copies back.
-pub fn clipboard(app: &gtk::Application) -> gtk::Window {
-    let g = w::glass_panel(w::S2);
-    let head = w::hbox(w::S2);
-    head.append(&w::label("Clipboard", "title"));
-    head.append(&w::spacer());
-    let list = w::vbox(w::S1);
-    let scroll = gtk::ScrolledWindow::builder()
-        .child(&list)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .build();
-    let history: Rc<RefCell<Vec<String>>> = Default::default();
-    let render = {
-        let (list, history) = (list.clone(), history.clone());
-        Rc::new(move || {
-            while let Some(c) = list.first_child() {
-                list.remove(&c);
-            }
-            let h = history.borrow();
-            if h.is_empty() {
-                list.append(&w::label("Copied text shows up here", "secondary"));
-            }
-            for e in h.iter() {
-                let row = w::list_button("edit-paste-symbolic", &crate::clipboard::preview(e), "");
-                let e = e.clone();
-                // A pick copies and closes, like a menu item (audit2 A2-15).
-                row.connect_clicked(move |b| {
-                    b.display().clipboard().set_text(&e);
-                    if let Some(win) = b.root().and_downcast::<gtk::Window>() {
-                        win.set_visible(false);
-                    }
-                });
-                list.append(&row);
-            }
-        })
-    };
-    let (h2, r2) = (history.clone(), render.clone());
-    head.append(&w::button("Clear", w::Kind::Default, move || {
-        h2.borrow_mut().clear();
-        r2();
-    }));
-    g.append(&head);
-    g.append(&scroll);
-    render();
-    // No display (the shell lost its compositor): the panel shows, nothing is recorded (audit2
-    // A2-17: this was an `expect`).
-    if let Some(d) = gdk::Display::default() {
-        d.clipboard().connect_changed(move |cb| {
-            let (history, render) = (history.clone(), render.clone());
-            cb.read_text_async(gio_none(), move |r| {
-                if let Ok(Some(t)) = r
-                    && crate::clipboard::push(&mut history.borrow_mut(), &t)
-                {
-                    render();
-                }
-            });
-        });
-    }
-    panel(app, "clipboard", "wol-panel-clipboard", [false; 4], &g)
-}
-
-fn gio_none() -> Option<&'static gtk::gio::Cancellable> {
-    None
-}
-
-/// Restart / Shut Down / Log Out ask first (macOS): the question, a 60 s countdown, Cancel and
+/// Restart / Shut Down / Log Out ask first: the question, a 60 s countdown, Cancel and
 /// the action. Doing nothing runs it; Cancel, Esc or closing the panel drops it.
 struct Confirm {
     view: gtk::Box,
@@ -310,8 +246,13 @@ struct Confirm {
 impl Confirm {
     fn new(row: &gtk::Box) -> Rc<Confirm> {
         let view = w::vbox(w::S2);
+        // The question sets the width; the countdown line wraps under it instead of widening
+        // the panel (asks nothing of its own width: one character).
         let question = w::label("", "title");
         let line = w::label("", "secondary");
+        line.set_wrap(true);
+        line.set_wrap_mode(gtk::pango::WrapMode::Word);
+        line.set_max_width_chars(1);
         let buttons = w::hbox(w::S2);
         buttons.set_halign(gtk::Align::End);
         let go = w::button("", w::Kind::Primary, || {});
@@ -379,6 +320,11 @@ impl Confirm {
             crate::copy::session_confirm(self.action.get(), self.left.get())
         {
             self.question.set_label(q);
+            // The count keeps its unit on its line ("60 seconds.") when the line wraps.
+            let line = match line.rsplit_once(' ') {
+                Some((head, unit)) => format!("{head}\u{a0}{unit}"),
+                None => line,
+            };
             self.line.set_label(&line);
             self.go.set_label(button);
         }
@@ -533,16 +479,13 @@ mod tests {
         }
     }
 
-    /// Audit2 A2-15/A2-17: About ignored everything but Esc and its close light, a clipboard pick
-    /// left the panel open, and the clipboard panel panicked without a display.
+    /// Audit2 A2-15: About ignored everything but Esc and its close light. (The clipboard half
+    /// of this test moved to ui/clipboard.rs with the panel.)
     #[test]
-    fn about_and_clipboard_close_like_menus_and_never_panic() {
+    fn about_closes_like_a_menu() {
         let src = include_str!("panels.rs");
-        let span = |from: &str, to: &str| {
-            let a = src.find(from).unwrap();
-            &src[a..a + src[a..].find(to).unwrap()]
-        };
-        let about = span("pub fn about(", "pub struct Osd");
+        let a = src.find("pub fn about(").unwrap();
+        let about = &src[a..a + src[a..].find("pub struct Osd").unwrap()];
         assert!(
             about.contains("transient::also_close"),
             "About closes with the set"
@@ -550,15 +493,6 @@ mod tests {
         assert!(
             about.contains("old.set_visible(false)"),
             "one About at a time"
-        );
-        let clip = span("pub fn clipboard(", "fn gio_none");
-        assert!(
-            clip.contains("win.set_visible(false)"),
-            "a pick closes the panel"
-        );
-        assert!(
-            !clip.contains(concat!(".expect", "(")),
-            "no expect on the display"
         );
     }
 

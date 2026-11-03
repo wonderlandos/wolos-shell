@@ -11,6 +11,7 @@
 //! (`crate::app_session::set_sheet`), never on the socket (audit S1). A same-account requester is
 //! named by the executable the kernel reports; the name it gives itself is only a second line
 //! (audit S18).
+use crate::copy;
 use crate::kit::{surface, widgets as w};
 use crate::system::{ActionError, System};
 use gtk::{gio, glib, prelude::*};
@@ -39,10 +40,11 @@ impl<T> Default for Queue<T> {
 }
 
 impl<T> Queue<T> {
-    /// Its id, or the request back when [`MAX_WAITING`] already wait.
-    pub fn push(&mut self, a: Approval, t: T) -> Result<u64, (Approval, T)> {
+    /// Its id, or the request back when [`MAX_WAITING`] already wait (boxed: an [`Approval`]
+    /// is large, and the refusal is the rare path).
+    pub fn push(&mut self, a: Approval, t: T) -> Result<u64, Box<(Approval, T)>> {
         if self.items.len() > MAX_WAITING {
-            return Err((a, t));
+            return Err(Box::new((a, t)));
         }
         self.next += 1;
         self.items.push_back((self.next, a, t));
@@ -115,6 +117,11 @@ pub fn plain(s: &str) -> String {
 pub fn title(a: &Approval, exe: Option<&str>) -> String {
     let path = exe.or_else(|| a.helper.starts_with('/').then_some(a.helper.as_str()));
     let what = plain(&a.request.describe());
+    // P6-4: any process of the account can run `/usr/bin/wol` and raise this sheet, so the file
+    // name "wol" says nothing; the sheet leads with what would change, package names in quotes.
+    if path == Some(shared::portal::HELPER_GATE) {
+        return copy::approval_via_wol(&plain(&quoted(&a.request).describe()));
+    }
     match path {
         Some(p) => format!(
             "“{}” ({}) wants to {what}.",
@@ -122,6 +129,18 @@ pub fn title(a: &Approval, exe: Option<&str>) -> String {
             plain(p)
         ),
         None => format!("“{}” wants to {what}.", plain(display_name(&a.helper))),
+    }
+}
+
+/// `request` with the package names of a package change in quotes (the name is what the person
+/// must check), anything else as it is.
+fn quoted(request: &ApprovalRequest) -> ApprovalRequest {
+    match request {
+        ApprovalRequest::Packages { verb, names } => ApprovalRequest::Packages {
+            verb: verb.clone(),
+            names: names.iter().map(|n| format!("“{}”", plain(n))).collect(),
+        },
+        other => other.clone(),
     }
 }
 
@@ -137,6 +156,10 @@ pub fn self_named(a: &Approval, exe: Option<&str>) -> Option<String> {
 /// The line under the title: what the choices mean, and how many more wait.
 pub fn detail(a: &Approval, waiting: usize) -> String {
     let mut d = match &a.request {
+        // C10-1: a change that leaves something behind is asked every time; no Always Allow.
+        ApprovalRequest::Change { .. } if policy::once_only(&a.tool) => {
+            policy::ONCE_ONLY_DETAIL.into()
+        }
         ApprovalRequest::Change { capability, .. } => match policy::label(capability) {
             Some(l) => {
                 let mut c = l.chars();
@@ -149,6 +172,11 @@ pub fn detail(a: &Approval, waiting: usize) -> String {
             }
             None => "Allow Once lets it do this one time.".into(),
         },
+        // ADR 0034: the title carries a short SHA-256 prefix; the whole digest of wold's copy is
+        // here, so it can be compared with the one the builder published.
+        ApprovalRequest::PackageFile { sha256, .. } => {
+            crate::copy::approval_package_file(&plain(sha256))
+        }
         _ => "Enter your password to allow this.".into(),
     };
     match waiting {
@@ -232,8 +260,8 @@ impl Approvals {
         let (tx, rx) = async_channel::bounded(1);
         let pushed = self.queue.borrow_mut().push(a, Pending { tx, exe });
         match pushed {
-            Err((_, p)) => {
-                let _ = p.tx.try_send(Answer::Busy);
+            Err(refused) => {
+                let _ = refused.1.tx.try_send(Answer::Busy);
             }
             Ok(id) => {
                 let weak = Rc::downgrade(self);
@@ -286,7 +314,7 @@ impl Approvals {
             "security-high-symbolic"
         }));
         s.field.set_visible(admin);
-        s.always.set_visible(!admin);
+        s.always.set_visible(!admin && !policy::once_only(&a.tool));
         s.cancel.set_label("Deny");
         s.allow
             .set_label(if admin { "Allow" } else { "Allow Once" });
@@ -341,6 +369,10 @@ impl Approvals {
         let ApprovalRequest::Change { capability, .. } = &a.request else {
             return;
         };
+        // C10-1: nothing is saved for a once-only change; it counts this one time.
+        if policy::once_only(&a.tool) {
+            return self.answer(Answer::AllowOnce);
+        }
         match self.sys.allow_helper_always(&a.helper, capability) {
             Ok(()) => self.answer(Answer::AllowAlways),
             // Not saved: allow this once; it asks again next time.
@@ -522,6 +554,68 @@ mod tests {
         }
     }
 
+    /// C10-1: a change that leaves something behind (a web app, a session) never offers Always
+    /// Allow; the sheet says it asks every time. A plain `open` still does.
+    #[test]
+    fn once_only_changes_say_they_ask_every_time() {
+        let mut a = change("Claude");
+        a.tool = "webapp_add".into();
+        a.request = R::Change {
+            capability: "apps".into(),
+            what: "add “Mail” as a web app (https://m.example.com)".into(),
+        };
+        assert_eq!(detail(&a, 0), policy::ONCE_ONLY_DETAIL);
+        a.tool = "open".into();
+        assert!(detail(&a, 0).starts_with("Always Allow lets it open apps"));
+    }
+
+    /// Audit C7-1: wold's local-file, Undo Update and channel sheets are administrator sheets
+    /// only wold may put on screen; a same-account helper cannot.
+    #[test]
+    fn wolds_root_package_sheets_need_the_password() {
+        for r in [
+            R::PackageFile {
+                staged: "/var/cache/wolos/install/0123456789abcdef0123456789abcdef/x.pkg.tar.zst"
+                    .into(),
+                name: "hello".into(),
+                version: "1:2.0-3".into(),
+                sha256: "ab".repeat(32),
+            },
+            R::SystemRollback,
+            R::SystemChannel {
+                channel: "beta".into(),
+            },
+        ] {
+            assert!(may_approve(0, 1000, "/usr/bin/wold", &r));
+            assert!(!may_approve(1000, 1000, "/usr/bin/wol", &r), "{r:?}");
+            let file = matches!(r, R::PackageFile { .. });
+            let a = Approval {
+                helper: "/usr/bin/wopkg".into(),
+                tool: "wopkg packages-update".into(),
+                request: r,
+            };
+            if file {
+                // ADR 0034: name, version and a SHA-256 prefix in the title, the whole digest
+                // on the detail line, within the sheet's line limit.
+                let t = title(&a, None);
+                assert!(t.contains("“hello” 1:2.0-3 (SHA-256 abababababab…)"), "{t}");
+                assert!(!t.contains("/var/cache"), "{t}");
+                let d = detail(&a, 0);
+                assert_eq!(
+                    d,
+                    format!(
+                        "SHA-256 of the copy: {}. Enter your password to allow this.",
+                        "ab".repeat(32)
+                    )
+                );
+                assert!(d.chars().count() <= crate::copy::MAX_LEN, "{d}");
+                assert!(crate::copy::lint(&d).is_empty(), "{d}");
+            } else {
+                assert_eq!(detail(&a, 0), "Enter your password to allow this.");
+            }
+        }
+    }
+
     /// One on screen, MAX_WAITING behind it, then Busy; expiry removes the right one.
     #[test]
     fn queue_lines_up_refuses_floods_and_expires() {
@@ -647,6 +741,44 @@ mod tests {
             None,
             "nothing to add when the names agree"
         );
+    }
+
+    /// Audit P6-4: `/usr/bin/wol` is what any process of the account can be, so its sheet does not
+    /// name "wol" as the requester: "a program using wol", and the package name in quotes.
+    #[test]
+    fn a_sheet_raised_through_the_wol_gate_names_the_change_not_wol() {
+        let a = Approval {
+            helper: shared::portal::HELPER_GATE.into(),
+            tool: "wol: packages-install".into(),
+            request: R::Packages {
+                verb: "install".into(),
+                names: vec!["gimp".into(), "ev\u{202E}il".into()],
+            },
+        };
+        let t = title(&a, None);
+        assert_eq!(
+            t, "A program using wol wants to install “gimp”, “evil” for every account.",
+            "{t}"
+        );
+        assert!(!t.contains("/usr/bin/wol") && !t.contains("“wol”"), "{t}");
+        assert_eq!(
+            title(&a, Some("/usr/bin/wol")),
+            t,
+            "the same from the kernel's word"
+        );
+        let wifi = Approval {
+            request: R::Wifi { on: false },
+            ..a.clone()
+        };
+        assert_eq!(
+            title(&wifi, None),
+            "A program using wol wants to turn Wi-Fi off."
+        );
+        let other = Approval {
+            helper: "/usr/bin/wopkg".into(),
+            ..a
+        };
+        assert!(title(&other, None).starts_with("“wopkg” (/usr/bin/wopkg)"));
     }
 
     /// R2C-12: a path or a name with bidi overrides or control characters cannot reorder the

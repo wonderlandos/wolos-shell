@@ -2,7 +2,7 @@
 //! IaraKit component set (HIG, archicture/modules/hig.md). The ONLY place widget metrics live:
 //! surfaces pass tokens from this module, never numbers.
 use gtk::{glib, prelude::*};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// Spacing scale (HIG §2).
@@ -37,10 +37,8 @@ pub const APP_NARROW: (i32, i32) = (480, 360);
 pub const NARROW: i32 = 640;
 pub const LOCK_FIELD_WIDTH: i32 = 200;
 pub const LOCK_FIELD_HEIGHT: i32 = 28;
-/// Setup assistant: card width, list row height, rows shown before scrolling.
-pub const SETUP_CARD_WIDTH: i32 = 560;
-pub const SETUP_ROW: i32 = 36;
-pub const SETUP_ROWS: i32 = 6;
+/// Gap between the password field's peek glyph and the submit disc inside the lock pill.
+pub const LOCK_PILL_GAP: i32 = 6;
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
 /// Overview desktop thumbnail and window title line.
@@ -60,7 +58,8 @@ pub fn hbox(spacing: i32) -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Horizontal, spacing)
 }
 
-/// Text styles: "" body 13, "title" 13 semibold, "secondary" 11 dim, "large-title" 22 semibold.
+/// Text styles: "" body 13, "title" 13 semibold (row titles), "heading" 15 semibold (section headings),
+/// "secondary" 11 dim, "large-title" 26 bold (page titles).
 pub fn label(text: &str, style: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
     l.set_xalign(0.0);
@@ -240,6 +239,11 @@ pub fn dropdown(options: &[&str], selected: u32) -> gtk::DropDown {
     d
 }
 
+/// Gives a [`dropdown`] a new list of options (the selection is the first until set again).
+pub fn set_options(d: &gtk::DropDown, options: &[&str]) {
+    d.set_model(Some(&gtk::StringList::new(options)));
+}
+
 pub fn segmented(options: &[&str], selected: usize, picked: impl Fn(usize) + 'static) -> gtk::Box {
     let row = hbox(0);
     row.add_css_class("segmented");
@@ -286,21 +290,55 @@ pub fn password_field(placeholder: &str) -> gtk::PasswordEntry {
 /// inside the entry, only while focused; this one says it in words.
 pub const CAPS_LOCK: &str = "⇪ Caps Lock is on";
 
+/// Follows the seat's keyboard, also after one is plugged in or out (audit4 S3-12: it bound the
+/// first keyboard only); its handlers go with the label.
 pub fn caps_lock_note() -> gtk::Label {
+    use gtk::gdk;
     let l = label(CAPS_LOCK, "caps-lock");
     l.set_visible(false);
-    let kb = gtk::gdk::Display::default()
-        .and_then(|d| d.default_seat())
-        .and_then(|s| s.keyboard());
-    if let Some(kb) = kb {
-        l.set_visible(kb.is_caps_locked());
-        let weak = l.downgrade();
-        kb.connect_caps_lock_state_notify(move |kb| {
+    let Some(seat) = gdk::Display::default().and_then(|d| d.default_seat()) else {
+        return l;
+    };
+    type Bound = Rc<RefCell<Option<(gdk::Device, glib::SignalHandlerId)>>>;
+    let bound: Bound = Default::default();
+    let bind = {
+        let (weak, bound) = (l.downgrade(), bound.clone());
+        Rc::new(move |seat: &gdk::Seat| {
+            let Some(kb) = seat.keyboard() else { return };
+            if bound.borrow().as_ref().is_some_and(|(d, _)| d == &kb) {
+                return;
+            }
             if let Some(l) = weak.upgrade() {
                 l.set_visible(kb.is_caps_locked());
             }
-        });
-    }
+            let w = weak.clone();
+            let id = kb.connect_caps_lock_state_notify(move |kb| {
+                if let Some(l) = w.upgrade() {
+                    l.set_visible(kb.is_caps_locked());
+                }
+            });
+            if let Some((old, old_id)) = bound.borrow_mut().replace((kb, id)) {
+                old.disconnect(old_id);
+            }
+        })
+    };
+    bind(&seat);
+    let ids = {
+        let (b1, b2) = (bind.clone(), bind);
+        Cell::new(Some((
+            seat.connect_device_added(move |s, _| b1(s)),
+            seat.connect_device_removed(move |s, _| b2(s)),
+        )))
+    };
+    l.connect_destroy(move |_| {
+        if let Some((added, removed)) = ids.take() {
+            seat.disconnect(added);
+            seat.disconnect(removed);
+        }
+        if let Some((kb, id)) = bound.take() {
+            kb.disconnect(id);
+        }
+    });
     l
 }
 
@@ -397,7 +435,7 @@ pub fn menubar_menu(child: &impl IsA<gtk::Widget>) -> gtk::MenuButton {
 pub fn section(title: &str, rows: &[gtk::Widget]) -> gtk::Box {
     let b = vbox(S2);
     if !title.is_empty() {
-        b.append(&label(title, "title"));
+        b.append(&label(title, "heading"));
     }
     let card = vbox(0);
     card.add_css_class("card-list");
@@ -423,13 +461,13 @@ pub fn list_row(
     let t = vbox(0);
     t.set_valign(gtk::Align::Center);
     t.set_hexpand(true);
-    // Titles wrap instead of forcing the window wider (narrow layouts).
+    // Titles and subtitles wrap instead of forcing the window wider (narrow layouts).
     let tl = label(title, "");
     tl.set_wrap(true);
     tl.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     t.append(&tl);
     if !subtitle.is_empty() {
-        t.append(&label(subtitle, "secondary"));
+        t.append(&row_subtitle(subtitle));
     }
     row.append(&t);
     if let Some(w) = trailing {
@@ -437,6 +475,14 @@ pub fn list_row(
         row.append(w);
     }
     row
+}
+
+/// A row's secondary line: wraps at the row's width instead of widening it.
+pub fn row_subtitle(text: &str) -> gtk::Label {
+    let l = label(text, "secondary");
+    l.set_wrap(true);
+    l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    l
 }
 
 /// Clickable row (lists of choices, results).
@@ -739,7 +785,9 @@ impl AppWindow {
     /// 28px sidebar row with a 16px symbolic icon; `page` becomes the content.
     pub fn source_item(&self, icon_name: &str, title: &str, page: &impl IsA<gtk::Widget>) {
         let row = hbox(S2);
-        row.append(&icon(icon_name, ICON));
+        let glyph = icon(icon_name, ICON);
+        glyph.add_css_class(tint_of(icon_name));
+        row.append(&glyph);
         row.append(&label(title, ""));
         let r = gtk::ListBoxRow::builder().child(&row).name(title).build();
         r.add_css_class("source-item");
@@ -946,48 +994,51 @@ pub fn module(child: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
-/// macOS fat slider: title above, 24px pill track with the icon inside at the left.
-pub fn control_slider(
-    title: &str,
-    icon_name: &str,
-    value: f64,
-    changed: impl Fn(f64) + 'static,
-) -> gtk::Box {
-    let b = vbox(S2);
-    b.append(&label(title, "title"));
-    let o = gtk::Overlay::new();
-    let s = slider(value, changed);
-    s.add_css_class("fat");
-    o.set_child(Some(&s));
-    let i = icon(icon_name, ICON);
-    i.set_halign(gtk::Align::Start);
-    i.add_css_class("fat-icon");
-    i.set_can_target(false);
-    o.add_overlay(&i);
-    b.append(&o);
-    module(&b)
+/// Section colours of the icon language (kit.css `--tint-*`): a sidebar glyph carries one, chosen
+/// from its icon name, so a section keeps its colour wherever it is listed.
+pub const TINTS: [&str; 6] = [
+    "tint-wolos",
+    "tint-files",
+    "tint-web",
+    "tint-talk",
+    "tint-media",
+    "tint-store",
+];
+
+/// FNV-1a: a hash that is the same on every run and every machine (std's is seeded).
+fn stable_hash(text: &str) -> u32 {
+    text.bytes().fold(0x811c_9dc5u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    })
 }
 
-/// Small square tile (Screenshot, Record): icon over a secondary label.
-pub fn square_tile(
-    icon_name: &str,
-    title: &str,
-    clicked: impl Fn(&gtk::Button) + 'static,
-) -> gtk::Button {
-    let c = vbox(S1);
-    let i = icon(icon_name, ICON);
-    i.set_halign(gtk::Align::Center);
-    c.append(&i);
-    c.append(&centered(title, "secondary"));
-    let b = gtk::Button::builder().child(&c).hexpand(true).build();
-    b.add_css_class("square-tile");
-    b.connect_clicked(move |b| clicked(b));
-    b
+/// `stable_hash(text)` as an index into a list of `len` (more than 0) items.
+fn pick(text: &str, len: usize) -> usize {
+    usize::try_from(stable_hash(text)).map_or(0, |h| h % len)
+}
+
+/// The section colour class of `icon_name`.
+pub fn tint_of(icon_name: &str) -> &'static str {
+    TINTS[pick(icon_name, TINTS.len())]
+}
+
+/// The avatar tone of a name nobody picked a colour for: the same name, the same colour, from the
+/// tones Setup offers (graphite stays the grey of "no name").
+pub fn name_tone(name: &str) -> Option<&'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let colours = &shared::login::AVATAR_TONES[..shared::login::AVATAR_TONES.len() - 1];
+    Some(colours[pick(&name.to_lowercase(), colours.len())])
 }
 
 pub fn avatar(name: &str, size: i32) -> gtk::Label {
     let l = gtk::Label::new(Some(&crate::login::initials(name)));
     l.add_css_class("avatar");
+    if let Some(tone) = name_tone(name) {
+        l.add_css_class(&super::assistant::tone_class(tone));
+    }
     l.add_css_class(match size {
         96.. => "avatar-xl",
         48.. => "avatar-l",
@@ -999,7 +1050,6 @@ pub fn avatar(name: &str, size: i32) -> gtk::Label {
     l.set_valign(gtk::Align::Center);
     l
 }
-pub const AVATAR_L: i32 = 48;
 pub const AVATAR_XL: i32 = 96;
 
 /// Lock/login clock: big time + long date, ticking on minute boundaries.
@@ -1039,7 +1089,7 @@ impl UserPanel {
         root.append(&avatar(name, AVATAR_XL));
         let n = centered(name, "lock-name");
         root.append(&n);
-        let pill = hbox(0);
+        let pill = hbox(LOCK_PILL_GAP);
         pill.add_css_class("lock-pill");
         pill.set_halign(gtk::Align::Center);
         pill.set_size_request(LOCK_FIELD_WIDTH, LOCK_FIELD_HEIGHT);
@@ -1509,7 +1559,9 @@ pub struct AppTile {
     pub action: gtk::Button,
     ring: gtk::DrawingArea,
     value: Rc<Cell<Option<u8>>>,
-    text: gtk::Box,
+    /// [`AppTile::set_source`]'s badge: one label, hidden until set (audit4 S3-11: each call
+    /// appended another, "Flathub Flathub").
+    source: gtk::Label,
 }
 
 impl AppTile {
@@ -1534,6 +1586,11 @@ impl AppTile {
         s.set_ellipsize(gtk::pango::EllipsizeMode::End);
         s.add_css_class("may-ellipsize");
         t.append(&s);
+        let source = label("", "badge");
+        source.set_halign(gtk::Align::Start);
+        source.set_margin_top(S1);
+        source.set_visible(false);
+        t.append(&source);
         root.append(&t);
         let action = gtk::Button::with_label("Get");
         action.add_css_class("get-button");
@@ -1548,17 +1605,25 @@ impl AppTile {
             action,
             ring,
             value,
-            text: t,
+            source,
         }
     }
 
     /// Where the app comes from when it is not WolOS's own packages ("Flathub"): a badge under
     /// the summary.
+    /// Calling it again replaces the badge; "" hides it.
     pub fn set_source(&self, source: &str) {
-        let b = label(source, "badge");
-        b.set_halign(gtk::Align::Start);
-        b.set_margin_top(S1);
-        self.text.append(&b);
+        self.source.set_label(source);
+        self.source.set_visible(!source.is_empty());
+    }
+
+    /// The badge [`AppTile::set_source`] shows ("" when none).
+    pub fn source(&self) -> String {
+        if self.source.is_visible() {
+            self.source.label().into()
+        } else {
+            String::new()
+        }
     }
 
     pub fn set_state(&self, s: TileState) {
@@ -1682,6 +1747,51 @@ impl AppWindow {
         if self.content.child_by_name(name).is_some() {
             self.sidebar.unselect_all();
             self.content.set_visible_child_name(name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_keeps_its_avatar_colour() {
+        assert_eq!(name_tone("Alice Liddell"), name_tone("  alice liddell "));
+        assert_eq!(name_tone(""), None);
+        assert_eq!(name_tone("  "), None);
+    }
+
+    #[test]
+    fn avatar_colours_come_from_setups_tones_and_are_not_all_one() {
+        let names = [
+            "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi",
+        ];
+        let tones: std::collections::BTreeSet<_> =
+            names.iter().filter_map(|n| name_tone(n)).collect();
+        assert!(tones.len() >= 3, "{tones:?}");
+        assert!(
+            !tones.contains("graphite"),
+            "graphite is the grey of no name"
+        );
+        for t in &tones {
+            assert!(shared::login::AVATAR_TONES.contains(t));
+        }
+    }
+
+    #[test]
+    fn a_sidebar_glyph_keeps_its_section_colour_and_every_colour_is_styled() {
+        assert_eq!(
+            tint_of("network-wireless-symbolic"),
+            tint_of("network-wireless-symbolic")
+        );
+        let css = include_str!("kit.css");
+        for t in TINTS {
+            assert!(
+                css.contains(&format!("list.sidebar row image.{t} {{")),
+                "kit.css styles {t}"
+            );
+            assert!(css.contains(&format!("--{t}: #")), "kit.css defines --{t}");
         }
     }
 }

@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The desktop hyprland.conf must blur every glass surface the shell creates.
-//! Live Hyprland 0.56: `match:namespace wol-shell` matched nothing (namespaces are wol-menubar, ...),
+//! Live on the compositor 0.56: `match:namespace wol-shell` matched nothing (namespaces are wol-menubar, ...),
 //! so the dock and menu bar had no blur; `ignore_alpha 0` then blurred their transparent margins.
 const CONF: &str = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 /// The compositor plugin that forwards Esc and the Super release (audit3 R2A-10).
 const PLUGIN: &str = include_str!("../../../plugins/wol-hypr/main.cpp");
+/// Its key gates (realtime wm_gates.rs, through wol_realtime.h): which line each key sends, which
+/// keys it consumes.
+const POLICY: &str = include_str!("../../realtime/src/wm_gates.rs");
 
 /// Every shell glass surface (ui::searchbar, ui::control_center are `wol-panel-*` too).
 const GLASS: [&str; 6] = [
@@ -239,7 +242,7 @@ fn every_command_shortcut_reaches_the_app_as_ctrl() {
     }
 }
 
-/// macOS system shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
+/// System shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
 /// ⌥⌘Esc (Force Quit), ⌃F2 (menu bar), ⌃F3 (Dock). Esc (closes panels, dismisses banners) is
 /// forwarded by wol-hypr, not bound (`no_process_per_escape_or_super_release`).
 #[test]
@@ -292,8 +295,7 @@ fn no_process_per_escape_or_super_release() {
     }
     for needle in [
         "case KEY_ESC:",
-        r#"tellShell("hide transient\n")"#,
-        r#"tellShell("hide switcher\n")"#,
+        "tellShell(wol_keys_line(line))",
         "/wol-shell.sock",
         r#"starts_with("wol-panel-")"#,
         "m_events.input.keyboard.key.listen",
@@ -301,6 +303,9 @@ fn no_process_per_escape_or_super_release() {
         "m_events.layer.closed.listen",
     ] {
         assert!(PLUGIN.contains(needle), "wol-hypr forwards: {needle}");
+    }
+    for needle in [r#""hide transient\n""#, r#""hide switcher\n""#] {
+        assert!(POLICY.contains(needle), "wol-hypr sends: {needle}");
     }
     assert_eq!(
         shell::protocol::socket_path("/run/user/1")
@@ -340,7 +345,7 @@ fn every_transient_panel_can_be_opened() {
 
 /// Audit2 A2-9: plain ⌃ + letter, digit or ←/→ is the app's key (Ctrl+1..9 browser tabs,
 /// Ctrl+arrows word-wise cursor; Super is ⌘ here). Spaces are ⌃⌥←/→ and ⌃⌥1..4 (⌃⌘arrows resize in
-/// tiling.conf). ⌃↑ stays the macOS Overview key and ⌃F2/⌃F3 the macOS bar keys.
+/// tiling.conf). ⌃↑ stays the Overview key and ⌃F2/⌃F3 the bar keys.
 #[test]
 fn plain_ctrl_keys_belong_to_the_app() {
     use wol_core::shortcuts::{CTRL, Combo, parse};
@@ -384,12 +389,19 @@ fn releasing_either_super_finishes_switching() {
     for needle in [
         "case KEY_LEFTMETA:",
         "case KEY_RIGHTMETA:",
-        "g_switching || shellLayerMapped(\"wol-panel-switcher\")",
         "case KEY_TAB:",
+        "shellLayerMapped(\"wol-panel-switcher\")",
     ] {
         assert!(PLUGIN.contains(needle), "wol-hypr: {needle}");
     }
-    // ⌘Tab itself stays a bind (one process per deliberate switch).
+    assert!(POLICY.contains("(self.switching || e.switcher_mapped)"));
+    // Audit4 S5-3: with the plugin, ⌘Tab's show goes over the same socket as the release, before
+    // it (the plugin consumes the Tab, so the bind below does not run as well).
+    for needle in [r#""show switcher\n""#, r#""show switcher-prev\n""#] {
+        assert!(POLICY.contains(needle), "wol-hypr sends: {needle}");
+    }
+    assert!(PLUGIN.contains("info.cancelled = true"));
+    // ⌘Tab itself stays a bind: the fallback without the plugin.
     let tab = wol_core::shortcuts::Combo::parse("SUPER", "Tab").unwrap();
     assert!(
         wol_core::shortcuts::parse(CONF)

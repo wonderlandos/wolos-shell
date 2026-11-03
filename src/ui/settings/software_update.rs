@@ -81,51 +81,104 @@ pub fn auto_main(download: bool, apps: bool) -> bool {
     download || apps
 }
 
-/// Automatic updates: the main switch and its two options (shown while it is on).
+/// Automatic updates: the main switch and its two options (shown while it is on). What is on now
+/// (`systemctl --user is-enabled`, `Machine::auto_updates`) is read off the GTK thread.
 fn automatic(e: &Rc<Env>, into: &gtk::Box) {
-    let ctx = e.ctx.clone();
-    let set_download: Rc<dyn Fn(bool)> = Rc::new(move |on| {
-        if let Some(a) = admin("auto-update", &[if on { "on" } else { "off" }]) {
-            ctx.act(a, Rc::new(|_| {}));
-        }
-    });
-    let set_apps: Rc<dyn Fn(bool)> = Rc::new(|on| {
-        std::thread::spawn(move || {
-            wol_core::system::run_with_timeout(
-                &wol_core::update::auto::apps_argv(on),
-                std::time::Duration::from_secs(20),
-            )
-        });
-    });
-    let (download, apps) = e.machine().auto_updates();
+    let holder = w::vbox(0);
+    into.append(&holder);
+    let (m, e) = (e.machine(), e.clone());
+    later(
+        &holder,
+        move || m.auto_updates(),
+        move |into, (download, apps)| automatic_rows(&e, into, download, apps),
+    );
+}
+
+/// What the main switch (now `on`) asks of an option: `Some(on)` when the option is shown
+/// (`usable`), idle and not there yet; `None` for one that waits for its change or already
+/// matches (a second `set_active` on a waiting switch starts a second change).
+fn drive(on: bool, usable: bool, active: bool, idle: bool) -> Option<bool> {
+    (usable && idle && active != on).then_some(on)
+}
+
+/// The switches of [`automatic`]. Each option waits for its change and flips back, with the
+/// reason under the section, when it fails (the Authenticate sheet cancelled, wol-admind refused,
+/// the user timer could not be changed); the main switch follows them. Without the
+/// `auto-update` verb in this build the download option is not shown.
+fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool) {
+    let status = status_label();
+    let can_download = admin("auto-update", &["on"]).is_some();
+    let download = download && can_download;
+    let dl = {
+        let (ctx, st) = (e.ctx.clone(), status.clone());
+        w::pending_toggle(download, move |on, done| {
+            match admin("auto-update", &[if on { "on" } else { "off" }]) {
+                Some(a) => ctx.act_switch(a, &st, done),
+                None => done(false),
+            }
+        })
+    };
+    let ap = {
+        let st = status.clone();
+        w::pending_toggle(apps, move |on, done| {
+            let st = st.clone();
+            off_thread(
+                move || {
+                    wol_core::system::run_with_timeout(
+                        &wol_core::update::auto::apps_argv(on),
+                        std::time::Duration::from_secs(20),
+                    )
+                    .is_some()
+                },
+                move |ok| {
+                    say(
+                        &st,
+                        if ok {
+                            ""
+                        } else {
+                            crate::copy::settings::AUTO_APPS_FAILED
+                        },
+                    );
+                    done(ok)
+                },
+            );
+        })
+    };
+    // Shows what the options are; turning it on or off sets both, their handlers apply it.
     let main = w::toggle(auto_main(download, apps), |_| {});
-    let dl = w::toggle(download, {
-        let f = set_download.clone();
-        move |on| f(on)
-    });
-    let ap = w::toggle(apps, {
-        let f = set_apps.clone();
-        move |on| f(on)
-    });
     let dl_row = form::row(
         "Download new updates",
         "In the background. You choose when to install.",
         &dl,
     );
     let ap_row = form::row("Install app updates", "Flathub apps, once a day.", &ap);
-    dl_row.set_visible(main.is_active());
+    dl_row.set_visible(can_download && main.is_active());
     ap_row.set_visible(main.is_active());
     {
         let (dl, ap, dl_row, ap_row) = (dl.clone(), ap.clone(), dl_row.clone(), ap_row.clone());
         main.connect_active_notify(move |m| {
             let on = m.is_active();
-            dl_row.set_visible(on);
+            dl_row.set_visible(can_download && on);
             ap_row.set_visible(on);
-            // Each switch's own handler applies the change.
-            dl.set_active(on);
-            ap.set_active(on);
+            // Only an option that is idle and differs is driven: one that waits for its change
+            // would run a second one on top of the first (audit6 S6-3).
+            for (o, usable) in [(&dl, can_download), (&ap, true)] {
+                if let Some(want) = drive(on, usable, o.is_active(), o.is_sensitive()) {
+                    o.set_active(want);
+                }
+            }
         });
     }
+    // The main switch waits while an option waits for its change: a second answer to either
+    // would race the first (audit6 S6-3).
+    for s in [&dl, &ap] {
+        let (main, dl, ap) = (main.clone(), dl.clone(), ap.clone());
+        s.connect_sensitive_notify(move |_| {
+            main.set_sensitive(dl.is_sensitive() && ap.is_sensitive())
+        });
+    }
+    // An option that ends off (turned off, or a change that failed) turns the main switch off
+    // once neither is on.
     for s in [&dl, &ap] {
         let (main, dl, ap) = (main.clone(), dl.clone(), ap.clone());
         s.connect_active_notify(move |_| {
@@ -146,6 +199,7 @@ fn automatic(e: &Rc<Env>, into: &gtk::Box) {
             ap_row,
         ],
     ));
+    into.append(&status);
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -253,14 +307,10 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 UpdateState::Available(v) => {
                     names.set_label(&names_line(v, 6));
                     (
-                        format!(
-                            "{} update{} available",
-                            v.len(),
-                            if v.len() == 1 { "" } else { "s" }
-                        ),
+                        crate::copy::updates_available(v.len()),
                         match note.borrow().as_deref() {
                             Some(n) => format!("{n} WolOS saves a restore point first."),
-                            None => "WolOS saves a restore point before updating.".into(),
+                            None => crate::copy::UPDATE_RESTORE_POINT.into(),
                         },
                     )
                 }
@@ -362,6 +412,41 @@ mod tests {
         assert!(auto_main(true, false));
         assert!(auto_main(false, true));
         assert!(!auto_main(false, false));
+    }
+
+    /// Audit6 S6-3: the main switch started a second change on an option that was still waiting
+    /// for its first (a cancelled Authenticate then left the options and the main switch apart).
+    #[test]
+    fn the_main_switch_drives_only_idle_options_that_differ() {
+        assert_eq!(drive(true, true, false, true), Some(true));
+        assert_eq!(drive(false, true, true, true), Some(false));
+        assert_eq!(drive(true, true, true, true), None, "already there");
+        assert_eq!(
+            drive(true, true, false, false),
+            None,
+            "still waiting for its change"
+        );
+        assert_eq!(
+            drive(true, false, false, true),
+            None,
+            "not offered in this build"
+        );
+        // Both off; the main switch goes on: both options start their change and wait.
+        let (mut dl, mut ap) = ((false, true), (false, true)); // (active, idle)
+        for o in [&mut dl, &mut ap] {
+            if let Some(w) = drive(true, true, o.0, o.1) {
+                *o = (w, false);
+            }
+        }
+        assert_eq!((dl, ap), ((true, false), (true, false)));
+        // The Authenticate sheet is cancelled: `dl` flips back. `ap` is still waiting and on, so
+        // the main switch stays on, and nothing re-drives `ap`.
+        dl = (false, true);
+        assert!(auto_main(dl.0, ap.0));
+        assert_eq!(drive(true, true, ap.0, ap.1), None);
+        // `ap` ends on: main on, `ap` on, `dl` off.
+        ap = (true, true);
+        assert!(auto_main(dl.0, ap.0) && ap.0 && !dl.0);
     }
 
     #[test]

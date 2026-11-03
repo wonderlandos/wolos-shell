@@ -2,6 +2,7 @@
 //! Low battery, full disk and updates-ready notifications, checked with the menu bar poll.
 //! Battery levels come from `wol_core::power::policy` (20, 10, 5 %, sleep at 3 %), updates from
 //! `wol_core::update::check`; the sentences from [`crate::copy`].
+use crate::software_update::PluginNews;
 use crate::status::{Battery, BatteryStatus};
 use wol_core::power::policy::{self, Alert};
 use wol_core::update::check::Updates;
@@ -34,6 +35,8 @@ pub struct Alerts {
     polls: u32,
     /// The update check already notified about (its `checked` time).
     updates_shown: u64,
+    /// Plugin versions already notified about: (id, version).
+    plugins_shown: Vec<(String, String)>,
     /// The online install result already shown (its `at` time).
     online_shown: Option<u64>,
     /// Newest stopped file already shown (its `when`).
@@ -81,6 +84,26 @@ impl Alerts {
         let u = u.filter(|u| u.notify_after(self.updates_shown))?;
         self.updates_shown = u.checked;
         let (s, body) = crate::copy::updates_ready(u.count(), !u.security.is_empty());
+        Some(Notice::Show(s, body, false))
+    }
+
+    /// Plugin updates the plugin index has for this account (audit6 ST6-4): one notice for the
+    /// versions not yet told about, none when every one was. A plugin that updates again is told
+    /// about again; one that was updated is forgotten.
+    pub fn plugin_updates(&mut self, news: Vec<PluginNews>) -> Option<Notice> {
+        self.plugins_shown
+            .retain(|(id, v)| news.iter().any(|n| n.id == *id && n.to == *v));
+        let fresh: Vec<&PluginNews> = news
+            .iter()
+            .filter(|n| !self.plugins_shown.contains(&(n.id.clone(), n.to.clone())))
+            .collect();
+        if fresh.is_empty() {
+            return None;
+        }
+        self.plugins_shown
+            .extend(fresh.iter().map(|n| (n.id.clone(), n.to.clone())));
+        let names: Vec<&str> = fresh.iter().map(|n| n.name.as_str()).collect();
+        let (s, body) = crate::copy::plugin_updates_ready(&names);
         Some(Notice::Show(s, body, false))
     }
 
@@ -144,54 +167,131 @@ thread_local! {
     static STATE: std::cell::RefCell<Alerts> = std::cell::RefCell::new(Alerts::default());
 }
 
-/// Menu bar poll hook: battery every time, disk and updates every few minutes.
-pub fn poll(b: Option<Battery>) {
-    let (battery, due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
-    let (disk, updates) = if due {
-        let u = Updates::read(std::path::Path::new(wol_core::update::check::DIR));
-        let online = std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
+/// What one poll read off the UI thread: the due checks (every [`DISK_EVERY_POLLS`]th poll)
+/// and the malware lists when they changed.
+#[derive(Debug, Default)]
+pub struct Reads {
+    /// None between the due polls.
+    pub due: Option<DueReads>,
+    /// The account's malware lists, only when a file changed since the last read.
+    pub malware: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default)]
+pub struct DueReads {
+    pub updates: Option<Updates>,
+    /// Plugin updates, read about once an hour ([`PLUGINS_EVERY_DUE`]); None between the checks
+    /// (an empty list is a check that found nothing).
+    pub plugins: Option<Vec<PluginNews>>,
+    pub online: Option<shared::hardware::OnlineInstall>,
+    /// Free and total bytes of the startup disk.
+    pub disk: Option<(u64, u64)>,
+}
+
+/// Due reads between plugin index checks (a due read is every 5 minutes: once an hour). The check
+/// reads the verified cache and downloads only when wopkg's own rule asks for it, so this bounds
+/// how often an offline computer tries.
+pub const PLUGINS_EVERY_DUE: u32 = 12;
+static DUE_READS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Whether this due read also checks the plugin index: the first one, then every
+/// [`PLUGINS_EVERY_DUE`]th.
+fn plugins_due() -> bool {
+    DUE_READS
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        .is_multiple_of(PLUGINS_EVERY_DUE)
+}
+
+/// Blocking: `df`, the update check's files, the online-install record and the malware lists.
+fn read(due: bool) -> Reads {
+    let due = due.then(|| DueReads {
+        updates: Updates::read(std::path::Path::new(wol_core::update::check::DIR)),
+        plugins: plugins_due().then(crate::software_update::plugin_news),
+        online: std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
             .ok()
-            .and_then(|t| wol_core::hardware::online::parse(&t));
-        let driver = STATE.with_borrow_mut(|a| a.online(online));
-        if let Some(n) = driver {
-            act(n);
-        }
-        let disk = startup_disk();
-        STATE.with_borrow_mut(|a| (disk.and_then(|(f, t)| a.disk(f, t)), a.updates(u)))
-    } else {
-        (None, None)
-    };
-    for n in battery.into_iter().chain(disk).chain(updates) {
-        act(n);
-    }
-    for n in malware_poll() {
-        act(n);
+            .and_then(|t| wol_core::hardware::online::parse(&t)),
+        disk: startup_disk(),
+    });
+    Reads {
+        due,
+        malware: malware_read(),
     }
 }
 
-/// The account's list, read only when it changed: a stat every poll, no read at rest.
-fn malware_poll() -> Vec<Notice> {
-    thread_local!(static SEEN: std::cell::Cell<Option<std::time::SystemTime>> =
-        const { std::cell::Cell::new(None) });
+/// The notices for what a poll read, in the order they are shown: a driver install first, then
+/// the disk, updates and each stopped file.
+pub fn notices(a: &mut Alerts, r: Reads) -> Vec<Notice> {
+    let mut out = Vec::new();
+    if let Some(d) = r.due {
+        out.extend(a.online(d.online));
+        out.extend(d.disk.and_then(|(f, t)| a.disk(f, t)));
+        out.extend(a.updates(d.updates));
+        // Between the hourly checks nothing is read, and what was told stays told.
+        if let Some(news) = d.plugins {
+            out.extend(a.plugin_updates(news));
+        }
+    }
+    if let Some(texts) = r.malware {
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        out.extend(a.malware(&wol_core::malware::merge(&refs)));
+    }
+    out
+}
+
+/// Menu bar poll hook: battery every time (a reading already in hand), the rest read in
+/// `gio::spawn_blocking`: `df` hung the menu bar, dock and panels for its 2 s timeout on a
+/// stale network mount (audit4 S3-6). The GTK thread only applies the result.
+pub fn poll(b: Option<Battery>) {
+    let (battery, due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
+    if let Some(n) = battery {
+        act(n);
+    }
+    gtk::glib::spawn_future_local(async move {
+        let Ok(r) = gtk::gio::spawn_blocking(move || read(due)).await else {
+            return;
+        };
+        for n in STATE.with_borrow_mut(|a| notices(a, r)) {
+            act(n);
+        }
+    });
+}
+
+/// The newest change seen on the malware lists (read off the UI thread).
+static MALWARE_SEEN: std::sync::Mutex<Option<std::time::SystemTime>> = std::sync::Mutex::new(None);
+
+/// The account's lists, read only when they changed: a stat every poll, no read at rest.
+fn malware_read() -> Option<Vec<String>> {
     let uid = wol_core::malware::my_uid();
-    let dir = std::path::Path::new(wol_core::malware::STATE_DIR);
-    let files = [
-        dir.join(wol_core::malware::findings_file(uid)),
-        dir.join(wol_core::malware::sweep_file(uid)),
-    ];
+    malware_read_in(
+        [
+            wol_core::malware::findings_path(uid).into(),
+            wol_core::malware::sweep_path(uid).into(),
+        ],
+        &MALWARE_SEEN,
+    )
+}
+
+/// [`malware_read`] of `files`: the guard's list and the background pass's (`sweep-<uid>.json`,
+/// the account's own 0600 file; audit R7-1), each in its own folder (audit F10).
+fn malware_read_in(
+    files: [std::path::PathBuf; 2],
+    seen: &std::sync::Mutex<Option<std::time::SystemTime>>,
+) -> Option<Vec<String>> {
     let newest = files
         .iter()
         .filter_map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok())
         .max();
-    if newest.is_none() || SEEN.replace(newest) == newest {
-        return Vec::new();
+    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
+    if newest.is_none() || std::mem::replace(&mut *seen, newest) == newest {
+        return None;
     }
-    let texts: Vec<String> = files
-        .iter()
-        .filter_map(|f| std::fs::read_to_string(f).ok())
-        .collect();
-    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    STATE.with_borrow_mut(|a| a.malware(&wol_core::malware::merge(&refs)))
+    drop(seen);
+    Some(
+        files
+            .iter()
+            .filter_map(|f| std::fs::read_to_string(f).ok())
+            .collect(),
+    )
 }
 
 fn act(n: Notice) {
@@ -267,6 +367,53 @@ mod tests {
             a.malware(&[b("/home/a/y", 9), b("/home/a/x.exe", 5)]).len(),
             1
         );
+    }
+
+    /// Audit R7-1: what the background pass publishes for this account (owned by it, 0600, the
+    /// way `wol-xguard sweep` writes it) is read and told once; unchanged, it is not read again.
+    #[test]
+    fn the_background_pass_list_is_read_and_told() {
+        let d = std::env::temp_dir().join(format!("wol-alerts-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let uid = wol_core::malware::my_uid();
+        let hit = wol_core::malware::Blocked {
+            path: "/home/a/evil.exe".into(),
+            name: "Win.Test".into(),
+            sha256: String::new(),
+            when: 7,
+            uid,
+        };
+        shared::atomic::write_as(
+            &d.join(wol_core::malware::sweep_file(uid)),
+            0o600,
+            Some(uid),
+            serde_json::to_string(&[&hit]).unwrap().as_bytes(),
+        )
+        .unwrap();
+        let seen = std::sync::Mutex::new(None);
+        let files = |u: u32| {
+            [
+                d.join(wol_core::malware::findings_file(u)),
+                d.join(wol_core::malware::sweep_file(u)),
+            ]
+        };
+        let texts = malware_read_in(files(uid), &seen).expect("a new list is read");
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let shown = Alerts::default().malware(&wol_core::malware::merge(&refs));
+        assert!(
+            matches!(&shown[..], [Notice::Malware(_, _, p)] if p == "/home/a/evil.exe"),
+            "{shown:?}"
+        );
+        assert!(
+            malware_read_in(files(uid), &seen).is_none(),
+            "unchanged: no read"
+        );
+        assert!(
+            malware_read_in(files(uid + 1), &std::sync::Mutex::new(None)).is_none(),
+            "another account's list is not this one's"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn bat(percent: u8, status: BatteryStatus) -> Option<Battery> {
@@ -385,6 +532,111 @@ mod tests {
         );
     }
 
+    /// ST6-4: a plugin update is told once per version, again for a newer one, and an empty or
+    /// absent read does not make the same version new again.
+    #[test]
+    fn plugin_updates_notify_once_per_version() {
+        let n = |id: &str, name: &str, to: &str| PluginNews {
+            id: id.into(),
+            name: name.into(),
+            to: to.into(),
+        };
+        let mut a = Alerts::default();
+        assert_eq!(a.plugin_updates(vec![]), None);
+        let Some(Notice::Show(s, body, false)) =
+            a.plugin_updates(vec![n("alice.weather", "Weather", "1.3")])
+        else {
+            panic!()
+        };
+        assert_eq!(s, "Plugin Update Available");
+        assert_eq!(
+            body,
+            "Weather has an update. Open the App Store, then Plugins, to install it."
+        );
+        assert_eq!(
+            a.plugin_updates(vec![n("alice.weather", "Weather", "1.3")]),
+            None,
+            "same version: once"
+        );
+        // Another plugin: only it is named.
+        let Some(Notice::Show(_, body, _)) = a.plugin_updates(vec![
+            n("alice.weather", "Weather", "1.3"),
+            n("bob.clock", "Clock", "2.0"),
+        ]) else {
+            panic!()
+        };
+        assert!(body.starts_with("Clock has"), "{body}");
+        // A newer version of the first is news again.
+        let Some(Notice::Show(_, body, _)) =
+            a.plugin_updates(vec![n("alice.weather", "Weather", "1.4")])
+        else {
+            panic!()
+        };
+        assert!(body.contains("Weather"), "{body}");
+        // Two at once: counted, not listed.
+        let mut b = Alerts::default();
+        let Some(Notice::Show(_, body, _)) = b.plugin_updates(vec![
+            n("alice.weather", "Weather", "1.3"),
+            n("bob.clock", "Clock", "2.0"),
+        ]) else {
+            panic!()
+        };
+        assert!(
+            body.starts_with("Updates are ready for 2 plugins"),
+            "{body}"
+        );
+        // Updated (gone from the list), then a new version: told again.
+        assert_eq!(b.plugin_updates(vec![]), None);
+        assert!(
+            b.plugin_updates(vec![n("bob.clock", "Clock", "2.0")])
+                .is_some()
+        );
+    }
+
+    /// Audit4 S3-6: what the blocking read found becomes notices on the UI thread, in order;
+    /// a poll between the due ones reads no disk.
+    #[test]
+    fn a_polls_reads_become_notices_in_order() {
+        use shared::hardware::OnlineInstall;
+        const G: u64 = 1_000_000_000;
+        let mut a = Alerts::default();
+        assert!(notices(&mut a, Reads::default()).is_empty());
+        let r = Reads {
+            due: Some(DueReads {
+                updates: Updates::parse("100", "curl 8.1-1 -> 8.2-1\n", "", ""),
+                plugins: Some(vec![PluginNews {
+                    id: "alice.weather".into(),
+                    name: "Weather".into(),
+                    to: "1.3".into(),
+                }]),
+                online: Some(OnlineInstall {
+                    at: 7,
+                    packages: vec!["nvidia-drm-kmod".into()],
+                    ok: true,
+                    graphics: true,
+                }),
+                disk: Some((2 * G, 100 * G)),
+            }),
+            malware: Some(vec![]),
+        };
+        let got = notices(&mut a, r);
+        assert_eq!(got.len(), 4, "{got:?}");
+        assert!(matches!(got[0], Notice::Restart(..)), "driver first");
+        let Notice::Show(disk, ..) = &got[1] else {
+            panic!("{got:?}")
+        };
+        assert_eq!(disk, &crate::copy::disk_full("2 GB").0);
+        assert!(matches!(&got[2], Notice::Show(s, ..) if s == "Updates Available"));
+        let Notice::Show(s, body, false) = &got[3] else {
+            panic!("{got:?}")
+        };
+        assert_eq!(
+            (s.as_str(), body.contains("Weather")),
+            ("Plugin Update Available", true)
+        );
+        assert!(read(false).due.is_none(), "no df between the due polls");
+    }
+
     #[test]
     fn alert_sentences_pass_the_copy_lint() {
         // Bodies are sentences; summaries are titles.
@@ -392,7 +644,17 @@ mod tests {
         let (_, db) = crate::copy::disk_full("2 GB");
         let (_, u1) = crate::copy::updates_ready(1, false);
         let (_, u2) = crate::copy::updates_ready(4, true);
-        for t in [b.as_str(), crate::copy::BATTERY_SLEEP.1, &db, &u1, &u2] {
+        let (_, p1) = crate::copy::plugin_updates_ready(&["Weather"]);
+        let (_, p2) = crate::copy::plugin_updates_ready(&["Weather", "Clock"]);
+        for t in [
+            b.as_str(),
+            crate::copy::BATTERY_SLEEP.1,
+            &db,
+            &u1,
+            &u2,
+            &p1,
+            &p2,
+        ] {
             assert!(
                 crate::copy::lint(t).is_empty(),
                 "{t}: {:?}",

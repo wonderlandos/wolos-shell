@@ -30,6 +30,10 @@ pub struct Check {
     pub tier: Option<String>,
     /// A BitLocker volume is on the disk (`bitlocker yes`, said with `os Windows`; R2B-9).
     pub bitlocker: bool,
+    /// The tier when the person leaves Secure Boot off (`boot-off <tier>`, `wol boot detect no`):
+    /// `off` when that changes nothing at the start, `firmware` when the computer's own Secure
+    /// Boot is on. None: an install-check that does not say, so the app keeps it on.
+    pub tier_off: Option<String>,
     pub refused: Option<String>,
 }
 
@@ -43,6 +47,7 @@ pub fn parse_check(out: &str) -> Check {
                 c.tier = Some(tier.trim().to_string());
             }
             Some(("bitlocker", yes)) => c.bitlocker = yes.trim() == "yes",
+            Some(("boot-off", tier)) => c.tier_off = Some(tier.trim().to_string()),
             Some(("refuse", why)) => c.refused = Some(why.to_string()),
             _ => {}
         }
@@ -152,7 +157,7 @@ pub fn write_plan(
 ) -> std::io::Result<std::path::PathBuf> {
     use std::io::Write;
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    let _ = std::fs::remove_dir_all(dir);
+    remove_plan(dir);
     std::fs::DirBuilder::new().mode(0o700).create(dir)?;
     let put = |name: &str, text: &str| -> std::io::Result<()> {
         std::fs::OpenOptions::new()
@@ -177,11 +182,73 @@ pub fn write_plan(
     Ok(dir.join(PLAN_FILE))
 }
 
+/// Removes what [`write_plan`] wrote: its named files, then the (now empty) folder. Nothing else
+/// is deleted: a folder holding anything more stays, and the next `write_plan` refuses to
+/// write into it (RR-041). A symlink in the folder's place is removed, never followed.
+pub fn remove_plan(dir: &std::path::Path) {
+    if dir
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+    {
+        let _ = std::fs::remove_file(dir);
+        return;
+    }
+    for name in [PLAN_FILE, DISK_PASSWORD, ACCOUNT_PASSWORD] {
+        let _ = std::fs::remove_file(dir.join(name));
+    }
+    let _ = std::fs::remove_dir(dir);
+}
+
+/// The optional modules on this image (ADR 0032, `/usr/share/wolos/modules`), for the Modules
+/// page. Read once at start, before the window shows; a missing directory gives none.
+pub fn modules_on_image() -> Vec<wol_core::modules::Module> {
+    let list = |d: &std::path::Path| -> Vec<String> {
+        std::fs::read_dir(d)
+            .map(|r| {
+                r.flatten()
+                    .take(64)
+                    .map(|e| e.path().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    wol_core::modules::load(
+        std::path::Path::new(wol_core::modules::DIR),
+        &list,
+        &read_module_record,
+    )
+}
+
+/// A record is a few hundred bytes; a bigger file is not one of ours.
+const MAX_MODULE_RECORD: u64 = 64 * 1024;
+
+/// One module record's text. A file over [`MAX_MODULE_RECORD`] (or not text) is refused whole,
+/// with a log line naming it, instead of being cut and then failing to parse.
+fn read_module_record(p: &std::path::Path) -> Option<String> {
+    let text = shared::bounded::read_text(p, MAX_MODULE_RECORD);
+    if text.is_none() && p.is_file() {
+        eprintln!(
+            "wol-installer: module record {} skipped: not text, or larger than {} KiB",
+            p.display(),
+            MAX_MODULE_RECORD / 1024
+        );
+    }
+    text
+}
+
 /// The live user may restart with sudo (`image/build.sh`).
 pub fn restart_command() -> Vec<String> {
     ["sudo", "-n", "systemctl", "reboot"]
         .map(String::from)
         .to_vec()
+}
+
+/// The Done page lets the person leave (Restart, and Restart Later from the live desktop) when no
+/// recovery key is on it, or they said they wrote it down or saved it (audit6 I6-5). The key is
+/// deleted as it is handed out (`install-check --result`): leaving unacknowledged loses it, so
+/// both actions wait for the same toggle.
+pub fn done_may_leave(key_shown: bool, acknowledged: bool) -> bool {
+    !key_shown || acknowledged
 }
 
 /// Where an install is: the stage words of the progress lines.
@@ -488,6 +555,49 @@ mod tests {
         assert_eq!(restart_command().join(" "), "sudo -n systemctl reboot");
     }
 
+    /// audit6 I6-5: with a recovery key on the page, neither Restart nor Restart Later works
+    /// before the toggle is on; without a key both always do.
+    #[test]
+    fn leaving_the_done_page_waits_for_the_recovery_key_toggle() {
+        assert!(!done_may_leave(true, false), "key shown, not acknowledged");
+        assert!(done_may_leave(true, true), "key shown, acknowledged");
+        assert!(done_may_leave(false, false), "no key on the page");
+        assert!(done_may_leave(false, true));
+        // Both buttons of the page ask this one function (ui/installer.rs).
+        let ui = include_str!("ui/installer.rs");
+        assert!(
+            ui.contains("fn set_leave(&self, on: bool)")
+                && ui.contains("c.next.set_sensitive(on)")
+                && ui.contains("b.set_sensitive(on)"),
+            "set_leave moves Restart and Restart Later together"
+        );
+        assert_eq!(
+            ui.matches("install::done_may_leave(").count(),
+            3,
+            "show_done, the toggle and next() each ask done_may_leave"
+        );
+        assert!(
+            ui.contains("*self.later.borrow_mut() = Some(later)"),
+            "Restart Later is kept to be switched"
+        );
+    }
+
+    /// dedup A11: an over-long module record is refused whole (it was cut at 64 KiB and then
+    /// failed to parse); one at the cap is read.
+    #[test]
+    fn an_over_long_module_record_is_refused() {
+        let d = std::env::temp_dir().join(format!("wol-shell-modrec-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("dev.json");
+        let at_cap = " ".repeat(MAX_MODULE_RECORD as usize);
+        std::fs::write(&p, &at_cap).unwrap();
+        assert_eq!(read_module_record(&p).map(|t| t.len()), Some(at_cap.len()));
+        std::fs::write(&p, at_cap + " ").unwrap();
+        assert_eq!(read_module_record(&p), None);
+        assert_eq!(read_module_record(&d.join("missing.json")), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn the_plan_and_its_passwords_are_private_files() {
         use std::os::unix::fs::PermissionsExt;
@@ -520,7 +630,40 @@ mod tests {
         // A second run starts clean; no disk password leaves no file behind.
         write_plan(&dir, &plan, &[], "", "account pw").unwrap();
         assert!(!dir.join(DISK_PASSWORD).exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        remove_plan(&dir);
+        assert!(!dir.exists(), "the plan's own files and folder are gone");
+    }
+
+    #[test]
+    fn removing_a_plan_deletes_only_its_named_files() {
+        let root = std::env::temp_dir().join(format!("wolos-plan-rm-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&root);
+        let dir = root.join("plan");
+        let plan = wol_core::install::plan::Plan::default();
+        write_plan(&dir, &plan, &[], "disk pw", "account pw").unwrap();
+        std::fs::write(dir.join("notes.txt"), "not ours").unwrap();
+        remove_plan(&dir);
+        assert!(!dir.join(PLAN_FILE).exists() && !dir.join(DISK_PASSWORD).exists());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("notes.txt")).unwrap(),
+            "not ours"
+        );
+        // A folder holding a stranger's file is not written into.
+        assert!(write_plan(&dir, &plan, &[], "", "account pw").is_err());
+        std::fs::remove_file(dir.join("notes.txt")).unwrap();
+        // A symlink in the plan's place goes; its target is untouched.
+        std::fs::remove_dir(&dir).unwrap();
+        let target = root.join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join(PLAN_FILE), "keep").unwrap();
+        std::os::unix::fs::symlink(&target, &dir).unwrap();
+        remove_plan(&dir);
+        assert!(dir.symlink_metadata().is_err());
+        assert_eq!(
+            std::fs::read_to_string(target.join(PLAN_FILE)).unwrap(),
+            "keep"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -864,6 +1007,17 @@ mod tests {
         assert!(b.bitlocker && !b.secure_boot, "R2B-9");
         assert!(!parse_check("os Windows\nbitlocker no\n").bitlocker);
         assert_eq!(b.tier.as_deref(), Some("own-keys"));
+        let off = parse_check("boot mok\nboot-off off\n");
+        assert_eq!(
+            (
+                off.tier.as_deref(),
+                off.tier_off.as_deref(),
+                off.secure_boot
+            ),
+            (Some("mok"), Some("off"), false),
+            "boot-off is the answer without Secure Boot, not the sheet's"
+        );
+        assert_eq!(parse_check("boot mok\n").tier_off, None);
         assert_eq!(
             erase_warning(&c.others[..1]),
             "This disk has Windows on it. Erasing removes it."

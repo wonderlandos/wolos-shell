@@ -132,12 +132,12 @@ fn window_area(size: (i32, i32)) -> Rect {
     }
 }
 
-/// On demand, not exclusive: with an exclusive layer mapped Hyprland refuses `focuswindow`, so a
+/// On demand, not exclusive: with an exclusive layer mapped the compositor refuses `focuswindow`, so a
 /// card click only closed Overview (audit2 A2-3; the switcher learnt it live, `ui::switcher::SPEC`).
 pub const SPEC: Spec = Spec::panel("wol-panel-overview", [true; 4], Keyboard::OnDemand);
 
 /// What a pick does, in order: the dispatch first (focus works while the layer is mapped on
-/// demand), then Overview hides; Hyprland's refocus on unmap then lands on the picked window.
+/// demand), then Overview hides; the compositor's refocus on unmap then lands on the picked window.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Step {
     Dispatch(Dispatch),
@@ -156,17 +156,17 @@ fn read_state() -> (Vec<Client>, i64) {
     (clients, current)
 }
 
-/// The layer surface; rebuilt from Hyprland state on every show.
+/// The layer surface; rebuilt from compositor state on every show.
 pub fn build(app: &gtk::Application) -> gtk::Window {
     let win = super::window(app, "panel", SPEC);
     crate::kit::surface::survive_output_loss(&win, SPEC);
     win.add_css_class("overview-window-surface");
     let w2 = win.clone();
     crate::kit::surface::on_escape(&win, move || w2.set_visible(false));
-    // Which show a Hyprland answer belongs to (a quick close and reopen must not fill twice).
+    // Which show a compositor answer belongs to (a quick close and reopen must not fill twice).
     let shows = std::rc::Rc::new(std::cell::Cell::new(0u32));
     win.connect_show(move |win| {
-        // The backdrop at once (never the last open's cards), the windows once Hyprland answered.
+        // The backdrop at once (never the last open's cards), the windows once the compositor answered.
         win.set_child(Some(
             &content(screen(win.upcast_ref()), &[], 1, vec![], |_| {}).0,
         ));
@@ -277,7 +277,7 @@ fn texture(bytes: &[u8]) -> Option<gdk::MemoryTexture> {
 mod tests {
     use super::*;
 
-    /// Audit2 A2-3: an exclusive Overview made Hyprland refuse the card's `focuswindow`; the
+    /// Audit2 A2-3: an exclusive Overview made the compositor refuse the card's `focuswindow`; the
     /// dispatch also ran before the unmap was flushed. On demand, focus first, then hide.
     #[test]
     fn overview_takes_the_keyboard_on_demand_and_focuses_before_hiding() {

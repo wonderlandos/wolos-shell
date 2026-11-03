@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Every symbolic icon name the shell requests ships in the WolOS theme (design/icons/symbolic, installed
-//! by design/icons/install.sh): no fallback to whatever system theme the image has. Symbolic SVGs are
+//! Every symbolic icon name the shell requests ships in the WolOS theme (design/icons/symbolic, drawn by
+//! design/tools/icons.py, installed by design/icons/install.sh): no fallback to whatever system theme the image has. Symbolic SVGs are
 //! fill-only: GTK 4.20 (FreeBSD pkg) draws `stroke` icons as solid blobs (FreeBSD shots: black dot for
 //! system-shutdown, purple dot for system-search).
 use std::path::{Path, PathBuf};
@@ -90,9 +90,12 @@ fn every_requested_wolos_app_icon_ships() {
                 .step_by(2)
                 .filter(|t| {
                     t.starts_with("wolos-")
-                        // A package repository and a runtime folder, not icons.
-                        && !["wolos-cachy", "wolos-install"].contains(t)
+                        // Package repositories, packages and runtime files, not icons.
+                        && !["wolos-cachy", "wolos-install", "wolos-sessions-offered"].contains(t)
+                        && !t.starts_with("wolos-module-")
                         && !t.ends_with("-symbolic")
+                        // A prefix a test checks names against (`"wolos-kit-"`), not a name.
+                        && !t.ends_with('-')
                         && t.bytes()
                             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
                 })

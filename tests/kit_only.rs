@@ -3,7 +3,11 @@
 //! is constructed in them directly, so every page shares the Kit's sizes, insets and states.
 use std::path::Path;
 
-const FILES: [&str; 2] = ["src/ui/setup.rs", "src/ui/installer.rs"];
+const FILES: [&str; 3] = [
+    "src/ui/setup.rs",
+    "src/ui/installer.rs",
+    "src/ui/installer/disks.rs",
+];
 const CONSTRUCTORS: [&str; 6] = [
     "::new(",
     "::builder(",
