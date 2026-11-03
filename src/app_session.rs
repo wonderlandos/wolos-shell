@@ -16,6 +16,8 @@ const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 const MAX_PREVIEW: usize = 400;
 /// Rows a search hands an app.
 const MAX_FOUND: usize = 20;
+/// Apps the open-with chooser offers (the dialog's row of buttons stays readable).
+const MAX_CHOICES: usize = 4;
 
 /// The session, apart from the rules (fake in tests).
 pub trait Session {
@@ -35,6 +37,21 @@ pub trait Session {
     fn set_muted(&self, muted: bool) -> bool;
     /// What the person picked; None when they cancelled. Blocks until then.
     fn panel(&self, save: bool, title: &str, name: &str) -> Option<PathBuf>;
+    /// The person's home folder.
+    fn home(&self) -> PathBuf;
+    /// The person's Trash on the home drive, where the Files Trash looks.
+    fn trash_dir(&self) -> PathBuf;
+    /// Move `path` to the Trash as the person, the one way the system does it
+    /// (`wol_core::malware::trash_argv`, as Settings > Malware does). False when it failed.
+    fn trash(&self, path: &Path) -> bool;
+    /// Where the person wants the file called `name` to go; None when they cancelled. Blocks.
+    fn share_file(&self, name: &str) -> Option<FileTo>;
+    /// Put the file on the clipboard as a link to it (`text/uri-list`), so a paste in Files or
+    /// another app takes the file itself.
+    fn copy_file(&self, path: &Path) -> bool;
+    /// The chooser of the apps that open `path`, then the chosen one opens it: false when the
+    /// person cancelled, or the sentence to show. Blocks until then.
+    fn open_with(&self, path: &Path) -> Result<bool, String>;
 }
 
 /// The running desktop.
@@ -66,20 +83,100 @@ impl Session for Desktop {
     }
 
     fn set_clipboard(&self, text: &str) -> bool {
-        // On stdin: an argument would show in every process listing.
-        let Ok(mut c) = Command::new("wl-copy")
-            .stdin(Stdio::piped())
+        copy(text, None)
+    }
+
+    fn home(&self) -> PathBuf {
+        wol_core::widgets::home()
+    }
+
+    fn trash_dir(&self) -> PathBuf {
+        wol_core::malware::home_trash()
+    }
+
+    fn trash(&self, path: &Path) -> bool {
+        let argv = wol_core::malware::trash_argv(&path.to_string_lossy());
+        Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .spawn()
-        else {
-            return false;
-        };
-        let wrote = c
-            .stdin
-            .take()
-            .is_some_and(|mut i| i.write_all(text.as_bytes()).is_ok());
-        wrote && c.wait().is_ok_and(|s| s.success())
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    fn share_file(&self, name: &str) -> Option<FileTo> {
+        let name = name.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel();
+        gtk::glib::MainContext::default().invoke(move || {
+            let d = gtk::AlertDialog::builder()
+                .modal(true)
+                .message(name.as_str())
+                .detail(crate::copy::FILE_SHEET_DETAIL)
+                .buttons(["Cancel", "Open With\u{2026}", "Save a Copy\u{2026}", "Copy"])
+                .cancel_button(0)
+                .default_button(3)
+                .build();
+            let cancel = gtk::gio::Cancellable::NONE;
+            d.choose(None::<&gtk::Window>, cancel, move |r| {
+                let _ = tx.send(r.ok());
+            });
+        });
+        match rx.recv().ok().flatten() {
+            Some(1) => Some(FileTo::App),
+            Some(2) => Some(FileTo::Copy),
+            Some(3) => Some(FileTo::Clipboard),
+            _ => None,
+        }
+    }
+
+    fn copy_file(&self, path: &Path) -> bool {
+        use gtk::gio::prelude::FileExt;
+        let uri = gtk::gio::File::for_path(path).uri();
+        copy(&format!("{uri}\r\n"), Some("text/uri-list"))
+    }
+
+    fn open_with(&self, path: &Path) -> Result<bool, String> {
+        use gtk::gio::prelude::*;
+        // Read off the main thread: X11 apps get the scale the session exported.
+        let env = crate::kit::user_scale_env();
+        let path = path.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<bool, String>>();
+        gtk::glib::MainContext::default().invoke(move || {
+            let apps = apps_for(&path);
+            if apps.is_empty() {
+                let _ = tx.send(Err(crate::copy::OPEN_WITH_NONE.into()));
+                return;
+            }
+            let name = path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            let mut labels = vec!["Cancel".to_owned()];
+            labels.extend(apps.iter().map(|a| a.display_name().to_string()));
+            let d = gtk::AlertDialog::builder()
+                .modal(true)
+                .message(format!("Open \u{201c}{name}\u{201d} With"))
+                .detail(crate::copy::OPEN_WITH_DETAIL)
+                .buttons(labels.iter().map(String::as_str).collect::<Vec<_>>())
+                .cancel_button(0)
+                .build();
+            let cancel = gtk::gio::Cancellable::NONE;
+            d.choose(None::<&gtk::Window>, cancel, move |r| {
+                let picked = r.ok().and_then(|i| usize::try_from(i).ok()?.checked_sub(1));
+                let got = match picked.and_then(|i| apps.get(i)) {
+                    None => Ok(false),
+                    Some(a) => {
+                        let file = gtk::gio::File::for_path(&path);
+                        let ctx = crate::kit::data::launch_context(&env);
+                        a.launch(&[file], Some(&ctx))
+                            .map(|()| true)
+                            .map_err(|_| crate::copy::OPEN_WITH_NOT_OPENED.to_owned())
+                    }
+                };
+                let _ = tx.send(got);
+            });
+        });
+        rx.recv().unwrap_or(Ok(false))
     }
 
     fn search(&self, text: &str) -> Vec<(String, String)> {
@@ -146,11 +243,134 @@ impl Session for Desktop {
     }
 }
 
+/// The apps that open `path`'s kind of file, the recommended first, at most [`MAX_CHOICES`].
+fn apps_for(path: &Path) -> Vec<gtk::gio::AppInfo> {
+    use gtk::gio::prelude::*;
+    let (kind, _) = gtk::gio::content_type_guess(Some(path), None);
+    let mut apps: Vec<gtk::gio::AppInfo> = Vec::new();
+    let found = gtk::gio::AppInfo::recommended_for_type(&kind)
+        .into_iter()
+        .chain(gtk::gio::AppInfo::all_for_type(&kind));
+    for a in found {
+        if a.should_show() && !apps.iter().any(|b| b.equal(&a)) {
+            apps.push(a);
+        }
+    }
+    apps.truncate(MAX_CHOICES);
+    apps
+}
+
+/// Put `text` on the clipboard, as `kind` (plain text when None). On stdin: an argument would
+/// show in every process listing.
+fn copy(text: &str, kind: Option<&str>) -> bool {
+    let mut cmd = Command::new("wl-copy");
+    if let Some(k) = kind {
+        cmd.args(["--type", k]);
+    }
+    let Ok(mut c) = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let wrote = c
+        .stdin
+        .take()
+        .is_some_and(|mut i| i.write_all(text.as_bytes()).is_ok());
+    wrote && c.wait().is_ok_and(|s| s.success())
+}
+
 /// Where shared text goes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShareTo {
     Clipboard,
     File,
+}
+
+/// Where a shared file goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileTo {
+    /// A link to it on the clipboard.
+    Clipboard,
+    /// A copy, where the person saves it.
+    Copy,
+    /// The app the person picks next opens it.
+    App,
+}
+
+/// Move `path` to the person's Trash: its name there (what the Files Trash shows and what puts
+/// it back), or None when the Trash of another drive took it. Never the home folder, a folder
+/// holding it, or something already in the Trash.
+fn trash(s: &dyn Session, path: &Path) -> Result<Option<String>, String> {
+    if path.symlink_metadata().is_err() {
+        return Err(crate::copy::FILE_GONE.into());
+    }
+    let bin = s.trash_dir();
+    if s.home().starts_with(path) || bin.starts_with(path) {
+        return Err(crate::copy::TRASH_KEEPS.into());
+    }
+    if path.starts_with(&bin) {
+        return Err(crate::copy::TRASH_ALREADY.into());
+    }
+    if !s.trash(path) {
+        return Err(crate::copy::TRASH_NOT_MOVED.into());
+    }
+    let (bin, path) = (bin.to_string_lossy(), path.to_string_lossy());
+    Ok(wol_core::malware::trashed_name(&PosixHost, &bin, &path))
+}
+
+/// A plain file the person may read: only that is shared or handed to another app.
+fn shareable(path: &Path) -> Result<(), String> {
+    match std::fs::metadata(path) {
+        Ok(m) if m.is_file() => Ok(()),
+        Ok(_) => Err(crate::copy::SHARE_ONLY_FILES.into()),
+        Err(_) => Err(crate::copy::FILE_GONE.into()),
+    }
+}
+
+/// Send the file at `path` where the person chose, as them.
+fn share_file(s: &dyn Session, path: &Path) -> Result<&'static str, String> {
+    shareable(path)?;
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    match s.share_file(&name) {
+        None => Ok("cancelled"),
+        Some(FileTo::Clipboard) => s
+            .copy_file(path)
+            .then_some("copied")
+            .ok_or_else(|| crate::copy::CLIPBOARD_UNCHANGED.into()),
+        Some(FileTo::App) => open_with(s, path),
+        Some(FileTo::Copy) => {
+            let Some(to) = s.panel(true, "Save a Copy", &name) else {
+                return Ok("cancelled");
+            };
+            let same = |a: &Path, b: &Path| {
+                a.canonicalize()
+                    .ok()
+                    .is_some_and(|a| b.canonicalize().is_ok_and(|b| a == b))
+            };
+            if same(path, &to) {
+                return Ok("saved");
+            }
+            let copied = File::open(path).and_then(|mut from| {
+                let mut out = open_pick(&to, true)?;
+                std::io::copy(&mut from, &mut out)
+            });
+            copied
+                .map(|_| "saved")
+                .map_err(|_| crate::copy::COPY_NOT_SAVED.into())
+        }
+    }
+}
+
+/// The app the person picks opens the file at `path`.
+fn open_with(s: &dyn Session, path: &Path) -> Result<&'static str, String> {
+    shareable(path)?;
+    s.open_with(path)
+        .map(|opened| if opened { "opened" } else { "cancelled" })
 }
 
 /// The start of shared text, for the dialog.
@@ -257,6 +477,18 @@ pub fn answer(s: &dyn Session, ask: Ask) -> Result<Option<Value>, String> {
         Ask::Approval { .. } => Err("Approvals are answered on the approval sheet.".into()),
         Ask::Share { title, text } => {
             let done = share(s, &title, &text)?;
+            Ok(Some(json!({ "done": done })))
+        }
+        Ask::Trash { path } => Ok(Some(match trash(s, Path::new(&path))? {
+            Some(name) => json!({ "name": name }),
+            None => json!({}),
+        })),
+        Ask::ShareFile { path } => {
+            let done = share_file(s, Path::new(&path))?;
+            Ok(Some(json!({ "done": done })))
+        }
+        Ask::OpenWith { path } => {
+            let done = open_with(s, Path::new(&path))?;
             Ok(Some(json!({ "done": done })))
         }
         Ask::Search { text } => {
@@ -455,6 +687,10 @@ mod tests {
         pick: Option<PathBuf>,
         sound: bool,
         share_to: Option<ShareTo>,
+        file_to: Option<FileTo>,
+        dir: PathBuf,
+        /// What the chooser does: Some(true) opens, Some(false) cancels, None has no app.
+        opens: Option<bool>,
     }
 
     impl Session for Fake {
@@ -489,6 +725,189 @@ mod tests {
             self.set.borrow_mut().push(format!("muted {muted}"));
             self.sound
         }
+        fn home(&self) -> PathBuf {
+            self.dir.join("home")
+        }
+        fn trash_dir(&self) -> PathBuf {
+            self.dir.join("home/.local/share/Trash")
+        }
+        /// The standard move: the file into `files/`, its note into `info/`.
+        fn trash(&self, path: &Path) -> bool {
+            self.set
+                .borrow_mut()
+                .push(format!("trash {}", path.display()));
+            let bin = self.trash_dir();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            let note = format!(
+                "[Trash Info]\nPath={}\nDeletionDate=2026-11-03T12:00:00\n",
+                path.display()
+            );
+            !self.refuse
+                && std::fs::create_dir_all(bin.join("files")).is_ok()
+                && std::fs::create_dir_all(bin.join("info")).is_ok()
+                && std::fs::write(bin.join("info").join(format!("{name}.trashinfo")), note).is_ok()
+                && std::fs::rename(path, bin.join("files").join(&name)).is_ok()
+        }
+        fn share_file(&self, name: &str) -> Option<FileTo> {
+            self.set.borrow_mut().push(format!("sheet {name}"));
+            self.file_to
+        }
+        fn copy_file(&self, path: &Path) -> bool {
+            self.set
+                .borrow_mut()
+                .push(format!("copy {}", path.display()));
+            !self.refuse
+        }
+        fn open_with(&self, path: &Path) -> Result<bool, String> {
+            self.set
+                .borrow_mut()
+                .push(format!("open {}", path.display()));
+            self.opens
+                .ok_or_else(|| "No app on this computer opens this kind of file.".into())
+        }
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("wol-app-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("home/Pictures")).unwrap();
+        d
+    }
+
+    #[test]
+    fn trash_moves_with_the_note_and_answers_the_name() {
+        let dir = scratch("trash");
+        let f = Fake {
+            dir: dir.clone(),
+            ..Fake::default()
+        };
+        let pic = dir.join("home/Pictures/a.jpg");
+        std::fs::write(&pic, b"x").unwrap();
+        let ask = |p: &Path| Ask::Trash {
+            path: p.display().to_string(),
+        };
+        assert_eq!(answer(&f, ask(&pic)), Ok(Some(json!({ "name": "a.jpg" }))));
+        assert!(!pic.exists());
+        assert!(f.trash_dir().join("files/a.jpg").exists());
+        assert_eq!(
+            answer(&f, ask(&pic)),
+            Err("That file is not there any more.".into())
+        );
+        let home = dir.join("home");
+        for keep in [home.clone(), dir.clone(), home.join(".local")] {
+            assert_eq!(
+                answer(&f, ask(&keep)),
+                Err("That folder cannot go to the Trash.".into())
+            );
+        }
+        let inside = f.trash_dir().join("files/a.jpg");
+        assert_eq!(
+            answer(&f, ask(&inside)),
+            Err("That is in the Trash already.".into())
+        );
+        assert_eq!(
+            f.set.borrow().len(),
+            1,
+            "only the first ask reached the Trash"
+        );
+        // A move that fails says so (the name for no name is wol_core::malware's test).
+        let other = dir.join("b.jpg");
+        std::fs::write(&other, b"x").unwrap();
+        let f2 = Fake {
+            dir: dir.join("nowhere"),
+            ..Fake::default()
+        };
+        std::fs::create_dir_all(f2.home()).unwrap();
+        let none = Fake { refuse: true, ..f2 };
+        assert_eq!(
+            answer(&none, ask(&other)),
+            Err("That could not be moved to the Trash.".into())
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_shared_file_goes_where_the_person_chose() {
+        let dir = scratch("share-file");
+        let pic = dir.join("home/Pictures/a.jpg");
+        std::fs::write(&pic, b"picture").unwrap();
+        let ask = || Ask::ShareFile {
+            path: pic.display().to_string(),
+        };
+        let done = |v: &str| Ok(Some(json!({ "done": v })));
+        let to = |file_to, pick, opens| Fake {
+            file_to,
+            pick,
+            opens,
+            dir: dir.clone(),
+            ..Fake::default()
+        };
+        let f = to(None, None, None);
+        assert_eq!(answer(&f, ask()), done("cancelled"));
+        assert_eq!(*f.set.borrow(), ["sheet a.jpg"]);
+        let f = to(Some(FileTo::Clipboard), None, None);
+        assert_eq!(answer(&f, ask()), done("copied"));
+        assert_eq!(f.set.borrow()[1], format!("copy {}", pic.display()));
+        assert_eq!(
+            answer(&to(Some(FileTo::App), None, Some(true)), ask()),
+            done("opened")
+        );
+        assert_eq!(
+            answer(&to(Some(FileTo::App), None, Some(false)), ask()),
+            done("cancelled")
+        );
+        assert_eq!(
+            answer(&to(Some(FileTo::Copy), None, None), ask()),
+            done("cancelled")
+        );
+        let copy = dir.join("copy.jpg");
+        assert_eq!(
+            answer(&to(Some(FileTo::Copy), Some(copy.clone()), None), ask()),
+            done("saved")
+        );
+        assert_eq!(std::fs::read(&copy).unwrap(), b"picture");
+        // Saving over itself keeps the picture.
+        assert_eq!(
+            answer(&to(Some(FileTo::Copy), Some(pic.clone()), None), ask()),
+            done("saved")
+        );
+        assert_eq!(std::fs::read(&pic).unwrap(), b"picture");
+        for bad in [dir.join("home"), dir.join("missing.jpg")] {
+            let f = to(Some(FileTo::Clipboard), None, None);
+            let a = Ask::ShareFile {
+                path: bad.display().to_string(),
+            };
+            assert!(answer(&f, a).is_err());
+            assert!(f.set.borrow().is_empty(), "no sheet for {bad:?}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn open_with_answers_opened_or_cancelled() {
+        let dir = scratch("open-with");
+        let pic = dir.join("home/Pictures/a.jpg");
+        std::fs::write(&pic, b"x").unwrap();
+        let ask = |p: &Path| Ask::OpenWith {
+            path: p.display().to_string(),
+        };
+        let with = |opens| Fake {
+            opens,
+            dir: dir.clone(),
+            ..Fake::default()
+        };
+        let done = |v: &str| Ok(Some(json!({ "done": v })));
+        assert_eq!(answer(&with(Some(true)), ask(&pic)), done("opened"));
+        assert_eq!(answer(&with(Some(false)), ask(&pic)), done("cancelled"));
+        assert_eq!(
+            answer(&with(None), ask(&pic)),
+            Err("No app on this computer opens this kind of file.".into())
+        );
+        assert_eq!(
+            answer(&with(Some(true)), ask(&dir)),
+            Err("Only a file can be shared.".into())
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Audit S1: wold's approval ask is answered with what the person chose on the sheet; with
