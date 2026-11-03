@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* WolOS kit stylesheet: the only visual style (HIG). Colours: var(--token). Glass light (white/black rims and
    shadows) is fixed material, not theme. Spacing 4/8/12/16/24/32; radius 6 controls, 10 cards, 16/24 panels;
-   type scale 11 caption, 13 body, 15 heading, 26 large title (Inter; ADR theme contract --font-size 13). Motion: the
-   theme contract's --motion-fast/-normal/-slow with --ease-out for entering and --ease-in for leaving; the spring is for drops only. */
+   type scale 11 caption, 13 body, 15 heading, 26 large title (Inter; ADR theme contract --font-size 13). Motion (kit::motion, HIG
+   section 7): --motion-fast/-normal/-slow with --ease-out for entering and --ease-in for leaving; springs are for drops
+   and drags only; keyframes move transform and opacity, never margins (no relayout per frame). */
 :root {
   --glass-radius: 24px;
   --glass-radius-m: 16px;
@@ -16,6 +17,12 @@
   --glass-shadow: 0 6px 18px rgba(0,0,0,0.24), 0 1px 4px rgba(0,0,0,0.16);
   --ease-out: cubic-bezier(.2,.8,.2,1);
   --ease-in: cubic-bezier(.4,0,1,1);
+  --ease-in-out: cubic-bezier(.4,0,.2,1);
+  /* The theme contract's durations (shared::theme::SCALE, kit::motion::DURATIONS_MS), defined here too so kit rules
+     resolve before or without a theme. --ease-out is the contract's `ease` curve, --ease-in its `in`. */
+  --motion-fast: 150ms;
+  --motion-normal: 250ms;
+  --motion-slow: 400ms;
   /* The menu bar follows the scheme: a tint of the surface with the text colour (light bar, dark text by day). */
   --bar-fill: alpha(var(--surface), 0.62);
   --bar-text: var(--text);
@@ -80,7 +87,7 @@ button.dock-tile { background: none; border: none; box-shadow: none; padding: 0;
   transform-origin: 50% 100%; transition: transform var(--motion-normal) var(--ease-out); }
 button.dock-tile:hover { transform: scale(1.15); }
 /* Launch: bounces until the app's first window maps (ui::dock). gtk-enable-animations off stills it. */
-@keyframes dock-bounce { 0%, 100% { margin-top: 0; margin-bottom: 0; } 50% { margin-top: -16px; margin-bottom: 16px; } }
+@keyframes dock-bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-16px); } }
 button.dock-tile.launching { animation: dock-bounce 640ms ease-in-out infinite; }
 /* Attention: bounces until the app is focused or the Dock stops it after 60 s (ui::dock). */
 button.dock-tile.attention { animation: dock-bounce 640ms ease-in-out infinite; }
@@ -279,7 +286,7 @@ button.lock-submit label { font-size: 13px; font-weight: 600; margin-top: -1px; 
 button.lock-submit:disabled { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.45); }
 button.lock-submit:hover:not(:disabled) { background: rgba(255,255,255,0.45); }
 label.lock-message { color: white; font-size: 13px; font-weight: 500; min-height: 18px; text-shadow: 0 1px 6px rgba(0,0,0,0.40); }
-@keyframes shake { 0%, 100% { margin-left: 0; margin-right: 0; } 15%, 55% { margin-left: 20px; margin-right: 0; } 35%, 75% { margin-left: 0; margin-right: 20px; } 90% { margin-left: 6px; margin-right: 0; } }
+@keyframes shake { 0%, 100% { transform: translateX(0); } 15%, 55% { transform: translateX(10px); } 35%, 75% { transform: translateX(-10px); } 90% { transform: translateX(3px); } }
 spinner.lock-checking { min-width: 16px; min-height: 16px; margin: 0 4px; color: white; }
 .lock-screen.light spinner.lock-checking { color: #1c1838; }
 .lock-pill.shake { animation: shake 420ms ease-out 1; }
