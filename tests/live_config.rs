@@ -125,7 +125,8 @@ fn run_until(limit: Duration, done: impl Fn() -> bool) -> Duration {
     t0.elapsed()
 }
 
-fn display() -> Kill {
+/// A private display server and its name (`:N`).
+fn display() -> (Kill, String) {
     let n = 40 + (std::process::id() + 97) % 200;
     let display = format!(":{n}");
     let port = (18000 + n).to_string();
@@ -147,20 +148,40 @@ fn display() -> Kill {
         // The server is a process that is starting: the connect is simply tried again.
         std::thread::yield_now();
     }
-    unsafe {
-        std::env::set_var("GDK_BACKEND", "broadway");
-        std::env::set_var("BROADWAY_DISPLAY", &display);
-    }
-    k
+    (k, display)
 }
+
+/// Set (to the stand-in `bin` folder) in the copy of this test binary that runs the journey: the
+/// parent starts it with the display, `XDG_CONFIG_HOME` and `PATH` in its environment, because
+/// `std::env::set_var` is `unsafe` and races GTK's own threads (RR-028).
+const CHILD: &str = "WOL_SP2_CHILD";
 
 /// The whole journey on one thread (GTK's): shell.json, widgets.json and kit.css saved while the
 /// watch runs, good and bad, then 100 explicit reloads.
 #[test]
 fn saves_apply_within_200_ms_and_bad_ones_keep_the_last_good_state() {
-    let _display = display();
-    let cfg = tmp("cfg");
-    let bin = tmp("bin");
+    let Some(bin) = std::env::var_os(CHILD).map(PathBuf::from) else {
+        let (_display, name) = display();
+        let cfg = tmp("cfg");
+        let bin = tmp("bin");
+        let path = std::env::var("PATH").unwrap_or_default();
+        let st = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "saves_apply_within_200_ms_and_bad_ones_keep_the_last_good_state",
+                "--nocapture",
+            ])
+            .env(CHILD, &bin)
+            .env("GDK_BACKEND", "broadway")
+            .env("BROADWAY_DISPLAY", &name)
+            .env("XDG_CONFIG_HOME", &cfg)
+            .env("PATH", format!("{}:{path}", bin.display()))
+            .status()
+            .expect("the journey's child");
+        assert!(st.success(), "the journey failed: {st}");
+        return;
+    };
+    let cfg = PathBuf::from(std::env::var_os("XDG_CONFIG_HOME").expect("set by the parent"));
     let log = bin.join("notices.log");
     // The notices go to a stand-in notify-send that writes one line each.
     let fake = bin.join("notify-send");
@@ -172,11 +193,6 @@ fn saves_apply_within_200_ms_and_bad_ones_keep_the_last_good_state() {
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    unsafe {
-        std::env::set_var("XDG_CONFIG_HOME", &cfg);
-        let path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{path}", bin.display()));
     }
     gtk::init().expect("gtk init");
     let notices = || {

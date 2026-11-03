@@ -509,33 +509,12 @@ pub const WATCHED: [&str; 3] = [
 ];
 /// Quiet time after the last change before a save applies (an editor writes in bursts).
 pub const DEBOUNCE_MS: u64 = 100;
-/// Summary of the notice for a config file that does not load.
-pub const NOT_APPLIED: &str = "Changes Not Applied";
+/// Summary of the notice for a config file that does not load ([`crate::copy::CONFIG_NOT_APPLIED`]).
+pub const NOT_APPLIED: &str = crate::copy::CONFIG_NOT_APPLIED;
 
-/// The notice body for `e`: which setting, never the reader's words.
+/// The notice body for `e`: which setting, never the reader's words ([`crate::copy::config_notice`]).
 pub fn notice_text(e: &ConfigError) -> String {
-    let what = match e.file {
-        wol_core::prefs::SHELL_NAME => "menu bar and Dock settings",
-        wol_core::prefs::WIDGETS_NAME => "desktop widgets",
-        _ => "style sheet",
-    };
-    match (&e.key, e.line) {
-        (Some(k), Some(l)) => {
-            format!(
-                "“{k}” on line {l} of your {what} doesn’t fit, so nothing changed. Check it and save again."
-            )
-        }
-        (Some(k), None) => {
-            format!(
-                "“{k}” in your {what} doesn’t fit, so nothing changed. Check it and save again."
-            )
-        }
-        (None, l) => format!(
-            "{} can’t be read near line {}, so nothing changed. Check it and save again.",
-            format_args!("Your {what}"),
-            l.unwrap_or(1)
-        ),
-    }
+    crate::copy::config_notice(e)
 }
 
 /// The notices standing now (one per config file that does not load), for tests and logs.

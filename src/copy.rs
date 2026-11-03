@@ -483,6 +483,36 @@ pub const UPDATE_CHECK: &str =
 /// Under "N updates available" (Settings > Software Update and the App Store's Updates).
 pub const UPDATE_RESTORE_POINT: &str = "WolOS saves a restore point before updating.";
 
+/// Summary of the notice for a shell config file that does not load (live reload, SP-2).
+pub const CONFIG_NOT_APPLIED: &str = "Changes Not Applied";
+
+/// The notice body for a shell config file that does not load: which setting, never the
+/// reader's words (`ui::ipc::watch_prefs`).
+pub fn config_notice(e: &wol_core::prefs::ConfigError) -> String {
+    let what = match e.file {
+        wol_core::prefs::SHELL_NAME => "menu bar and Dock settings",
+        wol_core::prefs::WIDGETS_NAME => "desktop widgets",
+        _ => "style sheet",
+    };
+    match (&e.key, e.line) {
+        (Some(k), Some(l)) => {
+            format!(
+                "“{k}” on line {l} of your {what} doesn’t fit, so nothing changed. Check it and save again."
+            )
+        }
+        (Some(k), None) => {
+            format!(
+                "“{k}” in your {what} doesn’t fit, so nothing changed. Check it and save again."
+            )
+        }
+        (None, l) => format!(
+            "{} can’t be read near line {}, so nothing changed. Check it and save again.",
+            format_args!("Your {what}"),
+            l.unwrap_or(1)
+        ),
+    }
+}
+
 /// "1 update available", "3 updates available".
 pub fn updates_available(n: usize) -> String {
     format!("{n} update{} available", if n == 1 { "" } else { "s" })
