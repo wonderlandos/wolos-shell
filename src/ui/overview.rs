@@ -161,8 +161,11 @@ pub fn build(app: &gtk::Application) -> gtk::Window {
     let win = super::window(app, "panel", SPEC);
     crate::kit::surface::survive_output_loss(&win, SPEC);
     win.add_css_class("overview-window-surface");
+    // Fades in on the window's clock each open (`ease`, 400 ms: a large surface); Esc fades it
+    // out. A pick hides at once: the focus goes to the window picked on the unmap.
+    super::transient::fade_on_map(win.upcast_ref(), crate::kit::motion::Duration::Slow);
     let w2 = win.clone();
-    crate::kit::surface::on_escape(&win, move || w2.set_visible(false));
+    crate::kit::surface::on_escape(&win, move || super::transient::dismiss(&w2));
     // Which show a compositor answer belongs to (a quick close and reopen must not fill twice).
     let shows = std::rc::Rc::new(std::cell::Cell::new(0u32));
     win.connect_show(move |win| {

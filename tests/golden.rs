@@ -21,6 +21,8 @@ mod form_kit;
 mod installer_cases;
 #[path = "golden_cases/maker.rs"]
 mod maker_cases;
+#[path = "golden_cases/motion.rs"]
+mod motion_cases;
 #[path = "golden_cases/offers.rs"]
 mod offer_cases;
 #[path = "golden_cases/store_package.rs"]
@@ -1238,6 +1240,7 @@ fn cases() -> Vec<Case> {
     v.extend(controlcenter_cases::cases());
     v.extend(theme_picker_cases::cases());
     v.extend(maker_cases::cases());
+    v.extend(motion_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-malware-{tag}"),
@@ -1774,6 +1777,7 @@ fn main() {
     regressions::a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     regressions::return_belongs_to_the_button_with_the_keyboard_ring();
     regressions::the_dock_takes_a_new_layout();
+    motion_cases::reduce_motion_snaps();
     regressions::an_app_tile_keeps_one_source_badge();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
