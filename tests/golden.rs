@@ -81,7 +81,7 @@ fn keyboard_follows_languages(s: &ui::setup::Setup) {
     }
 }
 
-/// Files' "Analyze with ClamAV" window in one state.
+/// Files' "Check for Malware" window in one state.
 fn analyze_case(tag: &str, view: ui::analyze::View) -> Case {
     Case {
         name: format!("analyze-{tag}"),
