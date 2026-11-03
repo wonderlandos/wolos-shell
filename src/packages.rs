@@ -227,7 +227,7 @@ pub const SEVERITIES: [(&str, &str); 3] = [
     ("High", "It runs or sends something it should not."),
     (
         "Medium",
-        "It reaches past its own files, or can't be tied to upstream.",
+        "It reaches past its own files, or can’t be tied to upstream.",
     ),
     (
         "Low",
@@ -295,12 +295,12 @@ pub const FLAGS: [(&str, &str, &str); 14] = [
     (
         "Downloads From Another Site",
         "Low",
-        "A source is not on the project's declared home.",
+        "A source is not on the project’s declared home.",
     ),
     (
         "Runs Code That Can't Be Read",
         "Low",
-        "Code is put together while running, so the check can't say what it does.",
+        "Code is put together while running, so the check can’t say what it does.",
     ),
     (
         "Not Fully Read",

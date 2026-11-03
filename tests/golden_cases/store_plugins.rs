@@ -135,9 +135,15 @@ pub fn empty() -> plugins::Listing {
     plugins::Listing::Ready(vec![])
 }
 
+/// A listing made on demand.
+type Make = fn() -> plugins::Listing;
+
+/// What a [`Case`] builds its widget with.
+type Build = Box<dyn Fn() -> gtk::Widget>;
+
 pub fn cases() -> Vec<Case> {
     let mut v = Vec::new();
-    let page = |l: fn() -> plugins::Listing| -> Box<dyn Fn() -> gtk::Widget> {
+    let page = |l: Make| -> Build {
         Box::new(move || {
             let s = store::content(
                 Rc::new(shell::system::Fake),
@@ -161,7 +167,7 @@ pub fn cases() -> Vec<Case> {
         });
     }
     // One size each: the states are one or two lines, not a layout.
-    let states: [(&str, fn() -> plugins::Listing); 4] = [
+    let states: [(&str, Make); 4] = [
         ("attention", attention),
         ("loading", loading),
         ("offline", offline),

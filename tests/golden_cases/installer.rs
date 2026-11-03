@@ -103,6 +103,52 @@ fn add_empty(v: &mut Vec<Case>) {
     });
 }
 
+/// audit6 I6-5: on the live desktop an encrypted install's Done page shows the recovery key, which
+/// `install-check --result` has already deleted. Restart and Restart Later both wait for "I wrote
+/// the key down"; with no key on the page both are free.
+fn add_done_live(v: &mut Vec<Case>) {
+    v.push(Case {
+        name: "installer-done-live-key-1280".into(),
+        size: (1280, 800),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| {
+            let i = Installer::new(&Hints::default(), false, true, zones(), Some(vec![]));
+            i.show_done(
+                Some("ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z2345-67ABC-DEFGH"),
+                None,
+                false,
+            );
+            assert_eq!(
+                i.leave_buttons(),
+                (false, Some(false)),
+                "key unacknowledged"
+            );
+            i.set_acknowledged(true);
+            assert_eq!(i.leave_buttons(), (true, Some(true)), "acknowledged");
+            i.set_acknowledged(false);
+            assert_eq!(i.leave_buttons(), (false, Some(false)), "toggled back off");
+            // A second install in the same window starts unacknowledged again.
+            i.set_acknowledged(true);
+            i.show_done(Some("ZZZZZ-FGHIJ"), None, false);
+            assert_eq!(
+                i.leave_buttons(),
+                (false, Some(false)),
+                "a new key resets it"
+            );
+            i.show_done(None, None, false);
+            assert_eq!(i.leave_buttons(), (true, Some(true)), "no key on the page");
+            // The golden shows the key page (what the person must read first).
+            i.show_done(
+                Some("ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z2345-67ABC-DEFGH"),
+                None,
+                false,
+            );
+            i.root.clone()
+        }),
+    });
+}
+
 fn blank() -> Disk {
     Disk {
         path: "/dev/sda".into(),
@@ -465,4 +511,5 @@ pub fn add(v: &mut Vec<Case>) {
     }
     add_fit(v);
     add_empty(v);
+    add_done_live(v);
 }

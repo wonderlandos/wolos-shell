@@ -278,8 +278,9 @@ fn remove(id: &str) -> bool {
 // ---- Page ----
 
 use crate::copy::{
-    STORE_NOT_FINISHED as FAILED, STORE_PLUGIN_ASKS_NOTHING, STORE_PLUGIN_ASKS_TO, STORE_PLUGIN_BY,
-    STORE_PLUGIN_ALLOW, STORE_PLUGIN_ASKS_MORE, STORE_PLUGIN_GET, STORE_PLUGIN_HELD, STORE_PLUGIN_NEEDS, STORE_PLUGIN_REMOVE, STORE_PLUGIN_TURN_OFF,
+    STORE_NOT_FINISHED as FAILED, STORE_PLUGIN_ALLOW, STORE_PLUGIN_ASKS_MORE,
+    STORE_PLUGIN_ASKS_NOTHING, STORE_PLUGIN_ASKS_TO, STORE_PLUGIN_BY, STORE_PLUGIN_GET,
+    STORE_PLUGIN_HELD, STORE_PLUGIN_NEEDS, STORE_PLUGIN_REMOVE, STORE_PLUGIN_TURN_OFF,
     STORE_PLUGIN_TURN_ON, STORE_PLUGIN_UPDATE_TO, STORE_PLUGINS_AVAILABLE, STORE_PLUGINS_CHECKED,
     STORE_PLUGINS_CREATE, STORE_PLUGINS_EMPTY, STORE_PLUGINS_INTRO as INTRO, STORE_PLUGINS_LOADING,
     STORE_PLUGINS_MINE, STORE_PLUGINS_NOT_YET, STORE_PLUGINS_OFFLINE,
@@ -425,7 +426,9 @@ fn row(sh: &Rc<Shared>, r: &Row, reload: &Rc<dyn Fn(bool)>) -> gtk::Widget {
     // The name alone: an installed row's version is the button's business ("Update to 1.3").
     let sub = match r.entry.author.as_str() {
         "" => sub_line(r),
-        a => STORE_PLUGIN_BY.replace("{a}", a).replace("{s}", &sub_line(r)),
+        a => STORE_PLUGIN_BY
+            .replace("{a}", a)
+            .replace("{s}", &sub_line(r)),
     };
     let row = w::list_row(
         "wolos-widgets-symbolic",
@@ -537,10 +540,10 @@ mod tests {
                     "h.asks".into(),
                     State::NeedsGrant(vec!["show notifications".into()])
                 ),
-                // Installed, its newer version held back: still On/Off as before (ST6-3).
-                ("e.later".into(), State::TurnOn),
                 ("b.off".into(), State::TurnOn),
                 ("c.on".into(), State::On),
+                // Installed, its newer version held back: still On/Off as before (ST6-3).
+                ("e.later".into(), State::TurnOn),
                 ("a.new".into(), State::Get),
                 // Not installed and not runnable here: not offered, whatever the minimum says.
                 ("f.future".into(), State::NeedsNewer("9.9".into())),
@@ -549,7 +552,11 @@ mod tests {
         );
         let later = list.iter().find(|r| r.entry.id == "e.later").unwrap();
         assert_eq!(later.held, Some(("2.0".into(), "9.9".into())));
-        assert!(sub_line(later).contains("Version 2.0 needs WolOS 9.9"), "{}", sub_line(later));
+        assert!(
+            sub_line(later).contains("Version 2.0 needs WolOS 9.9"),
+            "{}",
+            sub_line(later)
+        );
         assert!(list.iter().filter(|r| r.held.is_some()).count() == 1);
         // Your Plugins: installed ones only.
         let mine: Vec<&str> = list
@@ -557,7 +564,7 @@ mod tests {
             .filter(|r| r.installed())
             .map(|r| r.entry.id.as_str())
             .collect();
-        assert_eq!(mine, ["d.update", "h.asks", "e.later", "b.off", "c.on"]);
+        assert_eq!(mine, ["d.update", "h.asks", "b.off", "c.on", "e.later"]);
     }
 
     /// ST6-1: a plugin update that asks for a new permission is not left "On" with the new one
@@ -621,7 +628,10 @@ mod tests {
         let (have, on, more) = on_this_account(&p);
         assert_eq!(have.len(), 1);
         assert_eq!(on, ["alice.demo"]);
-        assert_eq!(more, [("alice.demo".to_string(), vec!["toggles".to_string()])]);
+        assert_eq!(
+            more,
+            [("alice.demo".to_string(), vec!["toggles".to_string()])]
+        );
         // Allowing it (what `wol plugin enable` saves) clears it.
         let m = wol_core::plugins::load_all(&[(user.clone(), false)])
             .remove(0)

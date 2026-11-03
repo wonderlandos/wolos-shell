@@ -243,6 +243,14 @@ pub fn restart_command() -> Vec<String> {
         .to_vec()
 }
 
+/// The Done page lets the person leave (Restart, and Restart Later from the live desktop) when no
+/// recovery key is on it, or they said they wrote it down or saved it (audit6 I6-5). The key is
+/// deleted as it is handed out (`install-check --result`): leaving unacknowledged loses it, so
+/// both actions wait for the same toggle.
+pub fn done_may_leave(key_shown: bool, acknowledged: bool) -> bool {
+    !key_shown || acknowledged
+}
+
 /// Where an install is: the stage words of the progress lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stage {
@@ -545,6 +553,33 @@ mod tests {
         assert_eq!(argv[..3], ["sudo", "-n", RUN]);
         assert_eq!(argv[3..], ["--plan", "/run/x/plan.json"]);
         assert_eq!(restart_command().join(" "), "sudo -n systemctl reboot");
+    }
+
+    /// audit6 I6-5: with a recovery key on the page, neither Restart nor Restart Later works
+    /// before the toggle is on; without a key both always do.
+    #[test]
+    fn leaving_the_done_page_waits_for_the_recovery_key_toggle() {
+        assert!(!done_may_leave(true, false), "key shown, not acknowledged");
+        assert!(done_may_leave(true, true), "key shown, acknowledged");
+        assert!(done_may_leave(false, false), "no key on the page");
+        assert!(done_may_leave(false, true));
+        // Both buttons of the page ask this one function (ui/installer.rs).
+        let ui = include_str!("ui/installer.rs");
+        assert!(
+            ui.contains("fn set_leave(&self, on: bool)")
+                && ui.contains("c.next.set_sensitive(on)")
+                && ui.contains("b.set_sensitive(on)"),
+            "set_leave moves Restart and Restart Later together"
+        );
+        assert_eq!(
+            ui.matches("install::done_may_leave(").count(),
+            3,
+            "show_done, the toggle and next() each ask done_may_leave"
+        );
+        assert!(
+            ui.contains("*self.later.borrow_mut() = Some(later)"),
+            "Restart Later is kept to be switched"
+        );
     }
 
     /// dedup A11: an over-long module record is refused whole (it was cut at 64 KiB and then

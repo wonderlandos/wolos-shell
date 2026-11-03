@@ -761,12 +761,19 @@ mod tests {
             "{t}"
         );
         assert!(!t.contains("/usr/bin/wol") && !t.contains("“wol”"), "{t}");
-        assert_eq!(title(&a, Some("/usr/bin/wol")), t, "the same from the kernel's word");
+        assert_eq!(
+            title(&a, Some("/usr/bin/wol")),
+            t,
+            "the same from the kernel's word"
+        );
         let wifi = Approval {
             request: R::Wifi { on: false },
             ..a.clone()
         };
-        assert_eq!(title(&wifi, None), "A program using wol wants to turn Wi-Fi off.");
+        assert_eq!(
+            title(&wifi, None),
+            "A program using wol wants to turn Wi-Fi off."
+        );
         let other = Approval {
             helper: "/usr/bin/wopkg".into(),
             ..a

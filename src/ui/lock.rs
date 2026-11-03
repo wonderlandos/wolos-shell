@@ -391,8 +391,6 @@ fn action(icon: &str, label: &str, run: impl Fn() + 'static) -> (gtk::Box, gtk::
     (v, b)
 }
 
-const LOCK_RESTART_REFUSED_TMP: &str = "This computer can’t restart while someone else is signed in. Ask them to sign out, then try again.";
-
 /// The caption under a power row for `note` (what [`power_note`] returned): its text and whether
 /// it is shown. No note clears the caption (audit6 S6-5: a refusal stayed after a later
 /// request was taken).
@@ -404,7 +402,7 @@ pub fn caption(note: Option<&'static str>) -> (&'static str, bool) {
 /// refused while another account is signed in (wol-admind's rule, `user_level_ok`), and the lock
 /// screen cannot ask for more rights, so the caption names that way out (audit6 S6-5).
 pub fn restart_caption(taken: bool) -> (&'static str, bool) {
-    caption((!taken).then_some(LOCK_RESTART_REFUSED_TMP))
+    caption((!taken).then_some(crate::copy::LOCK_RESTART_REFUSED))
 }
 
 /// What a power button's answer shows: nothing when it was taken.
@@ -735,8 +733,11 @@ mod tests {
         assert_eq!(caption(power_note(Power::Sleep, Verdict::Ok)), ("", false));
         // The lock screen's Restart names the other signed-in account when it is refused,
         // and clears the text when taken.
-        assert_eq!(restart_caption(false), (LOCK_RESTART_REFUSED_TMP, true));
-        assert!(LOCK_RESTART_REFUSED_TMP.contains("signed in"));
+        assert_eq!(
+            restart_caption(false),
+            (crate::copy::LOCK_RESTART_REFUSED, true)
+        );
+        assert!(crate::copy::LOCK_RESTART_REFUSED.contains("signed in"));
         assert_eq!(restart_caption(true), ("", false));
         assert_eq!(
             power_note(Power::ShutDown, Verdict::Error),

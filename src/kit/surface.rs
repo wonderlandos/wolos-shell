@@ -431,11 +431,14 @@ pub fn reserved_bottom_on(on: &impl IsA<gtk::Widget>) -> i32 {
         return 0;
     }
     let ours = monitor_of(on.as_ref());
-    let tops = gtk::Window::list_toplevels();
+    let tops = gtk::Window::toplevels();
     (0..tops.n_items())
         .filter_map(|i| tops.item(i).and_downcast::<gtk::Window>())
         .filter(|w| {
-            w.is_layer_window() && w.is_mapped() && w.anchor(Edge::Bottom) && !w.anchor(Edge::Top)
+            w.is_layer_window()
+                && w.is_mapped()
+                && w.is_anchor(Edge::Bottom)
+                && !w.is_anchor(Edge::Top)
         })
         .filter(|w| {
             let theirs = LayerShell::monitor(w).or_else(|| monitor_of(w.upcast_ref()));
@@ -459,11 +462,14 @@ pub fn reserved_bottom() -> i32 {
     if !gtk4_layer_shell::is_supported() {
         return 0;
     }
-    let tops = gtk::Window::list_toplevels();
+    let tops = gtk::Window::toplevels();
     (0..tops.n_items())
         .filter_map(|i| tops.item(i).and_downcast::<gtk::Window>())
         .filter(|w| {
-            w.is_layer_window() && w.is_mapped() && w.anchor(Edge::Bottom) && !w.anchor(Edge::Top)
+            w.is_layer_window()
+                && w.is_mapped()
+                && w.is_anchor(Edge::Bottom)
+                && !w.is_anchor(Edge::Top)
         })
         .map(|w| w.exclusive_zone().max(0))
         .sum()

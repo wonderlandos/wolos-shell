@@ -95,6 +95,8 @@ pub struct Installer {
     recovery_key: gtk::Label,
     /// "I wrote the key down": Restart waits for it.
     ack: RefCell<Option<gtk::Switch>>,
+    /// "Restart Later" (live desktop only): waits for the same toggle as Restart (audit6 I6-5).
+    later: RefCell<Option<gtk::Button>>,
     /// What the startup setup had to say (one or two lines).
     done_notes: gtk::Box,
     /// The Secure Boot sheet's BitLocker lines (R2B-9), filled when the sheet shows.
@@ -249,6 +251,7 @@ impl Installer {
             recovery,
             recovery_key,
             ack: Default::default(),
+            later: Default::default(),
             done_notes,
             secure_boot_notes,
             key_screen,
@@ -345,6 +348,15 @@ impl Installer {
             .and_then(|(_, e)| e.clone().dynamic_cast::<gtk::Editable>().ok())
         {
             e.set_text(text);
+        }
+    }
+
+    /// Restart and Restart Later move together: the recovery key is deleted once shown, so
+    /// neither may leave the page before the toggle is on (audit6 I6-5).
+    fn set_leave(&self, on: bool) {
+        self.with_card(Step::Done, |c| c.next.set_sensitive(on));
+        if let Some(b) = &*self.later.borrow() {
+            b.set_sensitive(on);
         }
     }
 
@@ -537,9 +549,24 @@ impl Installer {
         if let Some(ack) = &*self.ack.borrow() {
             ack.set_active(false);
         }
-        self.with_card(Step::Done, |c| c.next.set_sensitive(key.is_none()));
+        self.set_leave(install::done_may_leave(key.is_some(), false));
         self.flow.borrow_mut().jump(Step::Done);
         self.show(Step::Done);
+    }
+
+    /// The Done page's leaving actions: (Restart, Restart Later). None: no Restart Later on this
+    /// page (the installed machine's first start, `boot`). The golden case checks them.
+    pub fn leave_buttons(&self) -> (bool, Option<bool>) {
+        let mut next = false;
+        self.with_card(Step::Done, |c| next = c.next.is_sensitive());
+        (next, self.later.borrow().as_ref().map(|b| b.is_sensitive()))
+    }
+
+    /// "I wrote the key down", flipped as the person would.
+    pub fn set_acknowledged(&self, on: bool) {
+        if let Some(ack) = &*self.ack.borrow() {
+            ack.set_active(on);
+        }
     }
 
     pub fn is_installing(&self) -> bool {
@@ -551,11 +578,9 @@ impl Installer {
         let step = self.flow.borrow().step;
         match step {
             Step::Done => {
-                let acked = self
-                    .ack
-                    .borrow()
-                    .as_ref()
-                    .is_none_or(|a| !self.recovery.is_visible() || a.is_active());
+                let acked = self.ack.borrow().as_ref().is_none_or(|a| {
+                    install::done_may_leave(self.recovery.is_visible(), a.is_active())
+                });
                 if acked {
                     kit::spawn(&install::restart_command());
                 }
@@ -828,7 +853,7 @@ impl Installer {
             };
             (
                 vec![
-                    row(f.alongside_title(), "Keeps what's there"),
+                    row(f.alongside_title(), "Keeps what’s there"),
                     row(
                         Step::Replace.title().into(),
                         "Erases one partition, keeps the rest",
@@ -1174,7 +1199,7 @@ impl Installer {
         }
         rows.push(row("Password", "Asked at every start"));
         kinds.push(Protect::Password);
-        rows.push(row("Don't Encrypt", "Anyone with the disk can read it"));
+        rows.push(row("Don’t Encrypt", "Anyone with the disk can read it"));
         kinds.push(Protect::Off);
         let selected = kinds.iter().position(|k| *k == chosen);
         *self.protect_rows.borrow_mut() = kinds;
@@ -1573,7 +1598,7 @@ impl Installer {
         let me = Rc::downgrade(self);
         let ack = w::toggle(false, move |on| {
             if let Some(s) = me.upgrade() {
-                s.with_card(Step::Done, |c| c.next.set_sensitive(on));
+                s.set_leave(install::done_may_leave(true, on));
             }
         });
         ack.set_halign(gtk::Align::Start);
@@ -1592,9 +1617,9 @@ impl Installer {
         c.next.set_label("Restart");
         if !self.flow.borrow().boot {
             // From the live desktop: the person may go on trying WolOS and restart later.
-            c.add_action(&w::button("Restart Later", w::Kind::Default, || {
-                reveal::exit_faded()
-            }));
+            let later = w::button("Restart Later", w::Kind::Default, reveal::exit_faded);
+            c.add_action(&later);
+            *self.later.borrow_mut() = Some(later);
         }
         c
     }
@@ -1688,18 +1713,7 @@ impl Installer {
                 install::write_plan(&dir, &p, &f.plan_extras(), disk_pw, &f.draft.password)
             })
         };
-        let Some(Ok(plan)) = written else {
-            return self.show_failed(Stage::Prepare, "");
-        };
-        let argv = install::install_command(&plan);
-        eprintln!("wol-installer: {}", argv.join(" "));
-        let child = std::process::Command::new(&argv[0])
-            .args(&argv[1..])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
-            .spawn();
-        let Ok(mut child) = child else {
+        let Some(mut child) = launch(&dir, written, install::install_command) else {
             return self.show_failed(Stage::Prepare, "");
         };
         let out = child.stdout.take();
@@ -1983,6 +1997,10 @@ pub fn run() -> glib::ExitCode {
             if s2.is_installing() {
                 glib::Propagation::Stop
             } else {
+                // A failed install leaves no password file behind (audit6 S6-4).
+                if s2.flow.borrow().step == Step::Failed {
+                    install::remove_plan(&Installer::plan_dir());
+                }
                 glib::Propagation::Proceed
             }
         });
@@ -2010,6 +2028,32 @@ pub fn run() -> glib::ExitCode {
         let s3 = s.clone();
         a::keys(win, move || s.next(), move || s3.back());
     })
+}
+
+/// Starts `command(plan)` for the plan just written. When there is no plan (it could not be
+/// written) or the command cannot start, the plan folder goes: it already holds the account and
+/// disk passwords, and only `install-run` removes them (audit6 S6-4).
+fn launch(
+    dir: &std::path::Path,
+    written: Option<std::io::Result<PathBuf>>,
+    command: impl Fn(&std::path::Path) -> Vec<String>,
+) -> Option<std::process::Child> {
+    let Some(Ok(plan)) = written else {
+        install::remove_plan(dir);
+        return None;
+    };
+    let argv = command(&plan);
+    eprintln!("wol-installer: {}", argv.join(" "));
+    let child = std::process::Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::inherit())
+        .spawn();
+    if child.is_err() {
+        install::remove_plan(dir);
+    }
+    child.ok()
 }
 
 /// `org.freedesktop.ScreenSaver.Inhibit` on the session bus (hypridle serves it) until the sender
@@ -2048,6 +2092,40 @@ fn screensaver_inhibit() -> std::sync::mpsc::Sender<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit6 S6-4: a Prepare that failed (the plan could not be written, `install-run` could not
+    /// start) left the folder with both passwords until power-off.
+    #[test]
+    fn a_failed_prepare_leaves_no_password_files() {
+        let root = std::env::temp_dir().join(format!("wolos-launch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let dir = root.join("wolos-install");
+        let plan = wol_core::install::plan::Plan::default();
+        let write = || install::write_plan(&dir, &plan, &[], "disk pw", "account pw");
+        let gone = |what: &str| {
+            assert!(!dir.join(install::ACCOUNT_PASSWORD).exists(), "{what}");
+            assert!(!dir.join(install::DISK_PASSWORD).exists(), "{what}");
+            assert!(!dir.exists(), "{what}");
+        };
+        // The command cannot start.
+        let child = launch(&dir, Some(write()), |_| {
+            vec!["/nonexistent/install-run".into()]
+        });
+        assert!(child.is_none());
+        gone("unspawnable command");
+        // The plan could not be written: whatever was put down is removed.
+        write().unwrap();
+        let err = Some(Err(std::io::Error::other("disk full")));
+        assert!(launch(&dir, err, |_| unreachable!("no plan, no command")).is_none());
+        gone("plan not written");
+        // A command that starts keeps the plan for it (install-run removes it itself).
+        let mut child = launch(&dir, Some(write()), |_| vec!["true".into()]).expect("starts");
+        assert!(child.wait().unwrap().success());
+        assert!(dir.join(install::ACCOUNT_PASSWORD).exists());
+        install::remove_plan(&dir);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn the_sliders_land_on_whole_mib_inside_their_range() {

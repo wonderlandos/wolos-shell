@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Icon set v2 (design/tools/icons.py): one geometry for every icon the shell draws.
+//! Icon set v2 (design/tools/icons.py, design/tools/icons/): one geometry for every icon the shell draws.
 //! Symbolic: 16 grid, filled outlines of 1.5 px lines, `currentColor` only (GTK recolours them for
-//! light and dark through CSS). App icons: 24-cell pixel tiles, rendered to PNG at 48/128/512 in
-//! desktop/overlay/usr/share/icons/WolOS, whose edge reads on the light and the dark ground.
+//! light and dark through CSS). App icons: the Wonderland card, vector SVGs on the 64 grid rendered
+//! to PNG at 48/128/512 (rsvg-convert) in desktop/overlay/usr/share/icons/WolOS; their silhouette
+//! reads on the light and the dark ground.
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
@@ -121,10 +122,12 @@ const APP_TILES: &[&str] = &[
     "wolos-trash",
 ];
 
-/// `wolos-` literals that name packages, repositories and runtime files, not icons.
+/// `wolos-` literals that name packages, repositories and runtime files, not icons, and prefixes
+/// a name is built from (`"wolos-kit-"` + the kit id; the kits are in APP_TILES).
 fn not_an_icon(n: &str) -> bool {
     ["wolos-cachy", "wolos-install", "wolos-sessions-offered"].contains(&n)
         || n.starts_with("wolos-module-")
+        || n.ends_with('-')
 }
 
 /// Brand drawings the generator keeps as they are.
@@ -281,10 +284,18 @@ fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
-/// App tiles carry their own ground, so one drawing serves light and dark; what each needs is an
-/// edge that separates it from both the light (#F5F5F7) and the dark (#1C1C1E) desktop.
+/// Colours the set left behind (the previous tiles used another platform's system colours).
+const BANNED: &[&str] = &[
+    "#FF3B30", "#FF9500", "#FFCC00", "#34C759", "#007AFF", "#FF453A", "#FF9F0A", "#FFD60A",
+    "#30D158", "#0A84FF", "#FF5F57", "#FEBC2E", "#28C840", "#FF2D55", "#5AC8FA", "#8E8E93",
+];
+
+/// Full-colour icons are vector cards on the 64 grid (the Wonderland card, design/tools/icons/):
+/// one flat body with a 1-unit rim and a hard shadow, no filter, one light-edge gradient. Each
+/// carries its own ground, so one drawing serves light and dark; what each needs is a silhouette
+/// (body or rim) that separates from both the light (#F5F5F7) and the dark (#1C1C1E) desktop.
 #[test]
-fn app_tiles_are_pixel_tiles_that_read_on_light_and_dark() {
+fn full_colour_icons_are_vector_cards_that_read_on_light_and_dark() {
     let light = hex("#F5F5F7").unwrap();
     let dark = hex("#1C1C1E").unwrap();
     let mut all = svgs(&apps_dir());
@@ -303,29 +314,54 @@ fn app_tiles_are_pixel_tiles_that_read_on_light_and_dark() {
         if let Err(e) = well_formed(&s) {
             bad.push(format!("{n}: {e}"));
         }
-        if !s.contains(r#"viewBox="0 0 24 24""#) || !s.contains("crispEdges") {
-            bad.push(format!("{n}: not a 24-cell pixel tile"));
+        if !s.contains(r#"viewBox="0 0 64 64""#) || s.contains("crispEdges") {
+            bad.push(format!("{n}: not a vector icon on the 64 grid"));
         }
-        let edges: Vec<[f64; 3]> = s
-            .split("<rect ")
-            .filter(|r| r.contains(r#"class="edge""#))
-            .filter_map(|r| {
-                attr_values(&format!(" {r}"), "fill")
-                    .first()
-                    .and_then(|f| hex(f))
-            })
-            .collect();
-        if edges.len() < 20 {
-            bad.push(format!("{n}: {} edge cells", edges.len()));
+        if s.contains("<filter") || s.contains("<image") || s.contains("<text") {
+            bad.push(format!("{n}: filter, image or text"));
         }
-        for e in &edges {
-            if contrast(*e, light) < 1.3 || contrast(*e, dark) < 1.3 {
-                bad.push(format!("{n}: edge {e:?} vanishes on light or dark"));
-                break;
+        let upper = s.to_uppercase();
+        for c in BANNED {
+            if upper.contains(c) {
+                bad.push(format!("{n}: banned colour {c}"));
+            }
+        }
+        // The only gradient is the light edge; the body is flat.
+        if s.matches("<linearGradient").count() != 1 || !s.contains(r#"<linearGradient id="edge""#)
+        {
+            bad.push(format!("{n}: gradients other than the light edge"));
+        }
+        if s.contains("<radialGradient") {
+            bad.push(format!("{n}: radial gradient"));
+        }
+        // The hard shadow: the silhouette 1.5 down, black at 22%.
+        if !s.contains(r##"transform="translate(0 1.5)" fill="#000000" fill-opacity="0.22""##) {
+            bad.push(format!("{n}: no hard shadow"));
+        }
+        // First plane: flat fill and a 1-unit rim.
+        let plane = s.split("<path ").find_map(|t| {
+            let t = t.split('>').next()?;
+            let fill = attr_values(&format!(" {t}"), "fill")
+                .first()
+                .and_then(|f| hex(f))?;
+            let rim = attr_values(&format!(" {t}"), "stroke")
+                .first()
+                .and_then(|f| hex(f))?;
+            t.contains(r#"stroke-width="1""#).then_some((fill, rim))
+        });
+        match plane {
+            None => bad.push(format!("{n}: no body plane with a rim")),
+            Some((body, rim)) => {
+                for (g, ground) in [("light", light), ("dark", dark)] {
+                    let best = contrast(body, ground).max(contrast(rim, ground));
+                    if best < 1.8 {
+                        bad.push(format!("{n}: silhouette is {best:.2}:1 on {g}"));
+                    }
+                }
             }
         }
     }
-    assert!(tiles >= APP_TILES.len(), "only {tiles} app tiles");
+    assert!(tiles >= APP_TILES.len(), "only {tiles} icons");
     assert!(bad.is_empty(), "{bad:#?}");
 }
 
@@ -406,4 +442,13 @@ fn every_svg_renders() {
     }
     assert!(n > 230, "only {n} icons");
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+#[test]
+fn prefix_literals_and_package_names_are_not_icon_names() {
+    assert!(not_an_icon("wolos-kit-"));
+    assert!(not_an_icon("wolos-module-calendar"));
+    assert!(not_an_icon("wolos-install"));
+    assert!(!not_an_icon("wolos-kit-dev"));
+    assert!(!not_an_icon("wolos-files"));
 }

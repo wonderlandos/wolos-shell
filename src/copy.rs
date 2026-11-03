@@ -709,6 +709,24 @@ pub fn updates_ready(count: usize, security: bool) -> (String, String) {
     )
 }
 
+/// The plugin index has newer versions of plugins on this account (`shell::alerts`): the
+/// notification's summary and body, for the plugins not yet told about.
+pub fn plugin_updates_ready(names: &[&str]) -> (String, String) {
+    match names {
+        [one] => (
+            "Plugin Update Available".into(),
+            format!("{one} has an update. Open the App Store, then Plugins, to install it."),
+        ),
+        many => (
+            "Plugin Updates Available".into(),
+            format!(
+                "Updates are ready for {} plugins. Open the App Store, then Plugins, to install them.",
+                many.len()
+            ),
+        ),
+    }
+}
+
 /// Restart, Shut Down and Log Out ask first (macOS): question, countdown line, button.
 pub fn session_confirm(action: &str, secs: u32) -> Option<(&'static str, String, &'static str)> {
     let (q, what, button) = match action {
@@ -768,6 +786,10 @@ pub fn power_refused(p: shared::login::Power) -> &'static str {
         Power::ShutDown => "This computer can’t shut down right now. Try again.",
     }
 }
+
+/// The lock screen's Restart was refused: wol-admind does not end another account's session
+/// (audit6 S6-5).
+pub const LOCK_RESTART_REFUSED: &str = "This computer can’t restart right now. If someone else is signed in, they need to sign out first.";
 /// Timer widget notifications: (summary, body).
 pub const TIMER_BREAK: (&str, &str) = (
     "Time for a break",
@@ -810,12 +832,19 @@ pub const STORE_PLUGIN_UPDATE_TO: &str = "Update to {v}";
 pub const STORE_PLUGIN_NEEDS: &str = "Needs WolOS {v}";
 pub const STORE_PLUGIN_TURN_ON: &str = "Turn On";
 pub const STORE_PLUGIN_TURN_OFF: &str = "Turn Off";
+/// Installed and on, but this version asks for more than was allowed: Allow grants it.
+pub const STORE_PLUGIN_ALLOW: &str = "Allow";
 /// The row menu on an installed plugin; `{n}` is its name.
 pub const STORE_PLUGIN_REMOVE: &str = "Remove {n}";
 /// A row's second line; `{s}` the summary, `{p}` the permissions, `{a}` the author.
 pub const STORE_PLUGIN_ASKS_NOTHING: &str = "{s}. Asks for nothing.";
 pub const STORE_PLUGIN_ASKS_TO: &str = "{s}. Asks to: {p}.";
 pub const STORE_PLUGIN_BY: &str = "By {a}. {s}";
+/// What an allowed plugin's new version asks for beyond its grant; `{s}` the summary, `{p}` what is new.
+pub const STORE_PLUGIN_ASKS_MORE: &str = "{s}. Asks for more now: {p}.";
+/// Added to an installed plugin's line when its newer version needs a newer WolOS: `{s}` the line,
+/// `{v}` the version held back, `{m}` the WolOS version it needs.
+pub const STORE_PLUGIN_HELD: &str = "{s} Version {v} needs WolOS {m}.";
 
 /// Notification offers (`shell::offers`): the button labels.
 pub const OFFER_COPY_CODE: &str = "Copy Code";

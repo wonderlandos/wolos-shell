@@ -218,7 +218,9 @@ fn module_row(
                 },
             )
         }
-        Offer::Pending => w::label("Waiting", "secondary").upcast(),
+        // Queued for the next connection: Install Now does not wait for it (the same path as
+        // Install; audit6 ST6-2: the person is never left with a row that only says "Waiting").
+        Offer::Pending => install_button(e, s, "Install Now", reload, st, busy),
         Offer::Install => install_button(e, s, "Install", reload, st, busy),
     };
     let sub = if offer(s) == Offer::Pending {

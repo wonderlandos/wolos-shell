@@ -217,11 +217,8 @@ const RULES: &[(&str, &str)] = &[
 
 /// Violations tolerated today per rule (absent = 0). Only shrinks.
 const BASELINE: &[(&str, usize)] = &[
-    ("RU-001", 1),
     ("RU-003", 1),
     ("RU-004", 1),
-    ("RU-010", 47),
-    ("RU-014", 4),
     ("RU-019", 1),
     ("RU-024", 2),
     ("RU-026", 3),
@@ -980,6 +977,28 @@ fn quoted(keep: impl Fn(&str) -> bool) -> BTreeSet<String> {
     names
 }
 
+/// A `wolos-` literal that names an app icon: not a symbolic, package, repository or runtime
+/// file, and not a prefix a name is built from (`"wolos-kit-"` + the kit id).
+fn is_app_icon_literal(t: &str) -> bool {
+    t.starts_with("wolos-")
+        && !t.ends_with("-symbolic")
+        && !t.ends_with('-')
+        && t != "wolos-cachy"
+        && t != "wolos-install"
+        && t != "wolos-sessions-offered"
+        && !t.starts_with("wolos-module-")
+}
+
+#[test]
+fn ru_044_prefix_and_package_literals_are_not_icon_names() {
+    assert!(is_app_icon_literal("wolos-files"));
+    assert!(is_app_icon_literal("wolos-kit-dev"));
+    assert!(!is_app_icon_literal("wolos-kit-"));
+    assert!(!is_app_icon_literal("wolos-logo-symbolic"));
+    assert!(!is_app_icon_literal("wolos-module-calendar"));
+    assert!(!is_app_icon_literal("wolos-install"));
+}
+
 #[test]
 fn ru_042_to_044_icons() {
     let dir = root().join("design/icons/symbolic");
@@ -1004,14 +1023,7 @@ fn ru_042_to_044_icons() {
         .collect();
     check("RU-043", bad);
     let apps = root().join("design/icons/apps");
-    let app = quoted(|t| {
-        t.starts_with("wolos-")
-            && !t.ends_with("-symbolic")
-            && t != "wolos-cachy"
-            && t != "wolos-install"
-            && t != "wolos-sessions-offered"
-            && !t.starts_with("wolos-module-")
-    });
+    let app = quoted(is_app_icon_literal);
     check(
         "RU-044",
         app.iter()

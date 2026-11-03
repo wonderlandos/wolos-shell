@@ -209,7 +209,10 @@ mod tests {
             }]
         );
         list("0.1", "0.12");
-        assert!(plugin_news_in(&p, &keys, &net, url, "0.12.0").is_empty(), "same version");
+        assert!(
+            plugin_news_in(&p, &keys, &net, url, "0.12.0").is_empty(),
+            "same version"
+        );
         list("0.3", "0.13");
         assert!(
             plugin_news_in(&p, &keys, &net, url, "0.12.0").is_empty(),

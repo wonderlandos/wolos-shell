@@ -2,9 +2,9 @@
 //! Low battery, full disk and updates-ready notifications, checked with the menu bar poll.
 //! Battery levels come from `wol_core::power::policy` (20, 10, 5 %, sleep at 3 %), updates from
 //! `wol_core::update::check`; the sentences from [`crate::copy`].
+use crate::software_update::PluginNews;
 use crate::status::{Battery, BatteryStatus};
 use wol_core::power::policy::{self, Alert};
-use crate::software_update::PluginNews;
 use wol_core::update::check::Updates;
 
 /// Below this share of free space on the startup disk, warn once (until it is back above
@@ -492,7 +492,10 @@ mod tests {
             panic!()
         };
         assert_eq!(s, "Plugin Update Available");
-        assert_eq!(body, "Weather has an update. Open the App Store, then Plugins, to install it.");
+        assert_eq!(
+            body,
+            "Weather has an update. Open the App Store, then Plugins, to install it."
+        );
         assert_eq!(
             a.plugin_updates(vec![n("alice.weather", "Weather", "1.3")]),
             None,
@@ -507,7 +510,9 @@ mod tests {
         };
         assert!(body.starts_with("Clock has"), "{body}");
         // A newer version of the first is news again.
-        let Some(Notice::Show(_, body, _)) = a.plugin_updates(vec![n("alice.weather", "Weather", "1.4")]) else {
+        let Some(Notice::Show(_, body, _)) =
+            a.plugin_updates(vec![n("alice.weather", "Weather", "1.4")])
+        else {
             panic!()
         };
         assert!(body.contains("Weather"), "{body}");
@@ -519,10 +524,16 @@ mod tests {
         ]) else {
             panic!()
         };
-        assert!(body.starts_with("Updates are ready for 2 plugins"), "{body}");
+        assert!(
+            body.starts_with("Updates are ready for 2 plugins"),
+            "{body}"
+        );
         // Updated (gone from the list), then a new version: told again.
         assert_eq!(b.plugin_updates(vec![]), None);
-        assert!(b.plugin_updates(vec![n("bob.clock", "Clock", "2.0")]).is_some());
+        assert!(
+            b.plugin_updates(vec![n("bob.clock", "Clock", "2.0")])
+                .is_some()
+        );
     }
 
     /// Audit4 S3-6: what the blocking read found becomes notices on the UI thread, in order;
@@ -562,7 +573,10 @@ mod tests {
         let Notice::Show(s, body, false) = &got[3] else {
             panic!("{got:?}")
         };
-        assert_eq!((s.as_str(), body.contains("Weather")), ("Plugin Update Available", true));
+        assert_eq!(
+            (s.as_str(), body.contains("Weather")),
+            ("Plugin Update Available", true)
+        );
         assert!(read(false).due.is_none(), "no df between the due polls");
     }
 
@@ -575,7 +589,15 @@ mod tests {
         let (_, u2) = crate::copy::updates_ready(4, true);
         let (_, p1) = crate::copy::plugin_updates_ready(&["Weather"]);
         let (_, p2) = crate::copy::plugin_updates_ready(&["Weather", "Clock"]);
-        for t in [b.as_str(), crate::copy::BATTERY_SLEEP.1, &db, &u1, &u2, &p1, &p2] {
+        for t in [
+            b.as_str(),
+            crate::copy::BATTERY_SLEEP.1,
+            &db,
+            &u1,
+            &u2,
+            &p1,
+            &p2,
+        ] {
             assert!(
                 crate::copy::lint(t).is_empty(),
                 "{t}: {:?}",
