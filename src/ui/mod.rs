@@ -30,6 +30,7 @@ pub mod store;
 pub mod switcher;
 pub mod theme_picker;
 pub mod transient;
+pub mod tray_items;
 pub mod widgets;
 pub mod widgets_builtin;
 pub mod widgets_gallery;

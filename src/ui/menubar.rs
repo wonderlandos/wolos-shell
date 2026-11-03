@@ -161,11 +161,13 @@ struct Items {
     search: gtk::Button,
     control_center: gtk::Button,
     clock: gtk::Button,
+    /// Apps' status items (SP-7, `ui::tray_items`).
+    tray: Rc<super::tray_items::Strip>,
 }
 
 impl Bar {
     /// The widget of a built-in item (None: a plugin item, or one this bar does not draw yet:
-    /// workspaces, tasks and the tray come with the taskbar style).
+    /// workspaces and tasks come with the taskbar style).
     fn builtin(&self, item: &BarItem) -> Option<gtk::Widget> {
         let i = &self.items;
         Some(match item {
@@ -180,7 +182,8 @@ impl Bar {
             BarItem::Search => i.search.clone().upcast(),
             BarItem::ControlCenter => i.control_center.clone().upcast(),
             BarItem::Clock => i.clock.clone().upcast(),
-            BarItem::Workspaces | BarItem::Tasks | BarItem::Tray | BarItem::Plugin { .. } => {
+            BarItem::Tray => i.tray.root.clone().upcast(),
+            BarItem::Workspaces | BarItem::Tasks | BarItem::Plugin { .. } => {
                 return None;
             }
         })
@@ -190,6 +193,9 @@ impl Bar {
     /// (`plugins::Host::bar`). Plugin items are made again; the old ones' timers end.
     pub fn arrange(&self) {
         let layout = self.layout.borrow().clone();
+        let tray_placed = [&layout.left, &layout.centre, &layout.right]
+            .iter()
+            .any(|s| s.contains(&BarItem::Tray));
         let slots = match &self.plugins {
             Some(h) => h.borrow().bar(&layout),
             None => [layout.left, layout.centre, layout.right],
@@ -202,7 +208,11 @@ impl Bar {
                 slot.remove(&c);
             }
         }
-        for (slot, items) in self.slots.iter().zip(slots) {
+        for (n, (slot, items)) in self.slots.iter().zip(slots).enumerate() {
+            // A layout without the tray item: the status slot starts with it (hidden when empty).
+            if n == 2 && !tray_placed {
+                slot.append(&self.items.tray.root);
+            }
             for item in &items {
                 if let Some(w) = self.builtin(item) {
                     slot.append(&w);
@@ -218,7 +228,7 @@ impl Bar {
     pub fn set_layout(&self, layout: Layout) {
         let o = kit::surface::orientation(layout.bar);
         self.root.set_orientation(o);
-        for s in &self.slots {
+        for s in self.slots.iter().chain([&self.items.tray.root]) {
             s.set_orientation(o);
         }
         for s in &self.spacers {
@@ -370,6 +380,7 @@ pub fn content_with(
             search,
             control_center,
             clock: cb,
+            tray: super::tray_items::strip(),
         },
         slots,
         spacers,
@@ -446,6 +457,7 @@ pub fn build(
     )));
     let bar = content_with(sys, Layout::default(), Some(host.clone()));
     bar.life.tie(&win);
+    super::tray_items::start();
     {
         // Plugins load off the GTK thread and again whenever their folder changes; the
         // primary bar registers their hotkeys.
