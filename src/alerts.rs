@@ -205,7 +205,10 @@ fn plugins_due() -> bool {
 /// Blocking: `df`, the update check's files, the online-install record and the malware lists.
 fn read(due: bool) -> Reads {
     let due = due.then(|| DueReads {
-        updates: Updates::read(std::path::Path::new(wol_core::update::check::DIR)),
+        updates: Updates::read(
+            std::path::Path::new(wol_core::update::check::DIR),
+            crate::focus::unix_now(),
+        ),
         plugins: plugins_due().then(crate::software_update::plugin_news),
         online: std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
             .ok()

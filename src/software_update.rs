@@ -57,7 +57,10 @@ pub fn badge(u: Option<&Updates>) -> Option<Badge> {
 /// Reads the check's files and builds the badge. Blocking (a few small files): call it off the
 /// GTK thread, as the menu bar poll does.
 pub fn read() -> Option<Badge> {
-    let u = Updates::read(std::path::Path::new(wol_core::update::check::DIR))?;
+    let u = Updates::read(
+        std::path::Path::new(wol_core::update::check::DIR),
+        crate::focus::unix_now(),
+    )?;
     let running = std::fs::read_to_string(wol_core::update::check::RELEASE_FILE).ok();
     badge(Some(&u.installed(running.as_deref())))
 }
