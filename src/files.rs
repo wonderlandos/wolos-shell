@@ -66,9 +66,7 @@ pub fn save(text: &str, file: &Path) -> std::io::Result<()> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = file.with_extension("new");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(tmp, file)
+    shared::atomic::atomic_write(file, 0o644, text.as_bytes())
 }
 
 /// The saved list, and whether it is missing or older than [`STALE`].
@@ -331,5 +329,21 @@ mod tests {
             let budget = if cfg!(debug_assertions) { 200 } else { 50 };
             assert!(took.as_millis() < budget, "{q}: {took:?}");
         }
+    }
+
+    #[test]
+    fn save_replaces_the_list_whole_and_leaves_no_temporary() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("wol-files-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let file = d.join("cache/files.txt");
+        save("a\n", &file).unwrap();
+        save("b\n", &file).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "b\n");
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644);
+        let names: Vec<_> = std::fs::read_dir(file.parent().unwrap()).unwrap().collect();
+        assert_eq!(names.len(), 1, "only the list is left: {names:?}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

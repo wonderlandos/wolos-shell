@@ -43,7 +43,14 @@ fn every_control_center_spawn_is_a_real_command() {
                     cmd.target
                 );
             }
-            ["wol", sub, ..] => panic!("{argv:?}: only `wol shell` is spawned, not `wol {sub}`"),
+            // A desktop toggle tile (Stay Awake): `wol toggle <word>` with a word the CLI takes.
+            ["wol", "toggle", word] => assert!(
+                wol_core::toggles::words().contains(word),
+                "{argv:?}: `wol toggle` has no '{word}'"
+            ),
+            ["wol", sub, ..] => {
+                panic!("{argv:?}: only `wol shell` and `wol toggle` are spawned, not `wol {sub}`")
+            }
             ["wol-settings", page] => {
                 assert!(
                     shell::ui::settings::PAGES.contains(page),

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Click outside closes the open panel on every display: Hyprland's focus grab
+//! Click outside closes the open panel on every display: the compositor's focus grab
 //! (`hyprland_focus_grab_v1`, protocols/hyprland-focus-grab-v1.xml). The shell names the
 //! surfaces a click may land on (the open panel, menu bars, the Dock); a click anywhere else, on
 //! any display, clears the grab and the panel closes. A small Wayland client on GTK's own
@@ -54,7 +54,7 @@ pub enum Plan<T> {
     /// Nothing wanted any more: destroy the grab.
     Release,
     /// A grab is live: add and remove on it, also when another panel takes over. Never destroys
-    /// it, so Hyprland never refocuses the app behind (which closed the panel). The new panel has
+    /// it, so the compositor never refocuses the app behind (which closed the panel). The new panel has
     /// the keyboard from its own map (an on-demand layer takes focus), not from the grab's order.
     Adjust { add: Vec<T>, remove: Vec<T> },
     /// No grab yet: a fresh one with `wanted`.
@@ -62,7 +62,7 @@ pub enum Plan<T> {
 }
 
 /// Live (lead, v0.12): Control Center closed itself on open. Every sync destroyed and recreated
-/// the grab; Hyprland gave the keyboard back to the app behind, `activewindow` fired and the shell
+/// the grab; the compositor gave the keyboard back to the app behind, `activewindow` fired and the shell
 /// read it as "another app in front". The plan keeps a grab alive while its panel is open.
 pub fn plan<T: PartialEq + Clone>(held: &[T], wanted: &[T]) -> Plan<T> {
     if wanted.is_empty() {
@@ -75,7 +75,7 @@ pub fn plan<T: PartialEq + Clone>(held: &[T], wanted: &[T]) -> Plan<T> {
     if held == wanted {
         return Plan::Keep;
     }
-    // Audit3 R2A-1: recreating the grab for a panel switch destroyed it (Hyprland refocused the
+    // Audit3 R2A-1: recreating the grab for a panel switch destroyed it (the compositor refocused the
     // window under the pointer) and the new grab, made before the new panel mapped, did not
     // accept it, so its map cleared the grab: either way the new panel closed itself.
     if held.is_empty() {
@@ -250,7 +250,7 @@ impl FocusGrab {
     /// Grabs with these windows whitelisted (the mapped ones); empty releases the grab.
     /// Idempotent: the same set again sends nothing, a changed set adjusts the live grab, and a
     /// grab is only made when none is live (see [`plan`]). True when this call destroyed a grab:
-    /// Hyprland then hands the keyboard to a window, which is not "another app in front"
+    /// The compositor then hands the keyboard to a window, which is not "another app in front"
     /// (`transient::Dismisser::expect_refocus`).
     pub fn set(&self, windows: &[gtk::Window]) -> bool {
         let wanted: Vec<WlSurface> = windows
@@ -304,7 +304,7 @@ mod tests {
     }
 
     /// Opening the Control Center synced the grab twice (visible, then mapped); the second sync
-    /// destroyed and recreated it, Hyprland refocused the app behind and the panel closed itself.
+    /// destroyed and recreated it, the compositor refocused the app behind and the panel closed itself.
     #[test]
     fn syncing_the_same_surfaces_again_touches_nothing() {
         let panel_and_bars = [9, 1, 2];

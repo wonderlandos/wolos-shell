@@ -417,6 +417,7 @@ impl Busy {
     }
 }
 
+// Gives the answer slot back to IN_FLIGHT.
 impl Drop for Busy {
     fn drop(&mut self) {
         IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);

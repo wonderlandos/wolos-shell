@@ -64,17 +64,22 @@ pub fn now() -> crate::clock::Stamp {
     let Ok(t) = glib::DateTime::now_local() else {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs() as i64);
+            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
         return utc_stamp(secs);
     };
     crate::clock::Stamp {
-        weekday: t.day_of_week() as u8,
-        day: t.day_of_month() as u8,
-        month: t.month() as u8,
-        hour: t.hour() as u8,
-        minute: t.minute() as u8,
-        second: t.second() as u8,
+        weekday: field(t.day_of_week()),
+        day: field(t.day_of_month()),
+        month: field(t.month()),
+        hour: field(t.hour()),
+        minute: field(t.minute()),
+        second: field(t.second()),
     }
+}
+
+/// A calendar field (all below 60 by construction) as the clock's `u8`; 0 if one ever is not.
+fn field(v: impl TryInto<u8>) -> u8 {
+    v.try_into().unwrap_or(0)
 }
 
 /// UTC fields of a Unix time (civil-from-days, Howard Hinnant).
@@ -91,12 +96,12 @@ pub fn utc_stamp(secs: i64) -> crate::clock::Stamp {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     crate::clock::Stamp {
         // 1970-01-01 was a Thursday; `weekday` 1 = Monday.
-        weekday: ((days + 3).rem_euclid(7) + 1) as u8,
-        day: day as u8,
-        month: month as u8,
-        hour: (rem / 3_600) as u8,
-        minute: (rem % 3_600 / 60) as u8,
-        second: (rem % 60) as u8,
+        weekday: field((days + 3).rem_euclid(7) + 1),
+        day: field(day),
+        month: field(month),
+        hour: field(rem / 3_600),
+        minute: field(rem % 3_600 / 60),
+        second: field(rem % 60),
     }
 }
 
@@ -129,16 +134,80 @@ pub fn spawn(argv: &[String]) {
             return;
         }
     }
-    let Some((p, a)) = argv.split_first() else {
-        return;
-    };
-    match std::process::Command::new(p).args(a).spawn() {
+    match command(argv, &[]).map(|mut c| c.spawn()) {
         // Reap off the main thread so a long-running shell never collects zombies.
-        Ok(mut c) => {
-            std::thread::spawn(move || c.wait());
+        Some(Ok(mut c)) => {
+            let _ = std::thread::Builder::new()
+                .name("wol-reap".into())
+                .spawn(move || c.wait());
         }
-        Err(e) => eprintln!("wol: {p}: {e}"),
+        Some(Err(e)) => eprintln!("wol: {}: {e}", argv[0]),
+        None => {}
     }
+}
+
+/// Starts an app (Dock, Search, App Store): like [`spawn`], and the app gets the current X11
+/// scale ([`user_scale_env`], read on a worker thread). Commands that are not apps (Control
+/// Center toggles, `wol ...`) go through [`spawn`] and get nothing added.
+pub fn spawn_app(argv: &[String]) {
+    if shell_line(argv).is_some() {
+        return spawn(argv);
+    }
+    let owned = argv.to_vec();
+    let started = std::thread::Builder::new()
+        .name("wol-launch".into())
+        .spawn(move || {
+            let env = user_scale_env();
+            match command(&owned, &env).map(|mut c| c.spawn()) {
+                Some(Ok(mut c)) => {
+                    let _ = c.wait();
+                }
+                Some(Err(e)) => eprintln!("wol: {}: {e}", owned[0]),
+                None => {}
+            }
+        });
+    // No thread for the scale lookup: the app still starts, at the session's scale.
+    if started.is_err() {
+        spawn(argv);
+    }
+}
+
+/// argv as a command with `env` added; None for an empty argv.
+fn command(argv: &[String], env: &[(String, String)]) -> Option<std::process::Command> {
+    let (p, a) = argv.split_first()?;
+    let mut c = std::process::Command::new(p);
+    c.args(a).envs(env.iter().map(|(k, v)| (k, v)));
+    Some(c)
+}
+
+/// What `wol-x11-env` exports to the systemd user manager after every scale change (audit X1-2).
+/// The shell's own environment is from session start and stays without them on purpose (GTK 4
+/// layer surfaces), so every launch reads them fresh and hands them to the app.
+pub const SCALE_ENV: [&str; 2] = ["GDK_SCALE", "STEAM_FORCE_DESKTOPUI_SCALING"];
+
+/// The [`SCALE_ENV`] entries of `systemctl --user show-environment`; a value that is not a plain
+/// number (`2`, `1.5`) is dropped.
+pub fn scale_env(show_environment: &str) -> Vec<(String, String)> {
+    show_environment
+        .lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            let number = !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.');
+            (SCALE_ENV.contains(&k) && number).then(|| (k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// [`scale_env`] of the running user manager; empty without one. Blocking: off the main thread.
+pub fn user_scale_env() -> Vec<(String, String)> {
+    std::process::Command::new("systemctl")
+        .args(["--user", "show-environment"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| scale_env(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
 }
 
 pub fn runtime_dir() -> String {
@@ -185,7 +254,7 @@ pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static
 }
 
 #[cfg(test)]
-mod clock_tests {
+mod tests {
     use super::*;
 
     /// The bar's clock must never panic: without a local zone the UTC fallback is a real calendar.
@@ -202,11 +271,6 @@ mod clock_tests {
         let leap = utc_stamp(951_782_400); // Tue 29 Feb 2000 00:00:00
         assert_eq!((leap.day, leap.month, leap.weekday), (29, 2, 2));
     }
-}
-
-#[cfg(test)]
-mod spawn_tests {
-    use super::*;
 
     #[test]
     fn shell_commands_skip_the_cli() {
@@ -218,5 +282,39 @@ mod spawn_tests {
         assert_eq!(shell_line(&v(&["wol", "shell"])), None);
         assert_eq!(shell_line(&v(&["wol", "theme", "toggle"])), None);
         assert_eq!(shell_line(&v(&["wol-search"])), None);
+    }
+
+    /// Launches hand the app the scale wol-x11-env exported, never anything else from the manager.
+    #[test]
+    fn launches_carry_only_the_x11_scale() {
+        let text = "HOME=/home/ana\nGDK_SCALE=2\nPATH=/usr/bin\n\
+                    STEAM_FORCE_DESKTOPUI_SCALING=1.5\nGDK_SCALE_X=9\n";
+        assert_eq!(
+            scale_env(text),
+            [
+                ("GDK_SCALE".to_string(), "2".to_string()),
+                ("STEAM_FORCE_DESKTOPUI_SCALING".into(), "1.5".into()),
+            ]
+        );
+        assert!(scale_env("GDK_SCALE=$(reboot)\nGDK_SCALE=\n").is_empty());
+        assert!(scale_env("").is_empty());
+    }
+
+    /// Only app launches carry the scale: plain spawns (toggles, `wol ...`) add nothing.
+    #[test]
+    fn only_app_launches_add_the_scale() {
+        let argv = ["foot".to_string()];
+        let env = [("GDK_SCALE".to_string(), "2".to_string())];
+        let envs = |c: std::process::Command| {
+            c.get_envs()
+                .map(|(k, v)| format!("{}={}", k.to_string_lossy(), v.unwrap().to_string_lossy()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(envs(command(&argv, &env).unwrap()), ["GDK_SCALE=2"]);
+        assert!(
+            envs(command(&argv, &[]).unwrap()).is_empty(),
+            "spawn adds nothing"
+        );
+        assert!(command(&[], &env).is_none());
     }
 }

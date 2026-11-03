@@ -1,10 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Desktop & Dock: Dock and menu bar (shell prefs written to shell.json, applied with `reload`) and
-//! Windows (tiling through the managed Hyprland include, applied live by `Action::Desktop`).
+//! Windows (tiling through the managed compositor include, applied live by `Action::Desktop`).
 use super::*;
 use wol_core::hyprprefs::Layout;
 use wol_core::prefs::{AUTOHIDE_DELAY_MAX_MS, TILE_SIZE};
 use wol_core::shortcuts::Group;
+
+/// Row titles, as the page shows them and Settings search finds them (`super::search::ROWS`).
+pub(super) mod rows {
+    pub const MAGNIFY: &str = "Magnification";
+    pub const AUTOHIDE: &str = "Automatically hide and show the Dock";
+    pub const SIZE: &str = "Size";
+    pub const DELAY: &str = "Delay before the Dock shows";
+    pub const BATTERY: &str = "Show battery percentage";
+    pub const DATE: &str = "Show date";
+    pub const TILE: &str = "Tile windows";
+    pub const ARRANGEMENT: &str = "Arrangement";
+    pub const GAPS: &str = "Space between windows";
+    pub const SHORTCUTS: &str = "Tiling shortcuts";
+    pub const FLOATING: &str = "Keep Floating";
+}
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let p = w::page("Desktop & Dock");
@@ -26,13 +41,9 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&w::section(
         "Dock",
         &[
+            t(rows::MAGNIFY, |p| p.dock_magnify, |p, v| p.dock_magnify = v),
             t(
-                "Magnification",
-                |p| p.dock_magnify,
-                |p, v| p.dock_magnify = v,
-            ),
-            t(
-                "Automatically hide and show the Dock",
+                rows::AUTOHIDE,
                 |p| p.dock_autohide,
                 |p, v| p.dock_autohide = v,
             ),
@@ -42,7 +53,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         "",
         &[
             dock_slider(
-                "Size",
+                rows::SIZE,
                 (f64::from(TILE_SIZE.0), f64::from(TILE_SIZE.1), 4.0),
                 ("Small", "Large"),
                 &cur,
@@ -51,7 +62,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 |p, v| p.dock_tile_size = v as u32,
             ),
             dock_slider(
-                "Delay before the Dock shows",
+                rows::DELAY,
                 (0.0, f64::from(AUTOHIDE_DELAY_MAX_MS), 100.0),
                 ("None", "Long"),
                 &cur,
@@ -65,11 +76,11 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         "Menu Bar",
         &[
             t(
-                "Show battery percentage",
+                rows::BATTERY,
                 |p| p.battery_percent,
                 |p, v| p.battery_percent = v,
             ),
-            t("Show date", |p| p.show_date, |p, v| p.show_date = v),
+            t(rows::DATE, |p| p.show_date, |p, v| p.show_date = v),
         ],
     ));
     p.append(&status);
@@ -131,21 +142,54 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
     );
     let names: Vec<&str> = LAYOUTS.iter().map(|l| l.1).collect();
     let at = LAYOUTS.iter().position(|l| l.0 == d.layout).unwrap_or(0);
-    let (d1, s1) = (desk.clone(), status.clone());
-    let arrangement = form::picker_row("Arrangement", "", &names, at, move |i| {
-        d1.set(&s1, |p| p.layout = LAYOUTS[i].0)
+    // The menu and the slider, so a failed save can put them back to the saved prefs.
+    let (menu, slider) = (
+        Rc::new(glib::WeakRef::<gtk::DropDown>::new()),
+        Rc::new(glib::WeakRef::<gtk::Scale>::new()),
+    );
+    let (d1, s1, m1) = (desk.clone(), status.clone(), menu.clone());
+    let arrangement = form::picker_row(rows::ARRANGEMENT, "", &names, at, move |i| {
+        let (dk, m) = (d1.clone(), m1.clone());
+        d1.set_or(
+            &s1,
+            |p| p.layout = LAYOUTS[i].0,
+            move || {
+                let at = LAYOUTS.iter().position(|l| l.0 == dk.get().layout);
+                if let (Some(m), Some(at)) = (m.upgrade(), at) {
+                    m.set_selected(u32::try_from(at).unwrap_or_default());
+                }
+            },
+        )
     });
-    let (d2, s2, pv) = (desk.clone(), status.clone(), preview.clone());
+    let (d2, s2, pv, sl) = (
+        desk.clone(),
+        status.clone(),
+        preview.clone(),
+        slider.clone(),
+    );
     let gaps = form::slider_row(
-        "Space between windows",
+        rows::GAPS,
         GAPS,
         f64::from(d.looks.gaps).clamp(GAPS.0, GAPS.1),
         ("Narrow", "Wide"),
         move |v| {
-            d2.set(&s2, |p| p.looks.gaps = v as u8);
+            let (dk, pv2, sl) = (d2.clone(), pv.clone(), sl.clone());
+            d2.set_or(
+                &s2,
+                |p| p.looks.gaps = v as u8,
+                move || {
+                    let looks = dk.get().looks;
+                    pv2.set(&looks);
+                    if let Some(s) = sl.upgrade() {
+                        s.set_value(f64::from(looks.gaps).clamp(GAPS.0, GAPS.1));
+                    }
+                },
+            );
             pv.set(&d2.get().looks);
         },
     );
+    menu.set(control_in::<gtk::DropDown>(&arrangement).as_ref());
+    slider.set(control_in::<gtk::Scale>(&gaps).as_ref());
     let picture = w::vbox(0);
     picture.add_css_class("list-row");
     picture.add_css_class("preview-row");
@@ -165,7 +209,7 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
         "Windows",
         &[
             form::pending_toggle_row(
-                "Tile windows",
+                rows::TILE,
                 crate::copy::DOCK_TILE_HINT,
                 d.tiling,
                 move |on, done| {
@@ -193,7 +237,7 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
     more.append(&w::section(
         "",
         &[form::button_row(
-            "Tiling shortcuts",
+            rows::SHORTCUTS,
             crate::copy::DOCK_TILING_SHORTCUTS_HINT,
             "Show…",
             move || {
@@ -238,7 +282,11 @@ fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
             .map(|class| {
                 let (h, dk, st, c) = (holder.clone(), desk.clone(), status.clone(), class.clone());
                 let remove = w::icon_button("list-remove-symbolic", "Remove", move || {
-                    dk.set(&st, |p| p.float_apps.retain(|x| *x != c));
+                    dk.set_or(
+                        &st,
+                        |p| p.float_apps.retain(|x| *x != c),
+                        refill(&h, &dk, &st),
+                    );
                     fill(&h, &dk, &st);
                 });
                 let name = app_name(entries, class);
@@ -251,7 +299,7 @@ fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
         add.connect_clicked(move |b| {
             let taken = dk.get().float_apps;
             let (h, dk, st, b) = (h.clone(), dk.clone(), st.clone(), b.clone());
-            // Hyprland's client list and every .desktop file: off the UI thread.
+            // The compositor's client list and every .desktop file: off the UI thread.
             off_thread(
                 move || {
                     let entries = crate::desktop::load_all();
@@ -275,7 +323,11 @@ fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
                             .map(|(name, c)| {
                                 let (h, dk, st, c) = (h.clone(), dk.clone(), st.clone(), c.clone());
                                 let act: Box<dyn Fn()> = Box::new(move || {
-                                    dk.set(&st, |p| p.float_apps.push(c.clone()));
+                                    dk.set_or(
+                                        &st,
+                                        |p| p.float_apps.push(c.clone()),
+                                        refill(&h, &dk, &st),
+                                    );
                                     fill(&h, &dk, &st);
                                 });
                                 (name.as_str(), act)
@@ -294,7 +346,16 @@ fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
             ""
         };
         rows.push(form::row(hint, "", &add));
-        holder.append(&w::section("Keep floating", &rows));
+        holder.append(&w::section(rows::FLOATING, &rows));
+    }
+    /// What fills the list again after a failed save (Desk read the file back), while it shows.
+    fn refill(holder: &gtk::Box, desk: &Rc<Desk>, status: &gtk::Label) -> impl FnOnce() + 'static {
+        let (h, dk, st) = (holder.downgrade(), desk.clone(), status.clone());
+        move || {
+            if let Some(h) = h.upgrade() {
+                fill(&h, &dk, &st);
+            }
+        }
     }
     fill(&holder, desk, status);
     holder.upcast()

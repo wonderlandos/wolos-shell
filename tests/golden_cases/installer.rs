@@ -103,6 +103,52 @@ fn add_empty(v: &mut Vec<Case>) {
     });
 }
 
+/// audit6 I6-5: on the live desktop an encrypted install's Done page shows the recovery key, which
+/// `install-check --result` has already deleted. Restart and Restart Later both wait for "I wrote
+/// the key down"; with no key on the page both are free.
+fn add_done_live(v: &mut Vec<Case>) {
+    v.push(Case {
+        name: "installer-done-live-key-1280".into(),
+        size: (1280, 800),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| {
+            let i = Installer::new(&Hints::default(), false, true, zones(), Some(vec![]));
+            i.show_done(
+                Some("ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z2345-67ABC-DEFGH"),
+                None,
+                false,
+            );
+            assert_eq!(
+                i.leave_buttons(),
+                (false, Some(false)),
+                "key unacknowledged"
+            );
+            i.set_acknowledged(true);
+            assert_eq!(i.leave_buttons(), (true, Some(true)), "acknowledged");
+            i.set_acknowledged(false);
+            assert_eq!(i.leave_buttons(), (false, Some(false)), "toggled back off");
+            // A second install in the same window starts unacknowledged again.
+            i.set_acknowledged(true);
+            i.show_done(Some("ZZZZZ-FGHIJ"), None, false);
+            assert_eq!(
+                i.leave_buttons(),
+                (false, Some(false)),
+                "a new key resets it"
+            );
+            i.show_done(None, None, false);
+            assert_eq!(i.leave_buttons(), (true, Some(true)), "no key on the page");
+            // The golden shows the key page (what the person must read first).
+            i.show_done(
+                Some("ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z2345-67ABC-DEFGH"),
+                None,
+                false,
+            );
+            i.root.clone()
+        }),
+    });
+}
+
 fn blank() -> Disk {
     Disk {
         path: "/dev/sda".into(),
@@ -145,6 +191,36 @@ fn add_fit(v: &mut Vec<Case>) {
             }),
         });
     }
+}
+
+/// The module records the Modules page reads on the image (lead's order: developer, AI, creative,
+/// gaming).
+fn records() -> Vec<wol_core::modules::Module> {
+    [
+        ("dev", 900),
+        ("ai-claude", 300),
+        ("ai-local", 4000),
+        ("creative", 3500),
+        ("gaming", 6000),
+        ("console", 50),
+    ]
+    .into_iter()
+    .map(|(id, mb)| wol_core::modules::Module {
+        id: id.into(),
+        name: id.into(),
+        size_mb: mb,
+        ..Default::default()
+    })
+    .collect()
+}
+
+/// The Secure Boot page's computers: `tier` with Secure Boot on, `off` without it.
+fn secure(i: &Rc<Installer>, tier: &str, off: &str, on: bool) {
+    i.with_flow(|f| {
+        f.disks[0].check.tier = Some(tier.into());
+        f.disks[0].check.tier_off = Some(off.into());
+        f.secure = on;
+    });
 }
 
 fn at(i: &Rc<Installer>, page: &str) {
@@ -229,12 +305,84 @@ fn at(i: &Rc<Installer>, page: &str) {
             i.jump(Step::Summary)
         }
         "secure-boot" => i.jump(Step::SecureBoot),
+        // Lead 2026-11-02: Secure Boot opt-in, default off, the key screen pictured first.
+        "secure-boot-choice" => {
+            secure(i, "mok", "off", false);
+            i.jump(Step::SecureBootChoice)
+        }
+        "secure-boot-choice-on" => {
+            secure(i, "mok", "off", true);
+            i.jump(Step::SecureBootChoice)
+        }
+        "secure-boot-already-on" => {
+            secure(i, "mok", "firmware", false);
+            i.jump(Step::SecureBootChoice)
+        }
+        // BitLocker's recovery key is said only while the switch is on.
+        "secure-boot-own-keys" | "secure-boot-own-keys-on" => {
+            i.with_flow(|f| {
+                f.method = Method::Replace;
+                f.replace = Some("u3".into());
+                f.disks[0].disk.parts[1].fstype = "BitLocker".into();
+            });
+            secure(i, "own-keys", "off", page.ends_with("-on"));
+            i.jump(Step::SecureBootChoice)
+        }
+        "modules" => {
+            i.with_flow(|f| f.set_modules(&records()));
+            i.jump(Step::Modules)
+        }
+        "modules-ticked" => {
+            i.with_flow(|f| {
+                f.set_modules(&records());
+                f.tick_module("dev", true);
+                f.tick_module("creative", true);
+            });
+            i.jump(Step::Modules)
+        }
+        "extras" => i.jump(Step::Extras),
+        "extras-on" => {
+            i.with_flow(|f| f.codecs = true);
+            i.jump(Step::Extras)
+        }
+        "summary-choices" => {
+            i.with_flow(|f| {
+                f.method = Method::Erase;
+                f.set_modules(&records());
+                f.tick_module("dev", true);
+                f.tick_module("gaming", true);
+                f.codecs = true;
+            });
+            secure(i, "mok", "off", true);
+            i.jump(Step::Summary)
+        }
+        // No network at install time: the Summary says the media formats and modules chosen are
+        // added at first start (copy::installer::DEFERRED_BOTH).
+        "summary-offline" => {
+            i.set_online_probe(|| false);
+            i.with_flow(|f| {
+                f.method = Method::Erase;
+                f.set_modules(&records());
+                f.tick_module("dev", true);
+                f.codecs = true;
+                f.offline = true;
+            });
+            i.jump(Step::Summary);
+            i.with_flow(|f| {
+                assert_eq!(
+                    f.deferred_line(),
+                    Some(shell::copy::installer::DEFERRED_BOTH)
+                )
+            });
+        }
         // R2B-9: a Windows with BitLocker stays and this install changes the Secure Boot keys.
         "summary-bitlocker" | "secure-boot-bitlocker" => {
             i.with_flow(|f| {
                 f.method = Method::Replace;
                 f.replace = Some("u3".into());
                 f.disks[0].disk.parts[1].fstype = "BitLocker".into();
+                // Own keys only when the person turned Secure Boot on (opt-in).
+                f.secure = true;
                 f.disks[0].check.tier = Some(
                     if page == "summary-bitlocker" {
                         "own-keys"
@@ -263,6 +411,15 @@ fn at(i: &Rc<Installer>, page: &str) {
             Some(wol_core::boot::note(wol_core::boot::Tier::Mok)),
             true,
         ),
+        // Secure Boot left off: the key screen is not repeated, whatever was queued.
+        "done-secure-off" => {
+            secure(i, "mok", "off", false);
+            i.show_done(
+                None,
+                Some(wol_core::boot::note(wol_core::boot::Tier::Off)),
+                true,
+            )
+        }
         "failed-refused" => i.show_failed_with(
             Stage::Prepare,
             "the disk is not what the plan was made for (refuse UntypablePassword)",
@@ -286,12 +443,22 @@ refuse UntypablePassword
             );
             i.toggle_details();
         }
-        _ => i.show_failed_with(Stage::Disk, "sfdisk: cannot open /dev/nvme0n1", ""),
+        _ => {
+            i.show_failed_with(Stage::Disk, "sfdisk: cannot open /dev/nvme0n1", "");
+            // The tool's words are behind Details; the foot keeps one plain sentence.
+            assert_eq!(
+                i.failed_texts(),
+                (
+                    shell::copy::installer::FAILED_SEE_DETAILS.to_string(),
+                    "sfdisk: cannot open /dev/nvme0n1".to_string()
+                )
+            );
+        }
     }
 }
 
 pub fn add(v: &mut Vec<Case>) {
-    const PAGES: [&str; 33] = [
+    const PAGES: [&str; 45] = [
         "begin",
         "language",
         "zone",
@@ -313,13 +480,25 @@ pub fn add(v: &mut Vec<Case>) {
         "summary-unencrypted",
         "summary-manual",
         "summary-bitlocker",
+        "summary-choices",
+        "summary-offline",
         "secure-boot",
         "secure-boot-bitlocker",
+        "secure-boot-choice",
+        "secure-boot-choice-on",
+        "secure-boot-already-on",
+        "secure-boot-own-keys",
+        "secure-boot-own-keys-on",
+        "modules",
+        "modules-ticked",
+        "extras",
+        "extras-on",
         "installing",
         "done",
         "done-windows",
         "done-key",
         "done-key-screen",
+        "done-secure-off",
         "failed",
         "failed-details",
         "failed-refused",
@@ -362,4 +541,5 @@ pub fn add(v: &mut Vec<Case>) {
     }
     add_fit(v);
     add_empty(v);
+    add_done_live(v);
 }

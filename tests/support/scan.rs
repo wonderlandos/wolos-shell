@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Shared reader for the source ratchets (hypr_ratchet, copy_scan, unwrap_ratchet, main_thread,
 //! one_helper): every `src/**/*.rs` file of the shell, with comments removed and `#[cfg(test)]`
-//! items blanked, and its string literals. A small Rust lexer (strings, raw strings, chars vs
+//! items blanked (and the split-out `tests.rs` modules left out), and its string literals. A small Rust lexer (strings, raw strings, chars vs
 //! lifetimes, nested block comments), so a `//` inside a URL or a `"` inside a char literal does
 //! not hide or invent code. Heuristic by design: these tests ratchet counts, they do not prove.
 #![allow(dead_code)]
@@ -30,7 +30,9 @@ pub fn sources() -> Vec<Src> {
             let p = e.path();
             if p.is_dir() {
                 dirs.push(p);
-            } else if p.extension().is_some_and(|x| x == "rs") {
+            } else if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("tests.rs") {
+                // `tests.rs` is a split-out test module (`#[cfg(test)] mod tests;` in the parent
+                // file): test code, like the `#[cfg(test)]` items blanked below.
                 files.push(p);
             }
         }

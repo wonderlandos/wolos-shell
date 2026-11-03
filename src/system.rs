@@ -20,7 +20,7 @@ pub enum Action {
     NightLight(bool),
     MediaToggle,
     Power(PowerMode),
-    /// Hyprland monitor rule (`wol_core::controls::monitor_rule`).
+    /// Compositor monitor rule (`wol_core::controls::monitor_rule`).
     Monitor(String),
     UserAdd {
         name: String,
@@ -46,13 +46,13 @@ pub enum Action {
     Zoom(bool),
     /// Kit stylesheet contrast overrides (`kit::style::CONTRAST_FILE`), every shell process.
     IncreaseContrast(bool),
-    /// Settings: save desktop prefs and apply the changed Hyprland keywords live (`wol_core::hyprprefs`).
+    /// Settings: save desktop prefs and apply the changed compositor keywords live (`wol_core::hyprprefs`).
     Desktop(Box<wol_core::hyprprefs::DesktopPrefs>),
     /// Settings > Keyboard > Shortcuts: save overrides and rebind live.
     Shortcuts(Box<wol_core::shortcuts::Overrides>),
     /// Pause (true) or resume WolOS shortcuts while a shortcut is being recorded.
     ShortcutCapture(bool),
-    /// Settings > Restore: start from this restore point (ZFS boot environment) next time.
+    /// Settings > Restore: start from this restore point (a root slot) next time.
     BootEnvironment(String),
     /// Settings: one allow-listed administrator request (wol-admind validates it again).
     Admin(shared::admin::AdminRequest),
@@ -201,7 +201,7 @@ pub trait System: Send + Sync {
     fn undo(&self, _id: Option<u64>) -> Result<wol_core::journal::Entry, String> {
         Err("Undo is not available here.".into())
     }
-    /// Restore points (ZFS boot environments), empty without them.
+    /// Restore points (the root slots one can start from), empty without them.
     fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
         Vec::new()
     }
@@ -265,7 +265,7 @@ pub struct NowPlaying {
     pub art: Option<String>,
 }
 
-/// Accessibility shortcuts; None = not available here (no Hyprland).
+/// Accessibility shortcuts; None = not available here (no compositor).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Accessibility {
     pub reduce_motion: Option<bool>,
@@ -672,6 +672,8 @@ pub struct Snapshot {
     pub wifi_on: Option<bool>,
     pub nets: Vec<WifiNet>,
     pub volume: Option<Volume>,
+    /// The default input (microphone): level and mute (audit5 S9-3).
+    pub mic: Option<Volume>,
     pub outputs: Vec<Output>,
     pub brightness: Option<u8>,
     pub bluetooth: Option<bool>,
@@ -685,6 +687,12 @@ pub struct Snapshot {
     pub keyboard: Option<u8>,
     pub low_power: Option<bool>,
     pub a11y: Option<A11y>,
+}
+
+/// The default source, as `wpctl get-volume` prints it (`Volume: 0.50 [MUTED]`); None = no input.
+fn mic_volume(host: &dyn wol_core::system::Host) -> Option<Volume> {
+    host.run(&["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"])
+        .and_then(|t| wol_core::controls::parse_wpctl_volume(&t))
 }
 
 /// Seconds between refreshes per topic (system-api.md TTLs).
@@ -766,8 +774,20 @@ impl Inner {
 
     /// Audio only, now (volume keys); the other topics keep their schedule.
     fn refresh_audio(&self) {
-        self.last.lock().unwrap_or_else(|e| e.into_inner())[0] = Some(std::time::Instant::now());
-        self.refresh_topics([true, false, false, false, false]);
+        self.refresh_now([true, false, false, false, false]);
+    }
+
+    /// The `due` topics now (after an action that changed them); the others keep their schedule.
+    fn refresh_now(&self, due: [bool; TOPICS]) {
+        let now = std::time::Instant::now();
+        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+        for (l, d) in last.iter_mut().zip(due) {
+            if d {
+                *l = Some(now);
+            }
+        }
+        drop(last);
+        self.refresh_topics(due);
     }
 
     fn refresh_topics(&self, due: [bool; TOPICS]) {
@@ -776,6 +796,7 @@ impl Inner {
         let before = s.clone();
         if due[0] {
             s.volume = self.c.volume().or(s.volume);
+            s.mic = mic_volume(&*self.c.host).or(s.mic);
             s.brightness = self.c.brightness();
         }
         if due[1] {
@@ -802,10 +823,7 @@ impl Inner {
         if s != before {
             *self.lock() = s.clone();
             if let (Some(p), Ok(j)) = (&self.cache, serde_json::to_string(&s)) {
-                let tmp = p.with_extension("tmp");
-                if fs::write(&tmp, j).is_ok() {
-                    let _ = fs::rename(tmp, p);
-                }
+                let _ = shared::atomic::atomic_write(p, 0o644, j.as_bytes());
             }
             self.watchers
                 .lock()
@@ -814,14 +832,22 @@ impl Inner {
         }
     }
 
-    fn take_password(&self) -> String {
-        std::mem::take(&mut *self.password.lock().unwrap_or_else(|e| e.into_inner()))
+    fn take_password(&self) -> Secret {
+        Secret(std::mem::take(
+            &mut *self.password.lock().unwrap_or_else(|e| e.into_inner()),
+        ))
     }
 
     /// Blocking; runs on a worker thread.
     fn perform(&self, a: &Action) -> Result<(), ActionError> {
         let c = &self.c;
-        let pw = self.take_password();
+        // Only an action that can ask for it takes the stored password: a volume step between
+        // the Authenticate sheet and its retry used to eat it (audit4 S3-5).
+        let pw = if may_need_password(a) {
+            self.take_password()
+        } else {
+            Secret(String::new())
+        };
         let r = match a {
             Action::Wifi(on) => c.set_wifi(*on, &pw),
             Action::WifiJoin(ssid, p) => c.wifi_join(ssid, p.as_deref(), &pw),
@@ -963,6 +989,82 @@ fn flatpak_install_tracked(id: &str) -> Option<Result<(), wol_core::controls::Co
     } else {
         Err(ControlError::Failed)
     })
+}
+
+/// The admin password between the Authenticate sheet and the action: its bytes are overwritten
+/// when it is dropped (audit4 S3-5).
+struct Secret(String);
+
+impl std::ops::Deref for Secret {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+// Wipes the password bytes before the memory is freed.
+impl Drop for Secret {
+    fn drop(&mut self) {
+        let mut b = std::mem::take(&mut self.0).into_bytes();
+        b.fill(0);
+        std::hint::black_box(&b);
+    }
+}
+
+/// Actions that go through wol-admind and may answer `NeedsAuth`: the only ones that take the
+/// password [`System::authorize`] stored.
+fn may_need_password(a: &Action) -> bool {
+    matches!(
+        a,
+        Action::Wifi(_)
+            | Action::WifiJoin(..)
+            | Action::Bluetooth(_)
+            | Action::Output(_)
+            | Action::UserAdd { .. }
+            | Action::PkgUpgrade
+            | Action::PkgInstall(_)
+            | Action::PkgRemove(_)
+            | Action::FlatpakOverride { .. }
+            | Action::Power(_)
+            | Action::BootEnvironment(_)
+            | Action::Admin(_)
+    )
+}
+
+/// The snapshot topics (audio, wifi, slow, media, panel) an action changes: only those are read
+/// again before its reply. Every topic after every action forked nmcli, bluetoothctl, hyprctl and
+/// playerctl per slider step (audit4 S3-5).
+fn topics_of(a: &Action) -> [bool; TOPICS] {
+    let (audio, wifi, slow, media, panel) = match a {
+        Action::Volume(_) | Action::Muted(_) | Action::Brightness(_) => (1, 0, 0, 0, 0),
+        Action::Wifi(_) => (0, 1, 0, 0, 0),
+        // A new network brings a new default route.
+        Action::WifiJoin(..) => (0, 1, 1, 0, 0),
+        Action::Bluetooth(_) => (0, 0, 1, 0, 1),
+        Action::BtConnect(..) => (0, 0, 0, 0, 1),
+        Action::Output(_) | Action::Monitor(_) => (0, 0, 1, 0, 0),
+        Action::MediaToggle | Action::MediaNext | Action::MediaPrevious => (0, 0, 0, 1, 0),
+        Action::NightLight(_)
+        | Action::Power(_)
+        | Action::KeyboardBrightness(_)
+        | Action::ReduceMotion(_)
+        | Action::Zoom(_) => (0, 0, 0, 0, 1),
+        // Allow-listed requests of every kind: read everything again.
+        Action::Admin(_) => (1, 1, 1, 1, 1),
+        Action::UserAdd { .. }
+        | Action::PkgUpgrade
+        | Action::PkgInstall(_)
+        | Action::PkgRemove(_)
+        | Action::FlatpakInstall(_)
+        | Action::FlatpakRemove(_)
+        | Action::FlatpakOverride { .. }
+        | Action::IncreaseContrast(_)
+        | Action::Desktop(_)
+        | Action::Shortcuts(_)
+        | Action::ShortcutCapture(_)
+        | Action::BootEnvironment(_) => (0, 0, 0, 0, 0),
+    };
+    [audio, wifi, slow, media, panel].map(|t| t == 1)
 }
 
 fn admin(
@@ -1123,12 +1225,13 @@ impl System for CoreSystem {
         }
     }
     fn audio(&self) -> Audio {
-        let v = self.inner.lock().volume;
+        let s = self.inner.lock();
+        let (v, m) = (s.volume, s.mic);
         Audio {
             volume: v.map(|v| v.percent),
             muted: v.is_some_and(|v| v.muted),
-            mic: None,
-            mic_muted: false,
+            mic: m.map(|m| m.percent),
+            mic_muted: m.is_some_and(|m| m.muted),
         }
     }
     fn network(&self) -> Network {
@@ -1181,11 +1284,15 @@ impl System for CoreSystem {
         self.inner.lock().night
     }
     fn authorize(&self, password: &str) -> Result<(), ActionError> {
-        *self
-            .inner
-            .password
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = password.into();
+        // The one it replaces is wiped.
+        drop(Secret(std::mem::replace(
+            &mut *self
+                .inner
+                .password
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+            password.into(),
+        )));
         Ok(())
     }
     // Sync setters: same path as `spawn`, for callers that are already off the UI thread.
@@ -1205,8 +1312,12 @@ impl System for CoreSystem {
             .name("wol-action".into())
             .spawn(move || {
                 let r = i.perform(&a);
-                // Reply with the host's state already read, so callers never see it go stale after.
-                i.refresh(true);
+                // Reply with the host's state already read, so callers never see it go stale
+                // after: the topics this action changed, not all of them (audit4 S3-5).
+                let due = topics_of(&a);
+                if due.contains(&true) {
+                    i.refresh_now(due);
+                }
                 let _ = tx.try_send(r);
             });
         rx
@@ -1315,6 +1426,7 @@ pub fn approve(
     req: &shared::shell::ApprovalRequest,
     password: &str,
 ) -> Result<(), ActionError> {
+    use shared::admin::AdminAction;
     use shared::shell::ApprovalRequest as R;
     // User-level changes run in the helper after Allow; never here, and wol-admind never hears of them.
     if !req.is_admin() {
@@ -1329,6 +1441,16 @@ pub fn approve(
         R::WifiJoin { ssid, password: p } => c.wifi_join(ssid, p.as_deref(), password),
         R::Bluetooth { on } => c.set_bluetooth(*on, password),
         R::BootEnvironment { name } => c.boot_environment(name, password),
+        // Audit C7-1 (ADR 0034): wold's staged copy, Undo Update and the channel run in
+        // wol-admind, which checks that this account is an administrator and the password.
+        // The SHA-256 the sheet showed goes along: wol-admind installs only that file (ADR 0034).
+        R::PackageFile { staged, sha256, .. } => {
+            admin_one(c, AdminAction::PkgInstallFile, &[staged, sha256], password)
+        }
+        R::SystemRollback => admin_one(c, AdminAction::SystemRollback, &[], password),
+        R::SystemChannel { channel } => {
+            admin_one(c, AdminAction::SystemChannel, &[channel], password)
+        }
         // Refused above; answer Unavailable rather than panic.
         R::Change { .. } => Err(wol_core::controls::ControlError::Unavailable),
     };
@@ -1338,6 +1460,17 @@ pub fn approve(
         ActionError::NeedsAuth => ActionError::Denied,
         e => e,
     })
+}
+
+/// One wol-admind request with the typed password.
+fn admin_one(
+    c: &Controls,
+    action: shared::admin::AdminAction,
+    args: &[&String],
+    password: &str,
+) -> Result<(), wol_core::controls::ControlError> {
+    let args = args.iter().map(|a| (*a).clone()).collect();
+    c.admin_request(&shared::admin::AdminRequest { action, args }, password)
 }
 
 /// One wol-admind request per package name. `update` with names installs or upgrades each one
@@ -1365,7 +1498,7 @@ fn packages(
     }
 }
 
-/// What an undo touched follows it: other apps restyle, shell prefs and Hyprland reload.
+/// What an undo touched follows it: other apps restyle, shell prefs and compositor reload.
 fn after_undo(c: &Controls, r: &wol_core::journal::Reload) {
     use wol_core::theme::{accent, active};
     if let Some(saved) = &r.theme {
@@ -1393,408 +1526,4 @@ pub fn default_system() -> std::rc::Rc<dyn System> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn control_center_labels() {
-        use crate::status::*;
-        let nets = [WifiNetwork {
-            ssid: "Home".into(),
-            signal: 80,
-            secure: true,
-            connected: true,
-        }];
-        assert_eq!(
-            wifi_subtitle(
-                Network {
-                    online: true,
-                    wifi: true,
-                    signal: None
-                },
-                &nets
-            ),
-            "Home"
-        );
-        assert_eq!(
-            wifi_subtitle(
-                Network {
-                    online: true,
-                    wifi: false,
-                    signal: None
-                },
-                &[]
-            ),
-            "Ethernet"
-        );
-        assert_eq!(wifi_subtitle(Network::default(), &[]), "Not Connected");
-        assert_eq!(
-            battery_label(Some(Battery {
-                percent: 82,
-                status: BatteryStatus::Charging
-            }))
-            .unwrap(),
-            "82% · Charging"
-        );
-        assert_eq!(battery_label(None), None);
-        assert_eq!(signal_icon(30), "network-wireless-signal-ok-symbolic");
-    }
-
-    /// Helper approvals always check the password and leave no cached authorization behind.
-    #[test]
-    fn approve_revokes_around_the_admin_request() {
-        use shared::admin::AdminReply;
-        use shared::shell::ApprovalRequest as R;
-        let sent = Arc::new(Mutex::new(Vec::<String>::new()));
-        let log = sent.clone();
-        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::linux()));
-        c.admin = Arc::new(move |req, pw| {
-            log.lock()
-                .unwrap()
-                .push(format!("{} {}", req.action.name(), req.args.join(" ")));
-            Some(match pw {
-                "" => AdminReply::Ok,
-                "good" => AdminReply::Ok,
-                _ => AdminReply::Denied,
-            })
-        });
-        let be = R::BootEnvironment {
-            name: wol_core::update::SLOTS[1].into(),
-        };
-        assert_eq!(approve(&c, &be, "good"), Ok(()));
-        let change = R::Change {
-            capability: "appearance".into(),
-            what: "switch to Dark appearance".into(),
-        };
-        assert_eq!(
-            approve(&c, &change, "good"),
-            Err(ActionError::Unavailable),
-            "user-level changes never run as an admin request"
-        );
-        assert_eq!(approve(&c, &be, "bad"), Err(ActionError::Denied));
-        let be_line = format!("boot-environment {}", wol_core::update::SLOTS[1]);
-        assert_eq!(
-            *sent.lock().unwrap(),
-            [
-                "revoke ",
-                be_line.as_str(),
-                "revoke ",
-                "revoke ",
-                be_line.as_str(),
-                "revoke "
-            ]
-        );
-    }
-
-    /// Audit S7: wold's package sheet checks the typed password even while the session's
-    /// authorization is still cached (wol-admind would otherwise accept any text), and the
-    /// update verbs map to the wol-admind requests that keep holds (audit S2).
-    #[test]
-    fn package_sheets_check_the_password_even_with_a_warm_cache() {
-        use shared::admin::{AdminAction, AdminReply};
-        use shared::shell::ApprovalRequest as R;
-        let warm = Arc::new(Mutex::new(true));
-        let sent = Arc::new(Mutex::new(Vec::<String>::new()));
-        let (cache, log) = (warm.clone(), sent.clone());
-        let mut c = Controls::new(Arc::new(wol_core::system::fake::FakeHost::linux()));
-        c.admin = Arc::new(move |req, pw| {
-            let mut cached = cache.lock().unwrap();
-            if req.action == AdminAction::Revoke {
-                *cached = false;
-                return Some(AdminReply::Ok);
-            }
-            log.lock()
-                .unwrap()
-                .push(format!("{} {}", req.action.name(), req.args.join(" ")));
-            // wol-admind: a cached authorization allows; otherwise only the right password.
-            Some(if *cached || pw == "good" {
-                *cached = true;
-                AdminReply::Ok
-            } else {
-                AdminReply::Denied
-            })
-        });
-        let install = R::Packages {
-            verb: "install".into(),
-            names: vec!["gimp".into()],
-        };
-        assert_eq!(
-            approve(&c, &install, "junk"),
-            Err(ActionError::Denied),
-            "a warm cache does not make junk a password"
-        );
-        assert!(!*warm.lock().unwrap(), "and nothing is left cached");
-        assert_eq!(approve(&c, &install, "good"), Ok(()));
-        assert!(!*warm.lock().unwrap(), "revoked after, too");
-        let update = R::Packages {
-            verb: "update".into(),
-            names: vec!["firefox".into()],
-        };
-        let holding = R::Packages {
-            verb: "update-holding".into(),
-            names: vec!["firefox".into(), "gimp".into()],
-        };
-        assert_eq!(approve(&c, &update, "good"), Ok(()));
-        assert_eq!(approve(&c, &holding, "good"), Ok(()));
-        let sent = sent.lock().unwrap();
-        assert_eq!(sent[sent.len() - 2], "pkg-install firefox", "{sent:?}");
-        assert_eq!(sent[sent.len() - 1], "pkg-upgrade firefox gimp", "{sent:?}");
-    }
-
-    #[test]
-    fn battery_files() {
-        assert_eq!(
-            parse_battery("55\n", "Charging\n"),
-            Some(Battery {
-                percent: 55,
-                status: BatteryStatus::Charging
-            })
-        );
-        assert_eq!(parse_battery("x", "Full"), None);
-    }
-
-    #[test]
-    fn reads_fake_sysfs_tree() {
-        let root = std::env::temp_dir().join(format!("wol-sysfs-{}", std::process::id()));
-        let bat = root.join("power_supply/BAT0");
-        fs::create_dir_all(&bat).unwrap();
-        fs::write(bat.join("capacity"), "20\n").unwrap();
-        fs::write(bat.join("status"), "Discharging\n").unwrap();
-        let wl = root.join("net/wlan0/wireless");
-        fs::create_dir_all(&wl).unwrap();
-        fs::write(root.join("net/wlan0/operstate"), "up\n").unwrap();
-        let s = Sysfs { root: root.clone() };
-        assert_eq!(s.battery().unwrap().percent, 20);
-        assert_eq!(
-            s.network(),
-            Network {
-                online: true,
-                wifi: true,
-                signal: None
-            }
-        );
-        assert_eq!(s.brightness(), None);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    /// Settings > Battery, Control Center and Privacy & Security read the policies' own status.
-    #[test]
-    fn power_and_security_status_come_from_the_host() {
-        use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::linux());
-        h.command("ls /sys/class/power_supply", "AC\nBAT0\n")
-            .command("cat /sys/class/power_supply/AC/type", "Mains\n")
-            .command("cat /sys/class/power_supply/AC/online", "0\n")
-            .command("cat /sys/class/power_supply/BAT0/type", "Battery\n")
-            .command("cat /sys/class/power_supply/BAT0/capacity", "64\n");
-        h.command(
-            "systemctl show -p UnitFileState --value nftables.service",
-            "enabled\n",
-        );
-        let sys = CoreSystem::with_ticks(
-            Controls::new(h),
-            Sysfs::default(),
-            None,
-            std::sync::mpsc::channel().1,
-        );
-        let p = sys.power_status().unwrap();
-        assert_eq!(p.source, wol_core::power::policy::Source::Battery);
-        assert_eq!(p.battery, Some(64));
-        assert_eq!(sys.security_status().unwrap().firewall, Some(true));
-        assert!(Fake.power_status().is_none(), "previews read nothing");
-    }
-
-    /// Volume keys: the OSD waited for the next poll (up to 10 s). `refresh_audio` reads the
-    /// sink now, off the UI thread, and replies once the snapshot has it.
-    #[test]
-    fn refresh_audio_reads_the_sink_now() {
-        use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::new(false));
-        h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.42\n");
-        let (_tick, ticks) = std::sync::mpsc::channel();
-        let sys = CoreSystem::with_ticks(Controls::new(h), Sysfs::default(), None, ticks);
-        assert_eq!(sys.audio().volume, None, "no tick yet");
-        assert_eq!(sys.refresh_audio().recv_blocking(), Ok(Ok(())));
-        assert_eq!(sys.audio().volume, Some(42));
-    }
-
-    /// Live idle: the refresh worker woke every second (10 wakeups/s in wol-shell, plus helper
-    /// processes) with nobody looking. Fast refresh only while a watcher (Control Center) is open.
-    #[test]
-    fn refreshes_fast_only_while_watched() {
-        use wol_core::system::fake::FakeHost;
-        let (_tick, ticks) = std::sync::mpsc::channel();
-        let sys = CoreSystem::with_ticks(
-            Controls::new(Arc::new(FakeHost::new(false))),
-            Sysfs::default(),
-            None,
-            ticks,
-        );
-        assert_eq!(sys.inner.period(), IDLE_PERIOD);
-        let w = sys.watch().unwrap();
-        assert_eq!(sys.inner.period(), WATCHED_PERIOD);
-        drop(w);
-        assert_eq!(sys.inner.period(), IDLE_PERIOD);
-        assert!(IDLE_PERIOD >= std::time::Duration::from_secs(10));
-        assert!(
-            TTLS_IDLE[1] >= 60 && TTLS_IDLE[2] >= 60,
-            "scans are the expensive helpers"
-        );
-    }
-
-    #[test]
-    fn core_system_reads_snapshot_and_acts_off_thread() {
-        use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::new(false));
-        h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.64\n")
-            .command("nmcli radio wifi", "enabled\n")
-            .command(
-                "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list --rescan no",
-                "*:70:WPA2:Home\n :40::Cafe\n",
-            )
-            .command("wpctl set-volume @DEFAULT_AUDIO_SINK@ 30%", "");
-        let root = std::env::temp_dir().join(format!("wol-core-sys-{}", std::process::id()));
-        let cache = root.join("snap.json");
-        fs::create_dir_all(&root).unwrap();
-        let (tick, ticks) = std::sync::mpsc::channel();
-        let sys = CoreSystem::with_ticks(
-            Controls::new(h.clone()),
-            Sysfs { root: root.clone() },
-            Some(cache.clone()),
-            ticks,
-        );
-        let w = sys.watch().unwrap();
-        tick.send(()).unwrap();
-        w.recv_blocking().unwrap();
-        assert_eq!(sys.audio().volume, Some(64));
-        assert_eq!(sys.wifi_enabled(), Some(true));
-        assert_eq!(wifi_subtitle(sys.network(), &sys.wifi_networks()), "Home");
-        assert_eq!(sys.network().signal, Some(70));
-        h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.30\n");
-        let done = sys.spawn(Action::Volume(30));
-        assert_eq!(done.recv_blocking(), Ok(Ok(())));
-        assert_eq!(sys.audio().volume, Some(30), "refreshed before the reply");
-        assert_eq!(
-            sys.spawn(Action::UserAdd {
-                name: "dinah".into(),
-                full_name: "Dinah".into(),
-                admin: false,
-                password: "n3w-passw0rd".into(),
-            })
-            .recv_blocking(),
-            Ok(Err(ActionError::Unavailable)),
-            "no wol-admind on the test host"
-        );
-        let cached: Snapshot = serde_json::from_str(&fs::read_to_string(&cache).unwrap()).unwrap();
-        assert_eq!(cached.nets.len(), 2);
-        drop(sys);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    fn bare(h: &Arc<wol_core::system::fake::FakeHost>) -> CoreSystem {
-        let (_tick, ticks) = std::sync::mpsc::channel();
-        let root = std::env::temp_dir().join("wol-no-sysfs");
-        CoreSystem::with_ticks(Controls::new(h.clone()), Sysfs { root }, None, ticks)
-    }
-
-    /// Control Center-only helpers (playerctl, bluetoothctl, hyprctl getoption) never run while
-    /// nobody watches; opening a watcher reads them at once instead of after the idle period.
-    #[test]
-    fn panel_topics_refresh_only_while_watched() {
-        use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::new(false));
-        h.command(
-            &format!(
-                "playerctl metadata --format {}",
-                wol_core::controls::PLAYERCTL_FORMAT
-            ),
-            "Playing\t61000000\t152000000\tSong\tBand\t\n",
-        )
-        .command("powerprofilesctl get", "balanced\n");
-        let sys = bare(&h);
-        sys.inner.refresh(false);
-        assert!(
-            !h.ran()
-                .iter()
-                .any(|r| r.starts_with("playerctl") || r.starts_with("powerprofilesctl")),
-            "{:?}",
-            h.ran()
-        );
-        assert_eq!(sys.now_playing(), None);
-        let w = sys.watch().unwrap();
-        w.recv_blocking().unwrap();
-        let np = sys.now_playing().unwrap();
-        assert_eq!(
-            (np.title.as_str(), np.position, np.length),
-            ("Song", 61, Some(152))
-        );
-        assert_eq!(sys.power_mode(), Some(PowerMode::Automatic));
-    }
-
-    /// Battery and the default route come through the host (fakeable), not the sysfs mirror.
-    #[test]
-    fn battery_and_route_through_the_host() {
-        use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::linux());
-        h.file("/sys/class/power_supply/BAT0/type", "Battery\n")
-            .file("/sys/class/power_supply/BAT0/capacity", "47\n")
-            .file("/sys/class/power_supply/BAT0/status", "Discharging\n")
-            .file("/sys/class/power_supply/BAT0/energy_now", "19000\n")
-            .file("/sys/class/power_supply/BAT0/energy_full", "40000\n")
-            .file("/sys/class/power_supply/BAT0/power_now", "12000\n")
-            .file(
-                "/proc/net/route",
-                "Iface\tDestination\tGateway\tFlags\nenp0s31f6\t00000000\t0102A8C0\t0003\n",
-            );
-        let sys = bare(&h);
-        assert_eq!(sys.battery(), None);
-        sys.inner.refresh(true);
-        assert_eq!(
-            sys.battery(),
-            Some(Battery {
-                percent: 47,
-                status: BatteryStatus::Discharging
-            })
-        );
-        assert_eq!(sys.battery_time(), Some(95));
-        assert_eq!(
-            crate::status::network(sys.network()),
-            "network-wired-symbolic"
-        );
-    }
-
-    #[test]
-    fn panel_actions_update_the_snapshot() {
-        use wol_core::system::fake::FakeHost;
-        let h = Arc::new(FakeHost::new(false));
-        h.command("hyprctl keyword cursor:zoom_factor 2", "ok")
-            .command("hyprctl -j getoption animations:enabled", r#"{"int":1}"#)
-            .command(
-                "hyprctl -j getoption cursor:zoom_factor",
-                r#"{"float":1.0}"#,
-            )
-            .command("playerctl next", "");
-        let sys = bare(&h);
-        sys.inner.refresh(true);
-        assert_eq!(sys.accessibility().zoom, Some(false));
-        assert_eq!(sys.perform(&Action::Zoom(true)), Ok(()));
-        assert_eq!(sys.accessibility().zoom, Some(true));
-        assert_eq!(sys.perform(&Action::MediaNext), Ok(()));
-        assert_eq!(
-            sys.perform(&Action::BtConnect("bad".into(), true)),
-            Err(ActionError::Invalid),
-            "invalid address"
-        );
-    }
-
-    /// Manual: `cargo test -p shell --lib live_host -- --ignored --nocapture` prints this machine's snapshot.
-    #[test]
-    #[ignore]
-    fn live_host_snapshot() {
-        let sys = CoreSystem::new();
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        let s = sys.snapshot();
-        println!("{s:#?}\nnetwork {:?}", sys.network());
-        assert!(s.volume.is_some() || s.wifi_on.is_some());
-    }
-}
+mod tests;

@@ -1,7 +1,172 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Clipboard history and session actions: pure data rules.
+//! Clipboard history (ADR 0031 W5: search, pins, clear) and session actions: pure data rules.
+//! `ui::clipboard` draws the panel (⇧⌘V); this file decides what is kept. Invariant: the list
+//! is bounded ([`MAX`] recent, [`MAX_PINS`] pinned, [`MAX_TEXT`] bytes each), a pinned entry
+//! survives Clear and restarts (the pin file), and a one-time code is never kept.
 
 pub const MAX: usize = 25;
+/// Pinned entries kept at most (they live in the pin file as well).
+pub const MAX_PINS: usize = 25;
+/// Longest text kept, in bytes: a longer copy still pastes, it just is not in the history.
+pub const MAX_TEXT: usize = 64 * 1024;
+/// Pin file, relative to `$XDG_STATE_HOME`: JSON list of strings.
+pub const PINS_FILE: &str = "wolos/clipboard-pins.json";
+/// Largest pin file read, in bytes (a person pins short snippets; 25 × 64 KiB would be 1.6 MB).
+pub const MAX_PINS_FILE: u64 = 256 * 1024;
+
+/// A verification code (4 to 8 digits, maybe split by one space or dash, as banks and sign-in
+/// pages send them) is pasted once: the history does not keep it.
+pub fn is_one_time_code(text: &str) -> bool {
+    let t = text.trim();
+    let digits = t.chars().filter(char::is_ascii_digit).count();
+    let seps = t.chars().filter(|c| *c == ' ' || *c == '-').count();
+    (4..=8).contains(&digits) && seps <= 1 && digits + seps == t.chars().count()
+}
+
+/// One entry of the history.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub text: String,
+    pub pinned: bool,
+}
+
+/// Clipboard history: pinned entries first (in pin order), then recent ones, newest first.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct History {
+    entries: Vec<Entry>,
+}
+
+impl History {
+    /// A history holding `pins` (from the pin file), deduplicated and bounded.
+    pub fn with_pins(pins: Vec<String>) -> Self {
+        let mut h = History::default();
+        for p in pins {
+            if keepable(&p) && !h.entries.iter().any(|e| e.text == p) && h.pins() < MAX_PINS {
+                h.entries.push(Entry {
+                    text: p,
+                    pinned: true,
+                });
+            }
+        }
+        h
+    }
+
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
+    fn pins(&self) -> usize {
+        self.entries.iter().filter(|e| e.pinned).count()
+    }
+
+    /// A new copy: it becomes the newest recent entry; a pinned one stays where it is. Returns
+    /// true when the list changed.
+    pub fn push(&mut self, text: &str) -> bool {
+        if !keepable(text) || is_one_time_code(text) {
+            return false;
+        }
+        if self.entries.iter().any(|e| e.pinned && e.text == text) {
+            return false;
+        }
+        let first_recent = self.pins();
+        if self
+            .entries
+            .get(first_recent)
+            .is_some_and(|e| e.text == text)
+        {
+            return false;
+        }
+        self.entries.retain(|e| e.pinned || e.text != text);
+        self.entries.insert(
+            first_recent,
+            Entry {
+                text: text.to_string(),
+                pinned: false,
+            },
+        );
+        self.entries.truncate(first_recent + MAX);
+        true
+    }
+
+    /// Pins or unpins the entry with this text. Pinning moves it to the end of the pins;
+    /// unpinning makes it the newest recent entry. False when nothing changed (no such entry,
+    /// already in that state, or [`MAX_PINS`] reached).
+    pub fn set_pinned(&mut self, text: &str, pinned: bool) -> bool {
+        let Some(i) = self.entries.iter().position(|e| e.text == text) else {
+            return false;
+        };
+        let same = self.entries.get(i).is_some_and(|e| e.pinned == pinned);
+        if same || (pinned && self.pins() >= MAX_PINS) {
+            return false;
+        }
+        let mut e = self.entries.remove(i);
+        e.pinned = pinned;
+        let at = self.pins();
+        self.entries.insert(at, e);
+        self.entries.truncate(self.pins() + MAX);
+        true
+    }
+
+    /// Removes one entry, pinned or not.
+    pub fn remove(&mut self, text: &str) -> bool {
+        let n = self.entries.len();
+        self.entries.retain(|e| e.text != text);
+        n != self.entries.len()
+    }
+
+    /// Clear: recent entries go, pinned ones stay (unpin to drop them).
+    pub fn clear(&mut self) {
+        self.entries.retain(|e| e.pinned);
+    }
+
+    /// Entries whose text contains every word of `query`, ignoring case; all for a blank query.
+    pub fn search(&self, query: &str) -> Vec<&Entry> {
+        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        self.entries
+            .iter()
+            .filter(|e| {
+                let t = e.text.to_lowercase();
+                words.iter().all(|w| t.contains(w.as_str()))
+            })
+            .collect()
+    }
+
+    /// The pinned texts, for the pin file.
+    pub fn pinned_texts(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter(|e| e.pinned)
+            .map(|e| e.text.clone())
+            .collect()
+    }
+}
+
+fn keepable(text: &str) -> bool {
+    !text.trim().is_empty() && text.len() <= MAX_TEXT
+}
+
+/// Pin file text -> pins. Anything that is not a JSON list of strings is no pins.
+pub fn parse_pins(text: &str) -> Vec<String> {
+    serde_json::from_str::<Vec<String>>(text).unwrap_or_default()
+}
+
+/// Reads the pin file (blocking: call it off the GTK thread). Missing or too big = no pins.
+pub fn load_pins(state_home: &std::path::Path) -> Vec<String> {
+    shared::bounded::read_text(&state_home.join(PINS_FILE), MAX_PINS_FILE)
+        .map(|s| parse_pins(&s))
+        .unwrap_or_default()
+}
+
+/// Writes the pin file through a temp file and a rename, mode 0600 (pins can be addresses or
+/// snippets a person would not show). Blocking: call it off the GTK thread.
+pub fn save_pins(state_home: &std::path::Path, pins: &[String]) -> std::io::Result<()> {
+    let path = state_home.join(PINS_FILE);
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let text = serde_json::to_string(pins).map_err(std::io::Error::other)?;
+    shared::atomic::atomic_write(&path, 0o600, text.as_bytes())
+}
 
 /// Newest first, no duplicates, no blank entries, at most `MAX`. Returns true when the list changed.
 pub fn push(history: &mut Vec<String>, text: &str) -> bool {
@@ -25,7 +190,7 @@ pub fn preview(text: &str) -> String {
 }
 
 /// Session menu action -> argv. Sleep, restart and shut down go through `wol power` (wol-admind:
-/// any account at the computer, no password; sleep locks first); Hyprland exit for log out.
+/// any account at the computer, no password; sleep locks first); compositor exit for log out.
 pub fn session_command(action: &str) -> Option<&'static [&'static str]> {
     Some(match action {
         "lock" => &["wol-lock"],
@@ -37,7 +202,7 @@ pub fn session_command(action: &str) -> Option<&'static [&'static str]> {
     })
 }
 
-/// Seconds the Restart / Shut Down / Log Out sheet waits before it acts by itself (macOS).
+/// Seconds the Restart / Shut Down / Log Out sheet waits before it acts by itself.
 pub const CONFIRM_SECS: u32 = 60;
 
 /// Actions that end every open app: asked first, with a countdown.
@@ -62,6 +227,94 @@ mod tests {
             push(&mut h, &i.to_string());
         }
         assert_eq!(h.len(), MAX);
+    }
+
+    #[test]
+    fn pins_survive_clear_and_new_copies() {
+        let mut h = History::with_pins(vec!["addr".into(), "addr".into(), " ".into()]);
+        assert_eq!(h.entries().len(), 1);
+        assert!(h.push("a"));
+        assert!(h.push("b"));
+        assert!(!h.push("b"), "same as the newest");
+        assert!(!h.push("addr"), "already pinned");
+        let texts = |h: &History| {
+            h.entries()
+                .iter()
+                .map(|e| e.text.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(texts(&h), ["addr", "b", "a"]);
+        assert!(h.set_pinned("a", true));
+        assert_eq!(texts(&h), ["addr", "a", "b"]);
+        assert_eq!(h.pinned_texts(), ["addr", "a"]);
+        h.clear();
+        assert_eq!(texts(&h), ["addr", "a"]);
+        assert!(h.set_pinned("addr", false));
+        assert_eq!(texts(&h), ["a", "addr"]);
+        assert!(!h.set_pinned("zzz", true));
+        assert!(h.remove("addr") && !h.remove("addr"));
+        for i in 0..40 {
+            h.push(&format!("n{i}"));
+        }
+        assert_eq!(
+            h.entries().len(),
+            1 + MAX,
+            "pins do not count against recent"
+        );
+        let mut full = History::with_pins((0..MAX_PINS).map(|i| format!("p{i}")).collect());
+        full.push("x");
+        assert!(!full.set_pinned("x", true), "pins are bounded");
+    }
+
+    #[test]
+    fn search_matches_every_word() {
+        let mut h = History::default();
+        h.push("Hello World");
+        h.push("hello there");
+        h.push("other");
+        let found = |q: &str| {
+            h.search(q)
+                .iter()
+                .map(|e| e.text.as_str())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(found("HELLO"), ["hello there", "Hello World"]);
+        assert_eq!(found("world hello"), ["Hello World"]);
+        assert_eq!(found("  ").len(), 3);
+        assert!(found("nope").is_empty());
+    }
+
+    #[test]
+    fn one_time_codes_and_huge_copies_are_not_kept() {
+        for code in ["123456", "1234", "123 456", "123-456", " 87654321 "] {
+            assert!(is_one_time_code(code), "{code}");
+        }
+        for text in ["123", "123456789", "12 34 56", "abc123", "2026-11-02"] {
+            assert!(!is_one_time_code(text), "{text}");
+        }
+        let mut h = History::default();
+        assert!(!h.push("482913"));
+        assert!(!h.push(&"x".repeat(MAX_TEXT + 1)));
+        assert!(h.entries().is_empty());
+    }
+
+    #[test]
+    fn pin_file_round_trip() {
+        assert_eq!(parse_pins(r#"["a","b"]"#), ["a", "b"]);
+        assert!(parse_pins("{}").is_empty() && parse_pins("").is_empty());
+        let dir = std::env::temp_dir().join(format!("wol-pins-{}", std::process::id()));
+        save_pins(&dir, &["a".into(), "b\n\"c\"".into()]).unwrap();
+        assert_eq!(load_pins(&dir), ["a", "b\n\"c\""]);
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(dir.join(PINS_FILE))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+        std::fs::write(dir.join(PINS_FILE), "x".repeat(MAX_PINS_FILE as usize + 10)).unwrap();
+        assert!(load_pins(&dir).is_empty(), "too big");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(load_pins(&dir).is_empty(), "missing");
     }
 
     #[test]

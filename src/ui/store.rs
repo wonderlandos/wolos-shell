@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! App Store (`wol-store`): macOS App Store layout on the kit AppWindow. Curated catalog from
+//! App Store (`wol-store`): store layout on the kit AppWindow. Curated catalog from
 //! `wol_core::store`, `pacman -Ss` for the rest, installs through wol-admind `pkg-install` with the
 //! Authenticate sheet, updates from `wol update check`. `wol-store <file.wol>` (double-click) opens
 //! the install page: wol-admind `wol-install` (ADR 0011). Slow work never runs on the UI thread.
@@ -13,7 +13,16 @@ use std::rc::Rc;
 use wol_core::package;
 use wol_core::store::{self, App, Category};
 
-pub const PAGES: [&str; 6] = ["Discover", "Create", "Work", "Play", "Develop", "Updates"];
+pub const PAGES: [&str; 8] = [
+    "Discover", "Create", "Work", "Play", "Develop", "Kits", "Plugins", "Updates",
+];
+
+#[path = "store_plugins.rs"]
+pub mod plugins;
+
+mod details;
+use details::fill_details;
+pub use details::{Loaded, Subject, button_label, info_rows, load};
 
 /// Machine facts the store reads (injected so goldens do not depend on the build host).
 #[derive(Clone, Debug)]
@@ -24,6 +33,9 @@ pub struct Env {
     pub pkg_search: bool,
     /// Flathub apps installed (any scope).
     pub flatpaks: Vec<String>,
+    /// What is installed, for a kit's Added: None reads this computer's package database (off
+    /// the GTK thread); goldens set it so they do not depend on the build host.
+    pub installed: Option<wopkg::context::Installed>,
 }
 
 impl Env {
@@ -47,6 +59,7 @@ impl Env {
             flatpaks: wol_core::system::run_with_timeout(&l, std::time::Duration::from_secs(5))
                 .map(|t| wol_core::flatpak::parse_ids(&t))
                 .unwrap_or_default(),
+            installed: None,
         }
     }
 }
@@ -97,8 +110,10 @@ pub struct Store {
     show_package: Rc<dyn Fn(Option<PackageFile>)>,
     /// The details page: `None` reads the details off the UI thread first.
     show_details: Rc<dyn Fn(Subject, Option<Loaded>)>,
-    /// The AUR tab's lock.
+    /// The Community tab's lock.
     pub aur: Rc<AurGate>,
+    /// Shows a listing on the Plugins page.
+    show_plugins: Rc<dyn Fn(plugins::Listing)>,
 }
 
 impl Store {
@@ -143,6 +158,12 @@ impl Store {
     /// Details page with details already read (goldens).
     pub fn show_details(&self, s: Subject, l: Loaded) {
         (self.show_details)(s, Some(l));
+    }
+
+    /// The Plugins page with this listing, without downloading (goldens).
+    pub fn show_plugins(&self, l: plugins::Listing) {
+        (self.show_plugins)(l);
+        self.aw.select("Plugins");
     }
 
     /// Install page for an already checked file (goldens).
@@ -225,12 +246,12 @@ pub const TRUST_ROWS: [(&str, &str, &str); 3] = [
     (
         "dialog-warning-symbolic",
         "Not signed",
-        "WolOS can't check who made this app. Install it only if you trust where it came from.",
+        "WolOS can’t check who made this app. Install it only if you trust where it came from.",
     ),
     (
         "dialog-warning-symbolic",
-        "Can't be installed",
-        "This file is damaged, was changed after it was signed, or comes from a developer WolOS doesn't know.",
+        "Can’t be installed",
+        "This file is damaged, was changed after it was signed, or comes from a developer WolOS doesn’t know.",
     ),
 ];
 
@@ -416,9 +437,9 @@ fn remove_action(target: &str, flathub: bool, system: bool) -> Action {
 
 fn launch(target: &str, flathub: bool, desktop: Option<&str>) {
     if flathub {
-        kit::spawn(&["flatpak".into(), "run".into(), target.into()]);
+        kit::spawn_app(&["flatpak".into(), "run".into(), target.into()]);
     } else if let Some(d) = desktop {
-        kit::spawn(&["gtk4-launch".into(), d.into()]);
+        kit::spawn_app(&["gtk4-launch".into(), d.into()]);
     }
 }
 
@@ -607,16 +628,16 @@ fn flathub_tile(sh: &Rc<Shared>, h: &wol_core::flatpak::Hit) -> gtk::Widget {
     t.root.upcast()
 }
 
-/// An AUR package: no Get button here, because building one is a decision made in Terminal.
+/// A community package: no Get button here, because building one is a decision made in Terminal.
 fn aur_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
     let t = w::AppTile::new(&w::store_icon(&h.name, w::ICON_L), &h.name, &h.summary);
-    t.set_source("AUR");
+    t.set_source("Community");
     t.action.set_visible(false);
     open_on_click(sh, &t.root, Subject::aur(h));
     t.root.upcast()
 }
 
-/// What the states and flags mean, under the AUR's results.
+/// What the states and flags mean, under the community results.
 fn legend() -> gtk::Box {
     use crate::packages::{FLAGS, SEVERITIES, STATES};
     let b = w::vbox(w::S6);
@@ -643,11 +664,11 @@ fn severity_icon(level: &str) -> &'static str {
     }
 }
 
-/// Why the AUR tab wants a password.
+/// Why the Community tab wants a password.
 const AUR_WHY: &str =
-    "The AUR holds packages nobody at WolOS reviewed. Enter your password to open it.";
+    "Community packages are not reviewed by WolOS. Enter your password to open them.";
 
-/// The AUR tab: the warning always, the packages only after wol-admind has checked a password.
+/// The Community tab: the warning always, the packages only after wol-admind has checked a password.
 pub struct AurGate {
     locked: gtk::Box,
     open: gtk::Box,
@@ -692,9 +713,9 @@ fn ask_aur(sh: &Rc<Shared>, gate: &Rc<AurGate>) {
     );
 }
 
-/// The AUR's own page: apart from the catalogue and from search, its risk before any name.
+/// The Community page: apart from the catalogue and from search, its risk before any name.
 fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
-    let p = w::page("AUR");
+    let p = w::page("Community");
     p.append(&w::section(
         "Before You Open",
         &[note_row(
@@ -705,7 +726,7 @@ fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
     ));
     let locked = w::vbox(w::S2);
     locked.append(&w::label(
-        "The AUR stays locked until you enter your password.",
+        "Community packages stay locked until you enter your password.",
         "secondary",
     ));
     let open = w::vbox(w::S2);
@@ -729,7 +750,7 @@ fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
     }
     let found = w::vbox(w::S2);
     let entry = gtk::SearchEntry::new();
-    entry.set_placeholder_text(Some("Search the AUR"));
+    entry.set_placeholder_text(Some("Search community packages"));
     let (sh2, f3) = (sh.clone(), found.clone());
     entry.connect_search_changed(move |e| {
         while let Some(c) = f3.first_child() {
@@ -794,7 +815,7 @@ pub fn audit_section(a: &crate::packages::Audit) -> gtk::Box {
     b
 }
 
-/// The AUR's part of a details page: the risk, the way to install it, and the check on request.
+/// A community package's part of a details page: the risk, the way to install it, and the check on request.
 fn aur_details(page: &gtk::Box, s: &Subject) {
     let how = format!(
         "To install it, run wopkg install {} in Terminal, where you can read what it does first.",
@@ -957,6 +978,164 @@ fn category(sh: &Rc<Shared>, c: Category) -> gtk::Box {
     p
 }
 
+/// What a kit's Get button says: like an app's, but a kit has nothing to open.
+pub fn kit_label(s: w::TileState) -> String {
+    match s {
+        w::TileState::Open => "Added".into(),
+        s => button_label(s),
+    }
+}
+
+/// A part's row icon: what kind of thing it lets people play or read.
+pub fn part_icon(k: &store::Kit, p: &store::KitPart) -> &'static str {
+    if k.source != store::KitSource::Packages {
+        "applications-graphics-symbolic"
+    } else if p
+        .packages
+        .iter()
+        .any(|n| n.starts_with("ttf-") || n.starts_with("noto-"))
+    {
+        "preferences-desktop-locale-symbolic"
+    } else if p
+        .packages
+        .iter()
+        .any(|n| matches!(*n, "x264" | "x265" | "libde265"))
+    {
+        "video-display-symbolic"
+    } else {
+        "audio-x-generic-symbolic"
+    }
+}
+
+/// Whether a kit is already here: a packages kit when every one of its packages is installed, a
+/// wopkg kit when its recipe is. `pacman` and `recipes` come from wopkg's installed view.
+pub fn kit_installed(
+    k: &store::Kit,
+    pacman: &std::collections::HashSet<String>,
+    recipes: &std::collections::HashSet<String>,
+) -> bool {
+    match k.source {
+        store::KitSource::Packages => {
+            let p = k.packages();
+            !p.is_empty() && p.iter().all(|n| pacman.contains(*n))
+        }
+        store::KitSource::Wopkg(r) => recipes.contains(r),
+    }
+}
+
+/// [`kit_installed`] against `set` ([`Env::installed`]), else on this computer (reads the package
+/// database folders; worker thread only).
+fn kit_installed_here(k: &store::Kit, set: Option<&wopkg::context::Installed>) -> bool {
+    if let Some(i) = set {
+        return kit_installed(k, &i.pacman, &i.recipes);
+    }
+    wopkg::context::Context::new(Default::default())
+        .map(|c| {
+            let i = c.installed();
+            kit_installed(k, &i.pacman, &i.recipes)
+        })
+        .unwrap_or(false)
+}
+
+/// Get on a kit: one wol-admind `pkg-install <kit id>` (one approval for every part), or a wopkg
+/// install for this account. Nothing is ever ticked or installed before the person clicks.
+fn wire_kit(sh: &Rc<Shared>, k: &'static store::Kit, b: &gtk::Button) {
+    let b2 = b.clone();
+    let set: Rc<dyn Fn(w::TileState)> = Rc::new(move |s| {
+        b2.set_sensitive(!s.busy() && s != w::TileState::Open);
+        b2.set_label(&kit_label(s));
+    });
+    // The start state: worked out off the GTK thread, so a kit got before says Added.
+    {
+        let (tx, rx) = async_channel::bounded(1);
+        let injected = sh.env.installed.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send_blocking(kit_installed_here(k, injected.as_ref()));
+        });
+        let (set, b) = (set.clone(), b.clone());
+        glib::spawn_future_local(async move {
+            // Only over the untouched Get: a click made meanwhile owns the button.
+            if rx.recv().await.unwrap_or(false)
+                && b.is_sensitive()
+                && b.label().as_deref() == Some(kit_label(w::TileState::Get).as_str())
+            {
+                set(w::TileState::Open);
+            }
+        });
+    }
+    let sh = sh.clone();
+    b.connect_clicked(move |_| match k.wopkg_args() {
+        None => run_store_action(
+            &sh,
+            install_action(k.id, false, false),
+            progress_path(k.id, false),
+            set.clone(),
+            Rc::new(std::cell::Cell::new(false)),
+            true,
+            k.name.into(),
+        ),
+        Some(args) => {
+            set(w::TileState::Installing);
+            say(&sh.status, "");
+            let (tx, rx) = async_channel::bounded(1);
+            std::thread::spawn(move || {
+                let a: Vec<&str> = args.iter().map(String::as_str).collect();
+                let _ = tx.send_blocking(crate::packages::wopkg_verb(&a));
+            });
+            let (set, st) = (set.clone(), sh.status.clone());
+            glib::spawn_future_local(async move {
+                let ok = rx.recv().await.unwrap_or(false);
+                if !ok {
+                    say(&st, crate::copy::STORE_NOT_FINISHED);
+                }
+                set(if ok {
+                    w::TileState::Open
+                } else {
+                    w::TileState::Get
+                });
+            });
+        }
+    });
+}
+
+/// Kits (ADR 0032 B): a set of parts in one tile and one click, the most wanted part first.
+fn kits(sh: &Rc<Shared>) -> gtk::Box {
+    let p = w::page("Kits");
+    let intro = w::label(crate::copy::STORE_KITS_INTRO, "secondary");
+    intro.set_wrap(true);
+    p.append(&intro);
+    // Only kits that can apply here: a wopkg kit without its recipe is not shown.
+    let dirs = store::recipe_dirs(std::env::var("WOPKG_RECIPES").ok().as_deref());
+    for k in store::shown_kits(&dirs) {
+        let head = w::hbox(w::S3);
+        head.append(&w::app_icon(k.icon, w::ICON_L));
+        let text = w::vbox(0);
+        text.set_hexpand(true);
+        text.set_valign(gtk::Align::Center);
+        text.append(&w::label(k.name, "title"));
+        let sum = w::label(k.summary, "secondary");
+        sum.set_wrap(true);
+        text.append(&sum);
+        head.append(&text);
+        let get = gtk::Button::with_label(&kit_label(w::TileState::Get));
+        get.add_css_class("get-button");
+        get.set_valign(gtk::Align::Center);
+        wire_kit(sh, k, &get);
+        head.append(&get);
+        p.append(&head);
+        let parts: Vec<gtk::Widget> = k
+            .parts
+            .iter()
+            .map(|part| note_row(part_icon(k, part), part.name, part.why))
+            .collect();
+        p.append(&w::section("", &parts));
+        let note = w::label(k.note, "secondary");
+        note.set_wrap(true);
+        p.append(&note);
+    }
+    p
+}
+
 fn updates(sh: &Rc<Shared>) -> gtk::Box {
     let p = w::page("Updates");
     let ic = w::icon("software-update-available-symbolic", w::ICON_M);
@@ -1021,12 +1200,8 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
                         list.append(&w::list_row("package-x-generic-symbolic", n, "", None));
                     }
                     (
-                        format!(
-                            "{} update{} available",
-                            v.len(),
-                            if v.len() == 1 { "" } else { "s" }
-                        ),
-                        "WolOS saves a restore point before updating.".into(),
+                        crate::copy::updates_available(v.len()),
+                        crate::copy::UPDATE_RESTORE_POINT.into(),
                     )
                 }
                 UpdateState::Installing => (
@@ -1244,12 +1419,12 @@ fn fill_package(sh: &Rc<Shared>, page: &gtk::Box, f: Option<PackageFile>) {
             .map(|(i, l)| w::list_row(i, l, "", None).upcast())
             .collect()
     };
-    page.append(&w::section("What it uses", &rows));
+    page.append(&w::section("What It Uses", &rows));
     let installed = Rc::new(std::cell::Cell::new(s.button == "Open"));
     let (sh, id, path, label) = (sh.clone(), v.info.id.clone(), f.path.clone(), s.button);
     get.connect_clicked(move |b| {
         if installed.get() {
-            kit::spawn(&["gtk4-launch".into(), id.clone()]);
+            kit::spawn_app(&["gtk4-launch".into(), id.clone()]);
             return;
         }
         b.set_sensitive(false);
@@ -1283,601 +1458,6 @@ fn fill_package(sh: &Rc<Shared>, page: &gtk::Box, f: Option<PackageFile>) {
     });
 }
 
-/// What a tile opens: one app from the catalog, the repos or Flathub.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Subject {
-    /// Catalog id, package name or Flathub app id: what installs it.
-    pub target: String,
-    pub name: String,
-    pub summary: String,
-    pub flathub: bool,
-    pub desktop: Option<&'static str>,
-    /// The native package (`pacman -Si`, Arch's AppStream).
-    pub pkg: Option<String>,
-    /// Only the AUR has it: built here, reviewed by nobody.
-    pub aur: bool,
-}
-
-impl Subject {
-    pub fn catalog(a: &'static App) -> Self {
-        Subject {
-            target: a.id.into(),
-            name: a.name.into(),
-            summary: a.summary.into(),
-            flathub: false,
-            desktop: Some(a.desktop),
-            pkg: a.packages.first().map(|p| (*p).to_owned()),
-            aur: false,
-        }
-    }
-    pub fn aur(h: &store::PkgHit) -> Self {
-        Subject {
-            target: h.name.clone(),
-            name: h.name.clone(),
-            summary: h.summary.clone(),
-            flathub: false,
-            desktop: None,
-            pkg: None,
-            aur: true,
-        }
-    }
-    pub fn pkg(h: &store::PkgHit) -> Self {
-        Subject {
-            target: h.name.clone(),
-            name: h.name.clone(),
-            summary: h.summary.clone(),
-            flathub: false,
-            desktop: None,
-            pkg: Some(h.name.clone()),
-            aur: false,
-        }
-    }
-    pub fn flathub(h: &wol_core::flatpak::Hit) -> Self {
-        Subject {
-            target: h.id.clone(),
-            name: h.name.clone(),
-            summary: h.summary.clone(),
-            flathub: true,
-            desktop: None,
-            pkg: None,
-            aur: false,
-        }
-    }
-}
-
-/// What the details page reads off the UI thread.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Loaded {
-    pub details: Option<wol_core::appstream::Details>,
-    /// The cached AppStream icon file.
-    pub icon_file: Option<String>,
-    pub size: Option<String>,
-    /// Flatpak permissions it asks for.
-    pub perms: Vec<wol_core::flatpak::Perm>,
-    /// Installed for every account (a system Flatpak).
-    pub system: bool,
-    /// Every place this app comes from, best first.
-    pub sources: Vec<crate::packages::AppSource>,
-    /// The version on this computer.
-    pub installed: Option<String>,
-    pub pinned: bool,
-    /// The history entry that undoes its last change.
-    pub undo: Option<String>,
-}
-
-fn capture(argv: &[String], secs: u64) -> Option<String> {
-    let a: Vec<&str> = argv.iter().map(String::as_str).collect();
-    wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(secs))
-}
-
-/// Blocking: AppStream, size, permissions and install scope for `s`.
-pub fn load(s: &Subject) -> Loaded {
-    use wol_core::{appstream, flatpak};
-    let mut l = Loaded::default();
-    if !s.aur {
-        l.sources = crate::packages::sources(s.pkg.as_deref().unwrap_or(&s.target));
-        if let Some(i) = l.sources.iter().find(|x| x.installed) {
-            l.installed = crate::packages::installed_version(&i.id, i.kind == "flatpak");
-            l.pinned = crate::packages::pinned(&i.id);
-            l.undo = crate::packages::last_change(&i.id);
-        }
-    }
-    if s.flathub {
-        let home = std::env::var("HOME").unwrap_or_default();
-        for (xml, icons) in appstream::flathub_paths(&home) {
-            let Some(d) = std::fs::read_to_string(&xml)
-                .ok()
-                .and_then(|x| appstream::by_id(&x, &s.target))
-            else {
-                continue;
-            };
-            l.icon_file = d
-                .icon
-                .as_ref()
-                .map(|(n, f)| format!("{icons}/{n}x{n}/{f}"))
-                .filter(|f| std::path::Path::new(f).is_file());
-            l.details = Some(d);
-            break;
-        }
-        for scope in [flatpak::Scope::User, flatpak::Scope::System] {
-            if l.size.is_none() {
-                l.size = flatpak::remote_info_argv(scope, &s.target, false)
-                    .and_then(|a| capture(&a, 20))
-                    .and_then(|t| flatpak::parse_installed_size(&t));
-            }
-            if l.perms.is_empty() {
-                l.perms = flatpak::remote_info_argv(scope, &s.target, true)
-                    .and_then(|a| capture(&a, 20))
-                    .map(|t| flatpak::metadata_perms(&t))
-                    .unwrap_or_default();
-            }
-        }
-        let sys = [
-            "flatpak",
-            "list",
-            "--app",
-            "--system",
-            "--columns=application",
-        ]
-        .map(String::from);
-        l.system = capture(&sys, 5).is_some_and(|t| flatpak::parse_ids(&t).contains(&s.target));
-    } else if let Some(pkg) = &s.pkg {
-        for xml in appstream::NATIVE_XML {
-            let argv = ["gzip", "-dc", xml].map(String::from);
-            if let Some(d) = capture(&argv, 20).and_then(|x| appstream::by_pkgname(&x, pkg)) {
-                l.details = Some(d);
-                break;
-            }
-        }
-        l.size = store::info_argv(pkg)
-            .and_then(|a| capture(&a, 20))
-            .and_then(|t| store::parse_installed_size(&t));
-    }
-    l
-}
-
-/// Information rows: (title, value).
-pub fn info_rows(s: &Subject, l: &Loaded) -> Vec<(&'static str, String)> {
-    let mut v = Vec::new();
-    if let Some(d) = l.details.as_ref().and_then(|d| d.developer.clone()) {
-        v.push(("Developer", d));
-    }
-    if let Some(z) = &l.size {
-        v.push(("Size", z.clone()));
-    }
-    v.push((
-        "Source",
-        if s.aur {
-            "AUR"
-        } else if s.flathub {
-            "Flathub"
-        } else {
-            "System packages"
-        }
-        .into(),
-    ));
-    if l.system {
-        v.push(("Installed for", "All accounts".into()));
-    }
-    v
-}
-
-/// Get button label for a tile state: "Get", "Open", "42%".
-pub fn button_label(s: w::TileState) -> String {
-    match s {
-        w::TileState::Get => "Get".into(),
-        w::TileState::Installing => "Installing…".into(),
-        w::TileState::Progress(p) => format!("{p}%"),
-        w::TileState::Open => "Open".into(),
-    }
-}
-
-/// A screenshot decoded at the size it is shown (the Picture's natural size is then right).
-fn thumb(path: &str) -> Option<gtk::gdk::Texture> {
-    let pb =
-        gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(path, w::SCREENSHOT_W, w::SCREENSHOT_H, true)
-            .ok()?;
-    let png = pb.save_to_bufferv("png", &[]).ok()?;
-    gtk::gdk::Texture::from_bytes(&glib::Bytes::from_owned(png)).ok()
-}
-
-fn screenshot(t: &gtk::gdk::Texture) -> gtk::Widget {
-    let pic = gtk::Picture::for_paintable(t);
-    pic.set_content_fit(gtk::ContentFit::Contain);
-    pic.set_size_request(t.width(), t.height());
-    pic.add_css_class("store-screenshot");
-    pic.upcast()
-}
-
-/// Screenshots row: cached files show at once, others download off the UI thread first.
-fn screenshots(urls: &[String]) -> Option<gtk::Widget> {
-    if urls.is_empty() {
-        return None;
-    }
-    let row = w::hbox(w::S3);
-    let cache = wol_core::appstream::cache_home();
-    for url in urls.iter().take(6) {
-        if url.starts_with('/') {
-            if let Some(t) = thumb(url) {
-                row.append(&screenshot(&t));
-            }
-            continue;
-        }
-        let Some(path) = wol_core::appstream::shot_cache(&cache, url) else {
-            continue;
-        };
-        let slot = w::hbox(0);
-        slot.set_size_request(w::SCREENSHOT_W, w::SCREENSHOT_H);
-        slot.add_css_class("store-screenshot");
-        row.append(&slot);
-        let (tx, rx) = async_channel::bounded(1);
-        let url = url.clone();
-        std::thread::spawn(move || {
-            let p = std::path::Path::new(&path);
-            if !p.is_file() {
-                if let Some(d) = p.parent() {
-                    let _ = std::fs::create_dir_all(d);
-                }
-                let tmp = format!("{path}.part");
-                let ok = wol_core::system::run_with_timeout(
-                    &["curl", "-fsSL", "--max-time", "30", "-o", &tmp, "--", &url],
-                    std::time::Duration::from_secs(35),
-                )
-                .is_some();
-                if !(ok && std::fs::rename(&tmp, &path).is_ok()) {
-                    let _ = std::fs::remove_file(&tmp);
-                    return;
-                }
-            }
-            // Decoded and scaled here, not on the UI thread.
-            if let Some(t) = thumb(&path) {
-                let _ = tx.send_blocking(t);
-            }
-        });
-        glib::spawn_future_local(async move {
-            if let Ok(t) = rx.recv().await {
-                slot.append(&screenshot(&t));
-            }
-        });
-    }
-    let scroll = gtk::ScrolledWindow::builder()
-        .child(&row)
-        .vscrollbar_policy(gtk::PolicyType::Never)
-        .hscrollbar_policy(gtk::PolicyType::Automatic)
-        .propagate_natural_height(true)
-        .min_content_height(w::SCREENSHOT_H)
-        .build();
-    Some(scroll.upcast())
-}
-
-/// Details page: icon, name, summary, Get/Open (and Remove, Install for All Accounts),
-/// screenshots, description, information and, for a Flatpak, what it can do.
-fn fill_details(
-    sh: &Rc<Shared>,
-    page: &gtk::Box,
-    s: &Subject,
-    l: Option<Loaded>,
-    back: Rc<dyn Fn()>,
-) {
-    while let Some(c) = page.first_child() {
-        page.remove(&c);
-    }
-    say(&sh.status, "");
-    let head = w::hbox(w::S1);
-    head.add_css_class("subpage-header");
-    head.append(&w::icon_button("go-previous-symbolic", "Back", move || {
-        back()
-    }));
-    page.append(&head);
-    let Some(l) = l else {
-        let b = w::hbox(w::S3);
-        b.append(&w::progress_ring());
-        b.append(&w::label("Loading…", "secondary"));
-        page.append(&b);
-        let (tx, rx) = async_channel::bounded(1);
-        let s2 = s.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send_blocking(load(&s2));
-        });
-        let (sh, page, s, head) = (sh.clone(), page.clone(), s.clone(), head.clone());
-        glib::spawn_future_local(async move {
-            if let Ok(l) = rx.recv().await {
-                // Still showing this app: replace the spinner, keep the back button.
-                if page.first_child().as_ref() == Some(head.upcast_ref()) {
-                    while let Some(c) = head.next_sibling() {
-                        page.remove(&c);
-                    }
-                    details_body(&sh, &page, &s, &l);
-                }
-            }
-        });
-        return;
-    };
-    details_body(sh, page, s, &l);
-}
-
-/// Run a wopkg verb off the main thread and say how it went.
-fn wopkg_action(sh: &Rc<Shared>, args: Vec<String>, done: String) {
-    let status = sh.status.clone();
-    let (tx, rx) = async_channel::bounded(1);
-    std::thread::spawn(move || {
-        let a: Vec<&str> = args.iter().map(String::as_str).collect();
-        let _ = tx.send_blocking(crate::packages::wopkg_verb(&a));
-    });
-    glib::spawn_future_local(async move {
-        if let Ok(ok) = rx.recv().await {
-            say(
-                &status,
-                if ok {
-                    &done
-                } else {
-                    "That did not finish. Nothing was changed."
-                },
-            );
-        }
-    });
-}
-
-/// Where an app can come from and what is on this computer: the source picker, then update, pin
-/// and undo for what is installed. Nothing shows without an index.
-fn versions(
-    sh: &Rc<Shared>,
-    page: &gtk::Box,
-    s: &Subject,
-    l: &Loaded,
-    chosen: &Rc<RefCell<(String, bool)>>,
-) {
-    if l.sources.is_empty() {
-        return;
-    }
-    let mut rows: Vec<gtk::Widget> = l
-        .sources
-        .iter()
-        .map(|x| {
-            let icon = if x.installed {
-                "object-select-symbolic"
-            } else {
-                "package-x-generic-symbolic"
-            };
-            w::list_row(icon, &x.origin, &x.version, None).upcast()
-        })
-        .collect();
-    if l.sources.len() > 1 && l.installed.is_none() {
-        let labels: Vec<String> = l
-            .sources
-            .iter()
-            .map(|x| format!("{} {}", x.origin, x.version))
-            .collect();
-        let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let pick = w::dropdown(&refs, 0);
-        let (src, chosen) = (l.sources.clone(), chosen.clone());
-        *chosen.borrow_mut() = (src[0].id.clone(), src[0].kind == "flatpak");
-        pick.connect_selected_notify(move |d| {
-            if let Some(x) = src.get(d.selected() as usize) {
-                *chosen.borrow_mut() = (x.id.clone(), x.kind == "flatpak");
-            }
-        });
-        rows.push(w::list_row("", "Get From", "", Some(pick.upcast_ref())).upcast());
-    }
-    if let (Some(now), Some(i)) = (&l.installed, l.sources.iter().find(|x| x.installed)) {
-        rows.insert(0, w::list_row("", "On This Computer", now, None).upcast());
-        let id = i.id.clone();
-        let (sh2, id2) = (sh.clone(), id.clone());
-        let keep = w::toggle(l.pinned, move |on| {
-            let verb = if on { "pin" } else { "unpin" };
-            let done = if on {
-                "It stays at this version."
-            } else {
-                "It updates again."
-            };
-            wopkg_action(&sh2, vec![verb.into(), id2.clone()], done.into());
-        });
-        rows.push(w::list_row("", "Keep This Version", "", Some(keep.upcast_ref())).upcast());
-        let buttons = w::hbox(w::S2);
-        if i.version != *now {
-            let (sh2, id2) = (sh.clone(), id.clone());
-            buttons.append(&w::button("Update", w::Kind::Default, move || {
-                wopkg_action(&sh2, vec!["update".into(), id2.clone()], "Updated.".into());
-            }));
-        }
-        if let Some(entry) = l.undo.clone() {
-            let sh2 = sh.clone();
-            buttons.append(&w::button("Roll Back", w::Kind::Default, move || {
-                wopkg_action(
-                    &sh2,
-                    vec!["rollback".into(), entry.clone()],
-                    "Rolled back.".into(),
-                );
-            }));
-        }
-        page.append(&w::section("Versions", &rows));
-        if buttons.first_child().is_some() {
-            page.append(&buttons);
-        }
-        return;
-    }
-    let _ = s;
-    page.append(&w::section("Versions", &rows));
-}
-
-fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Loaded) {
-    let d = l.details.clone().unwrap_or_default();
-    let top = w::hbox(w::S6);
-    let icon = match &l.icon_file {
-        Some(f) => {
-            let img = gtk::Image::from_file(f);
-            img.set_pixel_size(w::HERO_ICON);
-            img.upcast()
-        }
-        None => w::store_icon(s.desktop.unwrap_or(&s.target), w::HERO_ICON),
-    };
-    top.append(&icon);
-    let text = w::vbox(w::S1);
-    text.set_hexpand(true);
-    text.set_valign(gtk::Align::Center);
-    let name = w::label(
-        if d.name.is_empty() { &s.name } else { &d.name },
-        "large-title",
-    );
-    name.set_wrap(true);
-    text.append(&name);
-    let summary = if d.summary.is_empty() {
-        &s.summary
-    } else {
-        &d.summary
-    };
-    let sl = w::label(summary, "secondary");
-    sl.set_wrap(true);
-    text.append(&sl);
-    if let Some(dev) = &d.developer {
-        text.append(&w::label(dev, "secondary"));
-    }
-    let buttons = w::hbox(w::S2);
-    buttons.set_margin_top(w::S2);
-    let get = gtk::Button::with_label("Get");
-    get.add_css_class("get-button");
-    let all = w::button("Install for All Accounts", w::Kind::Default, || {});
-    let remove = w::button("Remove", w::Kind::Default, || {});
-    buttons.append(&get);
-    buttons.append(&all);
-    buttons.append(&remove);
-    text.append(&buttons);
-    top.append(&text);
-    page.append(&top);
-
-    if s.aur {
-        buttons.set_visible(false);
-        aur_details(page, s);
-    }
-
-    let chosen = Rc::new(RefCell::new((s.target.clone(), s.flathub)));
-    versions(sh, page, s, l, &chosen);
-    let installed = Rc::new(std::cell::Cell::new(is_present(sh, &s.target, s.flathub)));
-    let system = Rc::new(std::cell::Cell::new(l.system));
-    let set: Rc<dyn Fn(w::TileState)> = {
-        let (get, all, remove, flathub) = (get.clone(), all.clone(), remove.clone(), s.flathub);
-        Rc::new(move |st| {
-            get.set_label(&button_label(st));
-            get.set_sensitive(!st.busy());
-            remove.set_visible(st == w::TileState::Open);
-            remove.set_sensitive(!st.busy());
-            all.set_visible(flathub && st == w::TileState::Get);
-        })
-    };
-    set(if installed.get() {
-        w::TileState::Open
-    } else {
-        w::TileState::Get
-    });
-    {
-        let (sh, s, set, inst, chosen) = (
-            sh.clone(),
-            s.clone(),
-            set.clone(),
-            installed.clone(),
-            chosen.clone(),
-        );
-        get.connect_clicked(move |_| {
-            if inst.get() {
-                return launch(&s.target, s.flathub, s.desktop);
-            }
-            let (target, flathub) = chosen.borrow().clone();
-            run_store_action(
-                &sh,
-                install_action(&target, flathub, false),
-                progress_path(&target, flathub),
-                set.clone(),
-                inst.clone(),
-                true,
-                s.name.clone(),
-            );
-        });
-    }
-    {
-        let (sh, s, set, inst, sys) = (
-            sh.clone(),
-            s.clone(),
-            set.clone(),
-            installed.clone(),
-            system.clone(),
-        );
-        all.connect_clicked(move |_| {
-            sys.set(true);
-            run_store_action(
-                &sh,
-                install_action(&s.target, true, true),
-                progress_path(&s.target, false),
-                set.clone(),
-                inst.clone(),
-                true,
-                s.name.clone(),
-            );
-        });
-    }
-    {
-        let (sh, s, set, inst, sys) = (
-            sh.clone(),
-            s.clone(),
-            set.clone(),
-            installed.clone(),
-            system.clone(),
-        );
-        remove.connect_clicked(move |_| {
-            run_store_action(
-                &sh,
-                remove_action(&s.target, s.flathub, sys.get()),
-                None,
-                set.clone(),
-                inst.clone(),
-                false,
-                s.name.clone(),
-            );
-        });
-    }
-
-    if let Some(shots) = screenshots(&d.screenshots) {
-        page.append(&shots);
-    }
-    if !d.description.is_empty() {
-        let b = w::vbox(w::S2);
-        for p in &d.description {
-            let l = w::label(p, "");
-            l.set_wrap(true);
-            l.set_xalign(0.0);
-            b.append(&l);
-        }
-        page.append(&b);
-    }
-    let rows: Vec<gtk::Widget> = info_rows(s, l)
-        .into_iter()
-        .map(|(t, v)| {
-            let value = w::label(&v, "secondary");
-            w::list_row("", t, "", Some(value.upcast_ref())).upcast()
-        })
-        .collect();
-    page.append(&w::section("Information", &rows));
-    if s.flathub && !l.perms.is_empty() {
-        let rows: Vec<gtk::Widget> = l
-            .perms
-            .iter()
-            .map(|p| {
-                let title = if p.is_display() {
-                    "Display".into()
-                } else {
-                    p.plain()
-                };
-                let sub = if p.is_display() {
-                    p.plain()
-                } else {
-                    String::new()
-                };
-                w::list_row(crate::ui::flatpak_consent::perm_icon(p), &title, &sub, None).upcast()
-            })
-            .collect();
-        page.append(&w::section("What it can do", &rows));
-    }
-}
-
 pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
     let aw = w::AppWindow::new(true, false);
     let ctx = Ctx::new(sys, "App Store");
@@ -1905,13 +1485,16 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
     ] {
         aw.source_item(icon, c.name(), &category(&sh, c));
     }
+    aw.source_item("view-app-grid-symbolic", "Kits", &kits(&sh));
+    let (plugins_page, show_plugins) = plugins::page(&sh);
+    aw.source_item("wolos-widgets-symbolic", "Plugins", &plugins_page);
     aw.source_item(
         "software-update-available-symbolic",
         "Updates",
         &updates(&sh),
     );
     let (aur, aur_gate) = aur_page(&sh);
-    aw.source_item("package-x-generic-symbolic", "AUR", &aur);
+    aw.source_item("package-x-generic-symbolic", "Community", &aur);
     let results = w::vbox(w::S6);
     results.add_css_class("page");
     aw.hidden_page("Search", &results);
@@ -2029,6 +1612,7 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
     }
     Store {
         aur: aur_gate,
+        show_plugins,
         aw,
         search,
         show_results,
@@ -2039,114 +1623,4 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn details_information_rows() {
-        let s = Subject::flathub(&wol_core::flatpak::Hit {
-            id: "org.gimp.GIMP".into(),
-            name: "GIMP".into(),
-            summary: "Edit images".into(),
-        });
-        let l = Loaded {
-            details: Some(wol_core::appstream::Details {
-                developer: Some("The GIMP team".into()),
-                ..Default::default()
-            }),
-            size: Some("312.4 MB".into()),
-            system: true,
-            ..Default::default()
-        };
-        assert_eq!(
-            info_rows(&s, &l),
-            [
-                ("Developer", "The GIMP team".to_string()),
-                ("Size", "312.4 MB".into()),
-                ("Source", "Flathub".into()),
-                ("Installed for", "All accounts".into()),
-            ]
-        );
-        let native = Subject::catalog(store::get("gimp").unwrap());
-        assert_eq!(native.pkg.as_deref(), Some("gimp"));
-        assert_eq!(
-            info_rows(&native, &Loaded::default()),
-            [("Source", "System packages".to_string())]
-        );
-    }
-
-    #[test]
-    fn get_button_shows_the_percentage() {
-        assert_eq!(button_label(w::TileState::Get), "Get");
-        assert_eq!(button_label(w::TileState::Progress(42)), "42%");
-        assert_eq!(button_label(w::TileState::Open), "Open");
-        assert!(w::TileState::Progress(0).busy() && w::TileState::Installing.busy());
-        assert!(!w::TileState::Open.busy());
-    }
-
-    #[test]
-    fn store_actions_by_scope() {
-        assert_eq!(
-            install_action("org.a.B", true, false),
-            Action::FlatpakInstall("org.a.B".into())
-        );
-        assert!(matches!(
-            install_action("org.a.B", true, true),
-            Action::Admin(r) if r.action == shared::admin::AdminAction::FlatpakInstall
-        ));
-        assert!(matches!(
-            remove_action("org.a.B", true, true),
-            Action::Admin(r) if r.action == shared::admin::AdminAction::FlatpakRemove
-        ));
-        assert_eq!(
-            install_action("gimp", false, true),
-            Action::PkgInstall("gimp".into())
-        );
-        assert_eq!(
-            progress_path("gimp", false).as_deref(),
-            Some("/run/wolos/progress/gimp")
-        );
-    }
-
-    #[test]
-    fn a_catalog_app_is_not_listed_again_under_more_packages() {
-        let hit = |n: &str| store::PkgHit {
-            name: n.into(),
-            summary: String::new(),
-        };
-        let pkgs = [hit("gimp"), hit("gimp-help-en")];
-        let left = beyond_catalog("gimp", &pkgs);
-        assert_eq!(left.len(), 1);
-        assert_eq!(left[0].name, "gimp-help-en");
-    }
-
-    #[test]
-    fn native_packages_win_over_flathub() {
-        let hit = |id: &str, name: &str| wol_core::flatpak::Hit {
-            id: id.into(),
-            name: name.into(),
-            summary: String::new(),
-        };
-        let repo = [store::PkgHit {
-            name: "drawing".into(),
-            summary: String::new(),
-        }];
-        assert!(covered_natively(
-            &hit("com.github.maoschanz.drawing", "Drawing"),
-            &repo
-        ));
-        assert!(!covered_natively(
-            &hit("com.github.maoschanz.drawing", "Drawing"),
-            &[]
-        ));
-        let catalog = &store::CATALOG[0];
-        assert!(covered_natively(
-            &hit("org.example.Whatever", catalog.name),
-            &[]
-        ));
-        assert!(!covered_natively(
-            &hit("com.example.NoSuchApp", "No Such App Here"),
-            &[]
-        ));
-    }
-}
+mod tests;

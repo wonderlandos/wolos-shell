@@ -77,13 +77,35 @@ pub fn install(extra: &'static str) {
         }
     };
     load();
+    // An id unknown at the first draw (a theme pack) is read off-thread; draw again when it lands
+    // (audit6 S6-2).
+    theme::on_refreshed(Rc::new(load.clone()));
     auto_timer(Rc::new(load.clone()));
-    for p in [path.clone(), contrast_path(), looks_path()] {
-        if let Ok(m) = gio::File::for_path(&p)
-            .monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
-        {
+    // The active-theme file and the installed themes' sources (plugin state, theme folder) may
+    // bring back an id missed earlier: forget the misses so it is looked for again (audit7 R7-4).
+    let [plugins, themes] = theme::installed_sources();
+    // (file, a folder, an installed-themes source)
+    for (p, folder, installed) in [
+        (path.clone(), false, true),
+        (plugins, false, true),
+        (themes, true, true),
+        (contrast_path(), false, false),
+        (looks_path(), false, false),
+    ] {
+        let f = gio::File::for_path(&p);
+        let m = if folder {
+            f.monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+        } else {
+            f.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        };
+        if let Ok(m) = m {
             let load = load.clone();
-            m.connect_changed(move |_, _, _, _| load());
+            m.connect_changed(move |_, _, _, _| {
+                if installed {
+                    theme::forget_missed();
+                }
+                load();
+            });
             // Keep the monitor alive for the process lifetime.
             std::mem::forget(m);
         }
@@ -171,9 +193,44 @@ fn icon_theme(dirs: &[&str], exists: impl Fn(&str) -> bool) -> &'static str {
     }
 }
 
+/// Repo checkout of the icon set (dev, goldens): design/icons laid out as a theme named WolOS in
+/// a per-checkout temp dir (links to design/icons/*, index.theme = design/icons/dev.theme from
+/// design/tools/icons.py), so the shell draws our symbolics instead of Adwaita's of the same name.
+/// None on an installed system (/usr/share/icons/WolOS) or without the design/ tree.
+fn dev_icon_root() -> Option<std::path::PathBuf> {
+    use std::path::Path;
+    let icons = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons"));
+    let index = icons.join("dev.theme");
+    if Path::new("/usr/share/icons/WolOS/index.theme").is_file() || !index.is_file() {
+        return None;
+    }
+    let key = icons
+        .to_string_lossy()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        });
+    let root = std::env::temp_dir().join(format!("wolos-dev-icons-{key:016x}"));
+    let theme = root.join(PRODUCT_ICONS);
+    std::fs::create_dir_all(&theme).ok()?;
+    for d in ["symbolic", "apps", "places", "devices", "mimetypes"] {
+        let link = theme.join(d);
+        if !link.exists() {
+            let _ = std::fs::remove_file(&link);
+            #[cfg(unix)]
+            let _ = std::os::unix::fs::symlink(icons.join(d), &link);
+        }
+    }
+    std::fs::copy(&index, theme.join("index.theme")).ok()?;
+    Some(root)
+}
+
 /// WolOS icons: installed share dir, else the repo's design/ tree (dev).
 fn icons(display: &gdk::Display) {
     let theme = gtk::IconTheme::for_display(display);
+    if let Some(root) = dev_icon_root() {
+        theme.add_search_path(&root);
+    }
     let dirs: Vec<String> = theme
         .search_path()
         .iter()

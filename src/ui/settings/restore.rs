@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Restore: recent settings changes with Undo (`wol_core::journal`, same as `wol undo`), and restore
-//! points (ZFS boot environments) to start the system from an earlier state.
+//! points (the root slots, `@wolos-a` and `@wolos-b`) to start the system from an earlier state.
 use super::*;
 use wol_core::journal::{Entry, is_undone};
 
@@ -18,6 +18,7 @@ pub(crate) fn topic(what: &str) -> &str {
         "helpers" => "Assistants & Automation",
         "files" => "Tidied Downloads",
         "widgets" => "Widgets",
+        "sound" => "Sound",
         other => other,
     }
 }

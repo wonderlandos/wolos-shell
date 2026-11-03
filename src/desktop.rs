@@ -33,39 +33,24 @@ pub fn parse(id: &str, text: &str) -> Option<Entry> {
     if HIDDEN.contains(&id) {
         return None;
     }
-    let has = |list: &str| list.split(';').any(|d| d.trim() == DESKTOP);
-    let (mut name, mut exec, mut icon, mut in_main, mut app) =
-        (None, None, String::new(), false, false);
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_main = line == "[Desktop Entry]";
-            continue;
-        }
-        if !in_main {
-            continue;
-        }
-        let Some((k, v)) = line.split_once('=') else {
-            continue;
-        };
-        match k.trim() {
-            "Name" => name = Some(v.trim().to_string()),
-            "Exec" => exec = Some(v.trim().to_string()),
-            "Icon" => icon = v.trim().to_string(),
-            "Type" => app = v.trim() == "Application",
-            "NoDisplay" | "Hidden" if v.trim() == "true" => return None,
-            "OnlyShowIn" if !has(v) => return None,
-            "NotShowIn" if has(v) => return None,
-            "TryExec" if !on_path(v.trim()) => return None,
-            _ => {}
-        }
+    // One reader for every `[Desktop Entry]` (wol_core::desktop: trimmed, first key wins); the
+    // policy of what the app list shows stays here.
+    let e = wol_core::desktop::Entry::parse(text);
+    let here = |key: &str| e.list(key).map(|l| l.contains(&DESKTOP));
+    if e.hidden()
+        || e.kind() != Some("Application")
+        || here("OnlyShowIn") == Some(false)
+        || here("NotShowIn") == Some(true)
+        || e.get("TryExec").is_some_and(|p| !on_path(p))
+    {
+        return None;
     }
-    let argv = exec_argv(&exec?);
-    (app && !argv.is_empty()).then(|| Entry {
+    let argv = exec_argv(e.exec()?);
+    (!argv.is_empty()).then(|| Entry {
         id: id.into(),
-        name: name.unwrap_or_else(|| id.into()),
+        name: e.name().unwrap_or(id).into(),
         exec: argv,
-        icon,
+        icon: e.icon().unwrap_or_default().into(),
     })
 }
 
@@ -189,6 +174,16 @@ mod tests {
         assert!(parse("a.desktop", &app("OnlyShowIn=Hyprland;")).is_some());
         assert!(parse("a.desktop", &app("TryExec=no-such-program-wolos")).is_none());
         assert!(parse("a.desktop", &app("TryExec=sh")).is_some());
+    }
+
+    /// dedup A7: the one `wol_core::desktop` reader. The first `Name=` wins (it was the last), an
+    /// empty one falls back to the file id.
+    #[test]
+    fn first_name_wins_and_an_empty_one_is_the_id() {
+        let t = "[Desktop Entry]\nType=Application\nName=First\nName=Second\nExec=a\n";
+        assert_eq!(parse("a.desktop", t).unwrap().name, "First");
+        let t = "[Desktop Entry]\nType=Application\nName=\nExec=a\n";
+        assert_eq!(parse("a.desktop", t).unwrap().name, "a.desktop");
     }
 
     #[test]

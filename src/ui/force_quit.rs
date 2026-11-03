@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Force Quit Applications (⌥⌘Esc, macOS): open apps, most recent first; Force Quit ends every
+//! Force Quit Applications (⌥⌘Esc): open apps, most recent first; Force Quit ends every
 //! window of the chosen one (`killwindow`, same as the app menu's Force Quit). Kit only.
 use crate::appmenu::{self, Act};
 use crate::hypr::Client;
@@ -10,10 +10,10 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 pub const TITLE: &str = "Force Quit Applications";
-pub const HINT: &str = "If an app doesn't respond for a while, choose it and click Force Quit.";
+pub const HINT: &str = "If an app doesn’t respond for a while, choose it and click Force Quit.";
 pub const EMPTY: &str = "No apps are open.";
 /// Exclusive (audit3 R2A-11): an on-demand layer gets no keyboard over a pointer-locked game, so
-/// the list had no arrows, Return or Esc there. Force Quit never asks Hyprland to focus a window
+/// the list had no arrows, Return or Esc there. Force Quit never asks the compositor to focus a window
 /// (the reason the switcher and Overview are on demand), it only ends them.
 pub const KEYBOARD: crate::kit::surface::Keyboard = crate::kit::surface::Keyboard::Exclusive;
 /// Apps listed before the list scrolls.
@@ -21,9 +21,11 @@ const ROWS: usize = 6;
 /// Time for the windows to go before the list is read again.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
 
-/// Hyprland request ending every window of `app` (None when it has no window left).
+/// Compositor request ending every window of `app` (None when it has no window left).
 pub fn batch(app: &App, clients: &[Client]) -> Option<String> {
-    let front = clients.iter().find(|c| c.class == app.class)?;
+    let front = clients
+        .iter()
+        .find(|c| appmenu::same_class(&c.class, &app.class))?;
     appmenu::batch(Act::ForceQuit, front, clients, (0, 0, 0, 0))
 }
 
@@ -163,7 +165,7 @@ impl Picker {
 
 /// Resident panel: the list is read each time it opens; Esc closes it.
 pub fn build(app: &gtk::Application) -> gtk::Window {
-    // Hyprland and the .desktop files are read off the UI thread (audit2 A2-10).
+    // The compositor and the .desktop files are read off the UI thread (audit2 A2-10).
     let refresh = |p: &Rc<Picker>| {
         let p = p.clone();
         glib::spawn_future_local(async move {
@@ -218,7 +220,13 @@ mod tests {
     #[test]
     fn force_quit_ends_every_window_of_the_chosen_app() {
         let c = |a: &str, class: &str| Client::new(a, class, "");
-        let clients = [c("0x1", "foot"), c("0x2", "helium"), c("0x3", "foot")];
+        let clients = [
+            c("0x1", "foot"),
+            c("0x2", "helium"),
+            c("0x3", "foot"),
+            c("0x4", "org.gnome.Nautilus"),
+            c("0x5", "org.gnome.Nautilus"),
+        ];
         let app = |class: &str| App {
             class: class.into(),
             name: class.into(),
@@ -228,6 +236,11 @@ mod tests {
         assert_eq!(
             batch(&app("foot"), &clients).as_deref(),
             Some("[[BATCH]]dispatch killwindow address:0x1;dispatch killwindow address:0x3")
+        );
+        assert_eq!(
+            batch(&app("org.gnome.nautilus"), &clients).as_deref(),
+            Some("[[BATCH]]dispatch killwindow address:0x4;dispatch killwindow address:0x5"),
+            "the switcher lowercases the class (audit4 S3-1)"
         );
         assert_eq!(batch(&app("gimp"), &clients), None, "already gone");
     }

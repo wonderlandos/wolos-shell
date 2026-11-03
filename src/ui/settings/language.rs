@@ -18,20 +18,36 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let names: Vec<&str> = LANGUAGES.iter().map(|l| l.1).collect();
     let note = w::footnote("Apps use the new language the next time you log in.");
     note.set_visible(false);
-    let (dk, st, n) = (e.desk.clone(), status.clone(), note.clone());
-    p.append(&w::section(
-        "",
-        &[form::search_picker_row(
-            "Preferred language",
-            "Menus, dates and numbers.",
-            &names,
-            language_index(d.language.as_deref()),
-            move |i| {
-                dk.set(&st, |p| p.language = Some(LANGUAGES[i].0.to_string()));
-                n.set_visible(true);
-            },
-        )],
-    ));
+    // The menu, so a failed save can put it back to the saved language (Desk::set_or).
+    let menu = Rc::new(glib::WeakRef::<gtk::DropDown>::new());
+    let (dk, st, n, m) = (e.desk.clone(), status.clone(), note.clone(), menu.clone());
+    let opened = d.language.clone();
+    let picker = form::search_picker_row(
+        "Preferred language",
+        "Menus, dates and numbers.",
+        &names,
+        language_index(d.language.as_deref()),
+        move |i| {
+            let (dk2, n2, m, opened) = (dk.clone(), n.clone(), m.clone(), opened.clone());
+            n.set_visible(true);
+            dk.set_or(
+                &st,
+                |p| p.language = Some(LANGUAGES[i].0.to_string()),
+                move || {
+                    let saved = dk2.get().language;
+                    // The note only for a language saved since the page opened.
+                    n2.set_visible(saved != opened);
+                    if let Some(m) = m.upgrade() {
+                        m.set_selected(
+                            u32::try_from(language_index(saved.as_deref())).unwrap_or_default(),
+                        );
+                    }
+                },
+            );
+        },
+    );
+    menu.set(control_in::<gtk::DropDown>(&picker).as_ref());
+    p.append(&w::section("", &[picker]));
     p.append(&note);
     let keyboard = form::nav_row(
         "input-keyboard-symbolic",

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! wol-analyze: what Files' "Analyze with ClamAV" opens. Checks through `wol-xguard scan`. With
+//! wol-analyze: what Files' "Check for Malware" opens. Checks through `wol-xguard scan`. With
 //! the signatures off it checks nothing and offers Settings: only the switch there turns them on.
 use crate::copy;
 use crate::kit::{self, widgets as w};

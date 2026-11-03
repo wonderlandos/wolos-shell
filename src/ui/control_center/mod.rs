@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Control Center (macOS Sonoma layout). Every control goes through `System` (core backend via
-//! `Host`; root actions through wol-admind, which may open the Authenticate sheet, IaraOS ADR 0026).
-//! Built once as a resident wol-shell panel; refreshes only while visible. Optional modules follow
-//! Settings > Control Center (`ShellPrefs.control_center`). UI pieces are Kit components only.
+//! Control Center (WolOS layout): a connectivity card (Wi-Fi, Bluetooth) next to Focus
+//! and Dark Mode, the Display and Sound sliders, Now Playing, then a grid of square
+//! tiles (Battery, Screen Mirroring, Keyboard Brightness, Night Shift, Screenshot, Record, accessibility, and the
+//! tiles of [`tiles::TileSource`], ADR 0031). Every control goes through `System` (core backend
+//! via `Host`; root actions through wol-admind, which may open the Authenticate sheet, IaraOS
+//! ADR 0026). Built once as a resident wol-shell panel; refreshes only while visible; ends above
+//! the Dock and narrows on a narrow display. Optional modules follow Settings > Control Center
+//! (`ShellPrefs.control_center`). UI pieces are Kit components only.
+mod display;
 mod pages;
+mod sound;
+pub mod tiles;
 
 use crate::focus::{self, Focus};
 use crate::kit::{
@@ -16,6 +23,7 @@ use crate::kit::{
     widgets as w,
 };
 use crate::system::{Action, ActionError, PowerMode, System};
+use crate::ui::settings::SoundState;
 use crate::{copy, theme};
 use gtk::{glib, prelude::*};
 use std::cell::{Cell, RefCell};
@@ -23,7 +31,16 @@ use std::rc::Rc;
 use wol_core::prefs::ControlCenterPrefs;
 
 /// Every argv the Control Center spawns (tests/cc_spawns.rs checks each resolves).
-pub const SPAWNS: &[&[&str]] = &[SCREENSHOT, RECORD, WIFI_SETTINGS, SOUND_SETTINGS];
+pub const SPAWNS: &[&[&str]] = &[
+    SCREENSHOT,
+    RECORD,
+    WIFI_SETTINGS,
+    SOUND_SETTINGS,
+    DISPLAY_SETTINGS,
+    STAY_AWAKE,
+];
+/// Stay Awake tile (`wol_core::toggles`): the CLI flips it; `tiles::toggle_argv` builds it.
+pub const STAY_AWAKE: &[&str] = &["wol", "toggle", "stay-awake"];
 /// Screenshot tile: the capture toolbar, like Super+Shift+5.
 const SCREENSHOT: &[&str] = &["wol", "shell", "show", "screenshot"];
 /// Record tile: the capture toolbar in Record Entire Screen mode.
@@ -32,13 +49,28 @@ const RECORD: &[&str] = &["wol", "shell", "show", crate::ui::capture::RECORD];
 pub const WIFI_SETTINGS: &[&str] = &["wol-settings", "Wi-Fi"];
 /// "Sound Settings…" on the Sound page.
 pub const SOUND_SETTINGS: &[&str] = &["wol-settings", "Sound"];
+/// "Displays Settings…" on the Display page.
+pub const DISPLAY_SETTINGS: &[&str] = &["wol-settings", "Displays"];
 
 /// Stack page names.
-pub const PAGES: [&str; 5] = ["main", "wifi", "bluetooth", "sound", "focus"];
+pub const PAGES: [&str; 6] = ["main", "wifi", "bluetooth", "sound", "focus", "display"];
 
 thread_local! {
     /// The page the next show opens (set by [`request_page`], taken once by the show handler).
     static NEXT_PAGE: Cell<Option<&'static str>> = const { Cell::new(None) };
+    /// Extra tiles (ADR 0031 `[[tile]]`), set once by the plugin host ([`set_tile_source`]).
+    static TILE_SOURCE: RefCell<Option<Rc<dyn tiles::TileSource>>> = const { RefCell::new(None) };
+}
+
+/// The tiles `source` lists join the Control Center's tile grid, after the built-in ones, on the
+/// next refresh (the plugin host calls it once at start and again when plugins change); None
+/// removes them.
+pub fn set_tile_source(source: Option<Rc<dyn tiles::TileSource>>) {
+    TILE_SOURCE.with_borrow_mut(|s| *s = source);
+}
+
+fn tile_source() -> Option<Rc<dyn tiles::TileSource>> {
+    TILE_SOURCE.with_borrow(|s| s.clone())
 }
 
 /// The next time the panel shows, open `page` (one of [`PAGES`]) instead of the main page (audit2
@@ -113,25 +145,61 @@ pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
             }
         });
     }
-    let running: Rc<RefCell<Option<glib::JoinHandle<()>>>> = Default::default();
     {
-        let (running, cc) = (running.clone(), cc.clone());
+        // Plugin [[tile]]s (ADR 0031): read off the GTK thread, again when the plugin folders
+        // change and on every show (a toggle may have moved from the command line).
+        let tiles = crate::ui::plugins::TileCache::new(crate::ui::plugins::Paths::user());
+        let weak = Rc::downgrade(&cc);
+        tiles.on_changed(Rc::new(move || {
+            if let Some(cc) = weak.upgrade() {
+                cc.sync();
+            }
+        }));
+        tiles.watch(&kit::lifetime::Lifetime::of_window(&win));
+        let t = tiles.clone();
+        win.connect_show(move |_| t.refresh());
+        set_tile_source(Some(tiles));
+    }
+    let running: Rc<RefCell<Option<glib::JoinHandle<()>>>> = Default::default();
+    // The sound service's state, looked at twice a second while the panel is open.
+    let polling: Rc<RefCell<Option<glib::SourceId>>> = Default::default();
+    {
+        let (running, polling, cc) = (running.clone(), polling.clone(), cc.clone());
         win.connect_show(move |win| {
+            if !cc.sound_page.has_source() {
+                cc.sound_page.set_source(sound::live());
+            }
             show_page_now(&cc.ui.pages, take_page());
             cc.sync();
-            fit(&cc.ui.scroll, win);
+            fit(&cc, win);
             *running.borrow_mut() = follow(&sys, cc.clone());
+            let weak = Rc::downgrade(&cc);
+            let id = glib::timeout_add_local(SOUND_POLL, move || {
+                let Some(cc) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if cc.sound_page.poll() {
+                    cc.sync();
+                }
+                glib::ControlFlow::Continue
+            });
+            if let Some(old) = polling.borrow_mut().replace(id) {
+                old.remove();
+            }
         });
     }
     {
         // On show the surface may not exist yet (then `screen_height` falls back to the first
         // display); mapped, the panel knows the display it is on.
         let cc = cc.clone();
-        win.connect_map(move |win| fit(&cc.ui.scroll, win));
+        win.connect_map(move |win| fit(&cc, win));
     }
     win.connect_hide(move |_| {
         if let Some(h) = running.borrow_mut().take() {
             h.abort();
+        }
+        if let Some(id) = polling.borrow_mut().take() {
+            id.remove();
         }
         forget_page();
     });
@@ -139,6 +207,9 @@ pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
     kit::surface::on_escape(&win, move || w2.set_visible(false));
     win.upcast()
 }
+
+/// How often the open panel looks for a new sound service state.
+const SOUND_POLL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Screen height the panel may not use: menu bar, glass margins and padding.
 const CHROME: i32 = w::MENUBAR_HEIGHT + 2 * 24 + 2 * w::INSET + 2 * 8;
@@ -150,19 +221,33 @@ fn cap(screen: i32, dock: i32) -> i32 {
     screen - CHROME - dock.max(0)
 }
 
-/// Scrolls the main page only when its modules are taller than the screen allows. Only a Dock on
-/// the panel's own display counts (audit3 R2A-4: a second display without one scrolled early).
-fn fit(scroll: &gtk::ScrolledWindow, win: &impl IsA<gtk::Widget>) {
-    let (screen, dock) = (screen_height(win), kit::surface::reserved_bottom_on(win));
-    cap_scroller(
-        scroll,
-        w::CONTROL_CENTER_WIDTH,
-        screen.map(|h| cap(h, dock)),
-    );
+/// Narrowest the panel gets (a 360 px wide display, scaled phones and portrait panels).
+pub const NARROW_WIDTH: i32 = 288;
+
+/// Panel width on a `screen` px wide display: the standard width, less where the display is too
+/// narrow for it and its glass margins, never under [`NARROW_WIDTH`].
+fn width_for(screen: Option<i32>) -> i32 {
+    match screen {
+        Some(s) if s > 0 => {
+            (s - 2 * 24 - 2 * w::INSET).clamp(NARROW_WIDTH, w::CONTROL_CENTER_WIDTH)
+        }
+        _ => w::CONTROL_CENTER_WIDTH,
+    }
 }
 
-fn screen_height(win: &impl IsA<gtk::Widget>) -> Option<i32> {
-    kit::surface::screen_of(win).map(|s| s.1)
+/// Fits the panel to its display: its width (narrow layout on a narrow display), and the main
+/// page scrolls only when its modules are taller than the screen allows. Only a Dock on the
+/// panel's own display counts (audit3 R2A-4: a second display without one scrolled early).
+fn fit(cc: &ControlCenter, win: &impl IsA<gtk::Widget>) {
+    let screen = kit::surface::screen_of(win);
+    let width = width_for(screen.map(|s| s.0));
+    if cc.ui.width.get() != width {
+        cc.ui.width.set(width);
+        cc.root.set_width_request(width);
+        cc.sync();
+    }
+    let dock = kit::surface::reserved_bottom_on(win);
+    cap_scroller(&cc.ui.scroll, width, screen.map(|s| cap(s.1, dock)));
 }
 
 /// Control Center content on its own (golden renders): follows the snapshot while the widget lives.
@@ -173,7 +258,34 @@ pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
 /// Content with explicit module prefs, showing `page` (one of [`PAGES`], or `wifi:other` for the
 /// Wi-Fi page with the Other Network sheet open; golden renders).
 pub fn content_with(sys: Rc<dyn System>, prefs: ControlCenterPrefs, page: &str) -> gtk::Widget {
+    content_sized(sys, prefs, page, w::CONTROL_CENTER_WIDTH)
+}
+
+/// [`content_with`] at a panel `width` (the narrow layout under [`tiles::NARROW_BELOW`]).
+pub fn content_sized(
+    sys: Rc<dyn System>,
+    prefs: ControlCenterPrefs,
+    page: &str,
+    width: i32,
+) -> gtk::Widget {
+    content_sound(sys, prefs, page, width, Some(SoundState::demo()))
+}
+
+/// [`content_sized`] with the sound service's state (`SoundState::demo()` in the others); None
+/// draws `System`'s devices only, as when the service is not running.
+pub fn content_sound(
+    sys: Rc<dyn System>,
+    prefs: ControlCenterPrefs,
+    page: &str,
+    width: i32,
+    sound: Option<SoundState>,
+) -> gtk::Widget {
     let cc = build(sys.clone(), prefs);
+    if let Some(s) = sound {
+        cc.sound_page.set_source(sound::fixed(s));
+    }
+    cc.ui.width.set(width);
+    cc.root.set_width_request(width);
     show_page_now(&cc.ui.pages, page.split(':').next().unwrap_or(page));
     cc.sync();
     if page == "wifi:other" {
@@ -204,6 +316,8 @@ pub(crate) struct Ui {
     pub pages: gtk::Stack,
     scroll: gtk::ScrolledWindow,
     pub prefs: Cell<ControlCenterPrefs>,
+    /// Panel width now (narrow on a narrow display); the tile grid's columns follow it.
+    width: Cell<i32>,
     message: gtk::Label,
     auth: w::AuthSheet,
     /// Admin action waiting for the password.
@@ -332,7 +446,6 @@ pub(crate) fn launch(wd: &impl IsA<gtk::Widget>, argv: &[&str]) {
 }
 
 struct Accessibility {
-    row: gtk::Box,
     reduce_motion: ToggleTile,
     contrast: ToggleTile,
     zoom: ToggleTile,
@@ -341,21 +454,30 @@ struct Accessibility {
 pub(crate) struct ControlCenter {
     root: gtk::Widget,
     ui: Rc<Ui>,
+    /// The two top cards: equal widths at the standard width; on a narrow panel each takes what
+    /// its names need (two equal halves would not hold "Dark Mode").
+    top: gtk::Box,
     wifi: w::ControlTile,
     bluetooth: w::ControlTile,
     focus: w::ControlTile,
     appearance: w::ControlTile,
     display: SliderModule,
     sound: SliderModule,
-    keyboard: SliderModule,
     media: NowPlayingCard,
+    grid: tiles::Grid,
     battery: BatteryTile,
-    tiles: gtk::Box,
+    mirroring: ToggleTile,
+    keyboard: ToggleTile,
     night: ToggleTile,
     screenshot: gtk::Button,
     record: gtk::Button,
     a11y: Accessibility,
+    /// Desktop toggles with a tile (`tiles::toggle_tiles`).
+    toggles: Vec<(wol_core::toggles::Toggle, ToggleTile)>,
+    extra: tiles::Extra,
     pages: pages::Pages,
+    sound_page: sound::SoundPage,
+    display_page: display::DisplayPage,
 }
 
 fn dark_now() -> bool {
@@ -391,6 +513,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         pages: pages.clone(),
         scroll: scroll.clone(),
         prefs: Cell::new(prefs),
+        width: Cell::new(w::CONTROL_CENTER_WIDTH),
         message: w::label("", "secondary"),
         auth: w::authenticate_sheet("Control Center"),
         pending: Default::default(),
@@ -416,6 +539,8 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     panel.append(&ui.auth.revealer);
     pages.add_named(&scroll, Some("main"));
     let detail = pages::Pages::build(&ui);
+    let sound_page = sound::SoundPage::build(&ui);
+    let display_page = display::DisplayPage::build(&ui);
     panel.append(&pages);
 
     // Two cards of two controls each (Wi-Fi + Bluetooth, Focus + Dark Mode): equal heights by
@@ -489,9 +614,13 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
             "display-brightness-symbolic",
             0.0,
             move |v| u.act_latest("brightness", Action::Brightness(v as u8)),
-            None,
+            Some("Display"),
         )
     };
+    if let Some(d) = &display.detail {
+        let u = ui.clone();
+        d.connect_clicked(move |_| u.show("display"));
+    }
     main.append(&display.root);
     let sound = {
         let u = ui.clone();
@@ -520,35 +649,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     }
     main.append(&media.root);
 
-    let keyboard = {
-        let u = ui.clone();
-        SliderModule::new(
-            "Keyboard Brightness",
-            "keyboard-brightness-symbolic",
-            0.0,
-            move |v| u.act_latest("keyboard", Action::KeyboardBrightness(v as u8)),
-            None,
-        )
-    };
-    main.append(&keyboard.root);
-
-    let tiles = w::hbox(w::S2);
-    tiles.set_homogeneous(true);
-    let night = ToggleTile::new("night-light-symbolic", "Night Shift");
-    {
-        let u = ui.clone();
-        night.button.connect_clicked(move |_| {
-            u.act(Action::NightLight(!u.sys.night_light().unwrap_or(false)))
-        });
-    }
-    tiles.append(&night.button);
-    let screenshot = ToggleTile::new("camera-photo-symbolic", "Screenshot").button;
-    screenshot.connect_clicked(|b| launch(b, SCREENSHOT));
-    tiles.append(&screenshot);
-    let record = ToggleTile::new("media-record-symbolic", "Record").button;
-    record.connect_clicked(|b| launch(b, RECORD));
-    tiles.append(&record);
-    // Battery folds into the tile row: charge at a glance, a click toggles Low Power Mode.
+    // Battery folds into the grid: charge at a glance, a click toggles Low Power Mode.
     let battery = BatteryTile::new();
     {
         let u = ui.clone();
@@ -562,12 +663,30 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
             }))
         });
     }
-    tiles.append(&battery.button);
-    main.append(&tiles);
+    // Screen Mirroring opens the Display page, where each external display can mirror this one.
+    let mirroring = ToggleTile::new("video-display-symbolic", "Screen Mirroring");
+    {
+        let u = ui.clone();
+        mirroring.button.connect_clicked(move |_| u.show("display"));
+    }
+    let keyboard = ToggleTile::new("keyboard-brightness-symbolic", "Keyboard Brightness");
+    {
+        let u = ui.clone();
+        keyboard.button.connect_clicked(move |_| u.show("display"));
+    }
+    let night = ToggleTile::new("night-light-symbolic", "Night Shift");
+    {
+        let u = ui.clone();
+        night.button.connect_clicked(move |_| {
+            u.act(Action::NightLight(!u.sys.night_light().unwrap_or(false)))
+        });
+    }
+    let screenshot = ToggleTile::new("camera-photo-symbolic", "Screenshot").button;
+    screenshot.connect_clicked(|b| launch(b, SCREENSHOT));
+    let record = ToggleTile::new("media-record-symbolic", "Record").button;
+    record.connect_clicked(|b| launch(b, RECORD));
 
     let a11y = {
-        let row = w::hbox(w::S2);
-        row.set_homogeneous(true);
         let reduce_motion = ToggleTile::new("wolos-reduce-motion-symbolic", "Reduce Motion");
         let contrast = ToggleTile::new("wolos-contrast-symbolic", "Increase Contrast");
         let zoom = ToggleTile::new("zoom-in-symbolic", "Zoom");
@@ -590,37 +709,60 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
                 let on = get(u.sys.accessibility()).unwrap_or(false);
                 u.act(make(!on));
             });
-            row.append(&t.button);
         }
         Accessibility {
-            row,
             reduce_motion,
             contrast,
             zoom,
         }
     };
-    main.append(&a11y.row);
+    let toggles: Vec<_> = tiles::toggle_tiles()
+        .into_iter()
+        .map(|t| {
+            let tile = ToggleTile::new(t.icon(), t.label());
+            let u = ui.clone();
+            tile.button.connect_clicked(move |_| {
+                kit::spawn(&tiles::toggle_argv(t));
+                // The CLI moves the state file; look again once it had the time to.
+                let u = u.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
+                    if let Some(f) = u.resync.borrow().clone() {
+                        f()
+                    }
+                });
+            });
+            (t, tile)
+        })
+        .collect();
+    let grid = tiles::Grid::new();
+    main.append(&grid.root);
     ui.message.set_visible(false);
     main.append(&ui.message);
 
     let cc = Rc::new(ControlCenter {
         root: panel.upcast(),
         ui: ui.clone(),
+        top,
         wifi,
         bluetooth,
         focus: focus_tile,
         appearance,
         display,
         sound,
-        keyboard,
         media,
+        grid,
         battery,
-        tiles,
+        mirroring,
+        keyboard,
         night,
         screenshot,
         record,
         a11y,
+        toggles,
+        extra: Default::default(),
         pages: detail,
+        sound_page,
+        display_page,
     });
     {
         let weak = Rc::downgrade(&cc);
@@ -649,6 +791,8 @@ impl ControlCenter {
         let s = &*u.sys;
         let p = u.prefs.get();
         u.syncing.set(true);
+        self.top
+            .set_homogeneous(u.width.get() >= w::CONTROL_CENTER_WIDTH);
 
         let nets = s.wifi_networks();
         self.wifi
@@ -692,8 +836,9 @@ impl ControlCenter {
             self.media.set_app_icon(s.now_playing_icon().as_deref());
         }
 
+        // The grid: visible tiles in a fixed order, then the extra ones.
+        let mut shown: Vec<gtk::Widget> = Vec::new();
         let bat = s.battery().filter(|_| p.battery);
-        self.battery.button.set_visible(bat.is_some());
         let pm = s.power_mode();
         if let Some(bt) = bat {
             self.battery.set(
@@ -702,36 +847,69 @@ impl ControlCenter {
                 s.battery_time(),
                 pm == Some(PowerMode::LowPower),
             );
+            shown.push(self.battery.button.clone().upcast());
         }
-
+        let monitors = s.monitors();
+        let mirrored = self.display_page.mirrored.borrow().clone();
+        let mirroring = display::externals(&monitors)
+            .into_iter()
+            .find(|m| Some(&m.name) == mirrored.as_ref());
+        self.mirroring.set_on(mirroring.is_some());
+        self.mirroring.button.set_tooltip_text(
+            mirroring
+                .as_ref()
+                .map(|m| display::display_name(m).to_string())
+                .as_deref(),
+        );
+        shown.push(self.mirroring.button.clone().upcast());
         let k = s.keyboard_brightness().filter(|_| p.keyboard_brightness);
-        self.keyboard.root.set_visible(k.is_some());
-        if let Some(k) = k
-            && !u.sliding("keyboard")
-        {
-            self.keyboard.set_value(k as f64);
+        if let Some(k) = k {
+            self.keyboard
+                .button
+                .set_tooltip_text(Some(&kit::controls::percent(f64::from(k))));
+            shown.push(self.keyboard.button.clone().upcast());
         }
-
         let night = s.night_light().filter(|_| p.night_shift);
-        self.night.button.set_visible(night.is_some());
         self.night.set_on(night.unwrap_or(false));
-        self.screenshot.set_visible(p.screenshot);
-        self.record.set_visible(p.record);
-        self.tiles
-            .set_visible(night.is_some() || p.screenshot || p.record || bat.is_some());
-
+        if night.is_some() {
+            shown.push(self.night.button.clone().upcast());
+        }
+        if p.screenshot {
+            shown.push(self.screenshot.clone().upcast());
+        }
+        if p.record {
+            shown.push(self.record.clone().upcast());
+        }
         let acc = s.accessibility();
-        self.a11y.row.set_visible(p.accessibility);
-        self.a11y
-            .reduce_motion
-            .button
-            .set_visible(acc.reduce_motion.is_some());
         self.a11y
             .reduce_motion
             .set_on(acc.reduce_motion.unwrap_or(false));
         self.a11y.contrast.set_on(acc.increase_contrast);
-        self.a11y.zoom.button.set_visible(acc.zoom.is_some());
         self.a11y.zoom.set_on(acc.zoom.unwrap_or(false));
+        if p.accessibility {
+            if acc.reduce_motion.is_some() {
+                shown.push(self.a11y.reduce_motion.button.clone().upcast());
+            }
+            shown.push(self.a11y.contrast.button.clone().upcast());
+            if acc.zoom.is_some() {
+                shown.push(self.a11y.zoom.button.clone().upcast());
+            }
+        }
+        for (t, tile) in &self.toggles {
+            tile.set_on(tiles::toggle_on(*t));
+            shown.push(tile.button.clone().upcast());
+        }
+        if let Some(src) = tile_source() {
+            let weak = Rc::downgrade(u);
+            let toggle_src = src.clone();
+            shown.extend(self.extra.buttons(src.tiles(), move |id, on| {
+                toggle_src.toggle(id, on);
+                if let Some(f) = weak.upgrade().and_then(|u| u.resync.borrow().clone()) {
+                    f();
+                }
+            }));
+        }
+        self.grid.set(shown, tiles::columns(u.width.get()));
         if let (Some(rm), Some(g)) = (acc.reduce_motion, gtk::Settings::default())
             && g.is_gtk_enable_animations() == rm
         {
@@ -739,6 +917,8 @@ impl ControlCenter {
         }
 
         self.pages.sync(u, f, &focus_label(f));
+        self.sound_page.sync(u);
+        self.display_page.sync(u);
         u.syncing.set(false);
         super::menubar::refresh_now();
     }
@@ -777,6 +957,36 @@ mod tests {
             cap(screen, 0),
             "a bad zone reserves nothing"
         );
+    }
+
+    /// The panel keeps its width on every usual display and narrows (three tile columns) on a
+    /// narrow one, never below the narrow width.
+    #[test]
+    fn the_panel_narrows_on_a_narrow_display() {
+        assert_eq!(width_for(None), w::CONTROL_CENTER_WIDTH);
+        assert_eq!(width_for(Some(1366)), w::CONTROL_CENTER_WIDTH);
+        assert_eq!(
+            width_for(Some(0)),
+            w::CONTROL_CENTER_WIDTH,
+            "a bad size changes nothing"
+        );
+        let narrow = width_for(Some(360));
+        assert!(
+            (NARROW_WIDTH..w::CONTROL_CENTER_WIDTH).contains(&narrow),
+            "{narrow}"
+        );
+        assert_eq!(tiles::columns(narrow), 3);
+        assert_eq!(width_for(Some(200)), NARROW_WIDTH);
+    }
+
+    /// Every page a status icon or a control opens is a page of the stack; the Display page
+    /// (Display chevron, Keyboard Brightness, Screen Mirroring) is one of them.
+    #[test]
+    fn display_is_a_page_and_links_its_settings_pane() {
+        assert!(PAGES.contains(&"display"));
+        request_page("display");
+        assert_eq!(take_page(), "display");
+        assert!(SPAWNS.contains(&DISPLAY_SETTINGS));
     }
 
     /// UX review: the Dark Mode tile switched to the plain dark theme, dropping the accent and

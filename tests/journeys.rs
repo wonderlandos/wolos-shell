@@ -71,7 +71,7 @@ fn j1_setup_asks_at_most_five_questions() {
     d.password = "curiouser".into();
     assert_eq!(
         d.account_problem().map(|p| p.1),
-        Some("Passwords don't match.")
+        Some("Passwords don’t match.")
     );
     d.verify = "curiouser".into();
     assert_eq!(
@@ -163,7 +163,7 @@ fn j4_theme_change_can_be_undone() {
     );
     j.undo(None, "settings", 4).unwrap();
     let again = j.undo(None, "settings", 5).unwrap_err();
-    assert_eq!(copy::undo(&again), "There's nothing to undo.");
+    assert_eq!(copy::undo(&again), "There’s nothing to undo.");
     for e in copy::undo_errors() {
         friendly("undo", copy::undo(&e));
     }

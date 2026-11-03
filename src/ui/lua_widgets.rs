@@ -3,12 +3,19 @@
 //! desktop as kind `lua:<id>`. Scripts run sandboxed in the shell; each file reloads when it
 //! changes, renders on the desktop widget timer at its own `refresh`, and after a click. The tree
 //! it returns is drawn with Kit parts (`ui::app_view`) on a widget card.
+//!
+//! Plugin cards (ADR 0031 `[[widget]]`) are Lua widgets too: kind `lua:plugin-<plugin>-<id>`
+//! (`plugins::widget_key`), run by the desktop's own plugin host with the same deadlines and the
+//! plugin failure count (three in a row turn the plugin off).
 use super::app_view::{Act, Sink, View};
+use super::plugins;
 use super::widgets::Content;
 use crate::kit::data as d;
 use gtk::prelude::*;
+use shared::plugins::Kind;
 use shared::view::Node;
 use shared::widgets::Size;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -18,6 +25,8 @@ use wol_lua::{Change, Deadlines, Library, Services};
 /// render, 200 ms per click and per load. A widget that runs out is stopped and shows the
 /// "took too long" card until its file changes.
 const DEADLINES: Deadlines = Deadlines::DEFAULT;
+/// Seconds between tries of a plugin card whose plugin is not loaded (yet).
+pub const PLUGIN_RETRY: u32 = 5;
 
 /// One file's last render.
 #[derive(Clone, Debug, PartialEq)]
@@ -27,10 +36,23 @@ enum Shown {
     Missing,
 }
 
+/// A plugin card's host and its (plugin, entry), None while the plugin does not offer it.
+type PluginCard = (Rc<RefCell<plugins::Host>>, Option<(String, String)>);
+
 /// The widget folder and what each file shows now.
 pub struct Lua {
     lib: Library,
     shown: HashMap<String, Shown>,
+    /// The desktop's plugin host (None: plain Lua files only).
+    plugins: Option<Rc<RefCell<plugins::Host>>>,
+    /// Ends the plugin folder watch with this.
+    life: crate::kit::lifetime::Lifetime,
+}
+
+impl Drop for Lua {
+    fn drop(&mut self) {
+        self.life.end();
+    }
 }
 
 impl Lua {
@@ -40,12 +62,68 @@ impl Lua {
         Lua {
             lib,
             shown: HashMap::new(),
+            plugins: None,
+            life: Default::default(),
         }
     }
 
-    /// The person's folder, with this machine's clock and services.
+    /// [`Lua::new`] with plugin cards from `host` (loaded and watched by the caller).
+    pub fn with_plugins(
+        dir: PathBuf,
+        services: Rc<dyn Services>,
+        host: Rc<RefCell<plugins::Host>>,
+    ) -> Lua {
+        let mut l = Lua::new(dir, services);
+        l.plugins = Some(host);
+        l
+    }
+
+    /// The person's folder, with this machine's clock and services, and the enabled plugins'
+    /// cards (loaded off the GTK thread, reloaded when the plugin folder changes).
     pub fn user() -> Lua {
-        Lua::new(wol_lua::user_dir(), Rc::new(wol_lua::Live))
+        let host = Rc::new(RefCell::new(plugins::Host::new(
+            plugins::Paths::user(),
+            plugins::DESKTOP_KINDS,
+        )));
+        let l = Lua::with_plugins(wol_lua::user_dir(), Rc::new(wol_lua::Live), host.clone());
+        plugins::watch(&host, &l.life, Rc::new(|| {}));
+        l
+    }
+
+    /// The plugin cards there are now (the gallery offers them as `lua:<key>`).
+    pub fn cards(&self) -> Vec<plugins::Card> {
+        self.plugins
+            .as_ref()
+            .map(|h| h.borrow().cards())
+            .unwrap_or_default()
+    }
+
+    /// (host, plugin, entry) of a plugin card id; None for a plain Lua file.
+    fn plugin(&self, id: &str) -> Option<PluginCard> {
+        if !id.starts_with(plugins::WIDGET_PREFIX) {
+            return None;
+        }
+        let h = self.plugins.clone()?;
+        let at = h.borrow().card(id);
+        Some((h, at))
+    }
+
+    /// A plugin card's render or click outcome, kept as what the card shows.
+    fn show_plugin(
+        &mut self,
+        id: &str,
+        h: &Rc<RefCell<plugins::Host>>,
+        plugin: &str,
+        r: Option<plugins::Shown>,
+    ) {
+        let name = h.borrow().name(plugin);
+        let s = match r {
+            Some(Ok(node)) => Shown::Tree { name, node },
+            Some(Err(m)) => Shown::Failed(m),
+            None => Shown::Missing,
+        };
+        self.shown.insert(id.to_owned(), s);
+        plugins::toast(h);
     }
 
     /// Look at the folder again; the files whose card changed.
@@ -72,6 +150,14 @@ impl Lua {
 
     /// Run the file's render function now.
     pub fn render(&mut self, id: &str) {
+        if let Some((h, at)) = self.plugin(id) {
+            let Some((plugin, entry)) = at else {
+                self.shown.insert(id.to_owned(), Shown::Missing);
+                return;
+            };
+            let r = h.borrow_mut().render(Kind::Widget, &plugin, &entry);
+            return self.show_plugin(id, &h, &plugin, r);
+        }
         let s = match self.lib.widget(id) {
             None => return,
             Some(w) => match w.render() {
@@ -87,6 +173,10 @@ impl Lua {
 
     /// A button on the card: its handler, then a new render.
     pub fn click(&mut self, id: &str, button: u32) {
+        if let Some((h, Some((plugin, entry)))) = self.plugin(id) {
+            let r = h.borrow_mut().click(Kind::Widget, &plugin, &entry, button);
+            return self.show_plugin(id, &h, &plugin, r);
+        }
         let r = self.lib.widget(id).map(|w| w.click(button));
         match r {
             Some(Err(m)) => {
@@ -99,6 +189,18 @@ impl Lua {
 
     /// Seconds between renders (None: not loaded, or 0 = only after a click).
     pub fn refresh(&mut self, id: &str) -> Option<u32> {
+        if let Some((h, at)) = self.plugin(id) {
+            // Not loaded yet (or turned off): look again soon, so it shows once it is there.
+            let Some((plugin, entry)) = at else {
+                return Some(PLUGIN_RETRY);
+            };
+            let r = h.borrow().refresh(Kind::Widget, &plugin, &entry);
+            return match r {
+                None => Some(PLUGIN_RETRY),
+                Some(0) => None,
+                every => every,
+            };
+        }
         self.lib.widget(id).map(|w| w.refresh()).filter(|r| *r > 0)
     }
 

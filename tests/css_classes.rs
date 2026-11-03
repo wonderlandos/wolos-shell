@@ -213,3 +213,127 @@ fn the_menu_bar_height_is_one_number() {
         "hyprland.conf hyprbars bar_height is not {h}"
     );
 }
+
+/// The rule of `sel` in kit.css (up to its closing brace).
+fn rule(sel: &str) -> &'static str {
+    let css = CSS[0];
+    let at = css
+        .find(&format!("\n{sel} {{"))
+        .unwrap_or_else(|| panic!("kit.css has no rule `{sel}`"));
+    css[at + 1..].split('}').next().unwrap()
+}
+
+/// Audit A6-ux #9: keyboard focus is visible on every widget, one ring everywhere.
+#[test]
+fn keyboard_focus_is_one_accent_ring_everywhere() {
+    let r = rule("*:focus-visible");
+    assert!(r.contains("outline: 2px solid var(--accent)"), "{r}");
+    assert!(r.contains("outline-offset: 2px"), "{r}");
+}
+
+/// Audit A6-ux #2: a selected sidebar row is a quiet accent tint that keeps the text colour; the
+/// glyphs carry the section colour.
+#[test]
+fn the_selected_sidebar_row_is_a_quiet_tint() {
+    let r = rule("list.sidebar row:selected, list.sidebar row:selected:hover");
+    assert!(r.contains("alpha(var(--accent), 0.18)"), "{r}");
+    let l = rule("list.sidebar row:selected label");
+    assert!(l.contains("color: var(--text)"), "{l}");
+    assert!(
+        !CSS[0].contains("list.sidebar row:selected label, list.sidebar row:selected image"),
+        "the selected glyph must not turn into accent text"
+    );
+}
+
+/// Audit A6-ux #3: Control Center tiles share one height whatever their captions.
+#[test]
+fn control_center_tiles_have_one_height() {
+    let r = rule("button.toggle-tile");
+    assert!(r.contains("min-height: 76px"), "{r}");
+    assert!(rule("button.toggle-tile label").contains("min-height: 16px"));
+    assert_eq!(
+        shell::kit::controls::CIRCLE,
+        28,
+        "the glyph circle is 28 px"
+    );
+}
+
+/// Audit A6-ux #7 and #8: the running dot and the menu bar follow the scheme, not a fixed white.
+#[test]
+fn the_dot_and_the_bar_follow_the_scheme() {
+    assert!(rule(".running-dot").contains("background: alpha(var(--text), 0.85)"));
+    let root = rule(":root");
+    assert!(root.contains("--bar-text: var(--text);"), "{root}");
+    assert!(root.contains("--bar-fill: alpha(var(--surface)"), "{root}");
+    assert!(
+        !root.contains("--bar-text: rgba(255"),
+        "a bar text fixed to white"
+    );
+}
+
+/// Audit A6-ux #11: motion tokens (the theme contract's fast/normal/slow plus ease-out and
+/// ease-in); hover is a scale, not a margin jump; the spring is left to drops.
+#[test]
+fn motion_comes_from_tokens_and_the_dock_hover_scales() {
+    let root = rule(":root");
+    assert!(
+        root.contains("--ease-out: cubic-bezier(.2,.8,.2,1);"),
+        "{root}"
+    );
+    assert!(root.contains("--ease-in: cubic-bezier("), "{root}");
+    let scale: Vec<&str> = shared::theme::SCALE.iter().map(|(k, _)| *k).collect();
+    for t in ["--motion-fast", "--motion-normal", "--motion-slow"] {
+        assert!(scale.contains(&t), "the theme contract defines {t}");
+    }
+    let tile = rule("button.dock-tile");
+    assert!(
+        tile.contains("transition: transform var(--motion-normal) var(--ease-out)"),
+        "{tile}"
+    );
+    assert!(
+        !tile.contains("glass-spring"),
+        "hover is not a spring: {tile}"
+    );
+    assert!(rule("button.dock-tile:hover").contains("transform: scale(1.15)"));
+    assert!(
+        !CSS[0].contains("transition: background 120ms"),
+        "durations come from tokens"
+    );
+}
+
+/// Audit A6-ux #14: the type scale is 11 / 13 / 15 / 26, in kit.css and the theme contract.
+#[test]
+fn the_type_scale_is_11_13_15_26() {
+    use shared::theme::scaffold as m;
+    assert_eq!(
+        (m::SECONDARY, m::BODY, m::HEADING, m::LARGE_TITLE),
+        (11, 13, 15, 26)
+    );
+    assert!(
+        rule("label.heading").contains(&format!("font-size: {}px; font-weight: 600", m::HEADING))
+    );
+    let t = rule("label.large-title");
+    assert!(
+        t.contains(&format!(
+            "font-size: {}px; font-weight: 700",
+            m::LARGE_TITLE
+        )),
+        "{t}"
+    );
+    assert!(t.contains("letter-spacing: -0.5px"), "{t}");
+    assert!(rule("label.eyebrow").contains("letter-spacing: 0.4px"));
+}
+
+/// Audit A6-ux #13: the page title shares the sidebar search's line (the page starts 8 px under
+/// the toolbar band).
+#[test]
+fn the_page_title_sits_on_the_search_line() {
+    assert!(rule(".page").contains("padding: 8px 24px 24px 24px"));
+}
+
+/// Audit A6-ux S3: desktop switches (30 x 18, knob 14).
+#[test]
+fn desktop_switches_are_not_phone_sized() {
+    assert!(rule("switch.toggle").contains("min-width: 30px; min-height: 18px"));
+    assert!(rule("switch.toggle slider").contains("min-width: 14px; min-height: 14px"));
+}

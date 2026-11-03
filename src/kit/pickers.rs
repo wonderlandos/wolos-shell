@@ -167,7 +167,8 @@ fn border_paint(cr: &gtk::cairo::Context, l: &Looks, x: f64, y: f64, bw: f64, bh
     }
 }
 
-/// One miniature window: shadow, frosted body, title bar with traffic lights, text lines, border.
+/// One miniature window: shadow, frosted body, title bar with the window controls (right, quiet),
+/// text lines, border.
 #[allow(clippy::too_many_arguments)]
 fn draw_window(
     cr: &gtk::cairo::Context,
@@ -216,11 +217,13 @@ fn draw_window(
     rgba(cr, t.surface, opacity);
     cr.rectangle(x, y, ww, bar);
     let _ = cr.fill();
+    // Close rightmost, then zoom, minimise: one quiet circle each (the text colour at 28%, as
+    // `button.light` in kit.css), never the status colours.
     let dot = (bar * 0.22).max(1.2);
-    for (i, c) in [t.danger, t.warning, t.success].into_iter().enumerate() {
-        rgba(cr, if active { c } else { t.dim }, 1.0);
+    for i in 0..3 {
+        rgba(cr, if active { t.text } else { t.dim }, 0.28);
         cr.arc(
-            x + r.max(bar * 0.5) + i as f64 * dot * 3.0,
+            x + ww - r.max(bar * 0.5) - f64::from(i) * dot * 3.0,
             y + bar / 2.0,
             dot,
             0.0,

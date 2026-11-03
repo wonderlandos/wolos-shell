@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Menu bar app and Window menus: every item is a real action. Pure: frontmost window + clients +
-//! usable zone in, Hyprland dispatch batch out. `wol-app <verb>` runs them (menu clicks and keybinds).
+//! usable zone in, compositor dispatch batch out. `wol-app <verb>` runs them (menu clicks and keybinds).
 use crate::hypr::{Client, Dispatch};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,7 +73,7 @@ impl Cmd {
         Cmd::Emoji,
     ];
 
-    /// (`wol-app` verb, Hyprland MODS, key) of the ⌘ shortcut in the shipped conf.
+    /// (`wol-app` verb, compositor MODS, key) of the ⌘ shortcut in the shipped conf.
     const fn spec(self) -> (&'static str, &'static str, &'static str) {
         match self {
             Cmd::Copy => ("copy", "SUPER", "C"),
@@ -111,7 +111,7 @@ impl Cmd {
 /// What the app in front receives for a [`Cmd`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Handoff {
-    /// One tap of MODS + key (Hyprland `sendshortcut`) to the keyboard focus.
+    /// One tap of MODS + key (compositor `sendshortcut`) to the keyboard focus.
     Keys(&'static str, &'static str),
     /// Close the window (a terminal's Ctrl+W deletes a word).
     CloseWindow,
@@ -175,7 +175,7 @@ pub fn send(c: Cmd, class: &str) -> Handoff {
     }
 }
 
-/// Hyprland request for `c` with `class`/`address` in front; `panel` = a shell panel that may hold
+/// Compositor request for `c` with `class`/`address` in front; `panel` = a shell panel that may hold
 /// the keyboard is open (then a window is never closed: the user may be typing in the panel).
 /// `sendshortcut` over the socket is a press and release, so the app sees one tap, never a held key.
 pub fn key_batch(c: Cmd, class: &str, address: &str, panel: bool) -> Option<String> {
@@ -311,7 +311,13 @@ pub fn parse_verb(v: &str) -> Option<Act> {
 
 const HIDDEN: &str = "special:hidden";
 
-/// Hyprland `[[BATCH]]` request for `a` on the frontmost window; None = nothing to do.
+/// One app's windows: the switcher groups by the lowercased class (`switcher::apps`), so a group
+/// matches every window whatever the case the compositor reports (audit4 S3-1).
+pub fn same_class(a: &str, b: &str) -> bool {
+    a == b || a.to_lowercase() == b.to_lowercase()
+}
+
+/// Compositor `[[BATCH]]` request for `a` on the frontmost window; None = nothing to do.
 pub fn batch(
     a: Act,
     front: &Client,
@@ -342,28 +348,28 @@ pub fn batch(
         }],
         Act::Hide => clients
             .iter()
-            .filter(|c| c.class == front.class)
+            .filter(|c| same_class(&c.class, &front.class))
             .filter(hide)
             .map(hide_cmd)
             .collect(),
         Act::HideOthers => clients
             .iter()
-            .filter(|c| c.class != front.class)
+            .filter(|c| !same_class(&c.class, &front.class))
             .filter(hide)
             .map(hide_cmd)
             .collect(),
         Act::Quit => clients
             .iter()
-            .filter(|c| c.class == front.class)
+            .filter(|c| same_class(&c.class, &front.class))
             .map(|c| Dispatch::CloseWindow(win(c)))
             .collect(),
         Act::ForceQuit => clients
             .iter()
-            .filter(|c| c.class == front.class)
+            .filter(|c| same_class(&c.class, &front.class))
             .map(|c| Dispatch::KillWindow(win(c)))
             .collect(),
         Act::Minimise => vec![hide_cmd(front)],
-        // Zoom does nothing to a window in real full screen (macOS greys it out): the toggling
+        // Zoom does nothing to a window in real full screen (the menu greys it out): the toggling
         // `fullscreen 1` dropped it to its floating box instead (audit3 R2A-13).
         Act::Zoom if front.fullscreen == 2 => return None,
         // `fullscreenstate` acts on the focused window: name the front window first, so a menu
@@ -516,6 +522,15 @@ mod tests {
         assert_eq!(
             b(Act::ForceQuit),
             "[[BATCH]]dispatch killwindow address:0xa;dispatch killwindow address:0xb"
+        );
+        // Classes match whatever the case (the switcher lowercases them, audit4 S3-1).
+        let mixed = [
+            c("0xe", "org.gnome.Nautilus", "1"),
+            c("0xf", "org.gnome.nautilus", "2"),
+        ];
+        assert_eq!(
+            batch(Act::Quit, &mixed[0], &mixed, ZONE).as_deref(),
+            Some("[[BATCH]]dispatch closewindow address:0xe;dispatch closewindow address:0xf")
         );
         assert_eq!(
             b(Act::Minimise),
