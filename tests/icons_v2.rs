@@ -121,6 +121,43 @@ const APP_TILES: &[&str] = &[
     "wolos-launcher",
     "wolos-music",
     "wolos-trash",
+    // Apps WolOS ships with no icon of their own in the language (design/tools/icons/crafted_c.py).
+    "wolos-clock",
+    "wolos-documents",
+    "wolos-videos",
+    "wolos-archive",
+    "wolos-disk-usage",
+];
+
+/// Names the shell, GIO and the shipped apps ask for outside the app tiles: places, devices and the
+/// mimetype generics (design/tools/icons/families.py draws them, build.py PLACE_ALIASES maps the rest).
+const LONG_TAIL: &[&str] = &[
+    "places/folder",
+    "places/folder-download",
+    "places/user-trash",
+    "places/user-home",
+    "devices/drive-harddisk",
+    "devices/drive-removable-media",
+    "devices/drive-optical",
+    "devices/media-flash",
+    "devices/phone",
+    "devices/computer",
+    "devices/camera-photo",
+    "devices/printer",
+    "mimetypes/text-x-generic",
+    "mimetypes/text-x-script",
+    "mimetypes/text-html",
+    "mimetypes/application-pdf",
+    "mimetypes/image-x-generic",
+    "mimetypes/audio-x-generic",
+    "mimetypes/video-x-generic",
+    "mimetypes/package-x-generic",
+    "mimetypes/font-x-generic",
+    "mimetypes/x-office-calendar",
+    "mimetypes/x-office-address-book",
+    "mimetypes/x-office-drawing",
+    "mimetypes/application-x-cd-image",
+    "mimetypes/application-x-addon",
 ];
 
 /// `wolos-` literals that name packages, repositories and runtime files, not icons, and prefixes
@@ -358,7 +395,7 @@ fn edge_contrast(p: &Path, ground: [f64; 3]) -> f64 {
     ring[ring.len() * 3 / 4]
 }
 
-/// Full-colour icons (design/tools/icons/, LANGUAGE-v2): crafted objects on the soft card (apps)
+/// Full-colour icons (design/tools/icons/, design/icons/LANGUAGE.md): crafted objects on the soft card (apps)
 /// and pressed paper (places, devices, mimetypes), vector SVGs on the 1024 canvas. Gradients and
 /// blurs are allowed (rsvg draws them; the PNGs the dock uses are renders), images, text, scripts
 /// and styles are not; every app also has its small drawing (apps/small/, the 48 px PNG is a render
@@ -431,8 +468,8 @@ fn full_colour_icons_are_crafted_vectors_that_read_on_light_and_dark() {
         }
     }
     assert!(
-        icons >= 51,
-        "only {icons} icons (25 apps, 13 places, 2 devices, 11 mimetypes)"
+        icons >= 70,
+        "only {icons} icons (30 apps, 13 places, 8 devices, 19 mimetypes)"
     );
     assert!(bad.is_empty(), "{bad:#?}");
 }
@@ -692,7 +729,7 @@ fn full_colour_icons_read_with_their_filters_ignored() {
         "filters ignored, worst RMSE: {:?}; worst not listed: {unlisted:?}",
         &scores[..5.min(scores.len())]
     );
-    assert!(scores.len() > 140, "only {} renders", scores.len());
+    assert!(scores.len() > 190, "only {} renders", scores.len());
     let fails = |s: &(f64, u32, String)| s.0 > 0.08;
     let bad: Vec<_> = scores
         .iter()
@@ -740,4 +777,82 @@ fn icons_outside_the_full_colour_sets_have_no_filter() {
         .collect();
     assert!(all.len() > 100, "found only {} icons", all.len());
     assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// The long tail the shell and GIO ask for is drawn, and every row of the two alias tables
+/// (design/icons/aliases.tsv: wolos-<base> for app names; places-aliases.tsv: <context>/<base>)
+/// points at a drawing that exists, so install.sh never writes a dangling symlink.
+#[test]
+fn the_long_tail_and_every_alias_point_at_a_drawing() {
+    let d = root().join("design/icons");
+    let missing: Vec<_> = LONG_TAIL
+        .iter()
+        .filter(|n| !d.join(format!("{n}.svg")).is_file())
+        .collect();
+    assert!(missing.is_empty(), "not drawn: {missing:?}");
+    let mut bad = Vec::new();
+    let mut rows = 0;
+    let apps = std::fs::read_to_string(d.join("aliases.tsv")).unwrap();
+    for l in apps
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
+        let (base, names) = l.split_once('\t').unwrap_or((l, ""));
+        rows += 1;
+        if !d.join(format!("apps/wolos-{base}.svg")).is_file() || names.trim().is_empty() {
+            bad.push(l.to_string());
+        }
+    }
+    let places = std::fs::read_to_string(d.join("places-aliases.tsv")).unwrap();
+    for l in places
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
+        let f: Vec<&str> = l.split('\t').collect();
+        rows += 1;
+        if f.len() != 3 || !d.join(format!("{}/{}.svg", f[0], f[1])).is_file() {
+            bad.push(l.to_string());
+        }
+    }
+    assert!(rows >= 50, "only {rows} alias rows");
+    assert!(bad.is_empty(), "alias rows without a drawing: {bad:#?}");
+}
+
+/// QtSvg (Qt 6.12) ignores `clip-path`: a clipped glow or mesh spills over the card in every Qt
+/// app. The generator writes each clip as a luminance mask (design/tools/icons/svgk.py qt_safe).
+#[test]
+fn full_colour_icons_have_no_clip_path_qt_would_ignore() {
+    let bad: Vec<_> = full_colour_svgs()
+        .into_iter()
+        .filter(|p| {
+            let s = std::fs::read_to_string(p).unwrap();
+            s.contains("<clipPath") || s.contains("clip-path=")
+        })
+        .map(|p| p.display().to_string())
+        .collect();
+    assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// Qt apps on WolOS load the same theme through QtSvg. design/tools/icons/qtcheck/check.sh draws
+/// every full-colour icon with QSvgRenderer and compares it with librsvg (RMSE <= 0.03 at 48 and
+/// 128 px). Without a C++ compiler, the Qt 6 Svg headers or rsvg-convert it is skipped, loudly
+/// (CI's lint job installs qt6-svg and runs it as its own step).
+#[test]
+fn qt_draws_every_full_colour_icon_like_librsvg() {
+    use std::io::Write;
+    let out = std::process::Command::new("bash")
+        .arg(root().join("design/tools/icons/qtcheck/check.sh"))
+        .output()
+        .expect("bash");
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    if out.status.code() == Some(77) {
+        let _ = writeln!(
+            std::io::stderr(),
+            "\n*** SKIPPED qt_draws_every_full_colour_icon_like_librsvg: {} ***\n",
+            text.trim()
+        );
+        return;
+    }
+    assert!(out.status.success(), "{text}");
 }
