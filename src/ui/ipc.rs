@@ -5,7 +5,8 @@ use crate::{hypr, protocol};
 use gtk::{gio, glib, prelude::*};
 use std::rc::Rc;
 
-/// `$XDG_RUNTIME_DIR/wol-shell.sock`: `toggle|show|hide <panel>`, `reload`, `approve <json>`.
+/// `$XDG_RUNTIME_DIR/wol-shell.sock`: `toggle|show|hide <panel>`, `reload`, `approve <json>`,
+/// `call <plugin> <fn> <json>` and `status` (one JSON line back).
 /// Surfaces with their own command semantics (e.g. the switcher); true = handled.
 pub type Handlers = Vec<Rc<dyn Fn(&protocol::Command) -> bool>>;
 /// Takes an `approve` request (JSON, verbatim), the connection to answer on and the requester's
@@ -108,6 +109,19 @@ pub fn shell_socket(
                         eprintln!("wol-shell: bad command '{line}'");
                         continue;
                     };
+                    // `call` and `status`: one JSON line back on this connection, then it closes.
+                    if matches!(cmd.verb, protocol::Verb::Call | protocol::Verb::Status) {
+                        let reply = if cmd.verb == protocol::Verb::Call {
+                            super::plugins::call_line(cmd.target).await
+                        } else {
+                            status_line(&panels)
+                        };
+                        let out = conn.output_stream();
+                        let _ = out
+                            .write_all_future(reply.into_bytes(), glib::Priority::DEFAULT)
+                            .await;
+                        break;
+                    }
                     // One request per connection; the answer goes back on it. Never logged (a
                     // Wi-Fi password may be in it).
                     if cmd.verb == protocol::Verb::Approve {
@@ -137,6 +151,41 @@ pub fn shell_socket(
             });
         }
     });
+}
+
+/// The `status` answer: every panel with its open state, every shell surface by its layer
+/// namespace, and the parts that stopped (`kit::fence`).
+fn status_line(panels: &super::Panels) -> String {
+    let open: Vec<(String, bool)> = panels
+        .borrow()
+        .iter()
+        .map(|(name, w)| ((*name).to_owned(), w.is_visible()))
+        .collect();
+    let surfaces: Vec<protocol::Surface> = gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk::Window>().ok())
+        .map(|w| protocol::Surface {
+            namespace: namespace_of(&w),
+            visible: w.is_visible(),
+        })
+        .filter(|s| !s.namespace.is_empty())
+        .collect();
+    protocol::status_json(&open, &surfaces, &crate::kit::fence::failed())
+}
+
+/// A window's layer namespace (`kit::surface::Spec`); without layer shell the stand-in window
+/// carries it as its title.
+fn namespace_of(w: &gtk::Window) -> String {
+    #[cfg(feature = "layer-shell")]
+    {
+        use gtk4_layer_shell::LayerShell;
+        if w.is_layer_window()
+            && let Some(n) = w.namespace()
+        {
+            return n.to_string();
+        }
+    }
+    w.title().map(|t| t.to_string()).unwrap_or_default()
 }
 
 /// Runs one shell command in this process.

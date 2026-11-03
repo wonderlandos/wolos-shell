@@ -97,7 +97,7 @@ pub fn parse_args(args: &[String]) -> Launch {
 /// What Create Plugin offers, with the row titles; on at first: what `wol plugin new` makes
 /// when no kind is given. Planned kinds (`Kind::PLANNED`: the scaffold refuses them) are not
 /// offered.
-pub const KINDS: [(Kind, &str, bool); 10] = [
+pub const KINDS: [(Kind, &str, bool); 11] = [
     (Kind::Menubar, copy::KIND_MENUBAR, true),
     (Kind::Widget, copy::KIND_WIDGET, true),
     (Kind::Dock, copy::KIND_DOCK, false),
@@ -108,6 +108,7 @@ pub const KINDS: [(Kind, &str, bool); 10] = [
     (Kind::Hotkey, copy::KIND_HOTKEY, false),
     (Kind::Webapp, copy::KIND_WEBAPP, false),
     (Kind::Theme, copy::KIND_THEME, false),
+    (Kind::Ipc, copy::KIND_IPC, false),
 ];
 
 /// This account's plugin folder (where `wol plugin new` writes).

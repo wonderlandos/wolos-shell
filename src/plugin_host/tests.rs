@@ -640,3 +640,136 @@ fn widget_keys_are_widget_ids() {
     assert_eq!(sh_word("a b"), "'a b'");
     assert_eq!(sh_word(""), "''");
 }
+
+// ---- `[[ipc]]` (SP-6): the host's dispatch, argument types, refusals and the failure streak. ----
+
+struct IpcQuiet;
+impl Services for IpcQuiet {
+    fn now(&self) -> Stamp {
+        Stamp {
+            year: 2026,
+            month: 11,
+            day: 3,
+            weekday: 2,
+            hour: 9,
+            minute: 0,
+            second: 0,
+        }
+    }
+    fn system(&self) -> wol_lua::SystemInfo {
+        unreachable!()
+    }
+    fn notify(&self, _: &str, _: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+const IPC_TOML: &str = concat!(
+    "schema = 1\nid = \"alice.music\"\nname = \"Music\"\nversion = \"1.0\"\nlicense = \"MIT\"\n",
+    "\n[[ipc]]\nid = \"next\"\nscript = \"ipc.lua\"\nargs = \"none\"\n",
+    "\n[[ipc]]\nid = \"volume\"\nscript = \"ipc.lua\"\nargs = \"number\"\n",
+    "\n[[ipc]]\nid = \"boom\"\nscript = \"ipc.lua\"\n",
+);
+const IPC_LUA: &str = r#"
+local n = 0
+return wol.ipc {
+  next = function() n = n + 1; return { track = n } end,
+  volume = function(v) if v > 100 then return nil, "Volume is 0 to 100." end; return { volume = v } end,
+  boom = function() error("no player") end,
+}
+"#;
+
+fn ipc_setup(name: &str) -> (Paths, PathBuf) {
+    let root = std::env::temp_dir().join(format!("wol-ipc-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let paths = Paths {
+        dirs: vec![(root.join("user"), false)],
+        config_home: root.join("config"),
+        state_home: root.join("state"),
+    };
+    let d = root.join("user").join("alice.music");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("plugin.toml"), IPC_TOML).unwrap();
+    std::fs::write(d.join("ipc.lua"), IPC_LUA).unwrap();
+    std::fs::create_dir_all(&paths.config_home).unwrap();
+    let r = cp::check(&d, false);
+    assert!(r.problems.is_empty(), "{:?}", r.problems);
+    let mut e = cp::load_enabled(&paths.config_home);
+    e.enable(r.manifest.as_ref().unwrap());
+    cp::save_enabled(&paths.config_home, &e).unwrap();
+    (paths, root)
+}
+
+#[test]
+fn calls_reach_the_named_function_and_keep_its_state() {
+    let (paths, root) = ipc_setup("calls");
+    let mut h = Host::with_services(paths.clone(), IPC_KINDS, Rc::new(IpcQuiet));
+    h.apply(read_snapshot(&paths, IPC_KINDS));
+    assert_eq!(
+        h.call_ipc("alice.music", "next", &serde_json::json!(null)),
+        Ok(serde_json::json!({"track": 1}))
+    );
+    // The same read again keeps the loaded scripts.
+    assert!(!h.apply(read_snapshot(&paths, IPC_KINDS)));
+    assert_eq!(
+        h.call_ipc("alice.music", "next", &serde_json::json!(null)),
+        Ok(serde_json::json!({"track": 2}))
+    );
+    assert_eq!(
+        h.call_ipc("alice.music", "volume", &serde_json::json!(40)),
+        Ok(serde_json::json!({"volume": 40}))
+    );
+    // Bar and desktop hosts never load ipc scripts.
+    let mut bar = Host::with_services(paths.clone(), BAR_KINDS, Rc::new(IpcQuiet));
+    bar.apply(read_snapshot(&paths, BAR_KINDS));
+    assert!(!bar.has(Kind::Ipc, "alice.music", "next"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn wrong_calls_are_sentences_and_only_failures_count() {
+    let (paths, root) = ipc_setup("wrong");
+    let mut h = Host::with_services(paths.clone(), IPC_KINDS, Rc::new(IpcQuiet));
+    h.apply(read_snapshot(&paths, IPC_KINDS));
+    assert_eq!(
+        h.call_ipc("bob.none", "next", &serde_json::json!(null))
+            .unwrap_err(),
+        "No plugin bob.none is turned on (wol plugin list shows them)."
+    );
+    assert_eq!(
+        h.call_ipc("alice.music", "prev", &serde_json::json!(null))
+            .unwrap_err(),
+        "alice.music has no [[ipc]] \"prev\"; it has next, volume, boom."
+    );
+    assert_eq!(
+        h.call_ipc("alice.music", "next", &serde_json::json!(1))
+            .unwrap_err(),
+        "alice.music next takes no arguments."
+    );
+    assert_eq!(
+        h.call_ipc("alice.music", "volume", &serde_json::json!("loud"))
+            .unwrap_err(),
+        "alice.music volume takes one JSON number."
+    );
+    // A refusal is an answer: three of them leave the plugin on.
+    for _ in 0..shared::plugins::MAX_FAILURES {
+        assert_eq!(
+            h.call_ipc("alice.music", "volume", &serde_json::json!(300))
+                .unwrap_err(),
+            "Volume is 0 to 100."
+        );
+    }
+    assert!(h.has(Kind::Ipc, "alice.music", "next"));
+    assert!(h.take_toasts().is_empty());
+    // Errors are failures: MAX_FAILURES in a row turn the plugin off with a toast.
+    for _ in 0..shared::plugins::MAX_FAILURES {
+        let e = h
+            .call_ipc("alice.music", "boom", &serde_json::json!(null))
+            .unwrap_err();
+        assert!(e.contains("no player"), "{e}");
+    }
+    assert!(!h.has(Kind::Ipc, "alice.music", "next"));
+    assert_eq!(h.take_toasts().len(), 1);
+    assert!(!cp::load_enabled(&paths.config_home).is_enabled("alice.music"));
+    let _ = std::fs::remove_dir_all(root);
+}
