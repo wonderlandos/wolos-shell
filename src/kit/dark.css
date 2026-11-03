@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Dark appearance: appended after kit.css (theme::stylesheet) when the theme is dark. The Dock's
+   half-alpha glass read light over the bright default wallpaper in dark mode (MANUAL 0.12.0: only
+   the menu bar looked dark), so in dark the shelf takes the menu bar's material and both bars of
+   the desktop read dark together. */
+.dock-shelf { background: var(--bar-fill); }
