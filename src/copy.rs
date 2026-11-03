@@ -259,7 +259,9 @@ pub fn install_refusal(r: &Refusal, d: &InstallDisk) -> String {
         ),
         // Windows is hibernated (Fast Startup): its sentence says how to shut it down fully.
         Refusal::WindowsNotShutDown(_) => install_blocked(Blocked::NotShutDown).into(),
-        Refusal::WindowsUnchecked(_) => "BitLocker hides whether Windows shut down fully, so only Erase Disk can change this disk. Turn off BitLocker in Windows, then start the installer again.".into(),
+        Refusal::WindowsUnchecked(_) => {
+            "BitLocker hides whether Windows shut down fully, so only Erase Disk can change this disk. Turn BitLocker off in Windows first.".into()
+        }
         Refusal::NotAnEsp(id) => format!(
             "{} can’t hold the startup files. Choose another or add a new one.",
             named(id)
