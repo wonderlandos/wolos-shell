@@ -134,11 +134,16 @@ fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
 
 /// The pin an installed .desktop entry is (desktop id or program), so Apps lists it once,
 /// under the WolOS name.
+/// An entry whose windows have a class of their own (`StartupWMClass`, a web app running the
+/// browser) is its own app, never the pin of the program it runs.
 pub fn pin_for_entry<'a>(e: &Entry, pins: &'a [Pin]) -> Option<&'a Pin> {
     let id = e.id.trim_end_matches(".desktop");
     let prog = e.exec.first().map(|x| program(x));
     pins.iter().find(|p| {
-        pin_classes(p).any(|c| c.eq_ignore_ascii_case(id) || prog.is_some_and(|x| x == c))
+        let own_class =
+            !e.wm_class.is_empty() && !pin_classes(p).any(|c| c.eq_ignore_ascii_case(&e.wm_class));
+        pin_classes(p)
+            .any(|c| c.eq_ignore_ascii_case(id) || (!own_class && prog.is_some_and(|x| x == c)))
     })
 }
 
@@ -146,6 +151,7 @@ fn entry_for<'a>(class: &str, installed: &'a [Entry]) -> Option<&'a Entry> {
     installed.iter().find(|e| {
         e.id.trim_end_matches(".desktop")
             .eq_ignore_ascii_case(class)
+            || (!e.wm_class.is_empty() && e.wm_class.eq_ignore_ascii_case(class))
             || e.exec
                 .first()
                 .is_some_and(|x| program(x).eq_ignore_ascii_case(class))
@@ -216,6 +222,7 @@ mod tests {
             name: "Calculator".into(),
             exec: vec!["gnome-calculator".into()],
             icon: String::new(),
+            wm_class: String::new(),
         }];
         for (c, t, w) in [
             ("", "", ""), // no focused window: no app name (no resident Finder)
@@ -229,6 +236,40 @@ mod tests {
         }
     }
 
+    /// e2e D1: a web app's window is named after its launcher (`StartupWMClass`), not shown as
+    /// `chrome-example.org__-Default` in the menu bar.
+    #[test]
+    fn web_app_windows_take_their_launchers_name() {
+        let text = wol_core::webapps::desktop_entry(
+            &wol_core::webapps::WebApp::new(
+                "E2EDemo",
+                "https://example.org",
+                wol_core::webapps::Profile::Own,
+            )
+            .unwrap(),
+            std::path::Path::new("/h/.local/share"),
+        );
+        let e = crate::desktop::parse("wolos-webapp-e2edemo.desktop", &text).unwrap();
+        assert_eq!(e.wm_class, "chrome-example.org__-Default");
+        let installed = [e];
+        let class = "chrome-example.org__-Default";
+        assert_eq!(
+            frontmost_name(class, "Example Domain", PINS, &installed),
+            "E2EDemo"
+        );
+        assert_eq!(icon_for(class, PINS, &installed), "web-browser");
+        // The browser itself stays the Browser pin, and the web app stays its own app in Apps.
+        assert_eq!(frontmost_name("helium", "t", PINS, &installed), "Browser");
+        assert_eq!(pin_for_entry(&installed[0], PINS), None);
+        let helium = crate::desktop::Entry {
+            id: "helium.desktop".into(),
+            exec: vec!["helium".into()],
+            wm_class: "helium".into(),
+            ..Default::default()
+        };
+        assert_eq!(pin_for_entry(&helium, PINS).map(|p| p.id), Some("helium"));
+    }
+
     #[test]
     fn icons_by_class() {
         let installed = [Entry {
@@ -236,6 +277,7 @@ mod tests {
             name: "Calculator".into(),
             exec: vec!["gnome-calculator".into()],
             icon: "accessories-calculator".into(),
+            wm_class: String::new(),
         }];
         for (c, w) in [
             ("foot", "wolos-terminal"),

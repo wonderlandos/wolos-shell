@@ -176,15 +176,17 @@ pub fn send(c: Cmd, class: &str) -> Handoff {
 }
 
 /// Compositor request for `c` with `class`/`address` in front; `panel` = a shell panel that may hold
-/// the keyboard is open (then a window is never closed: the user may be typing in the panel).
-/// `sendshortcut` over the socket is a press and release, so the app sees one tap, never a held key.
+/// the keyboard is open (then nothing goes to the window behind it: the user may be typing in the
+/// panel). `sendshortcut` over the socket is a press and release, so the app sees one tap, never a
+/// held key. The key always names its window: the compositor (0.56) answers "invalid args" to an
+/// empty window, its argument list drops an empty last field (e2e D7: ⌘A and ⌘C did nothing).
 pub fn key_batch(c: Cmd, class: &str, address: &str, panel: bool) -> Option<String> {
     match send(c, class) {
-        Handoff::Keys(m, k) => Some(
+        Handoff::Keys(m, k) if !panel && !address.is_empty() => Some(
             Dispatch::SendShortcut {
                 mods: m.into(),
                 key: k.into(),
-                window: String::new(),
+                window: format!("address:{address}"),
             }
             .to_request(),
         ),
@@ -603,24 +605,29 @@ mod tests {
     fn commands_dispatch_to_the_keyboard_focus() {
         assert_eq!(
             key_batch(Cmd::Copy, "org.gnome.TextEditor", "0xa", false).as_deref(),
-            Some("dispatch sendshortcut CTRL, C,")
+            Some("dispatch sendshortcut CTRL, C, address:0xa")
         );
         assert_eq!(
-            key_batch(Cmd::Copy, "foot", "0xa", true).as_deref(),
-            Some("dispatch sendshortcut CTRL SHIFT, C,"),
-            "a panel field takes Ctrl+Shift+C too (kit::widgets::terminal_clipboard_keys)"
+            key_batch(Cmd::SelectAll, "org.wolos.settings", "0xb", false).as_deref(),
+            Some("dispatch sendshortcut CTRL, A, address:0xb"),
+            "e2e D7: never an empty window, which the compositor refuses"
         );
+        assert_eq!(
+            key_batch(Cmd::Copy, "foot", "0xa", false).as_deref(),
+            Some("dispatch sendshortcut CTRL SHIFT, C, address:0xa")
+        );
+        // A shell panel may hold the keyboard: nothing goes to the window behind it.
+        assert_eq!(key_batch(Cmd::Copy, "foot", "0xa", true), None);
         assert_eq!(
             key_batch(Cmd::Close, "foot", "0xa", false).as_deref(),
             Some("dispatch closewindow address:0xa")
         );
         // A shell panel may hold the keyboard: ⌘W must not close the terminal behind it.
         assert_eq!(key_batch(Cmd::Close, "foot", "0xa", true), None);
-        assert_eq!(
-            key_batch(Cmd::Close, "", "", false).as_deref(),
-            Some("dispatch sendshortcut CTRL, W,"),
-            "no window in front: the panel with the keyboard gets Ctrl+W"
-        );
+        // No window in front: the compositor cannot be told "the keyboard focus" (no empty
+        // window), so nothing is sent.
+        assert_eq!(key_batch(Cmd::Close, "", "", false), None);
+        assert_eq!(key_batch(Cmd::Copy, "", "", true), None);
         assert_eq!(key_batch(Cmd::Undo, "foot", "0xa", false), None);
         for c in Cmd::ALL {
             assert_eq!(parse_verb(&verb(Act::Key(c)).unwrap()), Some(Act::Key(c)));

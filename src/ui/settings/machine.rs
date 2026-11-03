@@ -228,11 +228,15 @@ impl Machine for Live {
         ))
     }
     fn updates(&self) -> Option<wol_core::update::check::Updates> {
-        use wol_core::update::check::{DIR, USERLAND_ARGV, Updates};
+        use wol_core::update::check::{DIR, OS_RELEASE, USERLAND_ARGV, Updates};
         let os = self.os();
         let f = |n: &str| os.read_text(&format!("{DIR}/{n}")).unwrap_or_default();
         let u = Updates::parse(&f("checked"), &f("pkg"), &f("audit"), &f("base"))?;
-        let userland = u.base.as_ref().and_then(|_| os.run(&USERLAND_ARGV));
+        // No manifest in the image (v0.12.0): os-release names the running release.
+        let userland = u
+            .base
+            .as_ref()
+            .and_then(|_| os.run(&USERLAND_ARGV).or_else(|| os.read_text(OS_RELEASE)));
         Some(u.installed(userland.as_deref()))
     }
     fn passwd(&self) -> String {
