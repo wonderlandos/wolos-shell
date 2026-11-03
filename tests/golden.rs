@@ -404,7 +404,7 @@ fn cases() -> Vec<Case> {
             build: Box::new(|| {
                 let p = w::UserPanel::new("Alice Liddell");
                 p.field.set_text("CURIOUSER");
-                p.field.set_position(-1); // typed, not selected
+                p.field.set_position(-1); // typed; focus selects it (selection contrast checked)
                 p.set_caps_lock(true);
                 ui::lock::lock_screen(&p)
             }),
@@ -811,6 +811,7 @@ fn cases() -> Vec<Case> {
                             data_dirs: vec![],
                             pkg_search: false,
                             flatpaks: vec![],
+                            installed: Some(Default::default()),
                         },
                     );
                     if p == "Search" {
@@ -822,6 +823,31 @@ fn cases() -> Vec<Case> {
                 }),
             });
         }
+        // A kit got before says Added: its packages are in the (injected) installed set.
+        v.push(Case {
+            name: format!("store-kits-added-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(move || {
+                let codecs = wol_core::store::kit("codecs-kit").expect("the codecs kit");
+                let mut installed = wopkg::context::Installed::default();
+                installed
+                    .pacman
+                    .extend(codecs.packages().iter().map(|p| p.to_string()));
+                let s = ui::store::content(
+                    Rc::new(shell::system::Fake),
+                    ui::store::Env {
+                        data_dirs: vec![],
+                        pkg_search: false,
+                        flatpaks: vec![],
+                        installed: Some(installed),
+                    },
+                );
+                s.aw.select("Kits");
+                s.aw.root.clone().upcast()
+            }),
+        });
         v.push(Case {
             // Search with repo and Flathub hits: Flathub apps carry a badge, one tile per app.
             name: format!("store-search-flathub-{tag}"),
@@ -835,6 +861,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec!["com.github.maoschanz.drawing".into()],
+                        installed: Some(Default::default()),
                     },
                 );
                 let hit = |id: &str, name: &str, summary: &str| wol_core::flatpak::Hit {
@@ -878,10 +905,13 @@ fn cases() -> Vec<Case> {
                             data_dirs: vec![],
                             pkg_search: false,
                             flatpaks: vec![],
+                            installed: Some(Default::default()),
                         },
                     );
+                    // Fixed art, never another golden: a golden made from goldens changes
+                    // with every re-bake of those (an update run would not settle).
                     let shot = |n: &str| {
-                        format!("{}/tests/golden/{n}", env!("CARGO_MANIFEST_DIR"))
+                        format!("{}/../../design/wallpapers/{n}", env!("CARGO_MANIFEST_DIR"))
                     };
                     let perm = |p: &str| wol_core::flatpak::Perm::parse(p).unwrap();
                     let (subject, loaded) = if kind == "flathub" {
@@ -902,8 +932,8 @@ fn cases() -> Vec<Case> {
                                         "• Layers and adjustments".into(),
                                     ],
                                     screenshots: vec![
-                                        shot("store-discover-wide-light.png"),
-                                        shot("store-work-wide-dark.png"),
+                                        shot("wonderland-day.svg"),
+                                        shot("wonderland-night.svg"),
                                     ],
                                     ..Default::default()
                                 }),
@@ -943,6 +973,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
                 let hit = wol_core::store::PkgHit {
@@ -967,6 +998,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
                 let src = |origin: &str, kind: &str, version: &str, installed| AppSource {
@@ -1009,6 +1041,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
                 s.aw.open("Community");
@@ -1028,6 +1061,7 @@ fn cases() -> Vec<Case> {
                         data_dirs: vec![],
                         pkg_search: false,
                         flatpaks: vec![],
+                        installed: Some(Default::default()),
                     },
                 );
                 s.aur.show_open();
@@ -1036,8 +1070,9 @@ fn cases() -> Vec<Case> {
             }),
         });
         v.push(Case {
+            // A section of the details page's scroller: as tall as it reads (natural height).
             name: format!("store-aur-audit-{tag}"),
-            size: (sw, sh + 60),
+            size: (sw, 1),
             class: "preview-app",
             wallpaper: false,
             build: Box::new(move || {
@@ -1098,18 +1133,40 @@ fn cases() -> Vec<Case> {
             a.root.clone().upcast()
         }),
     });
+    // Clipboard history (⇧⌘V): a pinned snippet first, then the recent copies, newest first.
+    // The list scrolls, so the panel's minimum height is less than it shows: its natural height.
+    v.push(Case {
+        name: "clipboard".into(),
+        size: (360, 280),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(|| {
+            let mut h =
+                shell::clipboard::History::with_pins(vec!["alice@wonderland.example".into()]);
+            for t in [
+                "sudo pacman -Syu",
+                "https://wolos.org/docs/install",
+                "Meet at the Mad Hatter’s at four",
+            ] {
+                h.push(t);
+            }
+            ui::clipboard::Panel::new(h).root.upcast()
+        }),
+    });
     // Session menu and the Restart / Shut Down / Log Out question (60 s countdown).
     v.push(Case {
+        // Natural width: the panel is as wide as its five actions (453 since the Inter type scale).
         name: "session".into(),
-        size: (443, 142),
+        size: (453, 142),
         class: "preview",
         wallpaper: true,
         build: Box::new(|| ui::panels::SessionMenu::new().root.upcast()),
     });
-    for (action, width) in [("shutdown", 448), ("logout", 440)] {
+    // Natural sizes: the question sets the width and the countdown line wraps under it.
+    for (action, size) in [("shutdown", (432, 157)), ("logout", (314, 157))] {
         v.push(Case {
             name: format!("session-confirm-{action}"),
-            size: (width, 144),
+            size,
             class: "preview",
             wallpaper: true,
             build: Box::new(move || {

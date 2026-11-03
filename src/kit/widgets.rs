@@ -461,13 +461,13 @@ pub fn list_row(
     let t = vbox(0);
     t.set_valign(gtk::Align::Center);
     t.set_hexpand(true);
-    // Titles wrap instead of forcing the window wider (narrow layouts).
+    // Titles and subtitles wrap instead of forcing the window wider (narrow layouts).
     let tl = label(title, "");
     tl.set_wrap(true);
     tl.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     t.append(&tl);
     if !subtitle.is_empty() {
-        t.append(&label(subtitle, "secondary"));
+        t.append(&row_subtitle(subtitle));
     }
     row.append(&t);
     if let Some(w) = trailing {
@@ -475,6 +475,14 @@ pub fn list_row(
         row.append(w);
     }
     row
+}
+
+/// A row's secondary line: wraps at the row's width instead of widening it.
+pub fn row_subtitle(text: &str) -> gtk::Label {
+    let l = label(text, "secondary");
+    l.set_wrap(true);
+    l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    l
 }
 
 /// Clickable row (lists of choices, results).

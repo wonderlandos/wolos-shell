@@ -422,7 +422,9 @@ fn modules_run_one_job_at_a_time() {
 fn modules_offer_retry_for_what_could_not_be_added() {
     let (_a, p) = page(Rc::new(shell::system::Fake), &gave_up_host(), "Modules");
     assert!(says(&p, "Could Not Be Added"), "the section shows");
-    assert!(says(&p, "Craft Suite") && says(&p, "gst-libav"));
+    // A media format package reads as the formats it brings, not its package name.
+    assert!(says(&p, "Craft Suite") && says(&p, "AAC, H.264, HEVC (H.265), AC3 (Dolby Digital)"));
+    assert!(!says(&p, "gst-libav"));
     assert!(says(&p, shell::copy::settings::MODULES_GAVE_UP));
     assert!(says(&p, shell::copy::settings::MODULES_GAVE_UP_MEDIA));
     let labelled = |label: &str| -> Vec<gtk::Button> {

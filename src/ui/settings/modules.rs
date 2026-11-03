@@ -344,11 +344,27 @@ fn media_row(
     });
     w::list_row(
         "view-app-grid-symbolic",
-        name,
+        &media_title(name),
         copy::MODULES_GAVE_UP_MEDIA,
         Some(&retry),
     )
     .upcast()
+}
+
+/// A media format package's row title: the formats it brings, as the Kits list names them
+/// ("AAC, H.264"); the package name only when no kit lists it.
+fn media_title(pkg: &str) -> String {
+    let parts: Vec<&str> = wol_core::store::KITS
+        .iter()
+        .flat_map(|k| k.parts)
+        .filter(|p| p.packages.contains(&pkg))
+        .map(|p| p.name)
+        .collect();
+    if parts.is_empty() {
+        pkg.to_string()
+    } else {
+        parts.join(", ")
+    }
 }
 
 /// What the pane says with no rows: a list that could not be read is not an empty list.
@@ -519,6 +535,16 @@ mod tests {
         assert_eq!(size_label(900), "900 MB");
         assert_eq!(size_label(2400), "2.4 GB");
         assert_eq!(size_label(3000), "3 GB");
+    }
+
+    #[test]
+    fn a_media_format_reads_as_the_formats_it_brings() {
+        assert_eq!(media_title("lame"), "MP3");
+        assert_eq!(
+            media_title("gst-libav"),
+            "AAC, H.264, HEVC (H.265), AC3 (Dolby Digital)"
+        );
+        assert_eq!(media_title("not-in-a-kit"), "not-in-a-kit");
     }
 
     #[test]

@@ -454,6 +454,9 @@ struct Accessibility {
 pub(crate) struct ControlCenter {
     root: gtk::Widget,
     ui: Rc<Ui>,
+    /// The two top cards: equal widths at the standard width; on a narrow panel each takes what
+    /// its names need (two equal halves would not hold "Dark Mode").
+    top: gtk::Box,
     wifi: w::ControlTile,
     bluetooth: w::ControlTile,
     focus: w::ControlTile,
@@ -739,6 +742,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let cc = Rc::new(ControlCenter {
         root: panel.upcast(),
         ui: ui.clone(),
+        top,
         wifi,
         bluetooth,
         focus: focus_tile,
@@ -787,6 +791,8 @@ impl ControlCenter {
         let s = &*u.sys;
         let p = u.prefs.get();
         u.syncing.set(true);
+        self.top
+            .set_homogeneous(u.width.get() >= w::CONTROL_CENTER_WIDTH);
 
         let nets = s.wifi_networks();
         self.wifi

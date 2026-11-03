@@ -10,8 +10,11 @@ use std::cell::RefCell;
 
 /// Icon circle diameter in tiles and device rows.
 pub const CIRCLE: i32 = 28;
-/// Widest tile caption, in characters, before it is ellipsised (the full name is the tooltip).
+/// Widest tile caption line, in characters, before it wraps (two lines, then ellipsised; the
+/// full name is the tooltip).
 pub const TILE_LABEL_CHARS: i32 = 13;
+/// Lines a tile caption wraps to before it is ellipsised.
+pub const TILE_LABEL_LINES: i32 = 2;
 /// Now Playing cover art edge.
 pub const ART: i32 = 48;
 
@@ -32,7 +35,7 @@ fn set_class(wd: &impl IsA<gtk::Widget>, class: &str, on: bool) {
     }
 }
 
-/// Square tile: icon circle (accent while on) over a centred one-line caption. Tiles in
+/// Square tile: icon circle (accent while on) over a centred caption of up to two lines. Tiles in
 /// one homogeneous row share width and height. Action tiles (Screenshot) never turn on.
 pub struct ToggleTile {
     pub button: gtk::Button,
@@ -45,8 +48,11 @@ impl ToggleTile {
         col.set_valign(gtk::Align::Center);
         let circle = circle(icon_name);
         col.append(&circle);
-        // One line, ellipsised: tiles keep the same rhythm whatever the name (kit.css fixes the height).
+        // Wraps to two lines, ellipsised only past them: the whole name reads in the tile.
         let l = w::centered(title, "secondary");
+        l.set_wrap(true);
+        l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        l.set_lines(TILE_LABEL_LINES);
         l.set_ellipsize(gtk::pango::EllipsizeMode::End);
         l.set_max_width_chars(TILE_LABEL_CHARS);
         l.add_css_class("may-ellipsize");

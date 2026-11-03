@@ -151,6 +151,7 @@ pub fn cases() -> Vec<Case> {
                     data_dirs: vec![],
                     pkg_search: false,
                     flatpaks: vec![],
+                    installed: Some(Default::default()),
                 },
             );
             s.show_plugins(l());

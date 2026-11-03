@@ -92,6 +92,28 @@ pub fn cases() -> Vec<Case> {
                 b.root.clone().upcast()
             }),
         },
+        Case {
+            // The host's own bar item (ui/plugins.rs), alone: the stats plugin's figures.
+            name: "plugins-bar-item".into(),
+            size: (240, 28),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let h = host("item", plugins::BAR_KINDS);
+                let life = shell::kit::lifetime::Lifetime::new();
+                let b = plugins::bar_item(&h, "org.wolos.stats", "bar", &life);
+                let bar = w::hbox(0);
+                bar.add_css_class("menubar-strip");
+                b.set_halign(gtk::Align::Center);
+                b.set_hexpand(true);
+                bar.append(&b);
+                // The host and the lifetime live as long as the case's widgets (answers redraw).
+                bar.connect_destroy(move |_| {
+                    let _ = (&h, &life);
+                });
+                bar.upcast()
+            }),
+        },
         {
             let (wd, ht) = d::card_size(Size::Medium);
             Case {

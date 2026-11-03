@@ -255,7 +255,8 @@ label.lock-name { font-size: 15px; font-weight: 600; color: white; text-shadow: 
 entry.lock-field, entry.lock-field:focus, entry.lock-field:focus-within { background: none; border: none; outline: none; box-shadow: none; min-height: 0; padding: 0; margin: 0; color: white; caret-color: white; font-size: 13px; }
 entry.lock-field text placeholder { color: rgba(255,255,255,0.86); opacity: 1; }
 entry.lock-field image { color: rgba(255,255,255,0.70); }
-entry.lock-field text selection { background: rgba(255,255,255,0.30); color: white; }
+/* White at 16%: white text on it stays above 4.5:1 over the dark pill (30% measured 3.54:1). */
+entry.lock-field text selection { background: rgba(255,255,255,0.16); color: white; }
 label.caps-lock { font-size: 12px; font-weight: 600; }
 button.lock-submit { min-width: 20px; min-height: 20px; padding: 0; margin: 0; border-radius: 999px; border: none; box-shadow: none; background: rgba(255,255,255,0.30); color: white; }
 button.lock-submit label { font-size: 13px; font-weight: 600; margin-top: -1px; }

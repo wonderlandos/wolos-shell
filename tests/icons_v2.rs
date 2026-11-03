@@ -304,8 +304,6 @@ const SAFE_FILTER: &[&str] = &[
     "feSpecularLighting",
     "feDiffuseLighting",
     "feDistantLight",
-    "feComponentTransfer",
-    "feFuncA",
     "feBlend",
 ];
 
@@ -528,4 +526,50 @@ fn prefix_literals_and_package_names_are_not_icon_names() {
     assert!(not_an_icon("wolos-install"));
     assert!(!not_an_icon("wolos-kit-dev"));
     assert!(!not_an_icon("wolos-files"));
+}
+
+#[test]
+fn safe_filter_list_matches_the_generator_checks() {
+    // design/tools/icons/checks.py SAFE_FILTER is the same list plus the <filter> element itself.
+    let py = std::fs::read_to_string(root().join("design/tools/icons/checks.py")).unwrap();
+    let start = py.find("SAFE_FILTER = {").expect("checks.py: SAFE_FILTER");
+    let body = &py[start..start + py[start..].find('}').expect("checks.py: SAFE_FILTER end")];
+    let mut want: Vec<&str> = body
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .filter(|t| *t != "filter")
+        .collect();
+    let mut have = SAFE_FILTER.to_vec();
+    want.sort_unstable();
+    have.sort_unstable();
+    assert_eq!(
+        have, want,
+        "SAFE_FILTER here and in design/tools/icons/checks.py drifted apart"
+    );
+}
+
+/// GTK 4 draws SVG icons itself; a filter chain librsvg draws right can come out as a grey or
+/// dark block there. design/tools/icons/gtkcheck/check.sh draws every full-colour icon through
+/// GtkIconPaintable and compares it with librsvg (RMSE <= 0.02 at 48 and 128 px). Without a C
+/// compiler, the gtk4 headers, gtk4-broadwayd or rsvg-convert it is skipped, loudly.
+#[test]
+fn gtk_draws_every_full_colour_icon_like_librsvg() {
+    use std::io::Write;
+    let out = std::process::Command::new("bash")
+        .arg(root().join("design/tools/icons/gtkcheck/check.sh"))
+        .output()
+        .expect("bash");
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    if out.status.code() == Some(77) {
+        // Straight to stderr, past the test harness's capture, so the skip shows in every run.
+        let _ = writeln!(
+            std::io::stderr(),
+            "\n*** SKIPPED gtk_draws_every_full_colour_icon_like_librsvg: {} ***\n",
+            text.trim()
+        );
+        return;
+    }
+    assert!(out.status.success(), "{text}");
 }

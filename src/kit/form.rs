@@ -138,7 +138,7 @@ pub fn status_row(
     control: &impl IsA<gtk::Widget>,
 ) -> (gtk::Widget, gtk::Label) {
     let r = w::list_row(icon_name, title, "", Some(control.upcast_ref()));
-    let sub = w::label(subtitle, "secondary");
+    let sub = w::row_subtitle(subtitle);
     let text = if icon_name.is_empty() {
         r.first_child()
     } else {

@@ -246,8 +246,13 @@ struct Confirm {
 impl Confirm {
     fn new(row: &gtk::Box) -> Rc<Confirm> {
         let view = w::vbox(w::S2);
+        // The question sets the width; the countdown line wraps under it instead of widening
+        // the panel (asks nothing of its own width: one character).
         let question = w::label("", "title");
         let line = w::label("", "secondary");
+        line.set_wrap(true);
+        line.set_wrap_mode(gtk::pango::WrapMode::Word);
+        line.set_max_width_chars(1);
         let buttons = w::hbox(w::S2);
         buttons.set_halign(gtk::Align::End);
         let go = w::button("", w::Kind::Primary, || {});
@@ -315,6 +320,11 @@ impl Confirm {
             crate::copy::session_confirm(self.action.get(), self.left.get())
         {
             self.question.set_label(q);
+            // The count keeps its unit on its line ("60 seconds.") when the line wraps.
+            let line = match line.rsplit_once(' ') {
+                Some((head, unit)) => format!("{head}\u{a0}{unit}"),
+                None => line,
+            };
             self.line.set_label(&line);
             self.go.set_label(button);
         }

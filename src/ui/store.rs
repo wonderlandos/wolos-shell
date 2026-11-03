@@ -33,6 +33,9 @@ pub struct Env {
     pub pkg_search: bool,
     /// Flathub apps installed (any scope).
     pub flatpaks: Vec<String>,
+    /// What is installed, for a kit's Added: None reads this computer's package database (off
+    /// the GTK thread); goldens set it so they do not depend on the build host.
+    pub installed: Option<wopkg::context::Installed>,
 }
 
 impl Env {
@@ -56,6 +59,7 @@ impl Env {
             flatpaks: wol_core::system::run_with_timeout(&l, std::time::Duration::from_secs(5))
                 .map(|t| wol_core::flatpak::parse_ids(&t))
                 .unwrap_or_default(),
+            installed: None,
         }
     }
 }
@@ -1019,8 +1023,12 @@ pub fn kit_installed(
     }
 }
 
-/// [`kit_installed`] on this computer (reads the package database folders; worker thread only).
-fn kit_installed_here(k: &store::Kit) -> bool {
+/// [`kit_installed`] against `set` ([`Env::installed`]), else on this computer (reads the package
+/// database folders; worker thread only).
+fn kit_installed_here(k: &store::Kit, set: Option<&wopkg::context::Installed>) -> bool {
+    if let Some(i) = set {
+        return kit_installed(k, &i.pacman, &i.recipes);
+    }
     wopkg::context::Context::new(Default::default())
         .map(|c| {
             let i = c.installed();
@@ -1040,8 +1048,9 @@ fn wire_kit(sh: &Rc<Shared>, k: &'static store::Kit, b: &gtk::Button) {
     // The start state: worked out off the GTK thread, so a kit got before says Added.
     {
         let (tx, rx) = async_channel::bounded(1);
+        let injected = sh.env.installed.clone();
         std::thread::spawn(move || {
-            let _ = tx.send_blocking(kit_installed_here(k));
+            let _ = tx.send_blocking(kit_installed_here(k, injected.as_ref()));
         });
         let (set, b) = (set.clone(), b.clone());
         glib::spawn_future_local(async move {
