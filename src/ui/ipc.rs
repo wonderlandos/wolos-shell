@@ -56,6 +56,8 @@ pub fn shell_socket(
     osd: Rc<Osd>,
     sys: Rc<dyn crate::system::System>,
 ) {
+    // Saved config files apply on their own (the verb `reload` stays the explicit way).
+    watch_prefs();
     let handlers = Rc::new(handlers);
     let path = protocol::socket_path(&crate::kit::runtime_dir());
     let _ = std::fs::remove_file(&path);
@@ -267,14 +269,38 @@ thread_local! {
     /// Hooks with the lifetime they end with (None: the session).
     static RELOAD: std::cell::RefCell<Vec<(Option<crate::kit::lifetime::Lifetime>, OnReload)>> =
         Default::default();
+    /// `shell.json`'s prefs as last loaded: a save that does not load keeps them.
+    static GOOD: std::cell::Cell<Option<ShellPrefs>> = const { std::cell::Cell::new(None) };
+    /// The notice text for each config file that does not load now: one bad save, one notice.
+    static PROBLEMS: std::cell::RefCell<std::collections::BTreeMap<&'static str, String>> =
+        Default::default();
+    /// The live watch on the config folder (kept for the process).
+    static WATCH: std::cell::RefCell<Option<gio::FileMonitor>> = const { std::cell::RefCell::new(None) };
 }
-use wol_core::prefs::ShellPrefs;
+use wol_core::prefs::{ConfigError, ShellFile, ShellPrefs};
 type OnReload = Rc<dyn Fn(&ShellPrefs)>;
 
-/// `$XDG_CONFIG_HOME/wolos/shell.json` (written by Settings > Menu Bar & Dock).
+fn config_text(rel: &str) -> Option<String> {
+    std::fs::read_to_string(std::path::Path::new(&crate::kit::config_home()).join(rel)).ok()
+}
+
+/// `shell.json` now; a missing file is the defaults.
+fn load_shell() -> Result<ShellPrefs, ConfigError> {
+    config_text(wol_core::prefs::SHELL_FILE).map_or(Ok(ShellPrefs::default()), |t| {
+        ShellFile::try_parse(&t).map(|f| f.prefs)
+    })
+}
+
+/// `$XDG_CONFIG_HOME/wolos/shell.json` (written by Settings > Menu Bar & Dock). A file that does
+/// not load gives the last prefs that did (the defaults before any).
 pub fn shell_prefs() -> ShellPrefs {
-    let p = std::path::Path::new(&crate::kit::config_home()).join(wol_core::prefs::SHELL_FILE);
-    ShellPrefs::parse(std::fs::read_to_string(p).ok().as_deref())
+    match load_shell() {
+        Ok(p) => {
+            GOOD.set(Some(p));
+            p
+        }
+        Err(_) => GOOD.get().unwrap_or_default(),
+    }
 }
 
 /// Calls `f` with the current prefs now and after every `reload`.
@@ -303,6 +329,179 @@ pub fn reload_hooks() -> usize {
     RELOAD.with(|r| r.borrow().len())
 }
 
+/// `reload`, and a save [`watch_prefs`] saw: every hook gets `shell.json`'s prefs. When
+/// `shell.json` or `widgets.json` does not load, no hook runs (what shows stays) and the error
+/// names the file and its first bad key.
+pub fn reload() -> Result<(), ConfigError> {
+    if let Some(e) = config_text(shared::widgets::DESKTOP_FILE)
+        .as_deref()
+        .and_then(wol_core::prefs::widgets_error)
+    {
+        return Err(e);
+    }
+    let p = load_shell()?;
+    GOOD.set(Some(p));
+    // A hook may add or end others while it runs: call a snapshot.
+    let hooks: Vec<OnReload> = RELOAD.with(|r| r.borrow().iter().map(|h| h.1.clone()).collect());
+    hooks.iter().for_each(|f| f(&p));
+    Ok(())
+}
+
+/// Files the live watch applies, under `$XDG_CONFIG_HOME/wolos/` (frozen names).
+pub const WATCHED: [&str; 3] = [
+    wol_core::prefs::SHELL_NAME,
+    wol_core::prefs::WIDGETS_NAME,
+    crate::kit::style::USER_CSS_NAME,
+];
+/// Quiet time after the last change before a save applies (an editor writes in bursts).
+pub const DEBOUNCE_MS: u64 = 100;
+/// Summary of the notice for a config file that does not load.
+pub const NOT_APPLIED: &str = "Changes Not Applied";
+
+/// The notice body for `e`: which setting, never the reader's words.
+pub fn notice_text(e: &ConfigError) -> String {
+    let what = match e.file {
+        wol_core::prefs::SHELL_NAME => "menu bar and Dock settings",
+        wol_core::prefs::WIDGETS_NAME => "desktop widgets",
+        _ => "style sheet",
+    };
+    match (&e.key, e.line) {
+        (Some(k), Some(l)) => {
+            format!(
+                "“{k}” on line {l} of your {what} doesn’t fit, so nothing changed. Check it and save again."
+            )
+        }
+        (Some(k), None) => {
+            format!(
+                "“{k}” in your {what} doesn’t fit, so nothing changed. Check it and save again."
+            )
+        }
+        (None, l) => format!(
+            "{} can’t be read near line {}, so nothing changed. Check it and save again.",
+            format_args!("Your {what}"),
+            l.unwrap_or(1)
+        ),
+    }
+}
+
+/// The notices standing now (one per config file that does not load), for tests and logs.
+pub fn problems() -> Vec<String> {
+    PROBLEMS.with_borrow(|p| p.values().cloned().collect())
+}
+
+/// Records how applying `files` went: a new error shows one notice (the same error again does
+/// not), a file that loads again clears its notice.
+fn report(files: &[&'static str], r: Result<(), ConfigError>) {
+    let shown = match r {
+        Ok(()) => {
+            PROBLEMS.with_borrow_mut(|p| {
+                files.iter().for_each(|f| {
+                    p.remove(f);
+                })
+            });
+            return;
+        }
+        Err(e) => {
+            eprintln!("wol-shell: not applied: {e}");
+            let text = notice_text(&e);
+            PROBLEMS.with_borrow_mut(|p| {
+                files.iter().filter(|f| **f != e.file).for_each(|f| {
+                    p.remove(f);
+                });
+                (p.insert(e.file, text.clone()).as_ref() != Some(&text)).then_some(text)
+            })
+        }
+    };
+    if let Some(body) = shown {
+        crate::kit::spawn(&[
+            "notify-send".into(),
+            "-a".into(),
+            "WolOS".into(),
+            NOT_APPLIED.into(),
+            body,
+        ]);
+    }
+}
+
+/// [`WATCHED`] index of the file an event of the folder watch is about. None for other files,
+/// and for this process's own atomic saves (`<name>.<pid>-<nonce>.tmp` renamed over the file):
+/// what the shell wrote it already shows.
+pub fn touched(name: &str, renamed_to: Option<&str>, pid: u32) -> Option<usize> {
+    if let Some(to) = renamed_to
+        && let Some(i) = WATCHED.iter().position(|w| *w == to)
+    {
+        let own = name
+            .strip_prefix(to)
+            .and_then(|r| r.strip_prefix('.'))
+            .is_some_and(|r| r.starts_with(&format!("{pid}-")));
+        return (!own).then_some(i);
+    }
+    WATCHED.iter().position(|w| *w == name)
+}
+
+/// Applies [`WATCHED`] saves on their own, [`DEBOUNCE_MS`] after the last change: `shell.json`
+/// and `widgets.json` through [`reload`], `kit.css` through `kit::style::user_css`. One
+/// directory watch (it sees editors' rename saves and a file created later); no polling. Again
+/// = the watch starts over.
+pub fn watch_prefs() {
+    let dir = std::path::Path::new(&crate::kit::config_home()).join("wolos");
+    let _ = std::fs::create_dir_all(&dir);
+    let m = match gio::File::for_path(&dir)
+        .monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+    {
+        Ok(m) => m,
+        Err(e) => return eprintln!("wol-shell: {}: no live reload: {e}", dir.display()),
+    };
+    m.set_rate_limit(i32::try_from(DEBOUNCE_MS).unwrap_or(i32::MAX));
+    let due: Rc<std::cell::RefCell<(Option<glib::SourceId>, [bool; WATCHED.len()])>> =
+        Rc::default();
+    let pid = std::process::id();
+    m.connect_changed(move |_, file, other, ev| {
+        use gio::FileMonitorEvent as E;
+        if !matches!(
+            ev,
+            E::Changed
+                | E::ChangesDoneHint
+                | E::Created
+                | E::Deleted
+                | E::MovedIn
+                | E::MovedOut
+                | E::Renamed
+        ) {
+            return;
+        }
+        let name = |f: &gio::File| f.basename().and_then(|b| b.to_str().map(String::from));
+        let to = other.filter(|_| ev == E::Renamed).and_then(name);
+        let Some(i) = name(file).and_then(|n| touched(&n, to.as_deref(), pid)) else {
+            return;
+        };
+        let mut d = due.borrow_mut();
+        d.1[i] = true;
+        if let Some(s) = d.0.take() {
+            s.remove();
+        }
+        let due = due.clone();
+        d.0 = Some(glib::timeout_add_local_once(
+            std::time::Duration::from_millis(DEBOUNCE_MS),
+            move || {
+                let which = {
+                    let mut d = due.borrow_mut();
+                    d.0 = None;
+                    std::mem::take(&mut d.1)
+                };
+                if which[2] {
+                    let css = config_text(crate::kit::style::USER_CSS_FILE).unwrap_or_default();
+                    report(&[WATCHED[2]], crate::kit::style::user_css(&css));
+                }
+                if which[0] || which[1] {
+                    report(&WATCHED[..2], reload());
+                }
+            },
+        ));
+    });
+    WATCH.with(|w| w.replace(Some(m)));
+}
+
 fn run(
     cmd: &protocol::Command,
     panels: &Panels,
@@ -311,11 +510,7 @@ fn run(
 ) {
     if cmd.verb == protocol::Verb::Reload {
         // Theme reloads through its file monitor; shell prefs here.
-        let p = shell_prefs();
-        // A hook may add or end others while it runs: call a snapshot.
-        let hooks: Vec<OnReload> =
-            RELOAD.with(|r| r.borrow().iter().map(|h| h.1.clone()).collect());
-        return hooks.iter().for_each(|f| f(&p));
+        return report(&WATCHED[..2], reload());
     }
     if super::transient::closes_all(cmd) {
         return super::transient::close_on_escape(panels);

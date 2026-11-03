@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! One CssProvider per process. Loaded once; reloaded only when the active theme file or dark preference changes.
+//! A second one holds the user's own `kit.css` rules, above it ([`user_css`]).
 use crate::perf::Changed;
 use crate::theme;
 use gtk::{gdk, gio, glib, prelude::*};
@@ -110,7 +111,81 @@ pub fn install(extra: &'static str) {
             std::mem::forget(m);
         }
     }
+    // The user's own rules, over the kit (live: `ui::ipc::watch_prefs`); read off the GTK thread.
+    let user = std::path::Path::new(&super::config_home()).join(USER_CSS_FILE);
+    glib::spawn_future_local(async move {
+        let text = gio::spawn_blocking(move || std::fs::read_to_string(user).unwrap_or_default())
+            .await
+            .unwrap_or_default();
+        if let Err(e) = user_css(&text) {
+            eprintln!("wol-shell: {e} (the user style sheet is left out)");
+        }
+    });
     let _ = glib::MainContext::default();
+}
+
+/// `$XDG_CONFIG_HOME/wolos/kit.css`: the user's own rules for the shell's look.
+pub const USER_CSS_FILE: &str = "wolos/kit.css";
+/// The file name in notices and logs.
+pub const USER_CSS_NAME: &str = "kit.css";
+/// Just above the kit and theme provider (`STYLE_PROVIDER_PRIORITY_USER`): a user rule as
+/// specific as the kit's wins; nothing else in the shell sits higher.
+pub const USER_CSS_PRIORITY: u32 = gtk::STYLE_PROVIDER_PRIORITY_USER + 1;
+
+thread_local! { static USER_CSS: std::cell::OnceCell<gtk::CssProvider> = const { std::cell::OnceCell::new() }; }
+
+/// Loads `text` (what [`USER_CSS_FILE`] holds, empty when there is none) into the user's own
+/// provider ([`USER_CSS_PRIORITY`]). Text with a mistake changes nothing (the last good rules
+/// stay) and the error names the first bad property and its line. Ok without a display.
+pub fn user_css(text: &str) -> Result<(), wol_core::prefs::ConfigError> {
+    let Some(display) = gdk::Display::default() else {
+        return Ok(());
+    };
+    check_css(text)?;
+    USER_CSS.with(|c| {
+        c.get_or_init(|| {
+            let p = gtk::CssProvider::new();
+            gtk::style_context_add_provider_for_display(&display, &p, USER_CSS_PRIORITY);
+            p
+        })
+        .load_from_string(text);
+    });
+    Ok(())
+}
+
+/// The user rules now in force (empty before the first [`user_css`]).
+pub fn user_css_text() -> String {
+    USER_CSS.with(|c| c.get().map(|p| p.to_str().to_string()).unwrap_or_default())
+}
+
+/// The first error GTK's parser reports in `css` (warnings such as a deprecated property do not
+/// count): its line (1-based) and the name it quotes, when it quotes one (`No property named
+/// "colr"`). Needs GTK initialised.
+pub fn check_css(css: &str) -> Result<(), wol_core::prefs::ConfigError> {
+    let scratch = gtk::CssProvider::new();
+    let first: Rc<RefCell<Option<wol_core::prefs::ConfigError>>> = Rc::default();
+    let f = first.clone();
+    scratch.connect_parsing_error(move |_, section, err| {
+        if f.borrow().is_some() || err.kind::<gtk::CssParserError>().is_none() {
+            return;
+        }
+        let detail = err.message().to_string();
+        *f.borrow_mut() = Some(wol_core::prefs::ConfigError {
+            file: USER_CSS_NAME,
+            key: quoted(&detail),
+            line: Some(section.start_location().lines() + 1),
+            detail,
+        });
+    });
+    scratch.load_from_string(css);
+    first.take().map_or(Ok(()), Err)
+}
+
+/// The first `"..."` in a parser message.
+fn quoted(msg: &str) -> Option<String> {
+    let (_, rest) = msg.split_once('"')?;
+    let (name, _) = rest.split_once('"')?;
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Re-evaluates the theme at each light/dark switch time (only changes anything in Auto).
@@ -282,6 +357,16 @@ pub fn apply(t: &theme::Theme, extra: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_parser_message_names_its_property() {
+        assert_eq!(
+            quoted(r#"No property named "colr""#).as_deref(),
+            Some("colr")
+        );
+        assert_eq!(quoted("Expected a valid selector"), None);
+        assert_eq!(quoted(r#"empty """#), None);
+    }
 
     #[test]
     fn shell_icon_theme_is_the_product_theme() {
