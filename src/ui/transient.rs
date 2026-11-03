@@ -1,10 +1,142 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Transient panels (Control Center, Notification Center, clipboard, session menu): one at a
 //! time, and gone on a click outside, Esc, another app in front or a workspace switch.
+//!
+//! They fade in with `ease` when they map and out with `in` when the shell dismisses them
+//! ([`Presence`], on the window's own clock, `docs/modules/hig.md` section 7). A hide that comes
+//! straight from the socket (`wol shell hide|toggle`) stays immediate: the panel's visibility
+//! is what `protocol::apply` says, and the compositor fades the layer out.
 use crate::hypr;
+use crate::kit::anim::{Animated, Clock, Motion};
+use crate::kit::motion;
 use gtk::prelude::*;
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+
+/// A surface coming and going: one opacity on its window's clock. [`Presence::opened`] fades it
+/// in from nothing, [`Presence::close`] fades it out and then hides it; a [`Presence::keep`]
+/// during the fade-out turns it around (from where it is) and nothing hides. Under reduce
+/// motion both jump, and the hide is at once.
+pub struct Presence {
+    fade: Animated,
+    closing: Rc<Cell<bool>>,
+}
+
+impl Presence {
+    /// `apply` gets the opacity every frame; `hide` runs once a [`Presence::close`] got to 0.
+    pub fn on_clock(
+        clock: &Clock,
+        apply: impl Fn(f32) + 'static,
+        hide: impl Fn() + 'static,
+    ) -> Rc<Presence> {
+        let closing = Rc::new(Cell::new(false));
+        let fade = Animated::on_clock(clock, 1.0, apply);
+        let c = closing.clone();
+        fade.connect_settled(move |v| {
+            if v == 0.0 && c.replace(false) {
+                hide()
+            }
+        });
+        Rc::new(Presence { fade, closing })
+    }
+
+    /// The window's own: its opacity, `set_visible(false)` at the end of a close.
+    pub fn of_window(win: &gtk::Window) -> Rc<Presence> {
+        let (a, h) = (win.downgrade(), win.downgrade());
+        Presence::on_clock(
+            &Clock::of(win),
+            move |v| {
+                if let Some(w) = a.upgrade() {
+                    w.set_opacity(v.into())
+                }
+            },
+            move || {
+                if let Some(w) = h.upgrade() {
+                    w.set_visible(false)
+                }
+            },
+        )
+    }
+
+    /// Just mapped: from nothing to full in `d` with `ease`.
+    pub fn opened(&self, d: motion::Duration) {
+        self.closing.set(false);
+        self.fade.set(0.0);
+        self.fade.retarget(1.0, Motion::enter(d));
+    }
+
+    /// Shown again while it may be fading out: back to full from where it is, no hide.
+    pub fn keep(&self) {
+        self.closing.set(false);
+        self.fade
+            .retarget(1.0, Motion::enter(motion::Duration::Normal));
+    }
+
+    /// Fade out with `in`, one step faster than the entrance, then hide.
+    pub fn close(&self) {
+        self.closing.set(true);
+        if self.fade.value() == 0.0 && !self.fade.is_moving() {
+            // Already at nothing (a close before the first frame): nothing to wait for.
+            return self.fade.set(0.0);
+        }
+        self.fade
+            .retarget(0.0, Motion::leave(motion::Duration::Fast));
+    }
+
+    pub fn is_closing(&self) -> bool {
+        self.closing.get()
+    }
+
+    /// The opacity now.
+    pub fn value(&self) -> f32 {
+        self.fade.value()
+    }
+}
+
+thread_local! {
+    /// Windows that fade in and out, with their [`Presence`].
+    static PRESENCE: std::cell::RefCell<Vec<(gtk::glib::WeakRef<gtk::Window>, Rc<Presence>)>> =
+        Default::default();
+}
+
+/// `win`'s [`Presence`], when it has one.
+pub fn presence(win: &gtk::Window) -> Option<Rc<Presence>> {
+    PRESENCE.with_borrow(|p| {
+        p.iter()
+            .find(|(w, _)| w.upgrade().as_ref() == Some(win))
+            .map(|(_, p)| p.clone())
+    })
+}
+
+/// `win` fades in for `d` each time it maps (once per window; the first call's `d` holds).
+pub fn fade_on_map(win: &gtk::Window, d: motion::Duration) -> Rc<Presence> {
+    if let Some(p) = presence(win) {
+        return p;
+    }
+    let p = Presence::of_window(win);
+    {
+        let p = p.clone();
+        win.connect_map(move |_| p.opened(d));
+    }
+    PRESENCE.with_borrow_mut(|v| {
+        v.retain(|(w, _)| w.upgrade().is_some());
+        v.push((win.downgrade(), p.clone()));
+    });
+    p
+}
+
+/// The shell dismisses `win`: it fades out and hides (at once without a [`Presence`]).
+pub fn dismiss(win: &impl IsA<gtk::Window>) {
+    let win = win.upcast_ref::<gtk::Window>();
+    if !win.is_visible() {
+        return;
+    }
+    match presence(win) {
+        Some(p) if win.is_mapped() => p.close(),
+        _ => win.set_visible(false),
+    }
+}
 
 /// Shell panels that close like menus. Not the OSD, Overview, the screenshot bar or
 /// Force Quit (a window that stays until dismissed).
@@ -217,11 +349,11 @@ pub fn close_apps() {
 
 /// Hides every visible transient panel window.
 pub fn close_panels(panels: &super::Panels) {
-    for p in PANELS {
-        if let Some(w) = panels.borrow().get(p) {
-            w.set_visible(false);
-        }
-    }
+    let open: Vec<gtk::Window> = PANELS
+        .iter()
+        .filter_map(|p| panels.borrow().get(p).cloned())
+        .collect();
+    open.iter().for_each(dismiss);
 }
 
 /// Hides every visible transient panel and the other members of the set.
@@ -238,11 +370,11 @@ pub const ALSO_ESC: &[&str] = &["overview", "force-quit"];
 /// `hide transient`: [`close_all`] and [`ALSO_ESC`].
 pub fn close_on_escape(panels: &super::Panels) {
     close_all(panels);
-    for p in ALSO_ESC {
-        if let Some(w) = panels.borrow().get(p) {
-            w.set_visible(false);
-        }
-    }
+    let also: Vec<gtk::Window> = ALSO_ESC
+        .iter()
+        .filter_map(|p| panels.borrow().get(p).cloned())
+        .collect();
+    also.iter().for_each(dismiss);
 }
 
 /// Panel apps (Search): `close` on a click outside `win` or on a [`dismisses`] event.
@@ -365,6 +497,7 @@ pub fn manage(app: &gtk::Application, panels: &super::Panels) {
         let Some(w) = panels.borrow().get(name).cloned() else {
             continue;
         };
+        fade_on_map(&w, motion::Duration::Normal);
         // The grab names mapped surfaces only: it is made (or the panel added to it) once the
         // panel is on screen, not when it turns visible (a grab holding only the bars would be
         // cleared by the panel's map). The panel has the keyboard from its own map.
@@ -593,6 +726,70 @@ mod tests {
             d.feed_at("activewindowv2>>b\n", late),
             "the refocus never came"
         );
+    }
+
+    const MS: u64 = 1_000_000;
+
+    /// A panel fades in with `ease` over 250 ms and out with `in` over 150 ms, hidden once at
+    /// nothing; a show during the fade-out turns it around and nothing hides.
+    #[test]
+    fn a_panel_fades_in_and_out_and_hides_once() {
+        let clock = Clock::manual();
+        let (seen, hides) = (Rc::new(Cell::new(1.0f32)), Rc::new(Cell::new(0)));
+        let p = {
+            let (s, h) = (seen.clone(), hides.clone());
+            Presence::on_clock(&clock, move |v| s.set(v), move || h.set(h.get() + 1))
+        };
+        p.opened(motion::Duration::Normal);
+        assert_eq!(seen.get(), 0.0, "starts from nothing");
+        clock.step(0);
+        clock.step(125 * MS);
+        assert!(
+            seen.get() > 0.5 && seen.get() < 1.0,
+            "ease: past half at half time"
+        );
+        clock.step(250 * MS);
+        assert_eq!(seen.get(), 1.0);
+        p.close();
+        clock.step(260 * MS);
+        clock.step(335 * MS);
+        assert!(seen.get() > 0.5, "in: slow start ({})", seen.get());
+        assert_eq!(hides.get(), 0);
+        clock.step(410 * MS);
+        assert_eq!((seen.get(), hides.get()), (0.0, 1), "gone, hidden once");
+        assert!(!p.is_closing());
+        // Open again, close, and show it again half way out: it comes back and stays.
+        p.opened(motion::Duration::Normal);
+        clock.step(500 * MS);
+        clock.step(750 * MS);
+        p.close();
+        clock.step(760 * MS);
+        clock.step(830 * MS);
+        let mid = seen.get();
+        assert!(mid > 0.0 && mid < 1.0);
+        p.keep();
+        clock.step(840 * MS);
+        assert!(seen.get() >= mid - 0.01, "turns around from where it is");
+        clock.step(1200 * MS);
+        assert_eq!((seen.get(), hides.get()), (1.0, 1), "kept: no second hide");
+        assert!(clock.is_empty());
+    }
+
+    /// Reduce motion: no frames between, the hide is at once.
+    #[test]
+    fn under_reduce_motion_a_panel_snaps() {
+        let clock = Clock::manual();
+        clock.set_reduced(Some(true));
+        let (seen, hides) = (Rc::new(Cell::new(1.0f32)), Rc::new(Cell::new(0)));
+        let p = {
+            let (s, h) = (seen.clone(), hides.clone());
+            Presence::on_clock(&clock, move |v| s.set(v), move || h.set(h.get() + 1))
+        };
+        p.opened(motion::Duration::Normal);
+        assert_eq!(seen.get(), 1.0);
+        p.close();
+        assert_eq!((seen.get(), hides.get()), (0.0, 1));
+        assert!(clock.is_empty());
     }
 
     /// A panel switch: the hidden one does not resync while the new one waits for its map.

@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! org.freedesktop.Notifications server (zbus) + banners (top right, 5 s) + Notification Center panel.
+//!
+//! Motion (`docs/modules/hig.md` section 7): a banner fades in with `ease` (banners arriving
+//! together enter [`Stagger::GAP_MS`] apart, [`enter_delay`]) and fades out with `in` before it
+//! leaves the stack; the Center's rows enter one after another each time it opens
+//! ([`stagger_rows`]). All on the window's clock; reduce motion snaps.
 use crate::copy;
 use crate::kit::{
+    anim::{Animated, Clock, Motion},
+    motion::{Duration as Speed, Stagger},
     surface::{Keyboard, Spec},
     widgets as w,
 };
@@ -436,6 +443,48 @@ fn card(n: &Note) -> gtk::Box {
 /// Notes the Notification Center keeps; older ones fall off the bottom (audit2 A2-8: the list
 /// grew for the whole session).
 pub const CENTER_MAX: usize = 50;
+
+/// Rows of the Center that stagger when it opens (the ones a tall display shows); the rest are
+/// already in place.
+pub const STAGGER_ROWS: usize = 12;
+
+/// The Center opens: its first [`STAGGER_ROWS`] visible rows fade in one after another,
+/// [`Stagger::GAP_MS`] apart, newest first, on `clock`. The handles keep the moves alive: hold
+/// them until the next open (the clock finishes them when the window unmaps).
+pub fn stagger_rows(list: &gtk::Box, clock: &Clock) -> Vec<Animated> {
+    let mut rows = Vec::new();
+    let mut c = list.first_child();
+    while let Some(r) = c {
+        c = r.next_sibling();
+        if r.is_visible() && rows.len() < STAGGER_ROWS {
+            rows.push(r);
+        }
+    }
+    let st = Stagger::new(rows.len(), Stagger::GAP_MS);
+    rows.into_iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let a = {
+                let r = r.clone();
+                Animated::on_clock(clock, 0.0, move |v| r.set_opacity(v.into()))
+            };
+            r.set_opacity(0.0);
+            a.retarget_after(1.0, Motion::enter(Speed::Normal), st.delay_ms(i));
+            a
+        })
+        .collect()
+}
+
+/// Delay (ms) before a banner entering at `now_ms` starts its fade, when the one before it
+/// started at `prev_start_ms`: banners arriving together enter [`Stagger::GAP_MS`] apart, the
+/// wait never past [`Stagger::MAX_SPREAD_MS`]; one arriving on its own starts at once.
+pub fn enter_delay(prev_start_ms: Option<u64>, now_ms: u64) -> u64 {
+    prev_start_ms.map_or(0, |p| {
+        (p + Stagger::GAP_MS)
+            .saturating_sub(now_ms)
+            .min(Stagger::MAX_SPREAD_MS)
+    })
+}
 
 /// Notification Center rows by note id, newest first, at most [`CENTER_MAX`]. `T` is the row
 /// widget (a plain value in tests).
@@ -949,13 +998,24 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
         let c = center.clone();
         esc.connect_key_pressed(move |_, k, _, _| {
             if k == gtk::gdk::Key::Escape {
-                c.set_visible(false);
+                super::transient::dismiss(&c);
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
         });
     }
     center.add_controller(esc);
+    {
+        // Each open: the rows enter one after another (the last open's moves end first).
+        let moves: RefCell<Vec<Animated>> = Default::default();
+        let list = center_list.clone();
+        center.connect_map(move |win| {
+            for a in moves.take() {
+                a.finish();
+            }
+            moves.replace(stagger_rows(&list, &Clock::of(win)));
+        });
+    }
 
     glib::spawn_future_local(async move {
         // One banner per app, newest group on top; a group's notes leave together, except the
@@ -964,24 +1024,56 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
             app: String,
             notes: GroupNotes,
             rev: gtk::Revealer,
+            /// The banner's opacity (fades in on arrival, out before it leaves the stack).
+            fade: Animated,
             generation: u32,
             /// The note on screen and what a click on it runs ([`click_action`]).
             last: (u32, Option<&'static str>),
         }
         let groups: Rc<RefCell<Vec<Group>>> = Default::default();
         let next_gen = Rc::new(std::cell::Cell::new(0u32));
-        // Removes the group holding `rev`; returns its ids.
+        // Banners fading out: kept alive until they are off the stack.
+        let leaving: Rc<RefCell<Vec<(gtk::Revealer, Animated)>>> = Default::default();
+        // When the last banner started entering (ms, monotonic), for [`enter_delay`].
+        let last_enter: Rc<std::cell::Cell<Option<u64>>> = Default::default();
+        // Removes the group holding `rev`; returns its ids. Its banner fades out, then leaves
+        // the stack; the window goes when the stack is empty.
         let drop_group = {
             let (groups, stack, banners) = (groups.clone(), stack.clone(), banners.clone());
+            let leaving = leaving.clone();
             move |rev: &gtk::Revealer| -> Vec<u32> {
-                let mut g = groups.borrow_mut();
-                let Some(i) = g.iter().position(|x| &x.rev == rev) else {
-                    return vec![];
+                let gr = {
+                    let mut g = groups.borrow_mut();
+                    let Some(i) = g.iter().position(|x| &x.rev == rev) else {
+                        return vec![];
+                    };
+                    g.remove(i)
                 };
-                let gr = g.remove(i);
-                stack.remove(&gr.rev);
-                if g.is_empty() {
-                    banners.set_visible(false);
+                gr.rev.set_can_target(false);
+                let (r, st, b, l) = (
+                    gr.rev.clone(),
+                    stack.clone(),
+                    banners.clone(),
+                    leaving.clone(),
+                );
+                gr.fade.connect_settled(move |v| {
+                    if v != 0.0 {
+                        return;
+                    }
+                    l.borrow_mut().retain(|(x, _)| x != &r);
+                    if r.parent().is_some() {
+                        st.remove(&r);
+                    }
+                    if st.first_child().is_none() {
+                        b.set_visible(false);
+                    }
+                });
+                leaving.borrow_mut().push((gr.rev.clone(), gr.fade.clone()));
+                if banners.is_mapped() {
+                    gr.fade.retarget(0.0, Motion::leave(Speed::Fast));
+                } else {
+                    // No frames will come (no display): off the stack now.
+                    gr.fade.set(0.0);
                 }
                 gr.notes.ids()
             }
@@ -1190,17 +1282,29 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                         }
                     });
                     stack.prepend(&rev);
+                    banners.set_visible(true);
+                    let fade = {
+                        let r = rev.clone();
+                        Animated::on_clock(&Clock::of(&banners), 0.0, move |v| {
+                            r.set_opacity(v.into())
+                        })
+                    };
+                    rev.set_opacity(0.0);
+                    let now = (glib::monotonic_time() / 1000).max(0) as u64;
+                    let delay = enter_delay(last_enter.get(), now);
+                    last_enter.set(Some(now + delay));
+                    fade.retarget_after(1.0, Motion::enter(Speed::Normal), delay);
                     let mut gr = Group {
                         app: n.app.clone(),
                         notes: GroupNotes::default(),
                         rev: rev.clone(),
+                        fade,
                         generation,
                         last: (n.id, click_action(&n)),
                     };
                     gr.notes.push(n.clone());
                     render(&mut gr);
                     groups.borrow_mut().insert(0, gr);
-                    banners.set_visible(true);
                     let r2 = rev.clone();
                     glib::idle_add_local_once(move || r2.set_reveal_child(true));
                     rev
@@ -1477,6 +1581,17 @@ mod tests {
             Some(None),
             "a sticky note comes back: no timer"
         );
+    }
+
+    /// Banners arriving together enter 30 ms apart; one on its own starts at once; a burst
+    /// never makes the last wait past the stagger cap.
+    #[test]
+    fn banners_arriving_together_stagger() {
+        assert_eq!(enter_delay(None, 1_000), 0);
+        assert_eq!(enter_delay(Some(1_000), 1_000), Stagger::GAP_MS);
+        assert_eq!(enter_delay(Some(1_030), 1_005), 55, "the third of a burst");
+        assert_eq!(enter_delay(Some(1_000), 1_031), 0, "far enough apart");
+        assert_eq!(enter_delay(Some(9_000), 1_000), Stagger::MAX_SPREAD_MS);
     }
 
     /// Audit4 S3-4: a plain note stacked over an unanswered one with buttons expired both; the

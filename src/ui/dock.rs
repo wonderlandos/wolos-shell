@@ -4,7 +4,13 @@
 //! `dock_items`, on the layout's Dock edge.
 use super::plugins;
 use crate::apps;
-use crate::kit::{self, surface::Spec, widgets as w};
+use crate::kit::{
+    self,
+    anim::{Animated, Clock, Motion},
+    motion::Spring,
+    surface::Spec,
+    widgets as w,
+};
 use gtk::{gio, glib, prelude::*};
 use shared::layout::{DockItem, Edge, Layout};
 use std::cell::RefCell;
@@ -251,6 +257,217 @@ pub struct Dock {
     running: RefCell<HashSet<String>>,
     /// Keyboard access ([`keyboard`]): a tile click gives the keyboard back.
     keys: RefCell<Option<Keys>>,
+    /// Hover magnify (Settings > Dock > Magnification).
+    pub magnify: Rc<Magnify>,
+}
+
+/// Scale of the tile under the pointer.
+pub const MAGNIFY: f32 = 1.15;
+/// The hover follows the pointer: a spring (interruptible, a quick pass keeps its speed).
+pub const MAGNIFY_SPRING: Spring = Spring::SNAPPY;
+
+/// Hover magnify: the tile under the pointer grows to [`MAGNIFY`] on a spring and the one it
+/// left springs back. The tile's content scales about its bottom centre at draw time ([`Lift`]:
+/// no relayout, the shelf keeps its size); kit.css's hover scale is off on the shelf (`flat`).
+/// Under reduce motion the scale jumps.
+pub struct Magnify {
+    on: std::cell::Cell<bool>,
+    /// Hovered tiles so far: their lift and its spring.
+    tiles: RefCell<Vec<(glib::WeakRef<gtk::Button>, Lift, Animated)>>,
+    hovered: RefCell<Option<glib::WeakRef<gtk::Button>>>,
+    /// An explicit clock (goldens); else the tile's window clock.
+    clock: RefCell<Option<Clock>>,
+}
+
+impl Default for Magnify {
+    fn default() -> Self {
+        Magnify {
+            on: std::cell::Cell::new(true),
+            tiles: Default::default(),
+            hovered: Default::default(),
+            clock: Default::default(),
+        }
+    }
+}
+
+impl Magnify {
+    /// Moves run on `clock` (goldens and tests drive it by hand).
+    pub fn use_clock(&self, clock: &Clock) {
+        self.clock.replace(Some(clock.clone()));
+    }
+
+    pub fn is_on(&self) -> bool {
+        self.on.get()
+    }
+
+    /// Off: every tile springs back and none grows.
+    pub fn set_on(&self, on: bool) {
+        self.on.set(on);
+        if !on {
+            self.hover(None);
+        }
+    }
+
+    /// The pointer is over `tile` (None: over no tile, or gone).
+    pub fn hover(&self, tile: Option<&gtk::Button>) {
+        let tile = tile.filter(|_| self.on.get());
+        let before = self.hovered.borrow().as_ref().and_then(|w| w.upgrade());
+        if before.as_ref() == tile {
+            return;
+        }
+        if let Some(b) = before {
+            self.spring(&b, 1.0);
+        }
+        if let Some(t) = tile {
+            self.spring(t, MAGNIFY);
+        }
+        self.hovered.replace(tile.map(|t| t.downgrade()));
+    }
+
+    /// The scale `tile` draws at now (1 for one never hovered).
+    pub fn scale_of(&self, tile: &gtk::Button) -> f32 {
+        self.tiles
+            .borrow()
+            .iter()
+            .find(|(b, _, _)| b.upgrade().as_ref() == Some(tile))
+            .map_or(1.0, |(_, l, _)| l.scale())
+    }
+
+    fn spring(&self, tile: &gtk::Button, to: f32) {
+        let found = self
+            .tiles
+            .borrow()
+            .iter()
+            .find(|(b, _, _)| b.upgrade().as_ref() == Some(tile))
+            .map(|(_, _, a)| a.clone());
+        let a = match found {
+            Some(a) => a,
+            None if to == 1.0 => return,
+            None => {
+                let Some(lift) = Lift::wrap(tile) else { return };
+                let clock = self
+                    .clock
+                    .borrow()
+                    .clone()
+                    .unwrap_or_else(|| Clock::of(tile));
+                let a = {
+                    let l = lift.clone();
+                    Animated::on_clock(&clock, 1.0, move |v| l.set_scale(v))
+                };
+                let mut t = self.tiles.borrow_mut();
+                t.retain(|(b, _, _)| b.upgrade().is_some());
+                t.push((tile.downgrade(), lift, a.clone()));
+                a
+            }
+        };
+        a.retarget(to, Motion::Spring(MAGNIFY_SPRING));
+    }
+}
+
+/// The Dock tile under (`x`, `y`) of `root`.
+fn tile_at(root: &gtk::Box, x: f64, y: f64) -> Option<gtk::Button> {
+    let mut w = root.pick(x, y, gtk::PickFlags::DEFAULT);
+    while let Some(x) = w {
+        if x == *root.upcast_ref::<gtk::Widget>() {
+            return None;
+        }
+        if x.has_css_class("dock-tile")
+            && let Ok(b) = x.clone().downcast::<gtk::Button>()
+        {
+            return Some(b);
+        }
+        w = x.parent();
+    }
+    None
+}
+
+mod lift {
+    use gtk::{glib, graphene, prelude::*, subclass::prelude::*};
+    use std::cell::Cell;
+
+    pub struct Lift {
+        pub scale: Cell<f32>,
+    }
+
+    impl Default for Lift {
+        fn default() -> Self {
+            Lift {
+                scale: Cell::new(1.0),
+            }
+        }
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for Lift {
+        const NAME: &'static str = "WolDockLift";
+        type Type = super::Lift;
+        type ParentType = gtk::Widget;
+
+        fn class_init(klass: &mut Self::Class) {
+            klass.set_layout_manager_type::<gtk::BinLayout>();
+        }
+    }
+
+    impl ObjectImpl for Lift {
+        fn dispose(&self) {
+            while let Some(c) = self.obj().first_child() {
+                c.unparent();
+            }
+        }
+    }
+
+    impl WidgetImpl for Lift {
+        fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let w = self.obj();
+            let Some(child) = w.first_child() else { return };
+            let s = self.scale.get();
+            if (s - 1.0).abs() < 1e-4 {
+                return w.snapshot_child(&child, snapshot);
+            }
+            let (cw, ch) = (w.width() as f32, w.height() as f32);
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(cw / 2.0, ch));
+            snapshot.scale(s, s);
+            snapshot.translate(&graphene::Point::new(-cw / 2.0, -ch));
+            w.snapshot_child(&child, snapshot);
+            snapshot.restore();
+        }
+    }
+}
+
+glib::wrapper! {
+    /// Draws its one child scaled about its bottom centre (a transform at draw time: layout and
+    /// input stay where they are).
+    pub struct Lift(ObjectSubclass<lift::Lift>)
+        @extends gtk::Widget,
+        @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
+}
+
+impl Lift {
+    /// Puts a lift between `button` and its content (once; the existing one after that).
+    pub fn wrap(button: &gtk::Button) -> Option<Lift> {
+        let child = button.child()?;
+        if let Ok(l) = child.clone().downcast::<Lift>() {
+            return Some(l);
+        }
+        let l: Lift = glib::Object::new();
+        button.set_child(None::<&gtk::Widget>);
+        child.set_parent(&l);
+        button.set_child(Some(&l));
+        Some(l)
+    }
+
+    pub fn scale(&self) -> f32 {
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+        self.imp().scale.get()
+    }
+
+    pub fn set_scale(&self, s: f32) {
+        use gtk::subclass::prelude::ObjectSubclassIsExt;
+        if self.imp().scale.replace(s) != s {
+            self.queue_draw();
+        }
+    }
 }
 
 /// The tiles built from the layout's items.
@@ -298,7 +515,29 @@ pub fn content_with(running: &HashSet<String>, items: &[DockItem], edge: Edge) -
         layout: RefCell::new((edge, Vec::new())),
         running: RefCell::new(running.clone()),
         keys: RefCell::new(None),
+        magnify: Default::default(),
     });
+    // The hover scale is the spring's (Magnify), not kit.css's.
+    d.root.add_css_class("flat");
+    {
+        // Enter too: a pointer that lands on a tile (a warp, a window closing under it) moves
+        // nothing before it is there.
+        let motion = gtk::EventControllerMotion::new();
+        let at = {
+            let (m, root) = (d.magnify.clone(), d.root.downgrade());
+            move |x: f64, y: f64| {
+                if let Some(r) = root.upgrade() {
+                    m.hover(tile_at(&r, x, y).as_ref());
+                }
+            }
+        };
+        let at2 = at.clone();
+        motion.connect_enter(move |_, x, y| at2(x, y));
+        motion.connect_motion(move |_, x, y| at(x, y));
+        let m = d.magnify.clone();
+        motion.connect_leave(move |_| m.hover(None));
+        d.root.add_controller(motion);
+    }
     d.set_edge(edge);
     d.fill(items);
     d
@@ -393,7 +632,7 @@ pub fn build(app: &gtk::Application) -> Built {
         d.host.replace(Some(host));
     }
     {
-        let (root, d) = (d.root.clone(), d.clone());
+        let d = d.clone();
         let (w, rv) = (win.downgrade(), reveal.downgrade());
         super::ipc::on_reload(move |p| {
             read_layout(&d, &layout, w.clone(), rv.clone(), reserve.clone());
@@ -402,7 +641,7 @@ pub fn build(app: &gtk::Application) -> Built {
             d.set_tile_size(p.tile_size());
             reveal.set_reveal_child(!p.dock_autohide);
             reserve();
-            set_magnify(&root, p.dock_magnify);
+            set_magnify(&d, p.dock_magnify);
         });
     }
     (win, d, keys)
@@ -485,13 +724,9 @@ fn show_after(reveal: &gtk::Revealer, delay_ms: u32, epoch: &Rc<std::cell::Cell<
     );
 }
 
-/// Settings > Dock > Magnification: tiles lift on hover only when on.
-pub fn set_magnify(root: &gtk::Box, on: bool) {
-    if on {
-        root.remove_css_class("flat")
-    } else {
-        root.add_css_class("flat")
-    }
+/// Settings > Dock > Magnification: tiles lift on hover only when on ([`Magnify`]).
+pub fn set_magnify(d: &Dock, on: bool) {
+    d.magnify.set_on(on);
 }
 
 impl Dock {

@@ -194,6 +194,17 @@ pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
         let cc = cc.clone();
         win.connect_map(move |win| fit(&cc, win));
     }
+    {
+        // Open stagger: the main page's modules enter one after another (SP-4).
+        let moves: RefCell<Vec<kit::anim::Animated>> = Default::default();
+        let root = cc.root.clone().upcast::<gtk::Widget>();
+        win.connect_map(move |win| {
+            for a in moves.take() {
+                a.finish();
+            }
+            moves.replace(open_stagger(&root, &kit::anim::Clock::of(win)));
+        });
+    }
     win.connect_hide(move |_| {
         if let Some(h) = running.borrow_mut().take() {
             h.abort();
@@ -206,6 +217,66 @@ pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
     let w2 = win.clone();
     kit::surface::on_escape(&win, move || w2.set_visible(false));
     win.upcast()
+}
+
+/// The main page's modules as they stand top to bottom (the visible ones), under `root` (the
+/// panel's content).
+pub fn main_modules(root: &gtk::Widget) -> Vec<gtk::Widget> {
+    let mut todo = vec![root.clone()];
+    let mut stack = None;
+    while let Some(w) = todo.pop() {
+        if let Some(s) = w.downcast_ref::<gtk::Stack>()
+            && PAGES.iter().all(|p| s.child_by_name(p).is_some())
+        {
+            stack = Some(s.clone());
+            break;
+        }
+        let mut c = w.first_child();
+        while let Some(x) = c {
+            c = x.next_sibling();
+            todo.push(x);
+        }
+    }
+    // main -> scroller -> viewport -> the modules' box.
+    let mut page = stack.and_then(|s| s.child_by_name("main"));
+    while let Some(p) = page.clone() {
+        if p.is::<gtk::Box>() {
+            break;
+        }
+        page = p.first_child();
+    }
+    let mut out = Vec::new();
+    let mut c = page.and_then(|p| p.first_child());
+    while let Some(x) = c {
+        c = x.next_sibling();
+        if x.is_visible() {
+            out.push(x);
+        }
+    }
+    out
+}
+
+/// The panel opens: its main page's modules fade in top to bottom,
+/// [`kit::motion::Stagger::GAP_MS`] apart, `ease` over 250 ms, on `clock`. Hold the handles
+/// until the next open (the clock finishes them when the panel unmaps). Reduce motion: all at
+/// once.
+pub fn open_stagger(root: &gtk::Widget, clock: &kit::anim::Clock) -> Vec<kit::anim::Animated> {
+    use kit::anim::{Animated, Motion};
+    use kit::motion::{Duration, Stagger};
+    let mods = main_modules(root);
+    let st = Stagger::new(mods.len(), Stagger::GAP_MS);
+    mods.into_iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let a = {
+                let m = m.clone();
+                Animated::on_clock(clock, 0.0, move |v| m.set_opacity(v.into()))
+            };
+            m.set_opacity(0.0);
+            a.retarget_after(1.0, Motion::enter(Duration::Normal), st.delay_ms(i));
+            a
+        })
+        .collect()
 }
 
 /// How often the open panel looks for a new sound service state.

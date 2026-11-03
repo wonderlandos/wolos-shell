@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! App switcher: glass strip of 64 px app icons, accent ring on the selection, its name below.
 //! Super+Tab opens/advances, Super+Shift+Tab goes back, releasing Super focuses (see `switcher::op`).
+use crate::kit::anim::{Animated, Clock, Motion};
+use crate::kit::motion::Duration as Speed;
 use crate::kit::surface::{Keyboard, Spec};
 use crate::kit::widgets as w;
 use crate::switcher::{self, App, CancelOpen, Cycle, Op};
@@ -42,6 +44,8 @@ pub const SPEC: Spec = Spec::panel("wol-panel-switcher", [false; 4], Keyboard::O
 pub struct Strip {
     pub root: gtk::Box,
     tiles: Vec<(gtk::Box, gtk::Label)>,
+    /// The names' opacities on the window's clock ([`Strip::animate`]); None: they jump.
+    names: RefCell<Vec<Animated>>,
 }
 
 impl Strip {
@@ -69,12 +73,33 @@ impl Strip {
                 (tile, name)
             })
             .collect();
-        let s = Strip { root, tiles };
+        let s = Strip {
+            root,
+            tiles,
+            names: Default::default(),
+        };
         s.select(selected);
         s
     }
 
+    /// From now on a new selection cross-fades the names (150 ms, on `clock`: the switcher
+    /// window's, so the strip and its fade-in share one frame clock).
+    pub fn animate(&self, clock: &Clock) {
+        let names = self
+            .tiles
+            .iter()
+            .map(|(_, name)| {
+                let n = name.clone();
+                Animated::on_clock(clock, name.opacity() as f32, move |v| {
+                    n.set_opacity(v.into())
+                })
+            })
+            .collect();
+        self.names.replace(names);
+    }
+
     pub fn select(&self, index: usize) {
+        let names = self.names.borrow();
         for (i, (tile, name)) in self.tiles.iter().enumerate() {
             if i == index {
                 tile.add_css_class("selected");
@@ -82,8 +107,18 @@ impl Strip {
                 tile.remove_css_class("selected");
             }
             // Only the selection shows its name; the others keep their slot so nothing shifts.
-            name.set_opacity(if i == index { 1.0 } else { 0.0 });
+            let to = if i == index { 1.0 } else { 0.0 };
+            match names.get(i) {
+                Some(a) if to == 1.0 => a.retarget(to, Motion::enter(Speed::Fast)),
+                Some(a) => a.retarget(to, Motion::leave(Speed::Fast)),
+                None => name.set_opacity(to.into()),
+            }
         }
+    }
+
+    /// The name of tile `i`'s opacity now.
+    pub fn name_opacity(&self, i: usize) -> f64 {
+        self.tiles.get(i).map_or(0.0, |(_, n)| n.opacity())
     }
 }
 
@@ -142,6 +177,8 @@ impl Switcher {
         let window = super::window(app, "panel", SPEC);
         crate::kit::surface::survive_output_loss(&window, SPEC);
         window.add_css_class("switcher");
+        // Fades in each open, on the window's clock (the names' cross-fade shares it).
+        super::transient::fade_on_map(window.upcast_ref(), Speed::Normal);
         let s = Rc::new(Switcher {
             window: window.upcast(),
             apps: Default::default(),
@@ -263,6 +300,7 @@ impl Switcher {
             };
             let cycle = q.apply(Cycle::open(apps.len()));
             let strip = Strip::new(&apps, cycle.index);
+            strip.animate(&Clock::of(&me.window));
             me.window.set_child(Some(&strip.root));
             *me.strip.borrow_mut() = Some(strip);
             *me.apps.borrow_mut() = apps;

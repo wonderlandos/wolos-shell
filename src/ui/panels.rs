@@ -23,11 +23,11 @@ pub fn wallpaper(app: &gtk::Application, display: &gdk::Monitor) -> gtk::Applica
 }
 
 /// The wallpaper picture into `win`; its reload hook, file watch and Dynamic tick end with it.
+/// A new picture cross-fades over the old one ([`CrossFade`], 400 ms on the window's clock).
 pub fn dress_wallpaper(win: &gtk::Window) {
     let life = crate::kit::lifetime::Lifetime::of_window(win);
-    let pic = gtk::Picture::new();
-    pic.set_content_fit(gtk::ContentFit::Cover);
-    win.set_child(Some(&pic));
+    let fade = CrossFade::new(&kit::anim::Clock::of(win));
+    win.set_child(Some(&fade.root));
     let shown: RefCell<Option<std::path::PathBuf>> = Default::default();
     let show = Rc::new(move || {
         let now = crate::kit::pickers::desktop_wallpaper();
@@ -37,12 +37,12 @@ pub fn dress_wallpaper(win: &gtk::Window) {
         shown.replace(now.clone());
         let Some(p) = now else { return };
         // Decoded off the main thread: the CSS gradient shows until the picture is ready.
-        let pic = pic.clone();
+        let fade = fade.clone();
         glib::spawn_future_local(async move {
             if let Ok(Ok(t)) =
                 gtk::gio::spawn_blocking(move || gdk::Texture::from_filename(p)).await
             {
-                pic.set_paintable(Some(&t));
+                fade.show(&t);
             }
         });
     });
@@ -67,6 +67,79 @@ pub fn dress_wallpaper(win: &gtk::Window) {
         show();
         glib::ControlFlow::Continue
     }));
+}
+
+/// The wallpaper's two pictures: `back` is on screen, `front` fades the next one in over it
+/// (`out`, [`kit::motion::Duration::Slow`]) and hands it to `back` when it is done. The first
+/// picture appears at once (nothing to fade from); a change during a fade finishes that one
+/// first. Reduce motion: the new picture at once.
+#[derive(Clone)]
+pub struct CrossFade {
+    pub root: gtk::Overlay,
+    back: gtk::Picture,
+    front: gtk::Picture,
+    fade: kit::anim::Animated,
+}
+
+impl CrossFade {
+    pub fn new(clock: &kit::anim::Clock) -> CrossFade {
+        let pic = || {
+            let p = gtk::Picture::new();
+            p.set_content_fit(gtk::ContentFit::Cover);
+            p
+        };
+        let (back, front) = (pic(), pic());
+        front.set_can_target(false);
+        front.set_opacity(0.0);
+        let root = gtk::Overlay::new();
+        root.set_child(Some(&back));
+        root.add_overlay(&front);
+        let fade = {
+            let f = front.clone();
+            kit::anim::Animated::on_clock(clock, 0.0, move |v| f.set_opacity(v.into()))
+        };
+        {
+            let (b, f) = (back.clone(), front.clone());
+            fade.connect_settled(move |v| {
+                if v == 1.0 && f.paintable().is_some() {
+                    b.set_paintable(f.paintable().as_ref());
+                    f.set_paintable(None::<&gdk::Paintable>);
+                }
+            });
+        }
+        CrossFade {
+            root,
+            back,
+            front,
+            fade,
+        }
+    }
+
+    /// Shows `t`: over the picture on screen, or at once when there is none.
+    pub fn show(&self, t: &impl IsA<gdk::Paintable>) {
+        if self.back.paintable().is_none() {
+            return self.back.set_paintable(Some(t));
+        }
+        if self.fade.is_moving() {
+            self.fade.finish();
+        }
+        self.fade.set(0.0);
+        self.front.set_paintable(Some(t));
+        self.fade.retarget(
+            1.0,
+            kit::anim::Motion::tween(kit::motion::Curve::Out, kit::motion::Duration::Slow),
+        );
+    }
+
+    /// The picture on screen once the fade is done (the one fading in, during it).
+    pub fn current(&self) -> Option<gdk::Paintable> {
+        self.front.paintable().or_else(|| self.back.paintable())
+    }
+
+    /// The front picture's opacity now (0 at rest).
+    pub fn progress(&self) -> f32 {
+        self.fade.value()
+    }
 }
 
 /// Panel window: transparent overlay layer, glass content, Esc hides.
@@ -108,7 +181,7 @@ pub(super) fn panel_on(
     win.add_css_class(class);
     win.set_child(Some(child));
     let w2 = win.clone();
-    kit::surface::on_escape(&win, move || w2.set_visible(false));
+    kit::surface::on_escape(&win, move || super::transient::dismiss(&w2));
     win.upcast()
 }
 
@@ -206,6 +279,7 @@ impl Osd {
             OSD_KEYBOARD,
             &g,
         );
+        super::transient::fade_on_map(&window, kit::motion::Duration::Normal);
         Rc::new(Osd {
             window,
             icon,
@@ -219,13 +293,19 @@ impl Osd {
     pub fn show(self: &Rc<Self>, icon: &str, level: u8) {
         self.icon.set_icon_name(Some(icon));
         self.bar.set_fraction(level as f64 / 100.0);
+        if self.window.is_visible() {
+            // A show during the fade-out brings it back (its map fades a new one in).
+            if let Some(p) = super::transient::presence(&self.window) {
+                p.keep();
+            }
+        }
         self.window.set_visible(true);
         let seq = self.hide_gen.get() + 1;
         self.hide_gen.set(seq);
         let me = self.clone();
         glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || {
             if me.hide_gen.get() == seq {
-                me.window.set_visible(false);
+                super::transient::dismiss(&me.window);
             }
         });
     }
