@@ -13,7 +13,8 @@ fn main() -> std::process::ExitCode {
         return std::process::ExitCode::from(2);
     };
     if let appmenu::Act::Key(c) = act {
-        // No window in front (empty desktop, a shell panel): the keyboard focus gets the app key.
+        // The window in front gets the app key; with a shell panel holding the keyboard or no
+        // window, nothing is sent (appmenu::key_batch).
         let front = hypr::active_window();
         let (class, address) = front.map(|f| (f.class, f.address)).unwrap_or_default();
         let panel = hypr::layers().is_some_and(|l| appmenu::panel_has_keys(&l));

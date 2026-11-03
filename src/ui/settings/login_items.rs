@@ -121,6 +121,7 @@ mod tests {
             name: "Notes".into(),
             exec: vec!["wol-notes".into()],
             icon: "wolos-notes".into(),
+            wm_class: String::new(),
         }];
         assert_eq!(
             describe(&entries, "wol-notes"),

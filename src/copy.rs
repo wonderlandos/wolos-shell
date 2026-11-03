@@ -777,6 +777,9 @@ pub const WIDGET_NO_ROOM: &str = "No room. Remove a widget or pick a smaller siz
 /// An app's question (clipboard, file, sound) refused because too many are being answered at
 /// once (`app_session::ANSWERS_IN_FLIGHT`).
 pub const DESKTOP_BUSY: &str = "The desktop is busy. Try again.";
+/// The password is right, but the account may not use the screen (not in group `seat`).
+pub const LOGIN_NO_DISPLAY: &str =
+    "This account can’t use the screen yet. Ask an administrator to add it to the seat group.";
 /// Login window with no account that can sign in (audit4 S3-7): (title, hint).
 pub const LOGIN_NO_ACCOUNTS: (&str, &str) = (
     "No Accounts",
@@ -822,6 +825,12 @@ pub const STORE_PLUGINS_SIGNED: &str =
 pub const STORE_PLUGINS_LOADING: &str = "Loading the plugin list…";
 pub const STORE_PLUGINS_OFFLINE: &str =
     "The plugin list could not be loaded. Check that you are online, then try again.";
+/// The plugin server answered, but has no list (404): nothing to fix on this computer.
+pub const STORE_PLUGINS_NOT_PUBLISHED: &str =
+    "The plugin list is not available from the WolOS plugin server yet. Try again later.";
+/// A list came, but its signature does not check: it is never shown.
+pub const STORE_PLUGINS_UNTRUSTED: &str =
+    "The plugin list could not be checked, so it is not shown. Try again later.";
 /// Previews and first start before the list was downloaded.
 pub const STORE_PLUGINS_NOT_YET: &str = "The plugin list has not been downloaded yet.";
 pub const STORE_PLUGINS_EMPTY: &str = "The plugin list is empty.";

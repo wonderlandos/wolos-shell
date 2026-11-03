@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Auth wire formats. Lock: `/usr/lib/wol-authcheck`, password on stdin, exit 0 ok / 1 denied / 2 error (ADR 0023).
-//! Login window: `/var/run/wol-login.sock`, `user\n` + password, write side closed, reply `ok|denied|error` (ADR 0024).
+//! Login window: `/var/run/wol-login.sock`, `user\n` + password, write side closed, reply `ok|denied|error|no-display` (ADR 0024).
 use std::io::{Read, Write};
 
 pub const AUTHCHECK: &str = "/usr/lib/wol-authcheck";
@@ -12,6 +12,9 @@ pub enum Verdict {
     Ok,
     Denied,
     Error,
+    /// The password is right, but the account may not use the screen (not in group `seat`):
+    /// wol-login starts no session (e2e D6: a black screen, a restart every 0.7 s).
+    NoDisplay,
 }
 
 impl Verdict {
@@ -20,6 +23,7 @@ impl Verdict {
             Verdict::Ok => "",
             Verdict::Denied => "Incorrect password",
             Verdict::Error => "Your password can’t be checked right now. Try again, or restart.",
+            Verdict::NoDisplay => crate::copy::LOGIN_NO_DISPLAY,
         }
     }
 }
@@ -36,6 +40,7 @@ pub fn from_reply(reply: &str) -> Verdict {
     match reply.trim() {
         "ok" => Verdict::Ok,
         "denied" => Verdict::Denied,
+        shared::login::REPLY_NO_DISPLAY => Verdict::NoDisplay,
         _ => Verdict::Error,
     }
 }
@@ -406,10 +411,17 @@ mod tests {
             ("ok\n", Verdict::Ok),
             ("denied", Verdict::Denied),
             ("error", Verdict::Error),
+            ("no-display\n", Verdict::NoDisplay),
             ("", Verdict::Error),
         ] {
             assert_eq!(from_reply(r), v);
         }
+        // e2e D6: the real reason, never "can't be checked"; it is not a wrong password.
+        let m = Verdict::NoDisplay.message();
+        assert!(m.contains("seat group") && !m.contains("password"), "{m}");
+        let n = std::cell::Cell::new(5);
+        assert_eq!(wrong_password(&n, Verdict::NoDisplay, || None), None);
+        assert_eq!(n.get(), 5);
     }
 
     #[test]

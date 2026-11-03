@@ -61,7 +61,11 @@ pub fn read() -> Option<Badge> {
         std::path::Path::new(wol_core::update::check::DIR),
         crate::focus::unix_now(),
     )?;
-    let running = std::fs::read_to_string(wol_core::update::check::RELEASE_FILE).ok();
+    // No release file in the image (v0.12.0): os-release names the running release.
+    use wol_core::update::check::{OS_RELEASE, RELEASE_FILE};
+    let running = std::fs::read_to_string(RELEASE_FILE)
+        .or_else(|_| std::fs::read_to_string(OS_RELEASE))
+        .ok();
     badge(Some(&u.installed(running.as_deref())))
 }
 
