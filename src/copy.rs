@@ -773,6 +773,9 @@ pub const WIDGET_NO_ROOM: &str = "No room. Remove a widget or pick a smaller siz
 /// An app's question (clipboard, file, sound) refused because too many are being answered at
 /// once (`app_session::ANSWERS_IN_FLIGHT`).
 pub const DESKTOP_BUSY: &str = "The desktop is busy. Try again.";
+/// The password is right, but the account may not use the screen (not in group `seat`).
+pub const LOGIN_NO_DISPLAY: &str =
+    "This account can’t use the screen yet. Ask an administrator to add it to the seat group.";
 /// Login window with no account that can sign in (audit4 S3-7): (title, hint).
 pub const LOGIN_NO_ACCOUNTS: (&str, &str) = (
     "No Accounts",
