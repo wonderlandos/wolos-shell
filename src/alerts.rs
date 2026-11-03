@@ -261,8 +261,20 @@ static MALWARE_SEEN: std::sync::Mutex<Option<std::time::SystemTime>> = std::sync
 
 /// The account's lists, read only when they changed: a stat every poll, no read at rest.
 fn malware_read() -> Option<Vec<String>> {
-    let uid = wol_core::malware::my_uid();
-    let dir = std::path::Path::new(wol_core::malware::STATE_DIR);
+    malware_read_in(
+        std::path::Path::new(wol_core::malware::STATE_DIR),
+        wol_core::malware::my_uid(),
+        &MALWARE_SEEN,
+    )
+}
+
+/// [`malware_read`] in `dir` for `uid`: the guard's list and the background pass's
+/// (`sweep-<uid>.json`, the account's own 0600 file; audit R7-1).
+fn malware_read_in(
+    dir: &std::path::Path,
+    uid: u32,
+    seen: &std::sync::Mutex<Option<std::time::SystemTime>>,
+) -> Option<Vec<String>> {
     let files = [
         dir.join(wol_core::malware::findings_file(uid)),
         dir.join(wol_core::malware::sweep_file(uid)),
@@ -271,7 +283,7 @@ fn malware_read() -> Option<Vec<String>> {
         .iter()
         .filter_map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok())
         .max();
-    let mut seen = MALWARE_SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    let mut seen = seen.lock().unwrap_or_else(|e| e.into_inner());
     if newest.is_none() || std::mem::replace(&mut *seen, newest) == newest {
         return None;
     }
@@ -357,6 +369,47 @@ mod tests {
             a.malware(&[b("/home/a/y", 9), b("/home/a/x.exe", 5)]).len(),
             1
         );
+    }
+
+    /// Audit R7-1: what the background pass publishes for this account (owned by it, 0600, the
+    /// way `wol-xguard sweep` writes it) is read and told once; unchanged, it is not read again.
+    #[test]
+    fn the_background_pass_list_is_read_and_told() {
+        let d = std::env::temp_dir().join(format!("wol-alerts-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let uid = wol_core::malware::my_uid();
+        let hit = wol_core::malware::Blocked {
+            path: "/home/a/evil.exe".into(),
+            name: "Win.Test".into(),
+            sha256: String::new(),
+            when: 7,
+            uid,
+        };
+        shared::atomic::write_as(
+            &d.join(wol_core::malware::sweep_file(uid)),
+            0o600,
+            Some(uid),
+            serde_json::to_string(&[&hit]).unwrap().as_bytes(),
+        )
+        .unwrap();
+        let seen = std::sync::Mutex::new(None);
+        let texts = malware_read_in(&d, uid, &seen).expect("a new list is read");
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let shown = Alerts::default().malware(&wol_core::malware::merge(&refs));
+        assert!(
+            matches!(&shown[..], [Notice::Malware(_, _, p)] if p == "/home/a/evil.exe"),
+            "{shown:?}"
+        );
+        assert!(
+            malware_read_in(&d, uid, &seen).is_none(),
+            "unchanged: no read"
+        );
+        assert!(
+            malware_read_in(&d, uid + 1, &std::sync::Mutex::new(None)).is_none(),
+            "another account's list is not this one's"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     fn bat(percent: u8, status: BatteryStatus) -> Option<Battery> {

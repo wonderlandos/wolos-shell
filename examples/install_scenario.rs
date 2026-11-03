@@ -4,7 +4,8 @@
 //! `install_scenario <scenario> <probe.json> <plan dir>`; prints the summary.
 //! Scenarios: erase, password, tpm, alongside, encrypted-alongside, manual, manual-ext4,
 //! replace (the partition named `linuxroot`), replace-wolos (the old WolOS partition),
-//! modules (Erase, with the smallest module ticked on the Modules page: ai-sessions).
+//! modules (Erase, with the smallest module the Modules page offers ticked; its id is printed
+//! as `e2e-module: <id>` for the harness's drain checks).
 use shell::install::flow::{Flow, Found, Method, Next, Row, Step, Use, manual_lines};
 use shell::install::{Check, write_plan};
 use shell::setup::Hints;
@@ -148,8 +149,17 @@ fn main() {
     } else {
         must(&mut f, Step::Modules);
         if scenario == "modules" {
-            f.tick_module("ai-sessions", true);
-            assert_eq!(f.modules, ["ai-sessions"], "ai-sessions is not offered");
+            // What a person can tick: the page's rows, not every record on the image (a record
+            // the page has no words for, such as ai-sessions, is not offered).
+            let id = f
+                .module_list
+                .iter()
+                .min_by_key(|m| m.size_mb)
+                .map(|m| m.id.clone())
+                .unwrap();
+            f.tick_module(&id, true);
+            assert_eq!(f.modules, std::slice::from_ref(&id), "{id} is not offered");
+            println!("e2e-module: {id}");
         }
     }
     // The media formats stay off.

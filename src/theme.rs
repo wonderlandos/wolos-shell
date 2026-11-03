@@ -29,6 +29,27 @@ pub fn on_refreshed(f: std::rc::Rc<dyn Fn()>) {
     REFRESHED.with(|r| *r.borrow_mut() = Some(f));
 }
 
+/// The installed themes may have changed (a plugin turned on or off, a theme folder or the
+/// active-theme file changed): every id gets one fresh look on disk at its next resolve
+/// (audit7 R7-4). Without this, an id missed once stayed on the default until a restart.
+pub fn forget_missed() {
+    MISSED.with(forget);
+}
+
+fn forget(missed: &std::cell::RefCell<std::collections::HashSet<String>>) {
+    missed.borrow_mut().clear();
+}
+
+/// What the shell watches for [`forget_missed`]: the enabled-plugins file (theme packs) and the
+/// account's theme folder. The active-theme file is watched by the stylesheet loader already.
+pub fn installed_sources() -> [std::path::PathBuf; 2] {
+    let home = core_theme::config_home();
+    [
+        wol_core::plugins::enabled_path(&home),
+        home.join(shared::theme::USER_THEMES_DIR),
+    ]
+}
+
 /// Reads the installed themes on a worker thread and adopts them on the GTK thread.
 fn refresh_off_thread() {
     let _ = std::thread::Builder::new()
@@ -212,6 +233,51 @@ mod tests {
         );
         assert_eq!(reads.get(), 2);
         resolve_in(&cat, &missed, || panic!("asked again"), Some("gone"), false);
+    }
+
+    /// Audit7 R7-4: a pack missed at login (its plugin off) and turned on later is drawn: the
+    /// plugin-state or theme-file event forgets the miss, so the next resolve looks again.
+    #[test]
+    fn a_missed_pack_is_looked_for_again_after_a_change() {
+        let cat = std::cell::RefCell::new(ThemeCatalog::builtin());
+        let missed = Default::default();
+        let reads = std::cell::Cell::new(0);
+        let count = || reads.set(reads.get() + 1);
+        resolve_in(&cat, &missed, count, Some("pack-late"), true);
+        assert_eq!(reads.get(), 1, "the miss starts one re-read");
+        // That re-read lands without the pack (still off): `adopt` of a catalog without the id.
+        *cat.borrow_mut() = ThemeCatalog::builtin();
+        resolve_in(&cat, &missed, count, Some("pack-late"), true);
+        assert_eq!(reads.get(), 1, "no event: not looked for again");
+        // The plugin is turned on: the enabled-plugins file changes.
+        forget(&missed);
+        let t = resolve_in(&cat, &missed, count, Some("pack-late"), true);
+        assert_eq!(reads.get(), 2, "after the event: a second re-read");
+        assert_ne!(t.id, "pack-late", "the default until it lands");
+        let mut pack = ThemeCatalog::builtin()
+            .list()
+            .into_iter()
+            .find(|s| s.variant == Variant::Dark)
+            .cloned()
+            .expect("a built-in dark theme");
+        pack.id = "pack-late".into();
+        *cat.borrow_mut() = ThemeCatalog::builtin().with(pack);
+        let t = resolve_in(
+            &cat,
+            &missed,
+            || panic!("known now"),
+            Some("pack-late"),
+            true,
+        );
+        assert_eq!(t.id, "pack-late");
+    }
+
+    #[test]
+    fn the_installed_sources_are_the_plugin_state_and_the_theme_folder() {
+        let [plugins, themes] = installed_sources();
+        let home = core_theme::config_home();
+        assert_eq!(plugins, home.join(wol_core::plugins::ENABLED_FILE));
+        assert_eq!(themes, home.join(shared::theme::USER_THEMES_DIR));
     }
 
     #[test]

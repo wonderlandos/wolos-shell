@@ -81,12 +81,31 @@ pub fn install(extra: &'static str) {
     // (audit6 S6-2).
     theme::on_refreshed(Rc::new(load.clone()));
     auto_timer(Rc::new(load.clone()));
-    for p in [path.clone(), contrast_path(), looks_path()] {
-        if let Ok(m) = gio::File::for_path(&p)
-            .monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
-        {
+    // The active-theme file and the installed themes' sources (plugin state, theme folder) may
+    // bring back an id missed earlier: forget the misses so it is looked for again (audit7 R7-4).
+    let [plugins, themes] = theme::installed_sources();
+    // (file, a folder, an installed-themes source)
+    for (p, folder, installed) in [
+        (path.clone(), false, true),
+        (plugins, false, true),
+        (themes, true, true),
+        (contrast_path(), false, false),
+        (looks_path(), false, false),
+    ] {
+        let f = gio::File::for_path(&p);
+        let m = if folder {
+            f.monitor_directory(gio::FileMonitorFlags::WATCH_MOVES, gio::Cancellable::NONE)
+        } else {
+            f.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+        };
+        if let Ok(m) = m {
             let load = load.clone();
-            m.connect_changed(move |_, _, _, _| load());
+            m.connect_changed(move |_, _, _, _| {
+                if installed {
+                    theme::forget_missed();
+                }
+                load();
+            });
             // Keep the monitor alive for the process lifetime.
             std::mem::forget(m);
         }

@@ -110,7 +110,8 @@ pub fn exit_faded() {
     .hide_then(|| std::process::exit(0));
 }
 
-/// One boot timeline line to syslog (`grep wolos-boot /var/log/messages`), next to wol-login's.
+/// One boot timeline line to the journal via `logger` (`journalctl -b -t wolos | grep wolos-boot`),
+/// next to wol-login's.
 pub fn boot_mark(stage: &str) {
     if std::env::var_os("WOL_FAKE_NOW").is_some() {
         return;
