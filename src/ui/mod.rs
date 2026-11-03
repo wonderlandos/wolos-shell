@@ -217,16 +217,12 @@ fn apply_setup() {
         return;
     };
     let dir = home.join(prefs::HYPR_DIR);
-    let kb = dir.join("keyboard.conf");
-    if let (false, Some(conf)) = (kb.exists(), prefs::setup_keyboard(&json)) {
+    let kb = home.join(prefs::KEYBOARD_FILE);
+    if let (false, Some(lua)) = (kb.exists(), prefs::setup_keyboard(&json)) {
         let user = home.join(prefs::HYPR_USER);
-        let glob = dir.join("*.conf");
         let cur = std::fs::read_to_string(&user).ok();
-        let ok = std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&kb, conf).is_ok();
-        if let (true, Some(t)) = (
-            ok,
-            prefs::ensure_source(cur.as_deref(), &glob.to_string_lossy()),
-        ) {
+        let ok = std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&kb, lua).is_ok();
+        if let (true, Some(t)) = (ok, prefs::ensure_require(cur.as_deref())) {
             let _ = std::fs::write(&user, t);
         }
         let _ = std::process::Command::new("hyprctl").arg("reload").spawn();

@@ -165,7 +165,7 @@ pub fn rule(
     }
 }
 
-/// The place a rule already says (from displays.conf), so the menu opens on it.
+/// The place a rule already says (from displays.lua, `prefs::monitor_rules`), so the menu opens on it.
 pub fn place_of(rule: &str, main: Geometry, this: Geometry) -> Place {
     let parts: Vec<&str> = rule.split(',').map(str::trim).collect();
     if parts.get(4) == Some(&"mirror") {
