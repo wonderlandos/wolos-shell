@@ -410,6 +410,13 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            name: "lock-startup".into(),
+            size: (900, 600),
+            class: "lock-window",
+            wallpaper: false,
+            build: Box::new(|| ui::lock::startup_lock_screen(&w::UserPanel::new("Alice Liddell"))),
+        },
+        Case {
             name: "login".into(),
             size: (900, 600),
             class: "lock-window",

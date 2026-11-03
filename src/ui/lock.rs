@@ -247,6 +247,70 @@ fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box) {
     (screen(&body(&panel.root, Some(foot.upcast_ref()))), foot)
 }
 
+/// The avatar in `tone`, or in no tone at all (the plain avatar).
+fn show_tone(av: &gtk::Widget, tone: Option<&str>) {
+    match tone {
+        Some(t) => kit::assistant::set_tone(av, t),
+        None => {
+            for t in shared::login::AVATAR_TONES {
+                av.remove_css_class(&kit::assistant::tone_class(t));
+            }
+        }
+    }
+}
+
+/// `wol power <verb>` (through wol-admind, like the menu's); true when it was taken. Blocking:
+/// handed to `gio::spawn_blocking`.
+fn power_now(p: Power) -> bool {
+    std::process::Command::new("wol")
+        .args(["power", p.verb()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// What a power button of the lock screen says once `wol power` answered: Restart names the way
+/// out of its refusal (someone else signed in), the others say they were not taken.
+pub fn lock_power_caption(p: Power, taken: bool) -> (&'static str, bool) {
+    if p == Power::Restart {
+        restart_caption(taken)
+    } else {
+        caption((!taken).then(|| crate::copy::power_refused(p)))
+    }
+}
+
+/// The login window of a computer with one account: that account's lock screen at boot (ADR
+/// 0004), with the login window's Sleep, Restart and Shut Down row at the foot (parity with the
+/// login window of several accounts). The buttons go through `wol power` as the session's
+/// account; a refusal is said under the row.
+pub fn startup_lock_screen(panel: &w::UserPanel) -> gtk::Widget {
+    let foot = w::hbox(w::S8);
+    foot.set_halign(gtk::Align::Center);
+    foot.add_css_class("login-power");
+    let refused = w::centered("", "lock-caption");
+    refused.set_visible(false);
+    for p in Power::ALL {
+        let r = refused.clone();
+        let run = move || {
+            let r = r.clone();
+            glib::spawn_future_local(async move {
+                let taken = gtk::gio::spawn_blocking(move || power_now(p))
+                    .await
+                    .unwrap_or(false);
+                let (text, shown) = lock_power_caption(p, taken);
+                r.set_label(text);
+                r.set_visible(shown);
+            });
+        };
+        foot.append(&action(login::power_icon(p), login::power_label(p), run).0);
+    }
+    let footer = w::vbox(w::S2);
+    footer.append(&foot);
+    footer.append(&refused);
+    screen(&body(&panel.root, Some(footer.upcast_ref())))
+}
+
 /// Login window: user tiles, then the picked user's password pill; power row at the foot.
 pub struct Login {
     pub root: gtk::Widget,
@@ -359,6 +423,15 @@ impl Login {
         *self.selected.borrow_mut() = user.to_string();
         self.failures.set(0);
         self.panel.set_user(shown);
+        // The account's colour, as on its tile and on its lock screen (parity, vt-lock journey):
+        // the one picked in Setup, else the one its name gives (w::avatar), never the colour of
+        // the first account the panel was made for.
+        if let Some(av) = self.panel.root.first_child() {
+            show_tone(
+                &av,
+                login::read_avatar(user).or_else(|| w::name_tone(shown)),
+            );
+        }
         self.stack.set_visible_child_name("password");
         self.panel.field.grab_focus();
     }
@@ -541,7 +614,14 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
         if let (Some(tone), Some(av)) = (login::read_avatar(&user), panel.root.first_child()) {
             kit::assistant::set_tone(&av, tone);
         }
-        let (screen, restart) = lock_screen_with_restart(&panel);
+        // At boot this is the login window: the power row is always there (Restart included),
+        // so the Restart that only appears when the password can't be checked is not needed.
+        let (screen, restart) = if startup {
+            (startup_lock_screen(&panel), None)
+        } else {
+            let (s, r) = lock_screen_with_restart(&panel);
+            (s, Some(r))
+        };
         let shown = reveal::Reveal::new(&screen, startup);
         win.set_child(Some(&shown.root));
         if startup {
@@ -576,7 +656,9 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
             {
                 let (failures, p) = (std::cell::Cell::new(0), panel.clone());
                 move |v| {
-                    restart.set_visible(v == Verdict::Error);
+                    if let Some(r) = &restart {
+                        r.set_visible(v == Verdict::Error);
+                    }
                     if let Some(h) = login::wrong_password(&failures, v, || login::read_hint(&user))
                     {
                         p.message.set_label(&h);
@@ -726,6 +808,19 @@ mod tests {
             "listed shells: the normal rule"
         );
         assert!(login_accounts("root:*:0:0::/root:/bin/sh\n", "").is_empty());
+        // The one-account login window's power row (lock_power_caption): Restart names the way
+        // out, Sleep and Shut Down say they were not taken; a taken request says nothing.
+        for p in Power::ALL {
+            assert_eq!(lock_power_caption(p, true), ("", false), "{p:?}");
+        }
+        assert_eq!(
+            lock_power_caption(Power::Restart, false),
+            (crate::copy::LOCK_RESTART_REFUSED, true)
+        );
+        assert_eq!(
+            lock_power_caption(Power::Sleep, false),
+            (crate::copy::power_refused(Power::Sleep), true)
+        );
         assert_eq!(power_note(Power::ShutDown, Verdict::Ok), None);
         // Audit6 S6-5: a refusal and then a taken request: the caption goes away.
         let refused = caption(power_note(Power::ShutDown, Verdict::Error));
