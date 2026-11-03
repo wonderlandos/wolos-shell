@@ -75,7 +75,36 @@ pub fn cases() -> Vec<Case> {
             }),
         });
     }
+    // General with every shell installed and pwsh chosen for new terminal windows.
+    for (tag, size) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
+        v.push(Case {
+            name: format!("settings-general-shells-{tag}"),
+            size,
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(|| {
+                let f = config_file(wol_core::terminal_shell::FILE);
+                std::fs::create_dir_all(f.parent().expect("dir")).expect("config dir");
+                std::fs::write(&f, "pwsh\n").expect("terminal shell");
+                let a = ui::settings::content(Rc::new(shell::system::Fake), &all_shells_host());
+                a.open("General");
+                pump(50);
+                let p = a.content.visible_child().expect("a page shows");
+                let d: gtk::DropDown = on_row(&p, "Shell in the terminal");
+                assert_eq!(d.selected(), 4, "pwsh is chosen");
+                let _ = std::fs::remove_file(&f);
+                a.root.clone().upcast()
+            }),
+        });
+    }
     v
+}
+
+/// The demo host with every shell of `wol_core::terminal_shell::SHELLS` installed.
+fn all_shells_host() -> ui::settings::Host {
+    let mut h = ui::settings::Host::demo();
+    h.terminal_shells = wol_core::terminal_shell::ids().collect();
+    h
 }
 
 /// [`shell::system::Fake`] with an external display next to the built-in one.
@@ -130,6 +159,7 @@ pub fn checks() {
     pointer_sliders_show_the_saved_value_after_a_failed_save();
     language_menu_shows_the_saved_language_after_a_failed_save();
     login_items_show_the_saved_list_after_a_failed_save();
+    terminal_shell_choice_is_saved_or_put_back();
 }
 
 /// [`shell::system::Fake`], except that every action succeeds (Settings saves through actions).
@@ -557,4 +587,49 @@ fn startup_security_finish_setup_runs_once() {
         says(&p, queued),
         "the key-queued footnote shows after the action"
     );
+}
+
+/// General > Shell in the terminal: only the installed shells are offered, a choice is written to
+/// `wolos/terminal-shell`, and one that cannot be saved puts the saved shell back with a note.
+fn terminal_shell_choice_is_saved_or_put_back() {
+    use wol_core::terminal_shell as ts;
+    let f = config_file(ts::FILE);
+    std::fs::create_dir_all(f.parent().expect("dir")).expect("config dir");
+    let had = std::fs::read_to_string(&f).ok();
+    let _ = std::fs::remove_file(&f);
+    let mut host = ui::settings::Host::demo();
+    host.terminal_shells = vec!["zsh", "bash", "pwsh"];
+    let (_a, p) = page(Rc::new(shell::system::Fake), &host, "General");
+    let d: gtk::DropDown = on_row(&p, "Shell in the terminal");
+    let labels: Vec<String> = (0..d.model().expect("model").n_items())
+        .map(|i| {
+            d.model()
+                .and_then(|m| m.item(i))
+                .and_then(|o| o.downcast::<gtk::StringObject>().ok())
+                .map(|s| s.string().to_string())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(labels, ["zsh", "bash", "pwsh"], "installed shells only");
+    assert_eq!(d.selected(), 0, "no file: zsh");
+    d.set_selected(2);
+    pump(100);
+    let saved = std::fs::read_to_string(&f).ok();
+    // A directory where the file goes: the next save cannot happen.
+    let _ = std::fs::remove_file(&f);
+    std::fs::create_dir_all(&f).expect("block the file");
+    d.set_selected(1);
+    pump(100);
+    let back = d.selected();
+    let noted = says(&p, shell::copy::settings::GENERAL_TERMINAL_SHELL_NOT_SAVED);
+    let _ = std::fs::remove_dir_all(&f);
+    if let Some(t) = had {
+        std::fs::write(&f, t).expect("put the choice back");
+    }
+    assert_eq!(saved.as_deref(), Some("pwsh\n"), "the choice is saved");
+    assert_eq!(
+        back, 2,
+        "a choice that could not be saved shows the saved shell again"
+    );
+    assert!(noted, "and says so");
 }

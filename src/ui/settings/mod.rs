@@ -114,7 +114,10 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "General",
             "emblem-system-symbolic",
-            "about version software update storage disk date time zone clock language region locale login items startup sharing computer name remote ssh",
+            concat!(
+                "about version software update storage disk date time zone clock language region locale ",
+                "login items startup sharing computer name remote ssh terminal shell bash fish nu pwsh"
+            ),
         ),
         pane(
             "Appearance",
@@ -379,6 +382,8 @@ pub struct Host {
     pub memory: String,
     /// Slower facts (storage, hardware, network...), always read off the UI thread.
     pub machine: Arc<dyn Machine>,
+    /// Shells installed for this person that new terminal windows can open in (General).
+    pub terminal_shells: Vec<&'static str>,
 }
 
 impl Host {
@@ -401,6 +406,11 @@ impl Host {
             processor: info.processor,
             memory: info.memory,
             machine: Arc::new(Live::new()),
+            terminal_shells: wol_core::terminal_shell::installed(&glib::home_dir(), |p| {
+                use std::os::unix::fs::PermissionsExt;
+                p.metadata()
+                    .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            }),
         }
     }
 
@@ -414,6 +424,8 @@ impl Host {
             processor: "Intel Core i5-1240P (12 cores)".into(),
             memory: "16 GB".into(),
             machine: Arc::new(Demo),
+            // The base image's shells (the Console module adds the others).
+            terminal_shells: wol_core::terminal_shell::ids().take(2).collect(),
         }
     }
 }
@@ -1334,6 +1346,7 @@ mod tests {
             ("wifi", "Wi-Fi"),
             ("zsh", "Users & Groups"),
             ("time zone", "General"),
+            ("pwsh", "General"),
             ("tile", "Desktop & Dock"),
             ("firewall", "Privacy & Security"),
             ("UNDO", "Restore"),
