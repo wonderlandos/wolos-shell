@@ -893,16 +893,32 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
     stack.set_halign(gtk::Align::End);
     banners.set_child(Some(&stack));
     let rows: Rc<RefCell<Center<gtk::Box>>> = Default::default();
+    // The Center's notes, kept across a shell restart (notify_store, SP-1).
+    let (kept, restored) = crate::notify_store::Kept::start();
     let (g, center_list) = {
-        let held_back = held_back.clone();
-        center_panel(rows.clone(), move || held_back.borrow_mut().clear())
+        let (held_back, kept) = (held_back.clone(), kept.clone());
+        center_panel(rows.clone(), move || {
+            held_back.borrow_mut().clear();
+            kept.clear();
+        })
     };
+    // Oldest first, so the newest ends on top.
+    for n in restored.iter().rev() {
+        let row = card(n);
+        for gone in rows.borrow_mut().push(n.id, row.clone()) {
+            center_list.remove(&gone);
+        }
+        center_list.prepend(&row);
+        kept.push(n);
+    }
     // Takes note `id`'s row off the Notification Center (answered, or withdrawn by its app).
     let unlist = {
         let (rows, center_list, held_back) = (rows.clone(), center_list.clone(), held_back.clone());
+        let kept = kept.clone();
         move |id: u32| {
             // Off the center: never replayed either (audit5 S6-1).
             held_back.borrow_mut().forget(id);
+            kept.remove(id);
             if let Some(r) = rows.borrow_mut().remove(id) {
                 center_list.remove(&r);
             }
@@ -1123,6 +1139,7 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                     center_list.remove(&gone);
                 }
                 center_list.prepend(&row);
+                kept.push(&n);
             }
             if quiet(&n, crate::focus::read()) {
                 continue;

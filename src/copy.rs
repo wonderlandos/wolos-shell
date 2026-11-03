@@ -915,6 +915,10 @@ pub fn theme_from_plugin(theme: &str, plugin: &str) -> String {
 /// `wol.open` of a plugin found no app for the file, folder or link.
 pub const PLUGIN_OPEN_FAILED: &str = "No app here opens this.";
 
+/// A shell part that panicked while it was built (`kit::fence` card, SP-1).
+pub const PART_STOPPED: &str =
+    "Everything else keeps working. Sign out and in again to bring it back.";
+
 #[cfg(test)]
 mod tests {
     /// Audit F10: a download the system refused is said as such, not as "did not finish".

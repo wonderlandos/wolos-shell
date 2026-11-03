@@ -1,0 +1,325 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+//! SP-1: the shell supervisor (`shell::supervise`), surface fences (`shell::kit::fence`) and the
+//! Notification Center kept across a restart (`shell::notify_store`).
+use shell::kit::fence;
+use shell::notify_store::{self as store, Kept, Saved};
+use shell::supervise::{self, Exit};
+use shell::ui::notify::{CENTER_MAX, Note};
+use std::os::unix::net::UnixListener;
+use std::process::{Command, ExitStatus};
+use std::time::{Duration, Instant};
+
+fn ms(n: u64) -> Duration {
+    Duration::from_millis(n)
+}
+
+fn tmp(tag: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("wol-sp1-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn first_crash_restarts_at_once_then_backoff_doubles_to_3s() {
+    assert_eq!(supervise::exit(true, true, 0), Exit::Done, "clean exit");
+    assert_eq!(supervise::exit(false, false, 0), Exit::Done, "display gone");
+    let d: Vec<Exit> = (0..9).map(|n| supervise::exit(false, true, n)).collect();
+    let want = [0, 100, 200, 400, 800, 1600, 3000, 3000, 3000];
+    for (got, w) in d.iter().zip(want) {
+        assert_eq!(*got, Exit::Respawn(ms(w)));
+    }
+    assert_eq!(
+        supervise::exit(false, true, u32::MAX),
+        Exit::Respawn(ms(3000))
+    );
+}
+
+#[test]
+fn a_healthy_run_starts_the_backoff_over() {
+    assert_eq!(supervise::next_attempt(4, supervise::HEALTHY), 0);
+    assert_eq!(supervise::next_attempt(4, ms(19_999)), 5);
+    assert_eq!(supervise::next_attempt(u32::MAX, ms(1)), u32::MAX);
+    assert_eq!(supervise::HEALTHY, Duration::from_secs(20));
+}
+
+#[test]
+fn supervised_flag_picks_the_parent_and_is_not_passed_on() {
+    let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(supervise::wanted(&a(&["--supervised"]), false));
+    assert!(!supervise::wanted(&a(&["--supervised"]), true), "the child");
+    assert!(!supervise::wanted(&a(&[]), false), "plain wol-shell");
+    assert_eq!(supervise::ui_args(&a(&["--supervised", "x"])), a(&["x"]));
+    let note = supervise::respawn_note("signal: 11 (SIGSEGV)", ms(1234), 0);
+    assert_eq!(
+        note,
+        "shell ended (signal: 11 (SIGSEGV)) after 1234 ms; starting a new one (attempt 1)"
+    );
+}
+
+#[test]
+fn display_alive_needs_a_listening_socket() {
+    let d = tmp("alive");
+    let sock = d.join("wayland-9");
+    assert!(!supervise::display_alive(&sock), "no file");
+    let l = UnixListener::bind(&sock).unwrap();
+    assert!(supervise::display_alive(&sock));
+    drop(l);
+    // Another test's fork may hold the socket until its exec (close-on-exec): give it a moment.
+    let t = Instant::now();
+    while supervise::display_alive(&sock) && t.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(ms(10));
+    }
+    assert!(!supervise::display_alive(&sock), "stale file after a crash");
+}
+
+/// Real processes: two crashes (SIGSEGV), then a clean exit. Respawn count reaches the child,
+/// the first restart is at once, the second after 100 ms, one note per restart.
+#[test]
+fn run_respawns_crashed_children_until_a_clean_exit() {
+    let mut seen = Vec::new();
+    let (mut notes, mut waits) = (Vec::new(), Vec::new());
+    let code = supervise::run(
+        |respawns| {
+            seen.push(respawns);
+            let script = if respawns < 2 {
+                "kill -SEGV $$"
+            } else {
+                "exit 0"
+            };
+            Command::new("sh").args(["-c", script]).status()
+        },
+        || true,
+        |n| notes.push(n.to_string()),
+        |d| waits.push(d),
+    );
+    assert_eq!(code, 0);
+    assert_eq!(seen, [0, 1, 2]);
+    assert_eq!(waits, [ms(0), ms(100)]);
+    assert_eq!(notes.len(), 2);
+    assert!(notes[0].contains("SIGSEGV"), "{}", notes[0]);
+    assert!(notes[1].ends_with("(attempt 2)"), "{}", notes[1]);
+}
+
+#[test]
+fn run_stops_when_the_display_is_gone_and_retries_a_missing_binary() {
+    let mut n = 0;
+    let code = supervise::run(
+        |_| {
+            n += 1;
+            Command::new("sh").args(["-c", "exit 3"]).status()
+        },
+        || false,
+        |_| {},
+        |_| {},
+    );
+    assert_eq!((code, n), (1, 1), "no restart without a display");
+    let (mut tries, mut notes) = (0, Vec::new());
+    let code = supervise::run(
+        |_| -> std::io::Result<ExitStatus> {
+            tries += 1;
+            if tries < 3 {
+                Command::new("/nonexistent/wol-shell").status()
+            } else {
+                Command::new("true").status()
+            }
+        },
+        || true,
+        |s| notes.push(s.to_string()),
+        |_| {},
+    );
+    assert_eq!((code, tries), (0, 3));
+    assert!(notes[0].contains("not started: NotFound"), "{}", notes[0]);
+}
+
+/// The real binary: `wol-shell --supervised` restarts a shell that cannot start (no display for
+/// the toolkit) while the session's display socket listens, gives up once it is gone, and a
+/// second supervisor in the same session leaves at once.
+#[test]
+fn binary_supervises_and_holds_one_guard_per_session() {
+    let run = tmp("bin");
+    let sock = run.join("wayland-sp1");
+    let listener = UnixListener::bind(&sock).unwrap();
+    let bin = env!("CARGO_BIN_EXE_wol-shell");
+    let cmd = || {
+        let mut c = Command::new(bin);
+        c.arg("--supervised")
+            .env("XDG_RUNTIME_DIR", &run)
+            .env("WAYLAND_DISPLAY", "wayland-sp1")
+            .env("GDK_BACKEND", "x11")
+            .env_remove("DISPLAY")
+            .env_remove(supervise::UI_ENV)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped());
+        c
+    };
+    let child = cmd().spawn().unwrap();
+    // Two restarts at least (0 + 100 ms waits), then the session ends.
+    std::thread::sleep(ms(900));
+    let second = cmd().output().unwrap();
+    assert!(second.status.success());
+    assert!(
+        String::from_utf8_lossy(&second.stderr).contains("a supervisor already runs"),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    drop(listener);
+    let t = Instant::now();
+    let out = child.wait_with_output().unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        t.elapsed() < Duration::from_secs(5),
+        "left within one back-off"
+    );
+    let restarts = err.matches("starting a new one").count();
+    assert!(restarts >= 2, "{restarts} restarts: {err}");
+}
+
+#[test]
+fn guard_stops_the_part_that_panicked_only() {
+    let ok = fence::guard("clock", || 7);
+    assert_eq!(ok, Some(7));
+    let bad: Option<u32> = fence::guard("clipboard", || panic!("boom"));
+    assert_eq!(bad, None);
+    // Nested: the inner part fails, the outer one goes on.
+    let outer = fence::guard("outer", || fence::guard("inner", || panic!("x")).is_none());
+    assert_eq!(outer, Some(true));
+    assert_eq!(fence::failed(), ["clipboard", "inner"]);
+}
+
+#[test]
+fn break_list_names_parts_exactly() {
+    assert!(fence::broken(Some("clipboard"), "clipboard"));
+    assert!(fence::broken(Some("themes, clipboard"), "clipboard"));
+    assert!(!fence::broken(Some("clipboards"), "clipboard"));
+    assert!(!fence::broken(Some(""), "clipboard"));
+    assert!(!fence::broken(None, "clipboard"));
+}
+
+#[test]
+fn journal_lines_name_the_part() {
+    assert_eq!(
+        fence::journal_line(Some("notifications"), "boom at src/ui/notify.rs:1:1"),
+        "notifications stopped (the rest keeps running): boom at src/ui/notify.rs:1:1"
+    );
+    assert_eq!(
+        fence::journal_line(None, "x"),
+        "panic outside every part: x"
+    );
+    let s: Box<dyn std::any::Any + Send> = Box::new(String::from("owned"));
+    assert_eq!(fence::panic_text(&*s), "owned");
+    let s: Box<dyn std::any::Any + Send> = Box::new("static");
+    assert_eq!(fence::panic_text(&*s), "static");
+    let s: Box<dyn std::any::Any + Send> = Box::new(5u8);
+    assert_eq!(fence::panic_text(&*s), "panic");
+}
+
+#[test]
+fn the_card_reads_as_a_friendly_sentence() {
+    let p = shell::copy::lint(fence::HINT);
+    assert!(p.is_empty(), "{p:?}");
+    assert!(
+        fence::NAMESPACE.starts_with("wol-panel-"),
+        "blurred like every panel"
+    );
+}
+
+/// A fenced build that panics gives the card, a good one its own widget (needs a display; the
+/// golden harness's broadway, or a session).
+#[test]
+fn fence_gives_the_card_in_place_of_a_panicking_widget() {
+    if gtk::init().is_err() {
+        eprintln!("skipped: no display for the toolkit");
+        return;
+    }
+    use gtk::prelude::*;
+    let good = fence::fence("label", || gtk::Label::new(Some("hi")).upcast());
+    assert!(good.is::<gtk::Label>());
+    let bad = fence::fence("widgets", || panic!("broken"));
+    assert_eq!(bad.widget_name(), "widgets");
+    assert!(bad.has_css_class("glass-panel"));
+}
+
+fn note(id: u32, summary: &str) -> Note {
+    Note {
+        id,
+        app: "Mail".into(),
+        icon: "mail".into(),
+        summary: summary.into(),
+        body: "b".into(),
+        critical: false,
+        timeout_ms: 5000,
+        image: String::new(),
+        actions: vec![("default".into(), "Open".into())],
+    }
+}
+
+#[test]
+fn kept_follows_the_center_rules() {
+    let k = Kept::default();
+    k.push(&note(1, "a"));
+    k.push(&note(2, "b"));
+    k.push(&note(1, "a2"));
+    let sums: Vec<String> = k.list().into_iter().map(|s| s.summary).collect();
+    assert_eq!(sums, ["a2", "b"], "replaced on top");
+    k.remove(2);
+    assert_eq!(k.list().len(), 1);
+    for i in 10..(10 + CENTER_MAX as u32 + 5) {
+        k.push(&note(i, "n"));
+    }
+    assert_eq!(k.list().len(), CENTER_MAX);
+    k.clear();
+    assert!(k.list().is_empty());
+}
+
+#[test]
+fn saved_notes_round_trip_and_come_back_without_buttons() {
+    let d = tmp("store");
+    let file = store::path(&d);
+    assert!(file.ends_with("wolos/notify.json"));
+    assert!(store::read(&file).is_empty(), "no file");
+    let saved: Vec<Saved> = (0..60)
+        .map(|i| Saved::of(&note(i, &format!("n{i}"))))
+        .collect();
+    store::write(&file, &saved).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "notes are private");
+    assert!(!file.with_extension("json.tmp").exists());
+    let back = store::read(&file);
+    assert_eq!(back.len(), CENTER_MAX);
+    assert_eq!(back[0], saved[0]);
+    let n = back[0].note(0);
+    assert!(n.actions.is_empty());
+    assert_eq!(n.id, u32::MAX);
+    let ids: std::collections::HashSet<u32> = (0..CENTER_MAX).map(store::restored_id).collect();
+    assert_eq!(ids.len(), CENTER_MAX);
+    assert!(ids.iter().all(|i| *i > u32::MAX - 100));
+    std::fs::write(&file, "{not json").unwrap();
+    assert!(store::read(&file).is_empty(), "broken file: empty Center");
+}
+
+#[test]
+fn only_a_restarted_shell_restores() {
+    assert!(!store::restores(None));
+    assert!(!store::restores(Some("0")));
+    assert!(!store::restores(Some("x")));
+    assert!(store::restores(Some("1")));
+    assert!(store::restores(Some("12")));
+}
+
+/// The session starts the supervisor, with the shell's stderr still in the session log.
+#[test]
+fn the_session_starts_the_supervised_shell() {
+    let conf = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
+    let lines: Vec<&str> = conf
+        .lines()
+        .filter(|l| l.starts_with("exec") && l.contains("wol-shell") && !l.contains(".sock"))
+        .collect();
+    assert_eq!(
+        lines,
+        [r#"exec-once = sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#]
+    );
+}

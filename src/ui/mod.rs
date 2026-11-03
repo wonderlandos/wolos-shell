@@ -35,7 +35,7 @@ pub mod widgets_builtin;
 pub mod widgets_gallery;
 pub mod widgets_layout;
 
-use crate::kit::{self, surface};
+use crate::kit::{self, fence, surface};
 use gtk::{glib, prelude::*};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -63,6 +63,8 @@ fn mark(t0: std::time::Instant, stage: &str) {
 
 pub fn run_shell() -> glib::ExitCode {
     let t0 = std::time::Instant::now();
+    // A panic names the part it hit (journal); one while a part is built stops that part only.
+    fence::install_hook();
     let app = gtk::Application::builder()
         .application_id("org.wolos.shell")
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
@@ -100,78 +102,129 @@ pub fn run_shell() -> glib::ExitCode {
         // Everything below is off the first-frame path.
         let app = app.clone();
         glib::idle_add_local_once(move || {
-            // Desktop widgets (ADR 0010): above the wallpaper, below windows, main display.
-            let (desk, board) = widgets::build(&app, sys.clone());
-            kit::surface::set_monitor(&desk, main.as_ref());
-            // A wallpaper on every display, a menu bar on the others; follows hotplug.
-            let shown = std::cell::Cell::new(false);
-            let screens = displays::Displays::start(
-                &app,
-                sys.clone(),
-                bar_win.clone(),
-                bar.clone(),
-                vec![dock_win.clone().upcast(), desk.clone().upcast()],
-                Box::new(move || {
-                    if !shown.replace(true) {
-                        mark(t0, "wallpaper map");
-                        kit::reveal::boot_mark("desktop shown");
-                    }
-                }),
-            );
-            // Lives for the session.
-            std::mem::forget(screens);
-            desk.present();
+            // The shell socket first (SP-1): after a restart `wol shell ...` answers as soon as
+            // the bar is up. Commands go to the handlers once the parts below fill them in;
+            // until then a panel not built yet is simply not there.
             let osd = panels::Osd::build(&app);
-            menubar::poll_status(sys.clone());
-            ipc::hypr_events(dock, panels.clone());
-            // Esc and the Super release come from wol-hypr; without it, bind them (audit3 R2A-10).
-            glib::spawn_future_local(async {
-                let _ = gtk::gio::spawn_blocking(crate::hypr::ensure_key_forwarding).await;
-            });
-            let mut p = panels.borrow_mut();
-            p.insert("osd", osd.window.clone());
-            p.insert("clipboard", clipboard::panel(&app));
-            p.insert("themes", theme_picker::panel(&app));
-            p.insert("session", panels::session(&app));
-            let (center, dismiss) = notify::start(&app);
-            // App windows and app notifications through libwol (ADR 0020).
-            app_host::listen();
-            crate::app_notices::start();
-            // Sessions (ADR 0032): offer last time's windows once, then keep the set saved.
-            crate::sessions::start(crate::sessions::ask_by_notification);
-            p.insert("notifications", center);
-            p.insert("overview", overview::build(&app));
-            p.insert("control-center", control_center::panel(&app, sys.clone()));
-            p.insert("force-quit", force_quit::build(&app));
-            p.insert("shortcuts", shortcut_sheet::build(&app));
-            p.insert("shelf", drop_shelf::build(&app));
-            let (shot, record) = capture::build(&app);
-            p.insert("screenshot", shot);
-            drop(p);
-            {
-                let b = board.clone();
-                transient::also_close(Rc::new(move || b.set_edit(false)));
-                let p = panels.clone();
-                board.on_edit(Rc::new(move || {
-                    transient::close_panels(&p);
-                    transient::close_apps();
-                }));
-            }
-            transient::manage(&app, &panels);
-            transient::close_on_press(&dock_win, &panels);
-            transient::close_on_menus(&bar_win, &panels);
-            let sw = switcher::Switcher::build(&app);
-            let handlers: ipc::Handlers = vec![
-                Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
-                record,
-                Rc::new(move |c: &crate::protocol::Command| board.command(c)),
-                keyboard_handler(bar_keys, dock_keys, dismiss),
-            ];
+            let late: Rc<RefCell<ipc::Handlers>> = Default::default();
+            let to_late = late.clone();
+            let handlers: ipc::Handlers = vec![Rc::new(move |c: &crate::protocol::Command| {
+                to_late.borrow().iter().any(|h| h(c))
+            })];
             let approver = approval::handler(&app, sys.clone());
-            ipc::shell_socket(panels, handlers, approver, osd, sys);
-            searchbar::keep_file_index();
-            crate::phones::watch();
-            apply_setup();
+            ipc::shell_socket(panels.clone(), handlers, approver, osd.clone(), sys.clone());
+            mark(t0, "socket");
+            // The rest after the socket's first requests (idle runs below the socket's priority).
+            glib::idle_add_local_once(move || {
+                // Each part below is fenced (kit::fence): one that panics while it is built stops
+                // alone and shows a card; the bar, the Dock, the OSD and the socket are the core.
+                // Desktop widgets (ADR 0010): above the wallpaper, below windows, main display.
+                let desktop = fence::guard("desktop widgets", || widgets::build(&app, sys.clone()));
+                let mut follow: Vec<gtk::Window> = vec![dock_win.clone().upcast()];
+                if let Some((desk, _)) = &desktop {
+                    kit::surface::set_monitor(desk, main.as_ref());
+                    follow.push(desk.clone().upcast());
+                }
+                // A wallpaper on every display, a menu bar on the others; follows hotplug.
+                let shown = std::cell::Cell::new(false);
+                let screens = fence::guard("wallpaper", || {
+                    displays::Displays::start(
+                        &app,
+                        sys.clone(),
+                        bar_win.clone(),
+                        bar.clone(),
+                        follow,
+                        Box::new(move || {
+                            if !shown.replace(true) {
+                                mark(t0, "wallpaper map");
+                                kit::reveal::boot_mark("desktop shown");
+                            }
+                        }),
+                    )
+                });
+                // Lives for the session.
+                std::mem::forget(screens);
+                let board = desktop.map(|(desk, board)| {
+                    desk.present();
+                    board
+                });
+                menubar::poll_status(sys.clone());
+                ipc::hypr_events(dock, panels.clone());
+                // Esc and the Super release come from wol-hypr; without it, bind them (audit3 R2A-10).
+                glib::spawn_future_local(async {
+                    let _ = gtk::gio::spawn_blocking(crate::hypr::ensure_key_forwarding).await;
+                });
+                let mut p = panels.borrow_mut();
+                p.insert("osd", osd.window.clone());
+                let panel = |name: &str, build: &dyn Fn() -> gtk::Window| {
+                    fence::fence_window(&app, name, build)
+                };
+                p.insert("clipboard", panel("clipboard", &|| clipboard::panel(&app)));
+                p.insert("themes", panel("themes", &|| theme_picker::panel(&app)));
+                p.insert("session", panel("session", &|| panels::session(&app)));
+                let (center, dismiss) = fence::guard("notifications", || notify::start(&app))
+                    .unwrap_or_else(|| (fence::stand_in(&app, "notifications"), Rc::new(|| ())));
+                // App windows and app notifications through libwol (ADR 0020).
+                fence::guard("app host", app_host::listen);
+                fence::guard("app notices", crate::app_notices::start);
+                // Sessions (ADR 0032): offer last time's windows once, then keep the set saved.
+                fence::guard("sessions", || {
+                    crate::sessions::start(crate::sessions::ask_by_notification)
+                });
+                p.insert("notifications", center);
+                p.insert("overview", panel("overview", &|| overview::build(&app)));
+                let cc = panel("control-center", &|| {
+                    control_center::panel(&app, sys.clone())
+                });
+                p.insert("control-center", cc);
+                p.insert(
+                    "force-quit",
+                    panel("force-quit", &|| force_quit::build(&app)),
+                );
+                p.insert(
+                    "shortcuts",
+                    panel("shortcuts", &|| shortcut_sheet::build(&app)),
+                );
+                p.insert("shelf", panel("shelf", &|| drop_shelf::build(&app)));
+                let (shot, record) = fence::guard("screenshot", || capture::build(&app))
+                    .unwrap_or_else(|| {
+                        let none: capture::Handler = Rc::new(|_| false);
+                        (fence::stand_in(&app, "screenshot"), none)
+                    });
+                p.insert("screenshot", shot);
+                drop(p);
+                if let Some(board) = &board {
+                    let b = board.clone();
+                    transient::also_close(Rc::new(move || b.set_edit(false)));
+                    let p = panels.clone();
+                    board.on_edit(Rc::new(move || {
+                        transient::close_panels(&p);
+                        transient::close_apps();
+                    }));
+                }
+                transient::manage(&app, &panels);
+                transient::close_on_press(&dock_win, &panels);
+                transient::close_on_menus(&bar_win, &panels);
+                let mut handlers: ipc::Handlers =
+                    vec![record, keyboard_handler(bar_keys, dock_keys, dismiss)];
+                if let Some(sw) = fence::guard("switcher", || switcher::Switcher::build(&app)) {
+                    handlers.insert(
+                        0,
+                        Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
+                    );
+                }
+                if let Some(board) = board {
+                    handlers.insert(
+                        handlers.len() - 1,
+                        Rc::new(move |c: &crate::protocol::Command| board.command(c)),
+                    );
+                }
+                *late.borrow_mut() = handlers;
+                mark(t0, "panels");
+                fence::guard("file index", searchbar::keep_file_index);
+                fence::guard("phones", crate::phones::watch);
+                fence::guard("setup", apply_setup);
+            });
         });
     });
     app.run_with_args::<&str>(&[])
