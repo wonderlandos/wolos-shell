@@ -88,12 +88,28 @@ pub fn request(socket: &str, req: &[u8]) -> Verdict {
 }
 
 fn exchange(socket: &str, req: &[u8]) -> Verdict {
-    reply_to(socket, req).map_or(Verdict::Error, |r| from_reply(&r))
+    exchange_within(socket, req, REPLY_WAIT)
 }
+
+fn exchange_within(socket: &str, req: &[u8], wait: std::time::Duration) -> Verdict {
+    reply_within(socket, req, wait).map_or(Verdict::Error, |r| from_reply(&r))
+}
+
+/// The longest wol-login may take to answer one request (a Wi-Fi join or an account is seconds):
+/// a hung one ends the wait as an error, so Setup shows the failure and its buttons come back
+/// instead of "Setting up your account…" for ever (audit8 stability2 #7).
+const REPLY_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// Whole reply to one request (write side closed first). Blocking.
 fn reply_to(socket: &str, req: &[u8]) -> Option<String> {
+    reply_within(socket, req, REPLY_WAIT)
+}
+
+/// [`reply_to`], giving up (None) when a write or the read waits longer than `wait`.
+fn reply_within(socket: &str, req: &[u8], wait: std::time::Duration) -> Option<String> {
     let mut s = std::os::unix::net::UnixStream::connect(socket).ok()?;
+    s.set_read_timeout(Some(wait)).ok()?;
+    s.set_write_timeout(Some(wait)).ok()?;
     s.write_all(req).ok()?;
     s.shutdown(std::net::Shutdown::Write).ok()?;
     let mut r = String::new();
@@ -336,6 +352,41 @@ pub fn unlock_login_keyring(conn: &zbus::blocking::Connection, password: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit8 stability2 #7: a wol-login that takes the request and never answers ends as an
+    /// error within the wait, and one that answers still gives its verdict.
+    #[test]
+    fn a_login_service_that_never_answers_is_an_error() {
+        let dir = std::env::temp_dir().join(format!("wol-login-wait-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("s");
+        let l = std::os::unix::net::UnixListener::bind(&sock).unwrap();
+        let path = sock.to_str().unwrap();
+        let wait = std::time::Duration::from_millis(200);
+        let (hung, took) = std::thread::scope(|sc| {
+            // Holds the connection open without a word until the client has given up.
+            sc.spawn(|| {
+                let (c, _) = l.accept().unwrap();
+                std::thread::sleep(wait * 5);
+                drop(c);
+            });
+            let t = std::time::Instant::now();
+            (exchange_within(path, b"x", wait), t.elapsed())
+        });
+        assert_eq!(hung, Verdict::Error);
+        assert!(took < wait * 4, "{took:?}");
+        std::thread::scope(|sc| {
+            sc.spawn(|| {
+                let (mut c, _) = l.accept().unwrap();
+                let mut q = String::new();
+                c.read_to_string(&mut q).unwrap();
+                c.write_all(b"ok\n").unwrap();
+            });
+            assert_eq!(exchange_within(path, b"x", wait * 10), Verdict::Ok);
+        });
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn verdicts() {
