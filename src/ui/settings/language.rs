@@ -4,11 +4,17 @@
 use super::*;
 use wol_core::region::LANGUAGES;
 
-/// Index in [`LANGUAGES`] for a saved locale (None or unknown = English (US)).
-pub(crate) fn language_index(saved: Option<&str>) -> usize {
-    saved
-        .and_then(|l| LANGUAGES.iter().position(|x| x.0 == l))
-        .unwrap_or(0)
+/// Index in [`LANGUAGES`] for the language in use: the saved choice, else the computer's own
+/// (`system`, the session's `LANG`: what Setup or the installer picked), else English (US). Showing
+/// English (US) for a Portuguese computer that never saved a choice was a lie (QA-SET-27).
+pub(crate) fn language_index(saved: Option<&str>, system: &str) -> usize {
+    let at = |l: &str| LANGUAGES.iter().position(|x| x.0 == l);
+    saved.and_then(at).or_else(|| at(system)).unwrap_or(0)
+}
+
+/// The session's `LANG` (empty when unset).
+fn system_locale() -> String {
+    std::env::var("LANG").unwrap_or_default()
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -26,7 +32,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         "Preferred language",
         "Menus, dates and numbers.",
         &names,
-        language_index(d.language.as_deref()),
+        language_index(d.language.as_deref(), &system_locale()),
         move |i| {
             let (dk2, n2, m, opened) = (dk.clone(), n.clone(), m.clone(), opened.clone());
             n.set_visible(true);
@@ -39,7 +45,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                     n2.set_visible(saved != opened);
                     if let Some(m) = m.upgrade() {
                         m.set_selected(
-                            u32::try_from(language_index(saved.as_deref())).unwrap_or_default(),
+                            u32::try_from(language_index(saved.as_deref(), &system_locale()))
+                                .unwrap_or_default(),
                         );
                     }
                 },
@@ -67,8 +74,20 @@ mod tests {
 
     #[test]
     fn saved_language_selects_its_row() {
-        assert_eq!(language_index(None), 0);
-        assert_eq!(language_index(Some("pt_BR.UTF-8")), 2);
-        assert_eq!(language_index(Some("xx_XX.UTF-8")), 0);
+        assert_eq!(language_index(None, ""), 0);
+        assert_eq!(language_index(Some("pt_BR.UTF-8"), ""), 2);
+        assert_eq!(language_index(Some("xx_XX.UTF-8"), ""), 0);
+        // A saved choice beats the computer's.
+        assert_eq!(language_index(Some("de_DE.UTF-8"), "pt_BR.UTF-8"), 6);
+    }
+
+    /// QA-SET-27: nothing saved yet on a Portuguese computer: the pane shows Português (Brasil).
+    #[test]
+    fn language_index_none_picks_system() {
+        assert_eq!(language_index(None, "pt_BR.UTF-8"), 2);
+        assert_eq!(language_index(None, "ja_JP.UTF-8"), 10);
+        assert_eq!(language_index(None, "C.UTF-8"), 0);
+        assert_eq!(language_index(None, ""), 0);
+        assert_eq!(language_index(Some("junk"), "fr_FR.UTF-8"), 5);
     }
 }
