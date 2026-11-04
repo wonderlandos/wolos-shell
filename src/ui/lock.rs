@@ -161,6 +161,10 @@ pub(crate) fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
     screen_with(content, false)
 }
 
+/// Narrowest screen that shows the door mark and the word at the upper left: the table says 640, but a card
+/// (624 wide, centred) reaches the 60 + 40 + 12 + word column of the mark below 968, and the two would overlap.
+pub(crate) const CHROME_MIN_WIDTH: i32 = 968;
+
 /// [`screen`] for the installer and Setup: the door mark and the word at the upper left (60 from the
 /// edges), the entry of the page.
 pub(crate) fn assistant_screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
@@ -211,6 +215,30 @@ fn screen_with(content: &impl IsA<gtk::Widget>, chrome: bool) -> gtk::Widget {
         mark.append(&w::app_icon("wolos-mark", w::S10));
         mark.append(&w::label("WolOS", "screen-brand"));
         o.add_overlay(&mark);
+        // Below 640 px the card needs the room: the mark steps out of the way.
+        let weak = mark.downgrade();
+        let first = weak.clone();
+        o.add_tick_callback(move |o, _| {
+            // The first frame with a width decides; the surface's layout signal follows later resizes.
+            if o.width() == 0 {
+                return glib::ControlFlow::Continue;
+            }
+            if let Some(m) = first.upgrade() {
+                m.set_visible(o.width() >= CHROME_MIN_WIDTH);
+            }
+            glib::ControlFlow::Break
+        });
+        o.connect_map(move |o| {
+            let Some(surface) = o.native().and_then(|n| n.surface()) else {
+                return;
+            };
+            let weak = weak.clone();
+            surface.connect_layout(move |_, width, _| {
+                if let Some(m) = weak.upgrade() {
+                    m.set_visible(width >= CHROME_MIN_WIDTH);
+                }
+            });
+        });
     }
     o.upcast()
 }
