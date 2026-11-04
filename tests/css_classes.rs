@@ -254,8 +254,9 @@ fn the_selected_sidebar_row_is_a_quiet_tint() {
 #[test]
 fn control_center_tiles_have_one_height() {
     let r = rule("button.toggle-tile");
-    assert!(r.contains("min-height: 76px"), "{r}");
-    assert!(rule("button.toggle-tile label").contains("min-height: 16px"));
+    // 84 = 12 + the 28 circle + 4 + 8 + two caption lines of 16 (brand-ui section 4).
+    assert!(r.contains("min-height: 84px"), "{r}");
+    assert!(rule("button.toggle-tile label").contains("min-height: 32px"));
     assert_eq!(
         shell::kit::controls::CIRCLE,
         28,
@@ -299,28 +300,30 @@ fn motion_comes_from_tokens_and_the_dock_hover_scales() {
         !tile.contains("glass-spring"),
         "hover is not a spring: {tile}"
     );
-    assert!(rule("button.dock-tile:hover").contains("transform: scale(1.15)"));
+    assert!(rule("button.dock-tile:hover").contains("transform: scale(1.133)"));
     assert!(
         !CSS[0].contains("transition: background 120ms"),
         "durations come from tokens"
     );
 }
 
-/// Audit A6-ux #14: the type scale is 11 / 13 / 15 / 26, in kit.css and the theme contract.
+/// Audit A6-ux #14: the type scale is 11 / 13 / 16 / 27 on the fen (lines 16 / 20 / 24 / 40), in kit.css and
+/// the theme contract.
 #[test]
-fn the_type_scale_is_11_13_15_26() {
+fn the_type_scale_is_11_13_16_27() {
     use shared::theme::scaffold as m;
     assert_eq!(
         (m::SECONDARY, m::BODY, m::HEADING, m::LARGE_TITLE),
-        (11, 13, 15, 26)
+        (11, 13, 16, 27)
     );
-    assert!(
-        rule("label.heading").contains(&format!("font-size: {}px; font-weight: 600", m::HEADING))
-    );
+    assert!(rule("label.heading").contains(&format!(
+        "font-size: {}px; line-height: 24px; font-weight: 600",
+        m::HEADING
+    )));
     let t = rule("label.large-title");
     assert!(
         t.contains(&format!(
-            "font-size: {}px; font-weight: 700",
+            "font-size: {}px; line-height: 40px; font-weight: 700",
             m::LARGE_TITLE
         )),
         "{t}"
@@ -329,16 +332,16 @@ fn the_type_scale_is_11_13_15_26() {
     assert!(rule("label.eyebrow").contains("letter-spacing: 0.4px"));
 }
 
-/// Audit A6-ux #13: the page title shares the sidebar search's line (the page starts 8 px under
-/// the toolbar band).
+/// Audit A6-ux #13: the page title shares the sidebar search's line (the page starts 4 px under
+/// the 40 px toolbar band, its title box is 40 high).
 #[test]
 fn the_page_title_sits_on_the_search_line() {
-    assert!(rule(".page").contains("padding: 8px 24px 24px 24px"));
+    assert!(rule(".page").contains("padding: 4px 24px 24px 24px"));
 }
 
-/// Audit A6-ux S3: desktop switches (30 x 18, knob 14).
+/// Audit A6-ux S3: desktop switches (36 x 24 on the fen, knob 20; 3:2).
 #[test]
 fn desktop_switches_are_not_phone_sized() {
-    assert!(rule("switch.toggle").contains("min-width: 30px; min-height: 18px"));
-    assert!(rule("switch.toggle slider").contains("min-width: 14px; min-height: 14px"));
+    assert!(rule("switch.toggle").contains("min-width: 36px; min-height: 24px"));
+    assert!(rule("switch.toggle slider").contains("min-width: 20px; min-height: 20px"));
 }

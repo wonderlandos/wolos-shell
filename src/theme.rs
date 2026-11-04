@@ -176,10 +176,16 @@ fn journal_theme(text: Option<&str>) -> std::io::Result<()> {
 /// Kit stylesheet: the only visual style (HIG). Colours via `var(--token)`.
 pub const KIT_CSS: &str = include_str!("kit/kit.css");
 
-/// Token block, then the kit CSS, then surface glue.
+/// The dark scheme's elevation shadows and glass rim, over the light values in [`KIT_CSS`].
+pub const DARK_CSS: &str = include_str!("kit/dark.css");
+
+/// Token block, then the kit CSS (and the dark scheme's shadows), then surface glue.
 pub fn stylesheet(t: &Theme, extra: &str) -> String {
     let mut s = t.css();
     s.push_str(KIT_CSS);
+    if t.variant == Variant::Dark {
+        s.push_str(DARK_CSS);
+    }
     s.push_str(extra);
     s
 }

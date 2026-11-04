@@ -213,7 +213,7 @@ impl Approvals {
     pub fn new(sys: Rc<dyn System>) -> Rc<Self> {
         let root = w::glass_panel(0);
         root.add_css_class("approval");
-        root.set_width_request(w::CONTROL_CENTER_WIDTH + w::S8);
+        root.set_width_request(w::CONTROL_CENTER_WIDTH + w::S4);
         let sheet = w::authenticate_sheet("A helper");
         sheet.revealer.set_reveal_child(true);
         root.append(&sheet.revealer);

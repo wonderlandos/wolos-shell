@@ -328,6 +328,7 @@ const NOT_ON_SCREEN: [&str; 14] = [
 ];
 const CSS_KIT: &str = include_str!("../src/kit/kit.css");
 const CSS_CONTRAST: &str = include_str!("../src/kit/contrast.css");
+const CSS_DARK: &str = include_str!("../src/kit/dark.css");
 
 struct Lit {
     file: String,
@@ -1151,8 +1152,12 @@ fn strip_comments(css: &str) -> String {
     out
 }
 
-fn css_all() -> [(&'static str, &'static str); 2] {
-    [("kit.css", CSS_KIT), ("contrast.css", CSS_CONTRAST)]
+fn css_all() -> [(&'static str, &'static str); 3] {
+    [
+        ("kit.css", CSS_KIT),
+        ("contrast.css", CSS_CONTRAST),
+        ("dark.css", CSS_DARK),
+    ]
 }
 
 fn px_after(css: &str, prop: &str) -> Vec<u32> {
@@ -1251,6 +1256,9 @@ fn ru_061_to_064_css_tokens() {
         );
     }
     for (v, _) in shared::theme::SCALE {
+        defined.insert(v.trim_start_matches("--").to_string());
+    }
+    for v in shared::theme::DERIVED {
         defined.insert(v.trim_start_matches("--").to_string());
     }
     let mut undefined = BTreeSet::new();

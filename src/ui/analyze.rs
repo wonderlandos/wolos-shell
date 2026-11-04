@@ -53,7 +53,7 @@ fn head(icon: &str, title: &str, body: &str) -> gtk::Box {
 pub fn content(view: &View) -> (gtk::Widget, Option<gtk::Button>, gtk::Button) {
     let root = w::glass_panel(0);
     root.add_css_class("approval");
-    root.set_width_request(w::CONTROL_CENTER_WIDTH + w::S8);
+    root.set_width_request(w::CONTROL_CENTER_WIDTH + w::S4);
     let b = w::vbox(w::S3);
     let row = w::hbox(w::S2);
     row.append(&w::spacer());

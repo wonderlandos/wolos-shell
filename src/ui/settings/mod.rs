@@ -1009,6 +1009,7 @@ type OnQuery = Rc<dyn Fn(&str)>;
 
 fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, OnQuery) {
     let aw = w::AppWindow::new(true, false);
+    aw.set_column(crate::kit::column::PANE_COLUMN);
     let ctx = Ctx::new(sys.clone(), "System Settings");
     let sheets = Sheets {
         join: w::toolbar_sheet(&aw, &w::vbox(0)),

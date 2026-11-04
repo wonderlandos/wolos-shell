@@ -71,7 +71,7 @@ pub fn content(
     let mut pics = Vec::new();
     for (win, r) in windows
         .into_iter()
-        .zip(overview::grid(&sizes, area, w::S8 as f64))
+        .zip(overview::grid(&sizes, area, w::S10 as f64))
     {
         let card = w::vbox(w::S2);
         let frame = gtk::Overlay::new();
@@ -123,7 +123,7 @@ pub fn content(
 /// negative (a 0x0 size before the first allocation made every card's size request invalid).
 fn window_area(size: (i32, i32)) -> Rect {
     let (sw, sh) = (f64::from(size.0), f64::from(size.1));
-    let pad = w::S8 as f64 * 2.0;
+    let pad = w::S10 as f64 * 2.0;
     Rect {
         x: pad,
         y: 0.0,

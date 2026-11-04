@@ -31,6 +31,18 @@ struct WifiUi {
     pw_row: gtk::Box,
 }
 
+/// "N of M" for a page after the welcome: the Secure Boot key screen is not counted (it shows only when a key
+/// waits for an answer).
+fn position(step: Step) -> Option<(usize, usize)> {
+    let counted: Vec<Step> = STEPS[1..]
+        .iter()
+        .copied()
+        .filter(|s| *s != Step::KeyScreen)
+        .collect();
+    let at = counted.iter().position(|s| *s == step)?;
+    Some((at + 1, counted.len()))
+}
+
 /// The Language page of both assistants (setup and the installer), titled `title`/`subtitle`
 /// (each assistant's own words): the language list, the
 /// keyboard list under it, and with `try_it` a field to type into. `pick_language(i)` records
@@ -133,12 +145,13 @@ impl Setup {
 
     pub fn with(sys: &dyn System, hints: &Hints) -> Rc<Setup> {
         let net = sys.network();
+        a::set_header_icon("wolos-mark");
         let pager = a::pager();
         // The install queued this computer's key and the blue screen has not been answered yet.
         let key_pending = std::env::var_os("WOL_FAKE_NOW").is_none()
             && std::path::Path::new(crate::install::MOK_PENDING).exists();
         let s = Rc::new(Setup {
-            root: super::lock::screen(&pager),
+            root: super::lock::assistant_screen(&pager),
             pager,
             flow: RefCell::new(
                 Flow::new(Draft::detected(hints), net.online && !net.wifi)
@@ -153,7 +166,21 @@ impl Setup {
             scanning: Cell::new(false),
             busy: Cell::new(false),
         });
+        // The welcome is full-bleed dark art: the mark and the word at the upper left take the art's light ink.
+        {
+            let root = s.root.downgrade();
+            s.pager.connect_visible_child_name_notify(move |p| {
+                if let Some(r) = root.upgrade() {
+                    if p.visible_child_name().as_deref() == Some(Step::Welcome.id()) {
+                        r.add_css_class("on-art");
+                    } else {
+                        r.remove_css_class("on-art");
+                    }
+                }
+            });
+        }
         s.pager.add_named(&s.welcome(), Some(Step::Welcome.id()));
+        s.root.add_css_class("on-art");
         for st in &STEPS[1..] {
             let card = match st {
                 Step::KeyScreen => s.key_screen(),
@@ -223,6 +250,7 @@ impl Setup {
             }
         });
         card.back.set_visible(step != Step::Done);
+        card.set_step(position(step));
     }
 
     /// Continue (button or Return).

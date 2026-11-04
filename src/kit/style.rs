@@ -288,7 +288,14 @@ fn dev_icon_root() -> Option<std::path::PathBuf> {
     let root = std::env::temp_dir().join(format!("wolos-dev-icons-{key:016x}"));
     let theme = root.join(PRODUCT_ICONS);
     std::fs::create_dir_all(&theme).ok()?;
-    for d in ["symbolic", "apps", "places", "devices", "mimetypes"] {
+    for d in [
+        "symbolic",
+        "symbolic24",
+        "apps",
+        "places",
+        "devices",
+        "mimetypes",
+    ] {
         let link = theme.join(d);
         if !link.exists() {
             let _ = std::fs::remove_file(&link);
@@ -320,6 +327,7 @@ fn icons(display: &gdk::Display) {
         "/usr/share/icons/WolOS/scalable/apps",
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/apps"),
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/symbolic"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/icons/symbolic24"),
         concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/brand"),
     ] {
         if std::path::Path::new(p).is_dir() {

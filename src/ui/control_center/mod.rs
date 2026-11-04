@@ -618,7 +618,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     // construction, nothing stretched, so every card keeps its inset on all four sides.
     let top = w::hbox(w::S2);
     top.set_homogeneous(true);
-    let conn = w::vbox(w::S2);
+    let conn = w::vbox(w::S1);
     let wifi = w::ControlTile::new("network-wireless-symbolic", "Wi-Fi", "Off", Some(false));
     {
         let (u, t) = (ui.clone(), wifi.circle.clone());
@@ -642,7 +642,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     }
     conn.append(&bluetooth.root);
     top.append(&w::module(&conn));
-    let right = w::vbox(w::S2);
+    let right = w::vbox(w::S1);
     let focus_tile =
         w::ControlTile::new("weather-clear-night-symbolic", "Focus", "Off", Some(false));
     {
@@ -692,7 +692,6 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         let u = ui.clone();
         d.connect_clicked(move |_| u.show("display"));
     }
-    main.append(&display.root);
     let sound = {
         let u = ui.clone();
         SliderModule::new(
@@ -719,6 +718,8 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         b.connect_clicked(move |_| u.act(a.clone()));
     }
     main.append(&media.root);
+
+    main.append(&display.root);
 
     // Battery folds into the grid: charge at a glance, a click toggles Low Power Mode.
     let battery = BatteryTile::new();
@@ -907,7 +908,8 @@ impl ControlCenter {
             self.media.set_app_icon(s.now_playing_icon().as_deref());
         }
 
-        // The grid: visible tiles in a fixed order, then the extra ones.
+        // The grid: visible tiles in a fixed order (the five-phase order, brand-ui: light, power, tools,
+        // then the loop back to the display), then the extra ones. State first, order after.
         let mut shown: Vec<gtk::Widget> = Vec::new();
         let bat = s.battery().filter(|_| p.battery);
         let pm = s.power_mode();
@@ -918,7 +920,6 @@ impl ControlCenter {
                 s.battery_time(),
                 pm == Some(PowerMode::LowPower),
             );
-            shown.push(self.battery.button.clone().upcast());
         }
         let monitors = s.monitors();
         let mirrored = self.display_page.mirrored.borrow().clone();
@@ -932,44 +933,53 @@ impl ControlCenter {
                 .map(|m| display::display_name(m).to_string())
                 .as_deref(),
         );
-        shown.push(self.mirroring.button.clone().upcast());
         let k = s.keyboard_brightness().filter(|_| p.keyboard_brightness);
         if let Some(k) = k {
             self.keyboard
                 .button
                 .set_tooltip_text(Some(&kit::controls::percent(f64::from(k))));
-            shown.push(self.keyboard.button.clone().upcast());
         }
         let night = s.night_light().filter(|_| p.night_shift);
         self.night.set_on(night.unwrap_or(false));
-        if night.is_some() {
-            shown.push(self.night.button.clone().upcast());
-        }
-        if p.screenshot {
-            shown.push(self.screenshot.clone().upcast());
-        }
-        if p.record {
-            shown.push(self.record.clone().upcast());
-        }
         let acc = s.accessibility();
         self.a11y
             .reduce_motion
             .set_on(acc.reduce_motion.unwrap_or(false));
         self.a11y.contrast.set_on(acc.increase_contrast);
         self.a11y.zoom.set_on(acc.zoom.unwrap_or(false));
-        if p.accessibility {
-            if acc.reduce_motion.is_some() {
-                shown.push(self.a11y.reduce_motion.button.clone().upcast());
-            }
-            shown.push(self.a11y.contrast.button.clone().upcast());
-            if acc.zoom.is_some() {
-                shown.push(self.a11y.zoom.button.clone().upcast());
-            }
+        // Light: Night Shift, Keyboard Brightness.
+        if night.is_some() {
+            shown.push(self.night.button.clone().upcast());
+        }
+        if k.is_some() {
+            shown.push(self.keyboard.button.clone().upcast());
+        }
+        // Ground: Battery, Stay Awake.
+        if bat.is_some() {
+            shown.push(self.battery.button.clone().upcast());
         }
         for (t, tile) in &self.toggles {
             tile.set_on(tiles::toggle_on(*t));
             shown.push(tile.button.clone().upcast());
         }
+        // Tools: Screenshot, Record, Zoom, Increase Contrast, Reduce Motion.
+        if p.screenshot {
+            shown.push(self.screenshot.clone().upcast());
+        }
+        if p.record {
+            shown.push(self.record.clone().upcast());
+        }
+        if p.accessibility {
+            if acc.zoom.is_some() {
+                shown.push(self.a11y.zoom.button.clone().upcast());
+            }
+            shown.push(self.a11y.contrast.button.clone().upcast());
+            if acc.reduce_motion.is_some() {
+                shown.push(self.a11y.reduce_motion.button.clone().upcast());
+            }
+        }
+        // Loop: Screen Mirroring ends the page where it began (the display).
+        shown.push(self.mirroring.button.clone().upcast());
         if let Some(src) = tile_source() {
             let weak = Rc::downgrade(u);
             let toggle_src = src.clone();

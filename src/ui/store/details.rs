@@ -460,15 +460,21 @@ pub(super) fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Lo
     if let Some(dev) = &d.developer {
         text.append(&w::label(dev, "secondary"));
     }
-    let buttons = w::hbox(w::S2);
+    // The primary pill is 120 x 40; the second action ("Install for All Accounts") stands under it, so a
+    // narrow window keeps every button whole.
+    let buttons = w::vbox(w::S2);
     buttons.set_margin_top(w::S2);
+    let first = w::hbox(w::S2);
     let get = gtk::Button::with_label("Get");
     get.add_css_class("get-button");
+    get.add_css_class("get-primary");
     let all = w::button("Install for All Accounts", w::Kind::Default, || {});
     let remove = w::button("Remove", w::Kind::Default, || {});
-    buttons.append(&get);
+    first.append(&get);
+    first.append(&remove);
+    buttons.append(&first);
     buttons.append(&all);
-    buttons.append(&remove);
+    all.set_halign(gtk::Align::Start);
     text.append(&buttons);
     top.append(&text);
     page.append(&top);

@@ -262,7 +262,7 @@ pub struct Dock {
 }
 
 /// Scale of the tile under the pointer.
-pub const MAGNIFY: f32 = 1.15;
+pub const MAGNIFY: f32 = 68.0 / 60.0;
 /// The hover follows the pointer: a spring (interruptible, a quick pass keeps its speed).
 pub const MAGNIFY_SPRING: Spring = Spring::SNAPPY;
 
@@ -914,6 +914,12 @@ impl Dock {
 
     /// The window of `class` came to the front: its bounce stops.
     pub fn focused(&self, class: &str) {
+        for t in &self.shelf.borrow().tiles {
+            t.set_focused(false);
+        }
+        if let Some((t, _)) = self.tile_for(class) {
+            t.set_focused(true);
+        }
         if let Some((t, epochs)) = self.tile_for(class).filter(|(t, _)| t.is_attention()) {
             epochs.set(epochs.get().wrapping_add(1));
             t.set_attention(false);

@@ -23,7 +23,15 @@ fn rule(sel: &str) -> String {
 }
 
 fn prop(body: &str, name: &str) -> String {
-    body.split(';')
+    let mut plain = String::new();
+    let mut rest = body;
+    while let Some(i) = rest.find("/*") {
+        plain.push_str(&rest[..i]);
+        rest = rest[i..].split_once("*/").map_or("", |(_, r)| r);
+    }
+    plain.push_str(rest);
+    plain
+        .split(';')
         .find_map(|d| {
             d.trim()
                 .strip_prefix(&format!("{name}:"))
@@ -45,7 +53,14 @@ fn sides(v: &str) -> [f64; 4] {
 
 /// Extent of `--glass-shadow` past the box: [top, right, bottom, left].
 fn shadow_extent() -> [f64; 4] {
-    let v = prop(&rule(":root"), "--glass-shadow");
+    let root = rule(":root");
+    let mut v = prop(&root, "--glass-shadow");
+    // The elevation steps (--elev-1..3) are named in :root and the glass shadow is made of them.
+    while let Some(i) = v.find("var(") {
+        let end = i + v[i..].find(')').unwrap();
+        let name = v[i + 4..end].trim().to_string();
+        v = format!("{}{}{}", &v[..i], prop(&root, &name), &v[end + 1..]);
+    }
     let mut e = [0f64; 4];
     for layer in v.split("),") {
         let n: Vec<f64> = layer.split_whitespace().take(3).map(px).collect();

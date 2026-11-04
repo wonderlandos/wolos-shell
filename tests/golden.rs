@@ -148,7 +148,7 @@ fn cases() -> Vec<Case> {
         },
         Case {
             name: "dock".into(),
-            size: (960, 120),
+            size: (975, 120),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
@@ -1168,15 +1168,15 @@ fn cases() -> Vec<Case> {
     });
     // Session menu and the Restart / Shut Down / Log Out question (60 s countdown).
     v.push(Case {
-        // Natural width: the panel is as wide as its five actions (453 since the Inter type scale).
+        // Natural width: the panel is as wide as its five actions (453 since the Inter type scale; 146 high on the 20 px body line).
         name: "session".into(),
-        size: (453, 142),
+        size: (453, 146),
         class: "preview",
         wallpaper: true,
         build: Box::new(|| ui::panels::SessionMenu::new().root.upcast()),
     });
     // Natural sizes: the question sets the width and the countdown line wraps under it.
-    for (action, size) in [("shutdown", (432, 157)), ("logout", (314, 157))] {
+    for (action, size) in [("shutdown", (432, 166)), ("logout", (314, 166))] {
         v.push(Case {
             name: format!("session-confirm-{action}"),
             size,
