@@ -2,9 +2,9 @@
 //! Privacy & Security: which apps may post notifications (libwol, ADR 0020), control input, read
 //! the clipboard history or see the window list (consent through wol-admind `consent`) and how
 //! each choice is enforced; that apps ask each time they share the screen (no grant, the portal
-//! asks; `wol_core::consent::SCREEN_CAPTURE`), the firewall (pf, `firewall`), the kernel protections WolOS ships, disk encryption,
+//! asks; `wol_core::consent::SCREEN_CAPTURE`), the kernel protections WolOS ships, disk encryption,
 //! and the ways to Startup Security (`super::startup_security`) and Assistants & Automation
-//! (`wol_core::security`).
+//! (`wol_core::security`). The Firewall switch is in Network (`super::network`).
 use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
@@ -221,6 +221,9 @@ struct Facts {
     encrypted: Option<bool>,
     /// `wol boot status`: Secure Boot and this computer's key. None where `wol` cannot tell.
     boot: Option<wol_core::boot::Status>,
+    /// Installed apps (names and icons of the grants), read with the rest off the UI thread
+    /// (QA-SET-45: `load_all` ran on the GTK thread).
+    entries: Vec<crate::desktop::Entry>,
 }
 
 /// What a grant for one peer app or one device allows.
@@ -232,8 +235,36 @@ fn scoped(entries: &[crate::desktop::Entry], cap: &str) -> Option<String> {
     device_of(cap).map(|d| format!("Can use the USB device {d}."))
 }
 
-fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
-    let entries = crate::desktop::load_all();
+/// A consent switch: waits for wol-admind and flips back on Cancel, a refusal or a failure
+/// (QA-SET-39: it stayed off after Cancel).
+fn consent_row(
+    e: &Rc<Env>,
+    status: &gtk::Label,
+    (icon, name): (&str, &str),
+    what: &str,
+    path: &str,
+    cap: &str,
+    can_change: bool,
+) -> gtk::Widget {
+    let (ctx, st, path, cap) = (
+        e.ctx.clone(),
+        status.clone(),
+        path.to_string(),
+        cap.to_string(),
+    );
+    let r = form::pending_permission_row(icon, name, what, true, move |on, done| {
+        let verdict = if on { "allow" } else { "deny" };
+        match admin("consent", &[&path, &cap, verdict]) {
+            Some(a) => ctx.act_switch(a, &st, done),
+            None => done(false),
+        }
+    });
+    r.set_sensitive(can_change);
+    r
+}
+
+fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &Rc<dyn Fn()>) {
+    let entries = &f.entries;
     let can_change = admin("consent", &[]).is_some();
     for (cap, title, what) in KINDS {
         let apps: Vec<&String> = f
@@ -248,16 +279,8 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
         let rows: Vec<gtk::Widget> = apps
             .into_iter()
             .map(|path| {
-                let (name, icon) = app_of(&entries, path);
-                let (ctx, st, path) = (e.ctx.clone(), status.clone(), path.clone());
-                let r = form::permission_row(&icon, &name, what, true, move |on| {
-                    let verdict = if on { "allow" } else { "deny" };
-                    if let Some(a) = admin("consent", &[&path, cap, verdict]) {
-                        ctx.act_say(a, &st)
-                    }
-                });
-                r.set_sensitive(can_change);
-                r
+                let (name, icon) = app_of(entries, path);
+                consent_row(e, status, (&icon, &name), what, path, cap, can_change)
             })
             .collect();
         into.append(&w::section(title, &rows));
@@ -265,26 +288,21 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     let peers: Vec<gtk::Widget> = f
         .grants
         .iter()
-        .filter_map(|(path, cap)| Some((path, cap, scoped(&entries, cap)?)))
+        .filter_map(|(path, cap)| Some((path, cap, scoped(entries, cap)?)))
         .map(|(path, cap, what)| {
-            let (name, icon) = app_of(&entries, path);
-            let (ctx, st) = (e.ctx.clone(), status.clone());
-            let (path, cap) = (path.clone(), cap.clone());
-            let r = form::permission_row(&icon, &name, &what, true, move |on| {
-                let verdict = if on { "allow" } else { "deny" };
-                if let Some(a) = admin("consent", &[&path, &cap, verdict]) {
-                    ctx.act_say(a, &st)
-                }
-            });
-            r.set_sensitive(can_change);
-            r
+            let (name, icon) = app_of(entries, path);
+            consent_row(e, status, (&icon, &name), &what, path, cap, can_change)
         })
         .collect();
     if !peers.is_empty() {
         into.append(&w::section("App Connections", &peers));
     }
+    if !f.grants.is_empty() && !can_change {
+        // Greyed switches say why (QA-SET-39).
+        into.append(&w::footnote(crate::copy::PRIVACY_GRANTS_READ_ONLY));
+    }
     for app in &f.flatpaks {
-        into.append(&flatpak_section(e, app, status));
+        into.append(&flatpak_section(e, app, status, reload));
     }
     if f.grants.is_empty() && f.flatpaks.is_empty() {
         into.append(&w::section(
@@ -317,23 +335,6 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
     into.append(&w::footnote(&footnote(&shown)));
     let mut rows = Vec::new();
     let sec = f.security.as_ref();
-    if let (Some(on), Some(_)) = (sec.and_then(|s| s.firewall), admin("firewall", &[])) {
-        let (ctx, st) = (e.ctx.clone(), status.clone());
-        let stopped = on && sec.and_then(|s| s.firewall_running) == Some(false);
-        rows.push(form::pending_toggle_row(
-            "Firewall",
-            if stopped {
-                "On at startup, but not running now."
-            } else {
-                "Blocks connections from other computers that you did not start."
-            },
-            on,
-            move |v, done| match admin("firewall", &[if v { "on" } else { "off" }]) {
-                Some(a) => ctx.act_switch(a, &st, done),
-                None => done(false),
-            },
-        ));
-    }
     if let Some(line) = sec.and_then(|s| protections_line(&s.hardening)) {
         let value = w::label(&line, "secondary");
         rows.push(
@@ -395,18 +396,37 @@ pub(crate) fn flatpak_title(app: &wol_core::flatpak::App) -> String {
 }
 
 /// One Flatpak app: each permission it was granted with a switch, then Reset.
-fn flatpak_section(e: &Rc<Env>, app: &wol_core::flatpak::App, status: &gtk::Label) -> gtk::Box {
-    let act = |perm: Option<String>, allow: bool| {
-        let (ctx, st, scope, id) = (e.ctx.clone(), status.clone(), app.scope, app.id.clone());
+fn flatpak_section(
+    e: &Rc<Env>,
+    app: &wol_core::flatpak::App,
+    status: &gtk::Label,
+    reload: &Rc<dyn Fn()>,
+) -> gtk::Box {
+    // Reset: every switch of the app changes, so the page reads them again once it worked
+    // (QA-SET-37: the switches kept the old values).
+    let reset = {
+        let (ctx, st, scope, id, rl) = (
+            e.ctx.clone(),
+            status.clone(),
+            app.scope,
+            app.id.clone(),
+            reload.clone(),
+        );
         move || {
-            ctx.act_say(
+            let rl = rl.clone();
+            ctx.act_switch(
                 Action::FlatpakOverride {
                     scope,
                     app: id.clone(),
-                    perm: perm.clone(),
-                    allow,
+                    perm: None,
+                    allow: true,
                 },
                 &st,
+                Box::new(move |ok| {
+                    if ok {
+                        rl()
+                    }
+                }),
             )
         }
     };
@@ -431,8 +451,9 @@ fn flatpak_section(e: &Rc<Env>, app: &wol_core::flatpak::App, status: &gtk::Labe
                 app.id.clone(),
                 p.spelling(),
             );
-            let t = w::toggle(*on, move |v| {
-                ctx.act_say(
+            // Waits for flatpak: Cancel or a failure flips it back (QA-SET-37).
+            let t = w::pending_toggle(*on, move |v, done| {
+                ctx.act_switch(
                     Action::FlatpakOverride {
                         scope,
                         app: id.clone(),
@@ -440,6 +461,7 @@ fn flatpak_section(e: &Rc<Env>, app: &wol_core::flatpak::App, status: &gtk::Labe
                         allow: v,
                     },
                     &st,
+                    done,
                 )
             });
             w::list_row(
@@ -451,7 +473,6 @@ fn flatpak_section(e: &Rc<Env>, app: &wol_core::flatpak::App, status: &gtk::Labe
             .upcast()
         })
         .collect();
-    let reset = act(None, true);
     let b = w::button("Reset", w::Kind::Default, reset);
     let head = w::list_row(
         "",
@@ -470,9 +491,24 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&body);
     let status = status_label();
     p.append(&status);
-    let (m, e2) = (e.machine(), e.clone());
+    load(e, &body, &status);
+    p
+}
+
+/// Reads the facts off the UI thread and renders them into `body` (again after a Reset).
+fn load(e: &Rc<Env>, body: &gtk::Box, status: &gtk::Label) {
+    clear(body);
+    let reload: Rc<dyn Fn()> = {
+        let (e, body, st) = (e.clone(), body.downgrade(), status.clone());
+        Rc::new(move || {
+            if let Some(b) = body.upgrade() {
+                load(&e, &b, &st)
+            }
+        })
+    };
+    let (m, e2, st) = (e.machine(), e.clone(), status.clone());
     later(
-        &body,
+        body,
         move || Facts {
             grants: m.consent(),
             flatpaks: m.flatpak_apps(),
@@ -480,10 +516,10 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             malware: m.malware(),
             encrypted: m.storage().and_then(|s| s.encrypted),
             boot: m.boot(),
+            entries: crate::desktop::load_all(),
         },
-        move |into, f| render(&e2, into, f, &status),
+        move |into, f| render(&e2, into, f, &st, &reload),
     );
-    p
 }
 
 #[cfg(test)]

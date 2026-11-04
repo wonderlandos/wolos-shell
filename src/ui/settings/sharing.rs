@@ -4,26 +4,47 @@
 use super::*;
 use wol_core::sharing::is_valid_hostname;
 
+/// The account the Remote Login line tells people to use: the one signed in (QA-NET-14: bob read
+/// `ssh alice@host.local`, the first line of /etc/passwd). Only when that account is not a login
+/// account here (an odd session) does the first one stand in.
+pub(crate) fn ssh_user(users: &[String], current: &str) -> String {
+    if users.iter().any(|u| u == current) {
+        return current.to_owned();
+    }
+    users.first().cloned().unwrap_or_else(|| "you".into())
+}
+
 fn render(e: &Rc<Env>, into: &gtk::Box, s: Sharing, status: &gtk::Label) {
-    let host = e.host.hostname.clone();
+    let host = e.hostname();
     let mut rows = Vec::new();
     if admin("hostname", &[]).is_some() {
-        let (ctx, st) = (e.ctx.clone(), status.clone());
-        rows.push(form::entry_row(
+        let (ctx, st, env) = (e.ctx.clone(), status.clone(), Rc::downgrade(e));
+        // Waits for wol-admind: after Cancel or a failure Return sends the same name again
+        // (QA-SET-12: it did nothing), and a saved name shows as saved (lowercase) everywhere.
+        rows.push(form::pending_entry_row(
             "Computer name",
             &host,
             "wonderland",
-            move |t| {
+            move |t, done| {
                 let name = t.trim().to_lowercase();
                 if !is_valid_hostname(&name) {
-                    return say(
-                        &st,
-                        "Use lowercase letters, digits and hyphens, up to 63 characters.",
-                    );
+                    say(&st, crate::copy::HOSTNAME_RULE);
+                    return done(false);
                 }
-                if let Some(a) = admin("hostname", &[&name]) {
-                    ctx.act_say(a, &st)
-                }
+                let Some(a) = admin("hostname", &[&name]) else {
+                    return done(false);
+                };
+                let env = env.clone();
+                ctx.act_switch(
+                    a,
+                    &st,
+                    Box::new(move |ok| {
+                        done(ok);
+                        if ok && let Some(e) = env.upgrade() {
+                            e.set_hostname(&name);
+                        }
+                    }),
+                )
             },
         ));
     } else {
@@ -35,12 +56,10 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: Sharing, status: &gtk::Label) {
     ));
     if let (Some(on), Some(_)) = (s.remote_login, admin("remote-login", &[])) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
-        let user = e
-            .host
-            .users
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "you".into());
+        let user = ssh_user(
+            &e.host.users,
+            &crate::ui::lock::user_name(&e.machine().passwd()),
+        );
         into.append(&w::section(
             "",
             &[form::pending_toggle_row(
@@ -84,4 +103,19 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         move |into, s| render(&e2, into, s, &status),
     );
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// QA-NET-14: two accounts, the line names the one signed in.
+    #[test]
+    fn ssh_line_names_the_current_user() {
+        let two = vec!["alice".to_string(), "bob".to_string()];
+        assert_eq!(ssh_user(&two, "bob"), "bob");
+        assert_eq!(ssh_user(&two, "alice"), "alice");
+        assert_eq!(ssh_user(&two, "nobody-here"), "alice");
+        assert_eq!(ssh_user(&[], "bob"), "you");
+    }
 }
