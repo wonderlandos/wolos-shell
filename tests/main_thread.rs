@@ -50,8 +50,10 @@ const BLOCKING: [&str; 27] = [
 /// `.output()` / `.status()` count only on a `Command` (within the window).
 const NEEDS_COMMAND: [&str; 2] = [".output()", ".status()"];
 
-const WRAPPERS: [&str; 5] = [
+const WRAPPERS: [&str; 6] = [
     "spawn_blocking",
+    // kit::render::on(lane, work): the pictures' own threads.
+    "render::on(",
     "off_thread(",
     "thread::spawn",
     "thread::Builder",

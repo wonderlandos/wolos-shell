@@ -9,10 +9,6 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-const WALLPAPER_DIRS: [&str; 2] = [
-    "/usr/share/wolos/wallpapers",
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers"),
-];
 /// The backdrop is decoded small, blurred on the CPU (edge-clamped: no dark rim) and scaled up.
 const BACKDROP_PX: (i32, i32) = (480, 270);
 const BLUR_RADIUS: usize = 6;
@@ -75,17 +71,24 @@ fn blurred_wallpaper(path: &Path) -> Option<gtk::gdk::MemoryTexture> {
     ))
 }
 
-/// Lock/login wallpaper: night in dark, day in light; installed copy first.
+/// Lock/login wallpaper: the Moon Gate the desktop follows (the theme's dye; night when the theme
+/// for `dark` is dark), else the earlier day and night pictures; installed copy first.
 pub fn wallpaper_file(dark: bool) -> Option<PathBuf> {
-    let name = if dark {
-        "wonderland-night.svg"
-    } else {
-        "wonderland-day.svg"
-    };
-    WALLPAPER_DIRS
-        .iter()
-        .map(|d| Path::new(d).join(name))
-        .find(|p| p.exists())
+    let t = crate::theme::resolve(kit::style::active_id().as_deref(), dark);
+    let night = t.variant == crate::theme::Variant::Dark;
+    kit::pickers::gate_file(&t.id, night, 16.0 / 9.0).or_else(|| {
+        kit::pickers::shipped_wallpaper(if night {
+            "wonderland-night"
+        } else {
+            "wonderland-day"
+        })
+    })
+}
+
+/// A backdrop change moves the gate's parameters (`kit::gate`) instead of jumping: both pictures
+/// are gates, something is on screen, motion is on and the clock is real (goldens jump).
+fn backdrop_morphs(old: Option<&Path>, new: &Path, reduced: bool, fixed_time: bool) -> bool {
+    !reduced && !fixed_time && old.is_some_and(kit::gate::is_gate) && kit::gate::is_gate(new)
 }
 
 pub(crate) fn prefers_dark() -> bool {
@@ -126,28 +129,74 @@ pub(crate) fn backdrop() -> gtk::Picture {
         .build();
     pic.add_css_class("lock-backdrop");
     let weak = pic.downgrade();
+    // What is on screen, and a morph while it runs.
+    let shown: Rc<RefCell<Option<(PathBuf, gtk::gdk::MemoryTexture)>>> = Default::default();
+    let run: Rc<RefCell<Option<Animated>>> = Default::default();
     let load = move || {
         let (Some(pic), Some(path)) = (weak.upgrade(), wallpaper_file(prefers_dark())) else {
             return;
         };
-        if let Some(t) = BACKDROPS.with_borrow(|c| c.get(&path).cloned()) {
-            pic.set_paintable(Some(&t));
+        if shown.borrow().as_ref().is_some_and(|(p, _)| *p == path) {
             return;
         }
-        let store = |path: PathBuf, t: gtk::gdk::MemoryTexture, pic: &gtk::Picture| {
-            pic.set_paintable(Some(&t));
-            BACKDROPS.with_borrow_mut(|c| c.insert(path, t));
+        let fixed = crate::envv::is_set("WOL_FAKE_NOW");
+        let old = shown.borrow().clone();
+        let morph = old
+            .clone()
+            .filter(|(p, _)| backdrop_morphs(Some(p), &path, kit::motion::reduced(), fixed));
+        let show = {
+            let (shown, run) = (shown.clone(), run.clone());
+            move |path: PathBuf, t: gtk::gdk::MemoryTexture, pic: gtk::Picture| {
+                shown.replace(Some((path, t.clone())));
+                let Some((_, from)) = morph.clone() else {
+                    run.take();
+                    return pic.set_paintable(Some(&t));
+                };
+                let (f, to) = (
+                    from.upcast::<gtk::gdk::Texture>(),
+                    t.clone().upcast::<gtk::gdk::Texture>(),
+                );
+                let run = run.clone();
+                glib::spawn_future_local(async move {
+                    let m = kit::render::on(kit::render::Lane::Desktop, move || {
+                        super::panels::morph_between(&f, &to)
+                    })
+                    .await
+                    .flatten();
+                    match m {
+                        Some(m) => {
+                            run.replace(Some(super::panels::morph_picture(
+                                &pic,
+                                m,
+                                t.upcast_ref(),
+                            )));
+                        }
+                        None => {
+                            run.take();
+                            pic.set_paintable(Some(&t));
+                        }
+                    }
+                });
+            }
         };
-        if crate::envv::is_set("WOL_FAKE_NOW") {
+        if let Some(t) = BACKDROPS.with_borrow(|c| c.get(&path).cloned()) {
+            return show(path, t, pic);
+        }
+        let cache = |path: &PathBuf, t: &gtk::gdk::MemoryTexture| {
+            BACKDROPS.with_borrow_mut(|c| c.insert(path.clone(), t.clone()));
+        };
+        if fixed {
             if let Some(t) = blurred_wallpaper(&path) {
-                store(path, t, &pic);
+                cache(&path, &t);
+                show(path, t, pic);
             }
             return;
         }
         glib::spawn_future_local(async move {
             let p2 = path.clone();
             if let Ok(Some(t)) = gtk::gio::spawn_blocking(move || blurred_wallpaper(&p2)).await {
-                store(path, t, &pic);
+                cache(&path, &t);
+                show(path, t, pic);
             }
         });
     };
@@ -1592,13 +1641,54 @@ mod tests {
         assert_eq!(at(0, 0), 0);
     }
 
+    /// Lock and login show the desktop's Moon Gate (day in Light, night in Dark), else the
+    /// earlier pictures on an image without it.
     #[test]
     fn wallpaper_follows_variant() {
+        let gate = kit::pickers::shipped_wallpaper("wolos-gate-day-4k").is_some();
         for (dark, name) in [
-            (true, "wonderland-night.svg"),
-            (false, "wonderland-day.svg"),
+            (
+                true,
+                if gate {
+                    "wolos-gate-night-4k.svg"
+                } else {
+                    "wonderland-night.svg"
+                },
+            ),
+            (
+                false,
+                if gate {
+                    "wolos-gate-day-4k.svg"
+                } else {
+                    "wonderland-day.svg"
+                },
+            ),
         ] {
-            assert!(wallpaper_file(dark).unwrap().ends_with(name));
+            let f = wallpaper_file(dark).unwrap();
+            assert!(f.ends_with(name), "{f:?}");
         }
+    }
+
+    #[test]
+    fn the_backdrop_morphs_between_gates_only() {
+        let (day, night) = (
+            Path::new("/w/wolos-gate-day-4k.svg"),
+            Path::new("/w/themes/gate-nord-night-4k.svg"),
+        );
+        assert!(backdrop_morphs(Some(day), night, false, false));
+        assert!(
+            !backdrop_morphs(None, night, false, false),
+            "nothing on screen yet"
+        );
+        assert!(
+            !backdrop_morphs(Some(day), night, true, false),
+            "reduce motion"
+        );
+        assert!(!backdrop_morphs(Some(day), night, false, true), "goldens");
+        let place = Path::new("/w/cachoeira-night-4k.svg");
+        assert!(
+            !backdrop_morphs(Some(day), place, false, false),
+            "not a gate"
+        );
     }
 }

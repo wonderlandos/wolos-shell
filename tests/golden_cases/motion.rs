@@ -27,6 +27,17 @@ fn wall(name: &str) -> gdk::Texture {
     gdk::Texture::from_filename(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
 
+/// A Moon Gate picture (design brand/wallpapers) decoded at the golden's size.
+fn gate(mode: &str) -> gdk::Texture {
+    let p = format!(
+        "{}/../../design/brand/wallpapers/wolos-gate-{mode}-4k.svg",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let pb = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&p, 480, 270, false)
+        .unwrap_or_else(|e| panic!("{p}: {e}"));
+    gdk::Texture::for_pixbuf(&pb)
+}
+
 fn note(id: u32, app: &str, summary: &str, body: &str) -> ui::notify::Note {
     ui::notify::Note {
         id,
@@ -129,6 +140,59 @@ pub fn cases() -> Vec<Case> {
                     f.current().as_ref(),
                     Some(dusk.upcast_ref::<gdk::Paintable>()),
                     "end: the new picture"
+                );
+                f.root.set_size_request(480, 270);
+                f.root.clone().upcast()
+            }),
+        },
+        Case {
+            // Day to night on the Moon Gate: no cross-fade, the ring light, the ribbon dye and the
+            // sun move over 600 ms (kit::gate). The still is the frame at 300 ms: the ring already
+            // lit for the night, the ribbons on their way, the sun still warm.
+            name: "motion-wallpaper-gate-morph-mid".into(),
+            size: (480, 270),
+            class: "preview",
+            wallpaper: false,
+            build: Box::new(|| {
+                let clock = Clock::manual();
+                let f = ui::panels::CrossFade::new(&clock);
+                let (day, night) = (gate("day"), gate("night"));
+                let m = ui::panels::morph_between(&day, &night).expect("same size");
+                f.show(&day);
+                f.show_morph(m, &day, &night);
+                assert_eq!(f.morph_progress(), 0.0, "starts on the day picture");
+                run(&clock, 0, 300);
+                let p = f.morph_progress();
+                assert!(p > 0.4 && p < 0.6, "mid: half way ({p})");
+                assert_eq!(
+                    f.current().as_ref(),
+                    Some(night.upcast_ref::<gdk::Paintable>()),
+                    "the picture coming in is the night"
+                );
+                f.root.set_size_request(480, 270);
+                f.root.clone().upcast()
+            }),
+        },
+        Case {
+            // The same morph run to its end hands the real night picture to the desktop.
+            name: "motion-wallpaper-gate-morph-end".into(),
+            size: (480, 270),
+            class: "preview",
+            wallpaper: false,
+            build: Box::new(|| {
+                let clock = Clock::manual();
+                let f = ui::panels::CrossFade::new(&clock);
+                let (day, night) = (gate("day"), gate("night"));
+                let m = ui::panels::morph_between(&day, &night).expect("same size");
+                f.show(&day);
+                f.show_morph(m, &day, &night);
+                run(&clock, 0, 700);
+                assert!(clock.is_empty(), "nothing left moving");
+                assert_eq!(f.morph_progress(), 1.0);
+                assert_eq!(
+                    f.current().as_ref(),
+                    Some(night.upcast_ref::<gdk::Paintable>()),
+                    "end: the real night picture, not the last frame"
                 );
                 f.root.set_size_request(480, 270);
                 f.root.clone().upcast()

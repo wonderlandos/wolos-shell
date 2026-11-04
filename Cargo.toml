@@ -46,6 +46,11 @@ harness = false
 name = "desktop_idle"
 harness = false
 
+# GTK on the main thread (broadwayd, the cairo renderer): one main, like golden.
+[[test]]
+name = "gate_transition"
+harness = false
+
 [dev-dependencies]
 async-io = "2"
 blocking = "1"

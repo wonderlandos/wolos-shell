@@ -616,13 +616,11 @@ pub fn wallpaper_strips_tile(
         strips.append(&pic);
         let f = f.to_path_buf();
         glib::spawn_future_local(async move {
-            let r = gtk::gio::spawn_blocking(move || {
-                gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&f, tw * 2, -1, true)
-                    .ok()
-                    .map(|pb| gdk::Texture::for_pixbuf(&pb))
+            let r = super::render::on(super::render::Lane::Previews, move || {
+                wallpaper_thumb_in(&crate::widgets::cache_home(), &f, tw * 2)
             })
             .await;
-            if let Ok(Some(t)) = r {
+            if let Some(Some(t)) = r {
                 pic.set_paintable(Some(&t));
             }
         });
@@ -643,6 +641,88 @@ pub fn wallpaper_strips_tile(
     t.add_css_class("preview-tile");
     t.add_css_class("wallpaper-tile");
     t
+}
+
+/// Wallpaper previews made in this process: (file, width, modified) -> texture.
+type Thumbs = std::collections::HashMap<(std::path::PathBuf, i32, u64), gdk::Texture>;
+static THUMBS: std::sync::Mutex<Option<Thumbs>> = std::sync::Mutex::new(None);
+
+/// Where a preview of `f` at `width` px is kept across processes (`$XDG_CACHE_HOME/wolos/
+/// wallpaper-previews`): named by the file, its size and time, so a changed picture gets a new one.
+pub fn thumb_cache_file(
+    f: &std::path::Path,
+    width: i32,
+    modified: u64,
+    len: u64,
+) -> std::path::PathBuf {
+    thumb_cache_in(&crate::widgets::cache_home(), f, width, modified, len)
+}
+
+fn thumb_cache_in(
+    root: &std::path::Path,
+    f: &std::path::Path,
+    width: i32,
+    modified: u64,
+    len: u64,
+) -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (f, width, modified, len).hash(&mut h);
+    let stem = f
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    root.join("wolos/wallpaper-previews")
+        .join(format!("{stem}-{width}-{:016x}.png", h.finish()))
+}
+
+/// Widest picture also kept in memory (the previews); a desktop-sized one is only on disk.
+const THUMB_IN_MEMORY: i32 = 512;
+
+/// A wallpaper picture `width` px wide (a preview, or the desktop's at the display's width):
+/// rendered once (a 4k gate is ~3000 shapes and took ~8 s at its own size) and kept on disk, and
+/// in memory up to [`THUMB_IN_MEMORY`]. Blocking: run off the GTK thread.
+pub fn wallpaper_thumb(f: &std::path::Path, width: i32) -> Option<gdk::Texture> {
+    wallpaper_thumb_in(&crate::widgets::cache_home(), f, width)
+}
+
+fn wallpaper_thumb_in(
+    root: &std::path::Path,
+    f: &std::path::Path,
+    width: i32,
+) -> Option<gdk::Texture> {
+    let meta = std::fs::metadata(f).ok()?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let key = (f.to_path_buf(), width, modified);
+    if let Some(t) = THUMBS
+        .lock()
+        .ok()
+        .and_then(|m| m.as_ref()?.get(&key).cloned())
+    {
+        return Some(t);
+    }
+    let cached = thumb_cache_in(root, f, width, modified, meta.len());
+    let t = gdk::Texture::from_filename(&cached).ok().or_else(|| {
+        let pb = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(f, width, -1, true).ok()?;
+        if let Some(dir) = cached.parent() {
+            let tmp = cached.with_extension("part");
+            if std::fs::create_dir_all(dir).is_ok() && pb.savev(&tmp, "png", &[]).is_ok() {
+                let _ = std::fs::rename(&tmp, &cached);
+            }
+        }
+        Some(gdk::Texture::for_pixbuf(&pb))
+    })?;
+    if width <= THUMB_IN_MEMORY
+        && let Ok(mut m) = THUMBS.lock()
+    {
+        m.get_or_insert_with(Default::default)
+            .insert(key, t.clone());
+    }
+    Some(t)
 }
 
 /// GDK modifier state as [`shortcuts`] bits.
@@ -842,6 +922,44 @@ pub fn subpage(title: &str, back: impl Fn() + 'static) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A wallpaper picture is rendered once: the second ask reads the cached PNG (here swapped for
+    /// a 3 px one to tell them apart) instead of the SVG; a changed SVG gets a new one.
+    #[test]
+    fn wallpaper_pictures_are_rendered_once() {
+        let dir = std::env::temp_dir().join(format!("wol-thumbs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("pic-day-4k.svg");
+        std::fs::write(
+            &svg,
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"><rect width="1600" height="900" fill="#7c5cff"/></svg>"##,
+        )
+        .unwrap();
+        let root = dir.join("cache");
+        let first = wallpaper_thumb_in(&root, &svg, 960).expect("rendered");
+        assert_eq!((first.width(), first.height()), (960, 540));
+        let meta = std::fs::metadata(&svg).unwrap();
+        let modified = meta
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let png = thumb_cache_in(&root, &svg, 960, modified, meta.len());
+        assert!(png.is_file(), "the picture is on disk: {png:?}");
+        gtk::gdk_pixbuf::Pixbuf::new(gtk::gdk_pixbuf::Colorspace::Rgb, false, 8, 3, 3)
+            .unwrap()
+            .savev(&png, "png", &[])
+            .unwrap();
+        let again = wallpaper_thumb_in(&root, &svg, 960).expect("cached");
+        assert_eq!(
+            again.width(),
+            3,
+            "the second ask is the cached file, not a new render"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// QA-SET-12 and review: after Cancel Return sends the name again (it did nothing), but
     /// leaving the field does not ask again.

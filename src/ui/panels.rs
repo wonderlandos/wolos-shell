@@ -9,6 +9,8 @@ use gtk::{gdk, gio, glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+/// Pixel width a wallpaper SVG is rendered at before the window knows its size.
+const WALLPAPER_WIDTH: i32 = 1920;
 /// Seconds between two looks at the clock for the Dynamic wallpaper.
 const DYNAMIC_TICK: u32 = 60;
 
@@ -22,28 +24,62 @@ pub fn wallpaper(app: &gtk::Application, display: &gdk::Monitor) -> gtk::Applica
     win
 }
 
-/// The wallpaper picture into `win`; its reload hook, file watch and Dynamic tick end with it.
-/// A new picture cross-fades over the old one ([`CrossFade`], 400 ms on the window's clock).
+/// The wallpaper picture into `win`; its reload hook, file watch, light/dark watch and Dynamic
+/// tick end with it. A new picture cross-fades over the old one ([`CrossFade`], 400 ms on the
+/// window's clock); from one Moon Gate picture to another (day and night, a theme's dye) the
+/// gate's parameters move instead ([`CrossFade::show_morph`], `kit::gate`).
 pub fn dress_wallpaper(win: &gtk::Window) {
     let life = crate::kit::lifetime::Lifetime::of_window(win);
     let fade = CrossFade::new(&kit::anim::Clock::of(win));
     win.set_child(Some(&fade.root));
     let shown: RefCell<Option<std::path::PathBuf>> = Default::default();
+    let weak = win.downgrade();
     let show = Rc::new(move || {
-        let now = crate::kit::pickers::desktop_wallpaper();
+        let size = weak
+            .upgrade()
+            .filter(|w| w.width() > 0 && w.height() > 0)
+            .map(|w| (w.width(), w.height(), w.scale_factor()));
+        let aspect = size.map_or(16.0 / 9.0, |(w, h, _)| f64::from(w) / f64::from(h));
+        // The picture at the display's pixel width (1920 until the window has a size).
+        let width = size.map_or(WALLPAPER_WIDTH, |(w, _, s)| w * s);
+        let now = crate::kit::pickers::desktop_wallpaper_for(aspect);
         if *shown.borrow() == now {
             return;
         }
-        shown.replace(now.clone());
+        let was = shown.replace(now.clone());
         let Some(p) = now else { return };
+        // Gate to gate: the old picture's pixels are the parameters' start.
+        let old = (was.as_deref().is_some_and(kit::gate::is_gate) && kit::gate::is_gate(&p))
+            .then(|| fade.current()?.downcast::<gdk::Texture>().ok())
+            .flatten();
         // Decoded off the main thread: the CSS gradient shows until the picture is ready.
         let fade = fade.clone();
         glib::spawn_future_local(async move {
-            if let Ok(Ok(t)) =
-                gtk::gio::spawn_blocking(move || gdk::Texture::from_filename(p)).await
-            {
-                fade.show(&t);
+            let p2 = p.clone();
+            let Some(Some(t)) = kit::render::on(kit::render::Lane::Desktop, move || {
+                wallpaper_texture(&p2, width)
+            })
+            .await
+            else {
+                return;
+            };
+            // The other side (day or night) rendered now, so a light/dark change does not wait.
+            if let Some(other) = kit::pickers::other_side(&p) {
+                glib::spawn_future_local(kit::render::on(kit::render::Lane::Desktop, move || {
+                    wallpaper_texture(&other, width)
+                }));
             }
+            if let Some(old) = old.filter(|_| !fade.is_reduced()) {
+                let (from, to) = (old.clone(), t.clone());
+                if let Some(Some(m)) = kit::render::on(kit::render::Lane::Desktop, move || {
+                    morph_between(&from, &to)
+                })
+                .await
+                {
+                    return fade.show_morph(m, &old, &t);
+                }
+            }
+            fade.show(&t);
         });
     });
     {
@@ -63,22 +99,111 @@ pub fn dress_wallpaper(win: &gtk::Window) {
             m.cancel();
         });
     }
+    if let Some(settings) = gtk::Settings::default() {
+        let s = show.clone();
+        let id = settings.connect_gtk_application_prefer_dark_theme_notify(move |_| s());
+        life.on_end(move || settings.disconnect(id));
+    }
     life.own(glib::timeout_add_seconds_local(DYNAMIC_TICK, move || {
         show();
         glib::ControlFlow::Continue
     }));
 }
 
+/// Both gate pictures as one [`kit::gate::Morph`] at the working size; None when their sizes
+/// differ. Blocking (the downloads, the parameter file, the conversion): off the GTK thread.
+pub fn morph_between(from: &gdk::Texture, to: &gdk::Texture) -> Option<kit::gate::Morph> {
+    use std::path::Path;
+    let (w, h) = (from.width() as usize, from.height() as usize);
+    if (w, h) != (to.width() as usize, to.height() as usize) || w == 0 || h == 0 {
+        return None;
+    }
+    let (ww, wh) = kit::gate::work_size(w, h);
+    let px = |t: &gdk::Texture| {
+        let mut buf = vec![0u8; w * h * 4];
+        // B8g8r8a8 premultiplied (GDK's default download); the gate is opaque.
+        t.download(&mut buf, w * 4);
+        if (ww, wh) == (w, h) {
+            buf
+        } else {
+            kit::gate::resample(&buf, w, h, w * 4, ww, wh)
+        }
+    };
+    // The shipped parameter set (`walls.py gate --params`), else the built-in values.
+    let params = kit::pickers::WALLPAPER_DIRS
+        .iter()
+        .find_map(|d| std::fs::read_to_string(Path::new(d).join(kit::gate::PARAMS_FILE)).ok())
+        .and_then(|t| kit::gate::Params::parse(&t))
+        .unwrap_or_default();
+    Some(kit::gate::Morph::new(&px(from), &px(to), ww, wh, &params))
+}
+
+/// One frame of a morph as a texture.
+fn morph_frame(m: &kit::gate::Morph, t: f32) -> gdk::MemoryTexture {
+    gdk::MemoryTexture::new(
+        m.w as i32,
+        m.h as i32,
+        gdk::MemoryFormat::B8g8r8a8Premultiplied,
+        &glib::Bytes::from_owned(m.frame(t)),
+        m.w * 4,
+    )
+}
+
+/// Runs `m` on `pic` (the lock, login and assistant backdrop): its frames over [`kit::gate::MS`],
+/// then `to`. Keep the handle while it runs; under reduce motion `to` at once.
+pub fn morph_picture(
+    pic: &gtk::Picture,
+    m: kit::gate::Morph,
+    to: &gdk::Paintable,
+) -> kit::anim::Animated {
+    let weak = pic.downgrade();
+    let run = kit::anim::Animated::new(pic, 0.0, move |v| {
+        if let Some(p) = weak.upgrade() {
+            p.set_paintable(Some(&morph_frame(&m, v)));
+        }
+    });
+    let (weak, to) = (pic.downgrade(), to.clone());
+    run.connect_settled(move |v| {
+        if let (true, Some(p)) = (v >= 1.0, weak.upgrade()) {
+            p.set_paintable(Some(&to));
+        }
+    });
+    run.retarget(
+        1.0,
+        kit::anim::Motion::Tween {
+            curve: kit::motion::Curve::Linear,
+            ms: kit::gate::MS,
+        },
+    );
+    run
+}
+
+/// The picture of wallpaper `p` for a display `width` px wide: an SVG is rendered once at that
+/// width and kept with the previews ([`kit::form::wallpaper_thumb`]: a 4k gate took ~8 s to decode
+/// at its own size on every change); a photo as it is. Blocking: off the GTK thread.
+pub fn wallpaper_texture(p: &std::path::Path, width: i32) -> Option<gdk::Texture> {
+    if p.extension().is_some_and(|x| x == "svg") {
+        kit::form::wallpaper_thumb(p, width)
+    } else {
+        gdk::Texture::from_filename(p).ok()
+    }
+}
+
 /// The wallpaper's two pictures: `back` is on screen, `front` fades the next one in over it
 /// (`out`, [`kit::motion::Duration::Slow`]) and hands it to `back` when it is done. The first
 /// picture appears at once (nothing to fade from); a change during a fade finishes that one
-/// first. Reduce motion: the new picture at once.
+/// first. Between two gate pictures `front` instead shows the morph's frames (opaque, linear over
+/// [`kit::gate::MS`], each parameter eased inside it) and hands `back` the real new picture at the
+/// end. Reduce motion: the new picture at once.
 #[derive(Clone)]
 pub struct CrossFade {
     pub root: gtk::Overlay,
     back: gtk::Picture,
     front: gtk::Picture,
     fade: kit::anim::Animated,
+    clock: kit::anim::Clock,
+    morph: Rc<RefCell<Option<(kit::gate::Morph, gdk::Texture)>>>,
+    run: kit::anim::Animated,
 }
 
 impl CrossFade {
@@ -107,11 +232,52 @@ impl CrossFade {
                 }
             });
         }
+        let morph: Rc<RefCell<Option<(kit::gate::Morph, gdk::Texture)>>> = Default::default();
+        let run = {
+            let (m, f) = (morph.clone(), front.clone());
+            kit::anim::Animated::on_clock(clock, 0.0, move |v| {
+                if let Some((m, _)) = m.borrow().as_ref() {
+                    f.set_paintable(Some(&morph_frame(m, v)));
+                }
+            })
+        };
+        {
+            let (m, b, f) = (morph.clone(), back.clone(), front.clone());
+            run.connect_settled(move |v| {
+                if v < 1.0 {
+                    return;
+                }
+                if let Some((_, to)) = m.take() {
+                    b.set_paintable(Some(&to));
+                    b.set_opacity(1.0);
+                    f.set_paintable(None::<&gdk::Paintable>);
+                    f.set_opacity(0.0);
+                }
+            });
+        }
         CrossFade {
             root,
             back,
             front,
             fade,
+            clock: clock.clone(),
+            morph,
+            run,
+        }
+    }
+
+    /// Reduce motion is on (no morph is prepared then).
+    pub fn is_reduced(&self) -> bool {
+        self.clock.is_reduced()
+    }
+
+    /// Ends a fade or a morph that is still moving.
+    fn settle(&self) {
+        if self.fade.is_moving() {
+            self.fade.finish();
+        }
+        if self.morph.borrow().is_some() {
+            self.run.finish();
         }
     }
 
@@ -120,9 +286,7 @@ impl CrossFade {
         if self.back.paintable().is_none() {
             return self.back.set_paintable(Some(t));
         }
-        if self.fade.is_moving() {
-            self.fade.finish();
-        }
+        self.settle();
         self.fade.set(0.0);
         self.front.set_paintable(Some(t));
         self.fade.retarget(
@@ -131,14 +295,48 @@ impl CrossFade {
         );
     }
 
-    /// The picture on screen once the fade is done (the one fading in, during it).
+    /// Moves from `from` (the picture on screen) to `to` through `m` (made by [`morph_between`]
+    /// from the two). At once when nothing is on screen or under reduce motion; a cross-fade when
+    /// another picture came on screen while `m` was being made.
+    pub fn show_morph(&self, m: kit::gate::Morph, from: &gdk::Texture, to: &gdk::Texture) {
+        if self.back.paintable().is_none() || self.clock.is_reduced() {
+            self.settle();
+            return self.back.set_paintable(Some(to));
+        }
+        self.settle();
+        if self.back.paintable().as_ref() != Some(from.upcast_ref::<gdk::Paintable>()) {
+            return self.show(to);
+        }
+        self.morph.replace(Some((m, to.clone())));
+        self.front.set_opacity(1.0);
+        self.run.set(0.0);
+        // The frames are opaque: the renderer need not draw the full-size picture under them.
+        self.back.set_opacity(0.0);
+        self.run.retarget(
+            1.0,
+            kit::anim::Motion::Tween {
+                curve: kit::motion::Curve::Linear,
+                ms: kit::gate::MS,
+            },
+        );
+    }
+
+    /// The picture on screen once the fade or morph is done (the one coming in, during it).
     pub fn current(&self) -> Option<gdk::Paintable> {
+        if let Some((_, to)) = self.morph.borrow().as_ref() {
+            return Some(to.clone().upcast());
+        }
         self.front.paintable().or_else(|| self.back.paintable())
     }
 
     /// The front picture's opacity now (0 at rest).
     pub fn progress(&self) -> f32 {
         self.fade.value()
+    }
+
+    /// How far a morph is (0 at rest and at its start, 1 at its end).
+    pub fn morph_progress(&self) -> f32 {
+        self.run.value()
     }
 }
 
@@ -862,7 +1060,7 @@ mod tests {
         let body =
             &src[src.find("pub fn wallpaper(").unwrap()..src.find("/// Panel window").unwrap()];
         for want in [
-            "pickers::desktop_wallpaper()",
+            "pickers::desktop_wallpaper_for(",
             "ipc::on_reload",
             "monitor_file",
         ] {
