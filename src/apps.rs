@@ -358,6 +358,23 @@ pub fn remove_from_dock(
     (v.len() != items.len()).then_some(v)
 }
 
+/// `s` as a `'static` string, leaked once per distinct text: an app whose launcher changes on an
+/// update keeps its name, icon and class, so only the changed text costs memory (QA-A7-22; a
+/// [`Pin`] borrows `'static`, so a string that might still be on the Dock cannot be freed).
+fn interned(s: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    static TEXTS: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
+    let mut t = TEXTS.lock().unwrap_or_else(|p| p.into_inner());
+    let t = t.get_or_insert_with(HashSet::new);
+    if let Some(known) = t.get(s) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    t.insert(leaked);
+    leaked
+}
+
 /// The Dock pin of an installed entry: its name, icon, launcher and window class. One copy per
 /// distinct entry for the life of the shell (a Dock holds a handful; [`Pin`] borrows `'static`).
 pub fn entry_pin(e: &Entry) -> Pin {
@@ -378,7 +395,7 @@ pub fn entry_pin(e: &Entry) -> Pin {
     if let Some(p) = made.get(&key) {
         return p.clone();
     }
-    let leak = |s: &str| -> &'static str { Box::leak(s.to_string().into_boxed_str()) };
+    let leak = interned;
     let exec: Vec<&'static str> = e.exec.iter().map(|a| leak(a)).collect();
     let p = Pin {
         id: leak(&key.0),
@@ -472,6 +489,23 @@ pub fn running_unpinned(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-A7-22: an entry that changes only its launcher on an update does not leak its name,
+    /// icon and class again.
+    #[test]
+    fn a_changed_launcher_leaks_only_the_changed_text() {
+        let e = |exec: &str| Entry {
+            id: "leakcheck.desktop".into(),
+            name: "Leak Check".into(),
+            icon: "leakcheck".into(),
+            exec: vec![exec.into()],
+            wm_class: "leakcheck".into(),
+        };
+        let (a, b) = (entry_pin(&e("leak-1")), entry_pin(&e("leak-2")));
+        assert_ne!(a.exec, b.exec);
+        assert!(std::ptr::eq(a.name, b.name) && std::ptr::eq(a.icon, b.icon));
+        assert!(std::ptr::eq(a.class, b.class) && std::ptr::eq(a.id, b.id));
+    }
 
     #[test]
     fn install_leads_the_dock_only_while_trying_wolos() {

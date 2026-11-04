@@ -8,6 +8,7 @@ use crate::kit::{
 use gtk::{gdk, gio, glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Pixel width a wallpaper SVG is rendered at before the window knows its size.
 const WALLPAPER_WIDTH: i32 = 1920;
@@ -138,15 +139,52 @@ pub fn morph_between(from: &gdk::Texture, to: &gdk::Texture) -> Option<kit::gate
     Some(kit::gate::Morph::new(&px(from), &px(to), ww, wh, &params))
 }
 
-/// One frame of a morph as a texture.
-fn morph_frame(m: &kit::gate::Morph, t: f32) -> gdk::MemoryTexture {
+/// A frame of a morph (tightly packed BGRA, `w` x `h`) as a texture.
+fn frame_texture(w: usize, h: usize, bytes: Vec<u8>) -> gdk::MemoryTexture {
     gdk::MemoryTexture::new(
-        m.w as i32,
-        m.h as i32,
+        w as i32,
+        h as i32,
         gdk::MemoryFormat::B8g8r8a8Premultiplied,
-        &glib::Bytes::from_owned(m.frame(t)),
-        m.w * 4,
+        &glib::Bytes::from_owned(bytes),
+        w * 4,
     )
+}
+
+/// Makes the frames of a running morph on `Lane::Desktop` and puts the newest finished one on a
+/// picture. A frame is a pass over up to 1920x1200 pixels (10 ms and more, tens on a slow VM):
+/// made on the GTK thread by every tick it held up input for the whole 600 ms of a theme or
+/// day/night change. A tick that finds the previous frame still being made keeps what is on
+/// screen instead (QA-A7-9).
+#[derive(Clone, Default)]
+struct Frames {
+    busy: Rc<Cell<bool>>,
+    epoch: Rc<Cell<u32>>,
+}
+
+impl Frames {
+    /// Starts the frame at `t` of `m` for `pic` unless one is still being made.
+    fn request(&self, m: &Arc<kit::gate::Morph>, t: f32, pic: &gtk::Picture) {
+        if self.busy.replace(true) {
+            return;
+        }
+        let (m, pic) = (m.clone(), pic.clone());
+        let (busy, epoch) = (self.busy.clone(), self.epoch.clone());
+        let mine = epoch.get();
+        glib::spawn_future_local(async move {
+            let (w, h) = (m.w, m.h);
+            let bytes = kit::render::on(kit::render::Lane::Desktop, move || m.frame(t)).await;
+            busy.set(false);
+            // The morph ended (or another began) while this frame was being made: it is late.
+            if let (true, Some(bytes)) = (epoch.get() == mine, bytes) {
+                pic.set_paintable(Some(&frame_texture(w, h, bytes)));
+            }
+        });
+    }
+
+    /// The morph is over: a frame still being made is dropped when it lands.
+    fn end(&self) {
+        self.epoch.set(self.epoch.get().wrapping_add(1));
+    }
 }
 
 /// Runs `m` on `pic` (the lock, login and assistant backdrop): its frames over [`kit::gate::MS`],
@@ -156,15 +194,17 @@ pub fn morph_picture(
     m: kit::gate::Morph,
     to: &gdk::Paintable,
 ) -> kit::anim::Animated {
-    let weak = pic.downgrade();
+    let (weak, m, frames) = (pic.downgrade(), Arc::new(m), Frames::default());
+    let f = frames.clone();
     let run = kit::anim::Animated::new(pic, 0.0, move |v| {
         if let Some(p) = weak.upgrade() {
-            p.set_paintable(Some(&morph_frame(&m, v)));
+            f.request(&m, v, &p);
         }
     });
     let (weak, to) = (pic.downgrade(), to.clone());
     run.connect_settled(move |v| {
         if let (true, Some(p)) = (v >= 1.0, weak.upgrade()) {
+            frames.end();
             p.set_paintable(Some(&to));
         }
     });
@@ -202,8 +242,9 @@ pub struct CrossFade {
     front: gtk::Picture,
     fade: kit::anim::Animated,
     clock: kit::anim::Clock,
-    morph: Rc<RefCell<Option<(kit::gate::Morph, gdk::Texture)>>>,
+    morph: Rc<RefCell<Option<(Arc<kit::gate::Morph>, gdk::Texture)>>>,
     run: kit::anim::Animated,
+    frames: Frames,
 }
 
 impl CrossFade {
@@ -232,21 +273,23 @@ impl CrossFade {
                 }
             });
         }
-        let morph: Rc<RefCell<Option<(kit::gate::Morph, gdk::Texture)>>> = Default::default();
+        let morph: Rc<RefCell<Option<(Arc<kit::gate::Morph>, gdk::Texture)>>> = Default::default();
+        let frames = Frames::default();
         let run = {
-            let (m, f) = (morph.clone(), front.clone());
+            let (m, f, fr) = (morph.clone(), front.clone(), frames.clone());
             kit::anim::Animated::on_clock(clock, 0.0, move |v| {
                 if let Some((m, _)) = m.borrow().as_ref() {
-                    f.set_paintable(Some(&morph_frame(m, v)));
+                    fr.request(m, v, &f);
                 }
             })
         };
         {
-            let (m, b, f) = (morph.clone(), back.clone(), front.clone());
+            let (m, b, f, fr) = (morph.clone(), back.clone(), front.clone(), frames.clone());
             run.connect_settled(move |v| {
                 if v < 1.0 {
                     return;
                 }
+                fr.end();
                 if let Some((_, to)) = m.take() {
                     b.set_paintable(Some(&to));
                     b.set_opacity(1.0);
@@ -263,6 +306,7 @@ impl CrossFade {
             clock: clock.clone(),
             morph,
             run,
+            frames,
         }
     }
 
@@ -307,7 +351,10 @@ impl CrossFade {
         if self.back.paintable().as_ref() != Some(from.upcast_ref::<gdk::Paintable>()) {
             return self.show(to);
         }
-        self.morph.replace(Some((m, to.clone())));
+        self.frames.end();
+        self.morph.replace(Some((Arc::new(m), to.clone())));
+        // Frame 0 is the picture on screen: the front shows it until the first frame is made.
+        self.front.set_paintable(Some(from));
         self.front.set_opacity(1.0);
         self.run.set(0.0);
         // The frames are opaque: the renderer need not draw the full-size picture under them.

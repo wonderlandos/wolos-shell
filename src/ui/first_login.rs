@@ -41,9 +41,7 @@ impl Facts {
         }
         let reports_on = std::fs::read_to_string(wol_core::admin::REPORTS_CONF)
             .is_ok_and(|t| t.lines().any(|l| l.trim() == "send=1"));
-        let user = std::env::var("USER").unwrap_or_default();
-        let admin = std::fs::read_to_string("/etc/group")
-            .is_ok_and(|g| wol_core::admin::is_admin(&user, u32::MAX, &g));
+        let admin = wol_core::admin::this_account_is_admin(crate::envv::var("USER").as_deref());
         let location = std::process::Command::new("gsettings")
             .args(["get", "org.gnome.system.location", "enabled"])
             .output()
