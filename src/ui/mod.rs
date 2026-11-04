@@ -71,6 +71,7 @@ pub fn run_shell() -> glib::ExitCode {
         .application_id("org.wolos.shell")
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
+    crate::kit::fence::survive_bus_loss(&app);
     app.connect_startup(move |_| mark(t0, "startup"));
     app.connect_activate(move |app| {
         mark(t0, "activate");
@@ -337,6 +338,7 @@ pub fn run_panel_app(
 ) -> glib::ExitCode {
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder().application_id(id).build();
+    crate::kit::fence::survive_bus_loss(&app);
     app.connect_startup(move |_| mark(t0, "startup"));
     // Held until the process ends: closing the panel's window does not end a warm process.
     let _hold = warm.then(|| app.hold());

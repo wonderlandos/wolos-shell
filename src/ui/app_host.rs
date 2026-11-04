@@ -129,6 +129,7 @@ pub fn run_host() -> glib::ExitCode {
     let app = gtk::Application::builder()
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
+    crate::kit::fence::survive_bus_loss(&app);
     if let Some(id) = gtk_app_id(&app_id) {
         app.set_application_id(Some(id));
     }

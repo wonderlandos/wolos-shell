@@ -887,6 +887,7 @@ pub fn run(
     build: impl Fn(&gtk::ApplicationWindow) + 'static,
 ) -> glib::ExitCode {
     let app = gtk::Application::builder().application_id(app_id).build();
+    crate::kit::fence::survive_bus_loss(&app);
     app.connect_activate(move |app| {
         super::style::install("");
         let win = gtk::ApplicationWindow::new(app);

@@ -435,6 +435,7 @@ pub fn run() -> glib::ExitCode {
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
+    crate::kit::fence::survive_bus_loss(&app);
     let shown: Rc<RefCell<Option<Rc<Maker>>>> = Rc::default();
     app.connect_command_line(move |app, cmd| {
         let cwd = cmd.cwd();

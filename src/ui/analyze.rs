@@ -161,6 +161,7 @@ pub fn run() -> glib::ExitCode {
         .application_id("org.wolos.analyze")
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
+    crate::kit::fence::survive_bus_loss(&app);
     app.connect_activate(move |app| {
         kit::style::install("");
         let win = gtk::ApplicationWindow::builder()

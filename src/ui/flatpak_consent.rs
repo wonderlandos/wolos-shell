@@ -174,6 +174,7 @@ pub fn run() -> glib::ExitCode {
         .application_id("org.wolos.flatpak-consent")
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
+    crate::kit::fence::survive_bus_loss(&app);
     {
         let allowed = allowed.clone();
         app.connect_activate(move |app| {
