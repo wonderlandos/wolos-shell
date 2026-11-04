@@ -213,8 +213,25 @@ fn app_of(entries: &[crate::desktop::Entry], path: &str) -> (String, String) {
         .unwrap_or_else(|| (base.to_string(), w::PACKAGE_ICON.to_string()))
 }
 
+/// The rows of one capability: each granted app (switch on), then each app that asked and was
+/// refused without a grant (switch off, so the place a refusal names has the switch).
+fn switches<'a>(
+    grants: &'a [(String, String)],
+    asked: &'a [(String, String)],
+    cap: &str,
+) -> Vec<(&'a String, bool)> {
+    let on: Vec<&String> = grants.iter().filter(|g| g.1 == cap).map(|g| &g.0).collect();
+    let off = asked
+        .iter()
+        .filter(|g| g.1 == cap && !on.contains(&&g.0))
+        .map(|g| (&g.0, false));
+    on.iter().map(|p| (*p, true)).chain(off).collect()
+}
+
 struct Facts {
     grants: Vec<(String, String)>,
+    /// Refused and not granted: listed with the switch off (`Machine::asked`).
+    asked: Vec<(String, String)>,
     flatpaks: Vec<wol_core::flatpak::App>,
     security: Option<security::Status>,
     malware: Option<wol_core::malware::Status>,
@@ -242,7 +259,7 @@ fn consent_row(
     status: &gtk::Label,
     (icon, name): (&str, &str),
     what: &str,
-    path: &str,
+    (path, granted): (&str, bool),
     cap: &str,
     can_change: bool,
 ) -> gtk::Widget {
@@ -252,7 +269,7 @@ fn consent_row(
         path.to_string(),
         cap.to_string(),
     );
-    let r = form::pending_permission_row(icon, name, what, true, move |on, done| {
+    let r = form::pending_permission_row(icon, name, what, granted, move |on, done| {
         let verdict = if on { "allow" } else { "deny" };
         match admin("consent", &[&path, &cap, verdict]) {
             Some(a) => ctx.act_switch(a, &st, done),
@@ -267,23 +284,16 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
     let entries = &f.entries;
     let can_change = admin("consent", &[]).is_some();
     for (cap, title, what) in KINDS {
-        let apps: Vec<&String> = f
-            .grants
-            .iter()
-            .filter(|g| g.1 == cap)
-            .map(|g| &g.0)
-            .collect();
-        if apps.is_empty() {
-            continue;
-        }
-        let rows: Vec<gtk::Widget> = apps
+        let rows: Vec<gtk::Widget> = switches(&f.grants, &f.asked, cap)
             .into_iter()
-            .map(|path| {
+            .map(|(path, granted)| {
                 let (name, icon) = app_of(entries, path);
-                consent_row(e, status, (&icon, &name), what, path, cap, can_change)
+                consent_row(e, status, (&icon, &name), what, (path.as_str(), granted), cap, can_change)
             })
             .collect();
-        into.append(&w::section(title, &rows));
+        if !rows.is_empty() {
+            into.append(&w::section(title, &rows));
+        }
     }
     let peers: Vec<gtk::Widget> = f
         .grants
@@ -291,7 +301,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
         .filter_map(|(path, cap)| Some((path, cap, scoped(entries, cap)?)))
         .map(|(path, cap, what)| {
             let (name, icon) = app_of(entries, path);
-            consent_row(e, status, (&icon, &name), &what, path, cap, can_change)
+            consent_row(e, status, (&icon, &name), &what, (path.as_str(), true), cap, can_change)
         })
         .collect();
     if !peers.is_empty() {
@@ -304,7 +314,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
     for app in &f.flatpaks {
         into.append(&flatpak_section(e, app, status, reload));
     }
-    if f.grants.is_empty() && f.flatpaks.is_empty() {
+    if f.grants.is_empty() && f.asked.is_empty() && f.flatpaks.is_empty() {
         into.append(&w::section(
             "Privacy",
             &[w::list_row(
@@ -330,7 +340,10 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
     let shown: Vec<&str> = KINDS
         .iter()
         .map(|k| k.0)
-        .filter(|c| f.grants.is_empty() || f.grants.iter().any(|g| g.1 == *c))
+        .filter(|c| {
+            (f.grants.is_empty() && f.asked.is_empty())
+                || f.grants.iter().chain(&f.asked).any(|g| g.1 == *c)
+        })
         .collect();
     into.append(&w::footnote(&footnote(&shown)));
     let mut rows = Vec::new();
@@ -511,6 +524,7 @@ fn load(e: &Rc<Env>, body: &gtk::Box, status: &gtk::Label) {
         body,
         move || Facts {
             grants: m.consent(),
+            asked: m.asked(),
             flatpaks: m.flatpak_apps(),
             security: m.security(),
             malware: m.malware(),
@@ -525,6 +539,36 @@ fn load(e: &Rc<Env>, body: &gtk::Box, status: &gtk::Label) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MANUAL 0.12.0: "Notifications are off for hello. Turn them on in System Settings > Privacy
+    /// & Security", and that pane had no switch for hello. An app that asked has its row, off;
+    /// a granted one stays on and is not listed twice.
+    #[test]
+    fn an_app_that_asked_has_its_switch_off() {
+        let s = |a: &str, c: &str| (a.to_string(), c.to_string());
+        let grants = [
+            s("/usr/bin/hello", "notifications"),
+            s("/usr/bin/rec", "keep-awake"),
+        ];
+        let asked = [
+            s("/home/a/Work/hi/hi", "notifications"),
+            s("/usr/bin/hello", "notifications"),
+            s("/home/a/Work/hi/hi", "share"),
+        ];
+        let rows = |cap| {
+            switches(&grants, &asked, cap)
+                .into_iter()
+                .map(|(p, on)| (p.as_str(), on))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            rows("notifications"),
+            [("/usr/bin/hello", true), ("/home/a/Work/hi/hi", false)]
+        );
+        assert_eq!(rows("share"), [("/home/a/Work/hi/hi", false)]);
+        assert_eq!(rows("keep-awake"), [("/usr/bin/rec", true)]);
+        assert!(rows("window-list").is_empty());
+    }
 
     #[test]
     fn flatpak_sections_say_who_the_app_is_for() {

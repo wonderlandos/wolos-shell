@@ -1701,6 +1701,7 @@ mod tests {
             name: "Signal".into(),
             exec: vec!["signal-desktop".into()],
             icon: "signal-desktop".into(),
+            wm_class: String::new(),
         };
         assert_eq!(
             note_icon("Signal", std::slice::from_ref(&e)),

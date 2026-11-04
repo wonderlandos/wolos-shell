@@ -376,11 +376,19 @@ fn at(i: &Rc<Installer>, page: &str) {
             });
         }
         // R2B-9: a Windows with BitLocker stays and this install changes the Secure Boot keys.
+        // A BitLocker Windows on the chosen disk now refuses Replace, so on the Summary the
+        // Windows that stays is the one on the other disk (`bitlocker yes` in install-check).
         "summary-bitlocker" | "secure-boot-bitlocker" => {
             i.with_flow(|f| {
-                f.method = Method::Replace;
-                f.replace = Some("u3".into());
-                f.disks[0].disk.parts[1].fstype = "BitLocker".into();
+                if page == "summary-bitlocker" {
+                    f.method = Method::Erase;
+                    f.disks[1].check.others = vec!["Windows".into()];
+                    f.disks[1].check.bitlocker = true;
+                } else {
+                    f.method = Method::Replace;
+                    f.replace = Some("u3".into());
+                    f.disks[0].disk.parts[1].fstype = "BitLocker".into();
+                }
                 // Own keys only when the person turned Secure Boot on (opt-in).
                 f.secure = true;
                 f.disks[0].check.tier = Some(
