@@ -157,6 +157,20 @@ pub fn place_file(id: &str, night: bool, aspect: f64) -> Option<PathBuf> {
     first_shipped(&[format!("{id}-{}-{}.svg", mode(night), size_for(aspect))])
 }
 
+/// The same picture's other side, when installed: `…-day-…` and `…-night-…` (the gate, a theme's
+/// gate, a place).
+pub fn other_side(p: &Path) -> Option<PathBuf> {
+    let name = p.file_name()?.to_str()?;
+    let other = if name.contains("-day-") {
+        name.replacen("-day-", "-night-", 1)
+    } else if name.contains("-night-") {
+        name.replacen("-night-", "-day-", 1)
+    } else {
+        return None;
+    };
+    Some(p.with_file_name(other)).filter(|o| o.exists())
+}
+
 /// Dynamic wallpaper picture for a local hour: day 07–17, dusk 17–20, night otherwise.
 pub fn dynamic_name(hour: u8) -> &'static str {
     match hour {
@@ -868,6 +882,23 @@ mod tests {
         assert!(
             gone.ends_with("wolos-gate-day-4k.svg"),
             "an unknown place is the gate: {gone:?}"
+        );
+    }
+
+    #[test]
+    fn the_other_side_is_the_same_picture_at_night_or_by_day() {
+        if !gate_shipped() {
+            eprintln!("skip: no design/east tree");
+            return;
+        }
+        let day = shipped_wallpaper("wolos-gate-day-4k").unwrap();
+        let night = other_side(&day).unwrap();
+        assert!(night.ends_with("wolos-gate-night-4k.svg"), "{night:?}");
+        assert_eq!(other_side(&night), Some(day));
+        assert_eq!(other_side(Path::new("/x/wonderland-dusk.svg")), None);
+        assert_eq!(
+            other_side(Path::new("/nonexistent/gate-nord-day-4k.svg")),
+            None
         );
     }
 

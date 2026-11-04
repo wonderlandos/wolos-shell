@@ -8,7 +8,7 @@
 //! `gtk4-broadwayd` like `tests/golden.rs`; skips without the design's east wallpapers.
 use gtk::{gdk, glib, prelude::*};
 use shell::kit::{anim::Clock, gate};
-use shell::ui::panels::{CrossFade, morph_between};
+use shell::ui::panels::{CrossFade, morph_between, wallpaper_texture};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -100,10 +100,30 @@ fn main() {
     let _broadway = start_broadway();
     gtk::init().expect("gtk init");
 
+    // The desktop's pictures: rendered once at the display's width and cached
+    // (`panels::wallpaper_texture`); the second ask is what a day/night change waits for.
+    let cache = std::env::temp_dir().join(format!("wol-gate-transition-{}", std::process::id()));
+    unsafe { std::env::set_var("XDG_CACHE_HOME", &cache) };
     let t = Instant::now();
-    let day = gdk::Texture::from_filename(gate_svg("day")).expect("day picture");
-    let night = gdk::Texture::from_filename(gate_svg("night")).expect("night picture");
+    let full = gdk::Texture::from_filename(gate_svg("day")).expect("day picture at 4k");
     let decode = t.elapsed();
+    assert_eq!(full.width(), 3840);
+    let t = Instant::now();
+    let day = wallpaper_texture(&gate_svg("day"), SIZE.0).expect("day picture");
+    let night = wallpaper_texture(&gate_svg("night"), SIZE.0).expect("night picture");
+    let first = t.elapsed() / 2;
+    let t = Instant::now();
+    let again = wallpaper_texture(&gate_svg("night"), SIZE.0).expect("night again");
+    let cached = t.elapsed();
+    assert_eq!((day.width(), day.height()), (SIZE.0, SIZE.1));
+    assert_eq!(
+        (again.width(), again.height()),
+        (night.width(), night.height())
+    );
+    assert!(
+        cached < first,
+        "the cached picture is quicker than a render"
+    );
     let t = Instant::now();
     let m = morph_between(&day, &night).expect("same size");
     let prepare = t.elapsed();
@@ -172,13 +192,20 @@ fn main() {
     let mean = sum.as_secs_f64() * 1000.0 / frames as f64;
     println!(
         "gate transition {}x{}: {frames} frames, mean {mean:.2} ms, worst {:.2} ms per frame \
-         (morph step + snapshot + GSK cairo renderer); once: decode two 4k SVGs {:.0} ms, prepare {:.0} ms",
+         (morph step + snapshot + GSK cairo renderer); once: prepare {:.0} ms",
         SIZE.0,
         SIZE.1,
         worst.as_secs_f64() * 1000.0,
-        decode.as_secs_f64() * 1000.0,
         prepare.as_secs_f64() * 1000.0,
     );
+    println!(
+        "gate picture: 4k SVG at its own size {:.0} ms; at {} px first render {:.0} ms, from the cache {:.0} ms",
+        decode.as_secs_f64() * 1000.0,
+        SIZE.0,
+        first.as_secs_f64() * 1000.0,
+        cached.as_secs_f64() * 1000.0,
+    );
+    let _ = std::fs::remove_dir_all(&cache);
     // Timing depends on the machine and its load: the budget is asserted on request only.
     if std::env::var_os("WOL_GATE_BUDGET").is_some() {
         assert!(

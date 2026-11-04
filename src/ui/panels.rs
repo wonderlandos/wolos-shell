@@ -9,6 +9,8 @@ use gtk::{gdk, gio, glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+/// Pixel width a wallpaper SVG is rendered at before the window knows its size.
+const WALLPAPER_WIDTH: i32 = 1920;
 /// Seconds between two looks at the clock for the Dynamic wallpaper.
 const DYNAMIC_TICK: u32 = 60;
 
@@ -33,10 +35,13 @@ pub fn dress_wallpaper(win: &gtk::Window) {
     let shown: RefCell<Option<std::path::PathBuf>> = Default::default();
     let weak = win.downgrade();
     let show = Rc::new(move || {
-        let aspect = weak
+        let size = weak
             .upgrade()
             .filter(|w| w.width() > 0 && w.height() > 0)
-            .map_or(16.0 / 9.0, |w| f64::from(w.width()) / f64::from(w.height()));
+            .map(|w| (w.width(), w.height(), w.scale_factor()));
+        let aspect = size.map_or(16.0 / 9.0, |(w, h, _)| f64::from(w) / f64::from(h));
+        // The picture at the display's pixel width (1920 until the window has a size).
+        let width = size.map_or(WALLPAPER_WIDTH, |(w, _, s)| w * s);
         let now = crate::kit::pickers::desktop_wallpaper_for(aspect);
         if *shown.borrow() == now {
             return;
@@ -50,10 +55,17 @@ pub fn dress_wallpaper(win: &gtk::Window) {
         // Decoded off the main thread: the CSS gradient shows until the picture is ready.
         let fade = fade.clone();
         glib::spawn_future_local(async move {
-            let Ok(Ok(t)) = gio::spawn_blocking(move || gdk::Texture::from_filename(p)).await
+            let p2 = p.clone();
+            let Ok(Some(t)) = gio::spawn_blocking(move || wallpaper_texture(&p2, width)).await
             else {
                 return;
             };
+            // The other side (day or night) rendered now, so a light/dark change does not wait.
+            if let Some(other) = kit::pickers::other_side(&p) {
+                drop(gio::spawn_blocking(move || {
+                    wallpaper_texture(&other, width)
+                }));
+            }
             if let Some(old) = old.filter(|_| !fade.is_reduced()) {
                 let (from, to) = (old.clone(), t.clone());
                 if let Ok(Some(m)) = gio::spawn_blocking(move || morph_between(&from, &to)).await {
@@ -128,6 +140,46 @@ fn morph_frame(m: &kit::gate::Morph, t: f32) -> gdk::MemoryTexture {
         &glib::Bytes::from_owned(m.frame(t)),
         m.w * 4,
     )
+}
+
+/// Runs `m` on `pic` (the lock, login and assistant backdrop): its frames over [`kit::gate::MS`],
+/// then `to`. Keep the handle while it runs; under reduce motion `to` at once.
+pub fn morph_picture(
+    pic: &gtk::Picture,
+    m: kit::gate::Morph,
+    to: &gdk::Paintable,
+) -> kit::anim::Animated {
+    let weak = pic.downgrade();
+    let run = kit::anim::Animated::new(pic, 0.0, move |v| {
+        if let Some(p) = weak.upgrade() {
+            p.set_paintable(Some(&morph_frame(&m, v)));
+        }
+    });
+    let (weak, to) = (pic.downgrade(), to.clone());
+    run.connect_settled(move |v| {
+        if let (true, Some(p)) = (v >= 1.0, weak.upgrade()) {
+            p.set_paintable(Some(&to));
+        }
+    });
+    run.retarget(
+        1.0,
+        kit::anim::Motion::Tween {
+            curve: kit::motion::Curve::Linear,
+            ms: kit::gate::MS,
+        },
+    );
+    run
+}
+
+/// The picture of wallpaper `p` for a display `width` px wide: an SVG is rendered once at that
+/// width and kept with the previews ([`kit::form::wallpaper_thumb`]: a 4k gate took ~8 s to decode
+/// at its own size on every change); a photo as it is. Blocking: off the GTK thread.
+pub fn wallpaper_texture(p: &std::path::Path, width: i32) -> Option<gdk::Texture> {
+    if p.extension().is_some_and(|x| x == "svg") {
+        kit::form::wallpaper_thumb(p, width)
+    } else {
+        gdk::Texture::from_filename(p).ok()
+    }
 }
 
 /// The wallpaper's two pictures: `back` is on screen, `front` fades the next one in over it
