@@ -26,6 +26,7 @@ pub mod searchbar;
 pub mod settings;
 pub mod setup;
 pub mod shortcut_sheet;
+pub mod snap;
 pub mod store;
 pub mod switcher;
 pub mod theme_picker;
@@ -174,6 +175,12 @@ pub fn run_shell() -> glib::ExitCode {
                     handlers.insert(
                         0,
                         Rc::new(move |c: &crate::protocol::Command| sw.command(c.verb, &c.target)),
+                    );
+                }
+                if let Some(snap) = fence::guard("snap", || snap::Snap::build(&app)) {
+                    handlers.insert(
+                        0,
+                        Rc::new(move |c: &crate::protocol::Command| snap.command(c)),
                     );
                 }
                 if let Some(board) = board {

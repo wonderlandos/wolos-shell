@@ -248,7 +248,7 @@ fn every_command_shortcut_reaches_the_app_as_ctrl() {
     }
 }
 
-/// System shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
+/// System shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ (Overview) and ⌘←→↑↓ (Snap), ⌘Tab, ⌃⌘Q,
 /// ⌥⌘Esc (Force Quit), ⌃F2 (menu bar), ⌃F3 (Dock). Esc (closes panels, dismisses banners) is
 /// forwarded by wol-hypr, not bound (`no_process_per_escape_or_super_release`).
 #[test]
@@ -261,7 +261,10 @@ fn system_shortcuts_are_the_mac_ones() {
         ("SUPER SHIFT", "4", "", "wol-screenshot region"),
         ("SUPER SHIFT", "5", "", "wol shell show screenshot"),
         ("CTRL", "Up", "", "wol shell toggle overview"),
-        ("SUPER", "Up", "", "wol shell toggle overview"),
+        ("SUPER", "Left", "", "hyprctl wolsnap left"),
+        ("SUPER", "Right", "", "hyprctl wolsnap right"),
+        ("SUPER", "Up", "", "hyprctl wolsnap up"),
+        ("SUPER", "Down", "", "hyprctl wolsnap down"),
         ("SUPER", "Tab", "", "wol shell show switcher"),
         ("CTRL SUPER", "Q", "", "wol-lock"),
         ("SUPER ALT", "Escape", "", "wol shell toggle force-quit"),

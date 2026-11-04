@@ -56,7 +56,7 @@ label.large-title { font-size: 27px; line-height: 40px; font-weight: 700; letter
 label.eyebrow { font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: 0.4px; }
 
 /* Layer windows are see-through; only content draws. */
-window.wallpaper, window.menubar, window.dock, window.panel, window.banners, window.controlcenter, window.searchbar, window.preview, window.catcher { background: none; box-shadow: none; border: none; }
+window.wallpaper, window.menubar, window.dock, window.panel, window.banners, window.controlcenter, window.searchbar, window.preview, window.catcher, window.snap { background: none; box-shadow: none; border: none; }
 window.wallpaper { background: linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04354a); }
 
 /* ---- Menu bar: 28px translucent strip ---- */
@@ -430,6 +430,14 @@ button.hero-action { min-height: 40px; min-width: 168px; padding: 0 28px; border
 .switcher-ring { padding: 6px; border-radius: 16px; border: 3px solid transparent; }
 .switcher-tile.selected .switcher-ring { border-color: var(--accent); background: alpha(var(--accent), 0.18); }
 .switcher-name { font-size: 13px; font-weight: 600; }
+
+/* ---- Snap: the drop preview and the layouts chooser (ui::snap) ---- */
+.snap-preview { border-radius: var(--glass-radius-s); background: alpha(var(--accent), 0.28); border: 2px solid alpha(var(--accent), 0.75); }
+.snap-layouts { padding: 10px; }
+.snap-thumb { background: alpha(var(--text), 0.10); border-radius: 8px; }
+button.snap-cell { min-width: 0; min-height: 0; padding: 0; border: none; box-shadow: none; border-radius: 4px; background: alpha(var(--text), 0.22); }
+button.snap-cell:hover { background: alpha(var(--accent), 0.85); }
+button.snap-cell:active { background: var(--accent); }
 
 /* ---- Overview ---- */
 .overview-desktops { margin: 24px 0 16px 0; }

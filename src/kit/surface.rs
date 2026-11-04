@@ -317,6 +317,20 @@ pub fn set_monitor(w: &impl IsA<gtk::Window>, display: Option<&gtk::gdk::Monitor
 #[cfg(not(feature = "layer-shell"))]
 pub fn set_monitor(_w: &impl IsA<gtk::Window>, _display: Option<&gtk::gdk::Monitor>) {}
 
+/// The left and top layer margins of a surface anchored to the top left (a popup placed by
+/// pixels on its output: the snap layouts chooser).
+#[cfg(feature = "layer-shell")]
+pub fn set_origin(w: &impl IsA<gtk::Window>, left: i32, top: i32) {
+    use gtk4_layer_shell::{Edge, LayerShell};
+    if gtk4_layer_shell::is_supported() {
+        w.set_margin(Edge::Left, left);
+        w.set_margin(Edge::Top, top);
+    }
+}
+
+#[cfg(not(feature = "layer-shell"))]
+pub fn set_origin(_w: &impl IsA<gtk::Window>, _left: i32, _top: i32) {}
+
 /// True when surfaces really are layers (not dev toplevels).
 pub fn layered() -> bool {
     #[cfg(feature = "layer-shell")]

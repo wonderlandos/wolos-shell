@@ -132,7 +132,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p
 }
 
-/// Row titles in a group: a second key for the same action (⌃↑ and ⌘↑ both Overview) is its
+/// Row titles in a group: a second key for the same action (one the person added) is its
 /// "(alternate)", so the list never shows one name twice (audit2 A2-12).
 fn row_names<'a>(names: impl Iterator<Item = &'a str>) -> Vec<String> {
     let mut seen: Vec<&str> = Vec::new();

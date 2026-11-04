@@ -732,6 +732,11 @@ fn run(
     osd: &Rc<Osd>,
     sys: &Rc<dyn crate::system::System>,
 ) {
+    // `snap-preview` and `snap-layouts` lines are taken by the handler `ui::snap` adds; one that gets
+    // here found none (the parts are not built yet, or snap failed to build) and is dropped, not a panel.
+    if cmd.verb == protocol::Verb::Snap {
+        return;
+    }
     if cmd.verb == protocol::Verb::Reload {
         // Theme reloads through its file monitor; shell prefs here.
         return report(&WATCHED[..2], reload());

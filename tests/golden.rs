@@ -485,6 +485,37 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // Dragging a window to the left edge: the drop preview over the wallpaper.
+            name: "snap-preview".into(),
+            size: (640, 360),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                // The window being dragged (its name), the preview above it on the left half.
+                let f = gtk::Fixed::new();
+                f.put(
+                    &kit::widgets::centered("Terminal", "switcher-name"),
+                    400.0,
+                    150.0,
+                );
+                f.put(&ui::snap::preview_box(310, 330), 12.0, 12.0);
+                f.upcast()
+            }),
+        },
+        Case {
+            // Resting on the zoom button: the snap layouts chooser.
+            name: "snap-layouts".into(),
+            size: (420, 180),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let c = ui::snap::layouts(|_| {});
+                c.set_halign(gtk::Align::Center);
+                c.set_valign(gtk::Align::Center);
+                c.upcast()
+            }),
+        },
+        Case {
             // ⇧⌘/: every shortcut shipped by default, in columns.
             name: "shortcut-sheet".into(),
             size: (ui::shortcut_sheet::WIDTH + 2 * kit::widgets::S6, 1),
