@@ -86,6 +86,8 @@ pub fn entry(p: &Packed) -> wopkg::index::plugins::Entry {
         url: format!("https://example.com/{name}"),
         sha256: p.sha256.clone(),
         size: p.size,
+        // WolOS Hub adds the file certificate when it publishes the entry.
+        filecert: String::new(),
     }
 }
 

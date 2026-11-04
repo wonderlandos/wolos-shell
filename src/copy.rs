@@ -812,7 +812,7 @@ pub const TRUST_TRUSTED: &str =
 pub const TRUST_ORIGIN: &str = "WolOS knows who published this app and that it is unchanged since. Nobody at WolOS Hub has reviewed this developer yet.";
 /// Install page row "Previous key" (a legacy `SHA256.sig` only, audit H1).
 pub const TRUST_LEGACY: &str =
-    "Signed with the previous WolOS key, which has no certificate and no post-quantum signature.";
+    "Signed with the previous WolOS key, which has no certificate and no newer signature.";
 /// Install page, the line under the trust row naming who vouches (the roots' subject text).
 pub fn trust_vouched_by(text: &str) -> String {
     format!("Who vouches: {text}")
