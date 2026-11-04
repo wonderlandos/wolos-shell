@@ -1,0 +1,12 @@
+# path (relative to this directory)	module: the key prefix
+../../src/copy.rs	copy
+../../src/copy_installer.rs	installer
+../../src/install_flow.rs	installer
+../../src/ui/installer.rs	installer
+../../src/ui/installer/disks.rs	installer
+../../src/setup.rs	setup
+../../src/ui/setup.rs	setup
+../../src/kit/assistant.rs	kit
+../../src/ui/settings/language.rs	language
+../../src/kit/widgets.rs	kit
+../../src/login.rs	login

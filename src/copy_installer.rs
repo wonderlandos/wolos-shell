@@ -3,17 +3,21 @@
 //! pages lives here, in `shell::copy` (`copy::installer`), so `copy::lint` reads them and the scan in
 //! `tests/copy_lint.rs` keeps `src/install*.rs` and `src/ui/installer.rs` free of their own.
 //! Invariant: the pages pick a sentence by a fact (step, stage, tier, what stays), never build one.
+use crate::i18n::{tr, tr_fill, trn};
 use crate::install::Stage;
 use crate::install::flow::Step;
 
 /// The erase warning names what will be lost: "This disk has Windows on it. Erasing removes it."
 pub fn erase_warning(others: &[String]) -> String {
     match others {
-        [] => "Everything on this disk will be erased.".to_string(),
-        [one] => format!("This disk has {one} on it. Erasing removes it."),
-        [rest @ .., last] => format!(
-            "This disk has {} and {last} on it. Erasing removes them.",
-            rest.join(", ")
+        [] => tr("Everything on this disk will be erased.").to_string(),
+        [one] => tr_fill(
+            "This disk has {one} on it. Erasing removes it.",
+            &[("one", one)],
+        ),
+        [rest @ .., last] => tr_fill(
+            "This disk has {some} and {last} on it. Erasing removes them.",
+            &[("some", &rest.join(", ")), ("last", last)],
         ),
     }
 }
@@ -23,11 +27,13 @@ pub fn erase_warning(others: &[String]) -> String {
 pub fn refusal_text(why: &str, title: &str) -> Option<String> {
     match why {
         "in-use" => None,
-        "too-small" => Some(format!(
-            "“{title}” is too small. WolOS needs at least 16 GB."
+        "too-small" => Some(tr_fill(
+            "“{title}” is too small. WolOS needs at least 16 GB.",
+            &[("title", title)],
         )),
-        _ => Some(format!(
-            "“{title}” can’t be erased: it’s the disk WolOS started from, or it’s gone. Choose another disk."
+        _ => Some(tr_fill(
+            "“{title}” can’t be erased: it’s the disk WolOS started from, or it’s gone. Choose another disk.",
+            &[("title", title)],
         )),
     }
 }
@@ -40,41 +46,49 @@ pub const SECURE_BOOT_TEXT: &str =
     "This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.";
 /// Under [`SECURE_BOOT_TEXT`] on the same sheet, one line each (RU-001: a sentence stays short):
 /// the firmware setting to change, then the key screen that follows.
-pub const SECURE_BOOT_STEPS: [&str; 2] = [
-    "After installing, open your computer’s startup settings (often F2, F10, F12 or Delete) and \
+pub fn secure_boot_steps() -> [&'static str; 2] {
+    [
+        tr(
+            "After installing, open your computer’s startup settings (often F2, F10, F12 or Delete) and \
      allow third-party certificates.",
-    "They are sometimes called Microsoft UEFI CA or Other OS. Then a blue screen asks once to \
+        ),
+        tr(
+            "They are sometimes called Microsoft UEFI CA or Other OS. Then a blue screen asks once to \
      accept this computer’s WolOS key.",
-];
+        ),
+    ]
+}
 
 /// Each page's line under its title. Done and Secure Boot say more than a line: see
 /// `copy::INSTALL_RESTART` and [`SECURE_BOOT_STEPS`].
 pub fn subtitle(step: Step) -> &'static str {
     match step {
-        Step::Begin => "Install it on this computer, or try it first. Trying changes nothing.",
-        Step::Language => "Choose your language and the keyboard you type on.",
-        Step::Zone => "Your clock follows this place.",
-        Step::Disk => "Choose where WolOS goes.",
-        Step::Method => "Nothing changes until the last step.",
+        Step::Begin => tr("Install it on this computer, or try it first. Trying changes nothing."),
+        Step::Language => tr("Choose your language and the keyboard you type on."),
+        Step::Zone => tr("Your clock follows this place."),
+        Step::Disk => tr("Choose where WolOS goes."),
+        Step::Method => tr("Nothing changes until the last step."),
         Step::Replace => {
-            "Choose the partition WolOS takes over. It is erased; the rest of the disk stays."
+            tr("Choose the partition WolOS takes over. It is erased; the rest of the disk stays.")
         }
-        Step::Alongside => "Drag to choose how much room each system gets.",
-        Step::Manual => "Choose a partition to change it, or free space to add one.",
-        Step::Edit => "Choose what this partition is for.",
-        Step::Protect => "Encryption keeps your files private if this computer is lost.",
-        Step::SecureBootChoice => {
-            "Secure Boot checks at every start that nobody changed WolOS while the computer was off."
+        Step::Alongside => tr("Drag to choose how much room each system gets."),
+        Step::Manual => tr("Choose a partition to change it, or free space to add one."),
+        Step::Edit => tr("Choose what this partition is for."),
+        Step::Protect => tr("Encryption keeps your files private if this computer is lost."),
+        Step::SecureBootChoice => tr(
+            "Secure Boot checks at every start that nobody changed WolOS while the computer was off.",
+        ),
+        Step::Account => tr("You use this to sign in."),
+        Step::Modules => {
+            tr("Add sets of apps for what you do, or none. You can change this later.")
         }
-        Step::Account => "You use this to sign in.",
-        Step::Modules => "Add sets of apps for what you do, or none. You can change this later.",
-        Step::Extras => "Play the music and video files most people have, in one click.",
-        Step::Summary => "Nothing has changed yet. This is exactly what will happen.",
-        Step::SecureBoot => SECURE_BOOT_TEXT,
-        Step::Installing => "This takes a few minutes. Keep your computer plugged in.",
-        Step::Done => super::INSTALL_RESTART,
+        Step::Extras => tr("Play the music and video files most people have, in one click."),
+        Step::Summary => tr("Nothing has changed yet. This is exactly what will happen."),
+        Step::SecureBoot => tr(SECURE_BOOT_TEXT),
+        Step::Installing => tr("This takes a few minutes. Keep your computer plugged in."),
+        Step::Done => tr(super::INSTALL_RESTART),
         Step::Failed => "",
-        Step::KeyUnread => KEY_UNREAD_TEXT,
+        Step::KeyUnread => tr(KEY_UNREAD_TEXT),
     }
 }
 
@@ -84,55 +98,63 @@ pub const KEY_UNREAD_TEXT: &str = "WolOS is installed, but its recovery key coul
 /// What each page means for someone coming from Windows, macOS or another Linux (lead,
 /// 2026-11-02): what will happen, what is kept. Said after the subtitle, before the page's
 /// "Next:" line ([`next_words`]), as one paragraph. Each entry is one or two sentences.
-pub fn explain(step: Step) -> &'static [&'static str] {
+pub fn explain(step: Step) -> Vec<&'static str> {
     match step {
-        Step::Begin => &[
+        Step::Begin => vec![tr(
             "The installer asks a few questions first. Nothing on this computer changes until you click Install on the last page.",
-        ],
-        Step::Language => &[
+        )],
+        Step::Language => vec![tr(
             "This is the language of menus and apps, and what your keys type. Both can be changed later in System Settings.",
-        ],
-        Step::Zone => &["Type a big city near you: the clock and calendar follow its time."],
-        Step::Disk => &[
+        )],
+        Step::Zone => vec![tr(
+            "Type a big city near you: the clock and calendar follow its time.",
+        )],
+        Step::Disk => vec![tr(
             "A disk is the drive inside your computer that holds Windows, macOS or Linux and your files. Choosing one changes nothing yet.",
+        )],
+        Step::Method => vec![
+            tr(
+                "Sharing keeps your other system and its files, and you pick one when the computer starts.",
+            ),
+            tr(
+                "Erase Disk removes everything on the disk. Manual is for people who already know partitions.",
+            ),
         ],
-        Step::Method => &[
-            "Sharing keeps your other system and its files, and you pick one when the computer starts.",
-            "Erase Disk removes everything on the disk. Manual is for people who already know partitions.",
-        ],
-        Step::Replace => &[
+        Step::Replace => vec![tr(
             "A partition is one section of a disk, like a drive letter on Windows. Every other partition and its files stay.",
-        ],
-        Step::Alongside => &[
+        )],
+        Step::Alongside => vec![tr(
             "Your other system and its files stay; it only gets smaller. As with any change to a disk, back up what matters first.",
+        )],
+        Step::Manual => vec![
+            tr(
+                "A partition is one section of a disk. WolOS needs one for its system and a startup partition, the small part your computer starts from.",
+            ),
+            tr("Nothing changes until you click Install."),
         ],
-        Step::Manual => &[
-            "A partition is one section of a disk. WolOS needs one for its system and a startup partition, the small part your computer starts from.",
-            "Nothing changes until you click Install.",
-        ],
-        Step::Edit => &[
+        Step::Edit => vec![tr(
             "Turn on Erase to clear this partition for its new job. Leave it off and the files on it stay.",
-        ],
-        Step::Protect => &[
+        )],
+        Step::Protect => vec![tr(
             "It works like BitLocker on Windows or FileVault on a Mac: without your password or this computer, nobody can read the disk.",
-        ],
-        Step::Account => &[
+        )],
+        Step::Account => vec![tr(
             "It is like your Windows or Mac user account: it signs in, installs apps and changes settings.",
-        ],
-        Step::Modules => &[
+        )],
+        Step::Modules => vec![tr(
             "None are chosen for you. They download while WolOS installs; without the internet, WolOS adds them at its first start.",
-        ],
-        Step::Extras => &[
+        )],
+        Step::Extras => vec![tr(
             "Not added unless you turn this on. They download while WolOS installs; without the internet, find Media Codecs in the App Store.",
-        ],
-        Step::Summary => &[
+        )],
+        Step::Summary => vec![tr(
             "Install starts the changes and takes a few minutes. Back lets you change anything first.",
-        ],
-        Step::Installing => &[
+        )],
+        Step::Installing => vec![tr(
             "Nothing restarts until you click Restart. The tips below show a few things worth knowing.",
-        ],
+        )],
         Step::SecureBootChoice | Step::SecureBoot | Step::Done | Step::Failed | Step::KeyUnread => {
-            &[]
+            Vec::new()
         }
     }
 }
@@ -141,39 +163,51 @@ pub fn explain(step: Step) -> &'static [&'static str] {
 /// choice still to be made, or nothing comes next.
 pub fn next_words(next: Step) -> Option<&'static str> {
     Some(match next {
-        Step::Language => "Next: your language and keyboard.",
-        Step::Zone => "Next: your time zone.",
-        Step::Disk => "Next: the disk WolOS goes on.",
-        Step::Method => "Next: whether WolOS shares the disk or takes all of it.",
-        Step::Protect => "Next: how your files are protected.",
-        Step::SecureBootChoice => "Next: whether WolOS uses Secure Boot.",
-        Step::Account => "Next: your account.",
-        Step::Modules => "Next: optional apps for what you do.",
-        Step::Extras => "Next: music and video formats.",
-        Step::Summary => "Next: a summary of everything, before anything changes.",
+        Step::Language => tr("Next: your language and keyboard."),
+        Step::Zone => tr("Next: your time zone."),
+        Step::Disk => tr("Next: the disk WolOS goes on."),
+        Step::Method => tr("Next: whether WolOS shares the disk or takes all of it."),
+        Step::Protect => tr("Next: how your files are protected."),
+        Step::SecureBootChoice => tr("Next: whether WolOS uses Secure Boot."),
+        Step::Account => tr("Next: your account."),
+        Step::Modules => tr("Next: optional apps for what you do."),
+        Step::Extras => tr("Next: music and video formats."),
+        Step::Summary => tr("Next: a summary of everything, before anything changes."),
         _ => return None,
     })
 }
 
 /// The Secure Boot page when the person may choose (default off) and the key screen is how it
 /// turns on (`mok`): what On and Off mean.
-pub const SECURE_CHOICE_SCREEN: [&str; 3] = [
-    "It is optional, and off unless you turn it on.",
-    "On: one blue screen appears after the restart and asks you to accept this computer’s key, once. Off: WolOS starts straight away.",
-    "You can turn it on later in System Settings.",
-];
+pub fn secure_choice_screen() -> [&'static str; 3] {
+    [
+        tr("It is optional, and off unless you turn it on."),
+        tr(
+            "On: one blue screen appears after the restart and asks you to accept this computer’s key, once. Off: WolOS starts straight away.",
+        ),
+        tr("You can turn it on later in System Settings."),
+    ]
+}
 /// The same choice in Setup Mode (`own-keys`): WolOS writes its keys, nothing to click.
-pub const SECURE_CHOICE_OWN_KEYS: [&str; 3] = [
-    "It is optional, and off unless you turn it on.",
-    "On: WolOS puts its own keys into your computer’s startup settings, with nothing to click. Off: nothing there changes.",
-    "You can turn it on later in System Settings.",
-];
+pub fn secure_choice_own_keys() -> [&'static str; 3] {
+    [
+        tr("It is optional, and off unless you turn it on."),
+        tr(
+            "On: WolOS puts its own keys into your computer’s startup settings, with nothing to click. Off: nothing there changes.",
+        ),
+        tr("You can turn it on later in System Settings."),
+    ]
+}
 /// The computer's own Secure Boot is on already, so leaving it off is not a real choice (WolOS
 /// would only start after a trip to the startup settings): said, with no switch.
-pub const SECURE_ALREADY_ON: [&str; 2] = [
-    "Your computer already has Secure Boot turned on, so WolOS uses it too.",
-    "One blue screen appears after the restart and asks you to accept this computer’s key, once.",
-];
+pub fn secure_already_on() -> [&'static str; 2] {
+    [
+        tr("Your computer already has Secure Boot turned on, so WolOS uses it too."),
+        tr(
+            "One blue screen appears after the restart and asks you to accept this computer’s key, once.",
+        ),
+    ]
+}
 /// Over the steps: what the key screen looks like, before it appears.
 pub const KEY_SCREEN_LOOKS: &str = "It looks like an old computer screen: blue, white letters, a short menu. The mouse does not work there: use the arrow keys and Enter.";
 /// The switch on the Secure Boot page.
@@ -192,38 +226,44 @@ pub const SUMMARY_SECURE_OFF: &str =
 
 /// The Modules page's rows, by registry id, in the order the page lists them (lead: developer,
 /// AI, creative, gaming): (title, what it brings). A record with no row here is not offered.
-pub const MODULE_ROWS: [(&str, &str, &str); 5] = [
-    (
-        "dev",
-        "Developer Tools",
-        "Code editor, Git, containers and programming languages",
-    ),
-    (
-        "ai-claude",
-        "AI Assistants",
-        "Claude Code and other agents, inside WolOS’s rules",
-    ),
-    (
-        "ai-local",
-        "Local AI",
-        "AI models that run on this computer, also offline",
-    ),
-    (
-        "creative",
-        "Creative Apps",
-        "Blender, GIMP, Krita, Inkscape, OBS, Kdenlive and more",
-    ),
-    ("gaming", "Gaming", "Steam, controllers and game tools"),
-];
+pub fn module_rows() -> [(&'static str, &'static str, &'static str); 5] {
+    [
+        (
+            "dev",
+            tr("Developer Tools"),
+            tr("Code editor, Git, containers and programming languages"),
+        ),
+        (
+            "ai-claude",
+            tr("AI Assistants"),
+            tr("Claude Code and other agents, inside WolOS’s rules"),
+        ),
+        (
+            "ai-local",
+            tr("Local AI"),
+            tr("AI models that run on this computer, also offline"),
+        ),
+        (
+            "creative",
+            tr("Creative Apps"),
+            tr("Blender, GIMP, Krita, Inkscape, OBS, Kdenlive and more"),
+        ),
+        (
+            "gaming",
+            tr("Gaming"),
+            tr("Steam, controllers and game tools"),
+        ),
+    ]
+}
 
 /// Under the Modules list: how much the ticked ones download (`mb`, from their records).
 pub fn modules_download(mb: u64) -> String {
     if mb == 0 {
-        "Nothing extra to download.".to_string()
+        tr("Nothing extra to download.").to_string()
     } else {
-        format!(
-            "About {} to download.",
-            crate::install::size_text(mb * 1_000_000)
+        tr_fill(
+            "About {size} to download.",
+            &[("size", &crate::install::size_text(mb * 1_000_000))],
         )
     }
 }
@@ -233,17 +273,22 @@ fn and_list(names: &[&str]) -> String {
     match names {
         [] => String::new(),
         [one] => (*one).to_string(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+        [rest @ .., last] => tr_fill(
+            "{some} and {last}",
+            &[("some", &rest.join(", ")), ("last", last)],
+        ),
     }
 }
 
 /// The summary line for the ticked modules (`names`, the page's titles), None when none.
 pub fn summary_modules(names: &[&str], mb: u64) -> Option<String> {
     (!names.is_empty()).then(|| {
-        format!(
-            "Adds {}, about {} to download.",
-            and_list(names),
-            crate::install::size_text(mb * 1_000_000)
+        tr_fill(
+            "Adds {names}, about {size} to download.",
+            &[
+                ("names", &and_list(names)),
+                ("size", &crate::install::size_text(mb * 1_000_000)),
+            ],
         )
     })
 }
@@ -262,9 +307,9 @@ pub const DEFERRED_MODULES: &str = "Modules are added at first start with a netw
 /// The deferral line offline: None when neither media formats nor modules were chosen.
 pub fn deferred(codecs: bool, modules: bool) -> Option<&'static str> {
     match (codecs, modules) {
-        (true, true) => Some(DEFERRED_BOTH),
-        (true, false) => Some(DEFERRED_CODECS),
-        (false, true) => Some(DEFERRED_MODULES),
+        (true, true) => Some(tr(DEFERRED_BOTH)),
+        (true, false) => Some(tr(DEFERRED_CODECS)),
+        (false, true) => Some(tr(DEFERRED_MODULES)),
         (false, false) => None,
     }
 }
@@ -280,26 +325,37 @@ pub const PASSWORDS_DIFFER: &str = "Passwords don’t match.";
 /// The computer's name is not one RFC 1123 allows.
 pub const HOSTNAME_RULE: &str = "Use letters, digits and hyphens for the computer’s name.";
 /// The time zone search found nothing (the empty state's title, then its hint).
-pub const NO_PLACE: (&str, &str) = ("No matching place", "Try the name of a big city near you.");
+pub fn no_place() -> (&'static str, &'static str) {
+    (
+        tr("No matching place"),
+        tr("Try the name of a big city near you."),
+    )
+}
 /// The disk page while the disks are looked at.
 pub const LOOKING_AT_DISKS: &str = "Looking at your disks…";
 /// No disk the installer may use (the empty state's title, then its hint; the button is "Look Again").
-pub const NO_DISK: (&str, &str) = (
-    "No disk found",
-    "Connect the disk you want to install on, then click Look Again.",
-);
+pub fn no_disk() -> (&'static str, &'static str) {
+    (
+        tr("No disk found"),
+        tr("Connect the disk you want to install on, then click Look Again."),
+    )
+}
 
 /// The line under the progress bar.
 pub fn remaining_text(secs: Option<f64>) -> String {
     match secs {
-        None => "Estimating time remaining…".into(),
-        Some(s) if s < 60.0 => "Less than a minute remaining".into(),
+        None => tr("Estimating time remaining…").into(),
+        Some(s) if s < 60.0 => tr("Less than a minute remaining").into(),
         Some(s) => {
             let m = (s / 60.0).round().max(1.0) as u64;
             if m == 1 {
-                "About a minute remaining".into()
+                tr("About a minute remaining").into()
             } else {
-                format!("About {m} minutes remaining")
+                trn(
+                    "About {n} minute remaining",
+                    "About {n} minutes remaining",
+                    m,
+                )
             }
         }
     }
@@ -308,17 +364,17 @@ pub fn remaining_text(secs: Option<f64>) -> String {
 /// What the progress page says the installer is doing.
 pub fn doing(stage: Stage) -> &'static str {
     match stage {
-        Stage::Prepare | Stage::Disk => "Preparing the disk…",
-        Stage::Files => "Copying system files…",
-        Stage::Keys => "Making this computer’s keys…",
-        Stage::Encrypt => "Encrypting the disk…",
-        Stage::Initramfs => "Preparing the first start…",
-        Stage::Boot => "Installing the startup files…",
-        Stage::Settings => "Saving settings…",
-        Stage::Seal => "Locking the disk key to this computer…",
-        Stage::Packages => "Installing apps…",
-        Stage::Finish => "Finishing up…",
-        Stage::Done => "Done",
+        Stage::Prepare | Stage::Disk => tr("Preparing the disk…"),
+        Stage::Files => tr("Copying system files…"),
+        Stage::Keys => tr("Making this computer’s keys…"),
+        Stage::Encrypt => tr("Encrypting the disk…"),
+        Stage::Initramfs => tr("Preparing the first start…"),
+        Stage::Boot => tr("Installing the startup files…"),
+        Stage::Settings => tr("Saving settings…"),
+        Stage::Seal => tr("Locking the disk key to this computer…"),
+        Stage::Packages => tr("Installing apps…"),
+        Stage::Finish => tr("Finishing up…"),
+        Stage::Done => tr("Done"),
         Stage::Failed => "",
     }
 }
@@ -326,41 +382,48 @@ pub fn doing(stage: Stage) -> &'static str {
 /// Failed page subtitle, by the stage the install stopped in.
 pub fn stopped_text(at: Stage) -> &'static str {
     match at {
-        Stage::Prepare | Stage::Disk => {
-            "The disk couldn’t be prepared. Check that it’s connected, then try again or choose another disk."
-        }
+        Stage::Prepare | Stage::Disk => tr(
+            "The disk couldn’t be prepared. Check that it’s connected, then try again or choose another disk.",
+        ),
         Stage::Files => {
-            "The system files couldn’t be copied. Check the installer disk, then try again."
+            tr("The system files couldn’t be copied. Check the installer disk, then try again.")
         }
         Stage::Keys | Stage::Encrypt | Stage::Seal => {
-            "The disk couldn’t be encrypted. Try again, or choose Don’t Encrypt."
+            tr("The disk couldn’t be encrypted. Try again, or choose Don’t Encrypt.")
         }
         Stage::Initramfs | Stage::Boot => {
-            "The startup files couldn’t be installed. Try again, or choose another disk."
+            tr("The startup files couldn’t be installed. Try again, or choose another disk.")
         }
         // Language and keyboard (68) or the account (90): `wol install settings` (R2B-8).
-        Stage::Settings => {
-            "Your settings couldn’t be saved. Try again, and check the language, keyboard and account."
-        }
-        _ => "The installation stopped before it finished. Try again, or choose another disk.",
+        Stage::Settings => tr(
+            "Your settings couldn’t be saved. Try again, and check the language, keyboard and account.",
+        ),
+        _ => tr("The installation stopped before it finished. Try again, or choose another disk."),
     }
 }
 
 /// Things to read while the install runs, one at a time.
-pub const TIPS: [&str; 6] = [
-    "Updates install into a second copy of WolOS, so you can always start the previous one.",
-    "Press Command Space to search apps, files and settings from anywhere.",
-    "The App Store installs apps for everyone on this computer, with a restore point first.",
-    "Control Center, at the top right, has Wi-Fi, sound, brightness and Do Not Disturb.",
-    "Your files stay private: with encryption on, the disk opens only on this computer.",
-    "System Settings looks like the one you know, and every change there can be undone.",
-];
+pub fn tips() -> [&'static str; 6] {
+    [
+        tr(
+            "Updates install into a second copy of WolOS, so you can always start the previous one.",
+        ),
+        tr("Press Command Space to search apps, files and settings from anywhere."),
+        tr(
+            "The App Store installs apps for everyone on this computer, with a restore point first.",
+        ),
+        tr("Control Center, at the top right, has Wi-Fi, sound, brightness and Do Not Disturb."),
+        tr("Your files stay private: with encryption on, the disk opens only on this computer."),
+        tr("System Settings looks like the one you know, and every change there can be undone."),
+    ]
+}
 
 /// A kept system keeps its own startup partition while WolOS gets a new one: WolOS's menu can't
 /// list it, so it starts from the firmware's startup menu (R2B-11). `name`: "Windows", "Ubuntu".
 pub fn other_start(name: &str) -> String {
-    format!(
-        "To start {name}, open your computer’s startup menu while it starts, often with F12, F9 or Esc."
+    tr_fill(
+        "To start {name}, open your computer’s startup menu while it starts, often with F12, F9 or Esc.",
+        &[("name", name)],
     )
 }
 
@@ -384,15 +447,15 @@ pub const BITLOCKER_AVOID_SETTING: &str =
 pub fn bitlocker(tier: &str, done: bool) -> Vec<&'static str> {
     match (tier, done) {
         ("own-keys", false) => vec![
-            BITLOCKER_RECOVERY,
-            BITLOCKER_KEY_WHERE,
-            BITLOCKER_AVOID_OWN_KEYS,
+            tr(BITLOCKER_RECOVERY),
+            tr(BITLOCKER_KEY_WHERE),
+            tr(BITLOCKER_AVOID_OWN_KEYS),
         ],
-        ("own-keys", true) => vec![BITLOCKER_RECOVERY, BITLOCKER_KEY_WHERE],
+        ("own-keys", true) => vec![tr(BITLOCKER_RECOVERY), tr(BITLOCKER_KEY_WHERE)],
         ("firmware", _) => vec![
-            BITLOCKER_RECOVERY,
-            BITLOCKER_KEY_WHERE,
-            BITLOCKER_AVOID_SETTING,
+            tr(BITLOCKER_RECOVERY),
+            tr(BITLOCKER_KEY_WHERE),
+            tr(BITLOCKER_AVOID_SETTING),
         ],
         _ => Vec::new(),
     }
@@ -413,3 +476,40 @@ pub const DISK_FULL_STOPPED: &str =
 /// refusal's own sentence follows it.
 pub const REFUSED_STOPPED: &str =
     "Nothing on the disk was changed. Fix what is said below, then click Try Again.";
+
+/// The steps on the firmware's blue key screen, in the English of
+/// `wol_core::boot::key_screen_steps` (`key_screen_steps_are_the_core_ones` keeps them the same):
+/// Setup and the installer show them in the person's language. `{password}` is the key screen's
+/// password.
+const KEY_SCREEN_STEPS: [&str; 5] = [
+    crate::i18n::n_(
+        "After the restart a blue screen appears. It comes from your computer’s firmware, not from WolOS, and it waits for you.",
+    ),
+    crate::i18n::n_("Press a key, choose Enroll MOK, then Continue, then Yes."),
+    crate::i18n::n_("When it asks for a password, type {password}. Nothing shows while you type."),
+    crate::i18n::n_("Choose Reboot. You will not see this screen again."),
+    crate::i18n::n_("Missed it? Run wol boot enroll and restart."),
+];
+
+/// [`KEY_SCREEN_STEPS`] in the language in use, the password filled in.
+pub fn key_screen_steps() -> Vec<String> {
+    KEY_SCREEN_STEPS
+        .iter()
+        .map(|s| tr_fill(s, &[("password", wol_core::boot::MOK_PASSWORD)]))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The shell's copy of the key-screen steps is the core's English, word for word.
+    #[test]
+    fn key_screen_steps_are_the_core_ones() {
+        let shell: Vec<String> = KEY_SCREEN_STEPS
+            .iter()
+            .map(|s| shared::i18n::fill(s, &[("password", wol_core::boot::MOK_PASSWORD)]))
+            .collect();
+        assert_eq!(shell, wol_core::boot::key_screen_steps());
+    }
+}

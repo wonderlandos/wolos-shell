@@ -703,8 +703,8 @@ fn installer_sentences_pass() {
         c::PASSWORD_SHORT.into(),
         c::PASSWORDS_DIFFER.into(),
         c::HOSTNAME_RULE.into(),
-        c::NO_PLACE.1.into(),
-        c::NO_DISK.1.into(),
+        c::no_place().1.into(),
+        c::no_disk().1.into(),
         c::CLOCK_LOCAL.into(),
         c::REFUSED_STOPPED.into(),
         c::other_start("Ubuntu 24.04 LTS"),
@@ -712,7 +712,7 @@ fn installer_sentences_pass() {
         c::erase_warning(&["Windows".into()]),
         c::erase_warning(&["Windows".into(), "Linux".into()]),
     ];
-    all.extend(c::TIPS.iter().map(|s| s.to_string()));
+    all.extend(c::tips().iter().map(|s| s.to_string()));
     all.extend(
         ["in-use", "too-small", "not-listed"]
             .iter()

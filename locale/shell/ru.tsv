@@ -1,0 +1,385 @@
+# WolOS text: shell, Русский (ru). Write the translation in the third column; leave the hash alone.
+# Translators: docs/l10n/README.md and docs/l10n/RULES-ru.md. Columns:
+# key	source	text	hash
+copy.install_blank	This disk is empty, so there’s nothing to install alongside. Use Erase Disk.	Этот диск пуст, поэтому установить рядом не с чем. Выберите «Стереть диск».	9d62424a
+copy.install_recovery_note	Write this key down and keep it safe. It opens your disk if your password or security chip stops working.	Запишите этот ключ и храните его в надёжном месте. Он открывает диск, если пароль или чип безопасности перестанут работать.	a810c173
+copy.install_point_of_no_return	Back up anything you need first. These changes can’t be undone.	Сначала сохраните резервную копию всего нужного. Эти изменения нельзя отменить.	f0e88da3
+copy.install_unencrypted	Your files won’t be encrypted. Anyone who takes the disk can read them.	Файлы не будут зашифрованы. Любой, у кого окажется диск, сможет их прочитать.	7497258d
+copy.install_passphrase_ascii	Use letters, digits and common symbols only. Accented letters can’t be typed before WolOS starts.	Используйте только латинские буквы, цифры и обычные символы. До запуска WolOS буквы с диакритикой ввести нельзя.	c5d8d498
+copy.install_name_taken	That name is already used on this computer. Choose another.	Это имя уже используется на этом компьютере. Выберите другое.	eaaf84a8
+copy.install_own_keys_media	The install media is not signed with those keys, so it will no longer start on this computer. Remove it when the screen goes dark.	Установочный носитель не подписан этими ключами, поэтому на этом компьютере он больше не запустится. Извлеките его, когда экран погаснет.	6e3cc030
+copy.install_key_screen_title	One blue screen after restart	Один синий экран после перезагрузки	11c1387e
+copy.install_key_screen_media	When the screen goes dark after you click Restart, remove the USB stick or detach the ISO.	Когда после нажатия «Перезагрузить» экран погаснет, извлеките USB-накопитель или отключите ISO.	6dc4c915
+copy.install_restart	Click Restart to start using WolOS. When the screen goes dark, remove the USB stick or detach the ISO.	Нажмите «Перезагрузить», чтобы начать работу с WolOS. Когда экран погаснет, извлеките USB-накопитель или отключите ISO.	65261e51
+copy.install_windows_start	To start Windows, open your computer’s startup menu while it starts, often with F12, F9 or Esc.	Чтобы запустить Windows, откройте меню загрузки во время включения компьютера — обычно клавишей F12, F9 или Esc.	420eedc4
+copy.install_tpm_fallback	If the chip can’t open the disk, your account password does. Use letters, digits and common symbols only.	Если чип не сможет открыть диск, его откроет пароль учётной записи. Используйте только латинские буквы, цифры и обычные символы.	8cf2c18b
+copy.install_key_ack	I wrote the key down or saved it	Ключ записан или сохранён	38d126fc
+copy.install_no_usb	No USB stick was found. Plug one in and try again.	USB-накопитель не найден. Подключите его и повторите попытку.	276e7e2c
+copy.install_key_not_saved	The key couldn’t be saved there. Try another USB stick.	Не удалось сохранить ключ туда. Попробуйте другой USB-накопитель.	f89b0ad9
+copy.install_nothing_to_replace	No partition on this disk is big enough to take over. Use Erase Disk or Manual.	На этом диске нет раздела, достаточно большого, чтобы занять его. Выберите «Стереть диск» или «Вручную».	870d79c9
+copy.install_autologin	Sign in automatically when the computer starts.	Входить автоматически при включении компьютера.	b1459cf7
+copy.no_answer	WolOS didn’t answer in time, so nothing changed. Try again.	WolOS не ответила вовремя, поэтому ничего не изменилось. Повторите попытку.	99a92bbb
+copy.change_password_menu	Change Password…	Сменить пароль…	ec830bde
+copy.change_password	Change Password	Сменить пароль	81c9aa8e
+copy.ask_again	Ask Again	Спросить снова	a015ae6e
+copy.hw_driver_off	Its driver is installed but not turned on. Fix turns it on.	Драйвер установлен, но не включён. «Исправить» включит его.	162d734f
+copy.hw_needs_driver	Needs a driver. Fix installs it.	Нужен драйвер. «Исправить» установит его.	33bec473
+copy.hw_needs_firmware	Needs firmware. Fix installs it.	Нужна прошивка. «Исправить» установит её.	008e8dfd
+copy.hw_driver_didnt_start	Its driver didn’t start. Restarting may help.	Драйвер не запустился. Может помочь перезагрузка.	3c89b1b4
+copy.shortcuts_not_paused	WolOS shortcuts are still on, so keys that already do something may do it while you record.	Сочетания клавиш WolOS по-прежнему работают, поэтому клавиши, у которых уже есть действие, могут выполнить его во время записи.	54649297
+copy.modules_remove_not_done	The module was removed, but some of its settings are still here. Run “wol modules remove” in Terminal to finish.	Модуль удалён, но часть его настроек осталась. Чтобы закончить, выполните «wol modules remove» в Терминале.	a4b0efb4
+copy.users_unreadable	WolOS couldn’t read the list of accounts on this computer.	WolOS не удалось прочитать список учётных записей на этом компьютере.	93776beb
+copy.account_name_cut	Account names have up to 32 letters, so this one is cut.	Имя учётной записи — не больше 32 букв, поэтому это имя сокращено.	9f2a7538
+copy.account_name_type	Type an account name: lowercase letters and digits, like “mei”.	Введите имя учётной записи: строчные латинские буквы и цифры, например «mei».	8ceac574
+copy.password_disk_too	If this account unlocks the disk at startup, the disk’s password changes too.	Если эта учётная запись открывает диск при запуске, пароль диска тоже изменится.	c63e7dea
+copy.hostname_rule	Use lowercase letters, digits and hyphens, up to 63 characters.	Используйте строчные латинские буквы, цифры и дефисы, не больше 63 символов.	d6ecddf1
+copy.malware_trash_failed	It couldn’t be moved to the Trash. Try again.	Не удалось переместить в Корзину. Повторите попытку.	a3e06e33
+copy.malware_allow_failed	It’s still stopped: WolOS couldn’t allow it. Try again.	Он по-прежнему заблокирован: WolOS не удалось его разрешить. Повторите попытку.	a0df0c16
+copy.privacy_grants_read_only	These permissions can’t be changed from Settings on this computer yet.	Эти разрешения пока нельзя изменить в Настройках на этом компьютере.	360276cb
+copy.checking	Checking…	Проверка…	87f62cb7
+copy.update_check	Couldn’t check for updates. Check that you’re online, then try again.	Не удалось проверить обновления. Убедитесь, что вы в сети, и повторите попытку.	75e48833
+copy.update_restore_point	WolOS saves a restore point before updating.	Перед обновлением WolOS сохраняет точку восстановления.	aa4c4b65
+copy.config_not_applied	Changes Not Applied	Изменения не применены	ee02ca56
+copy.widget_missing	This widget isn’t installed. Reinstall it, or remove it.	Этот виджет не установлен. Переустановите или удалите его.	6563edef
+copy.lua_widget_failed	This widget’s script stopped. Fix the file and it reloads.	Скрипт этого виджета остановился. Исправьте файл, и он перезагрузится.	b7999cc3
+copy.widget_newer	This widget needs a newer version of WolOS.	Этому виджету нужна более новая версия WolOS.	babdde61
+copy.city_search	Couldn’t search for cities. Check that you’re online, then try again.	Не удалось найти города. Убедитесь, что вы в сети, и повторите попытку.	89b5bbc6
+copy.weather_offline	No forecast right now. It updates when you’re back online.	Прогноза пока нет. Он обновится, когда вы снова будете в сети.	b7378c8f
+copy.analyze_title	Check for Malware	Проверить на вредоносные программы	73e4844f
+copy.malware_full_note	Downloads about 115 MB once, then about 25 MB a day, and the system checks every download before use. A check can use about 1 GB of memory.	Один раз загружается около 115 МБ, затем около 25 МБ в день, и система проверяет каждую загрузку перед использованием. Проверка может занять около 1 ГБ памяти.	d015252f
+copy.malware_scope	Checks downloads, new programs and removable disks for known malware. New malware can get past it, so be careful with unexpected files.	Проверяет загрузки, новые программы и съёмные диски на известные вредоносные программы. Новые могут проскочить, поэтому будьте осторожны с неожиданными файлами.	e4244102
+copy.dock_downloads_empty	Nothing downloaded yet.	Пока ничего не загружено.	b5edd701
+copy.dock_tile_hint	New windows fill the screen side by side instead of floating.	Новые окна заполняют экран рядом друг с другом, а не плавают.	c2c0ec64
+copy.dock_tiling_shortcuts_hint	Move, resize and focus tiled windows from the keyboard.	Перемещайте окна в мозаике, меняйте их размер и переключайтесь между ними с клавиатуры.	74be7c76
+copy.dock_add_app_empty	Open the app first, then add it here.	Сначала откройте приложение, затем добавьте его сюда.	26fe2774
+copy.widget_no_room	No room. Remove a widget or pick a smaller size.	Нет места. Удалите виджет или выберите размер поменьше.	a280e054
+copy.desktop_busy	The desktop is busy. Try again.	Рабочий стол занят. Повторите попытку.	f2723176
+copy.login_no_display	This account can’t use the screen yet. Ask an administrator to add it to the seat group.	Эта учётная запись пока не может пользоваться экраном. Попросите администратора добавить её в группу seat.	10cf4e9b
+copy.login_unusable	Your password can’t be checked: it is too long or has a character that isn’t allowed.	Не удаётся проверить пароль: он слишком длинный или содержит недопустимый символ.	6719d5a4
+copy.login_text_password	Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks after this computer.	Ваши файлы открываются только паролем из набираемых символов. Используйте пароль, который можно набрать, или обратитесь к тому, кто обслуживает этот компьютер.	2f6a063a
+copy.lock_restart_refused	This computer can’t restart right now. If someone else is signed in, they need to sign out first.	Сейчас этот компьютер нельзя перезагрузить. Если в системе работает кто-то ещё, ему нужно сначала выйти.	32504043
+copy.store_not_finished	That did not finish. Nothing was changed.	Действие не завершилось. Ничего не изменено.	bdc6d173
+copy.store_kits_intro	Sets of extras added in one step. Nothing here is installed until you choose it.	Наборы дополнений, которые добавляются за один шаг. Здесь ничего не устанавливается, пока вы это не выберете.	ef1c98d1
+copy.store_plugins_intro	Plugins add to the menu bar, the desktop and search. They install for you only and update on their own, apart from WolOS updates.	Плагины добавляют возможности в строку меню, на рабочий стол и в поиск. Они устанавливаются только для вас и обновляются сами, отдельно от обновлений WolOS.	b95036f0
+copy.store_plugins_signed	Every plugin here was checked and signed by the WolOS plugin index.	Каждый плагин здесь проверен и подписан каталогом плагинов WolOS.	9048730f
+copy.store_plugins_loading	Loading the plugin list…	Загрузка списка плагинов…	87239167
+copy.store_plugins_offline	The plugin list could not be loaded. Check that you are online, then try again.	Не удалось загрузить список плагинов. Убедитесь, что вы в сети, и повторите попытку.	96e3574c
+copy.store_plugins_not_published	The plugin list is not available from the WolOS plugin server yet. Try again later.	Список плагинов пока недоступен на сервере плагинов WolOS. Повторите попытку позже.	647c5fad
+copy.store_plugins_untrusted	The plugin list could not be checked, so it is not shown. Try again later.	Не удалось проверить список плагинов, поэтому он не показан. Повторите попытку позже.	653c6b0f
+copy.store_plugins_not_yet	The plugin list has not been downloaded yet.	Список плагинов ещё не загружен.	751c8f61
+copy.store_plugins_empty	The plugin list is empty.	Список плагинов пуст.	8e791130
+copy.store_plugins_title	Plugins	Плагины	847d7bcb
+copy.store_plugins_create	Create Plugin…	Создать плагин…	335e2658
+copy.store_plugins_mine	Your Plugins	Ваши плагины	2c78fb8e
+copy.store_plugins_available	Available	Доступные	72402638
+copy.store_plugins_checked	Checked Plugins	Проверенные плагины	2168bb3a
+copy.store_plugins_try_again	Try Again	Повторить	f5b37c9a
+copy.store_plugin_get	Get	Получить	b6973ef7
+copy.store_plugin_update_to	Update to {v}	Обновить до {v}	25d15499
+copy.store_plugin_needs	Needs WolOS {v}	Нужна WolOS {v}	7ff543f2
+copy.store_plugin_turn_on	Turn On	Включить	6552a6c7
+copy.store_plugin_turn_off	Turn Off	Выключить	3208e0eb
+copy.store_plugin_allow	Allow	Разрешить	546d19d2
+copy.store_plugin_remove	Remove {n}	Удалить {n}	5dc7ee29
+copy.store_plugin_asks_nothing	{s}. Asks for nothing.	{s}. Ничего не запрашивает.	05cb9852
+copy.store_plugin_asks_to	{s}. Asks to: {p}.	{s}. Запрашивает: {p}.	0c95c3a9
+copy.store_plugin_by	By {a}. {s}	Автор: {a}. {s}	8f7b9192
+copy.store_plugin_asks_more	{s}. Asks for more now: {p}.	{s}. Теперь запрашивает больше: {p}.	9d125c98
+copy.store_plugin_held	{s} Version {v} needs WolOS {m}.	{s} Для версии {v} нужна WolOS {m}.	8870a70a
+copy.offer_copy_code	Copy Code	Скопировать код	02998b89
+copy.offer_open_link	Open Link	Открыть ссылку	ade08dcf
+copy.offer_copy_number	Copy Number	Скопировать номер	0005c83d
+copy.offer_copied	Copied	Скопировано	8dc21305
+copy.offer_not_copied	Not Copied	Не скопировано	fd43c922
+copy.offer_code_tip	Copies the code. Clipboard history skips it, and it is cleared after a minute.	Копирует код. История буфера обмена его пропускает, а через минуту он стирается.	19ad234a
+copy.offer_number_tip	Copies the number so you can paste it into a call.	Копирует номер, чтобы вставить его при звонке.	c3c1cf10
+copy.sessions_offer_body	Your terminals and coding agents open again on their desktops, in their folders.	Ваши терминалы и агенты для программирования снова откроются на своих рабочих столах и в своих папках.	16a0139c
+copy.sessions_reopen	Reopen	Открыть снова	b41fb578
+copy.themes_title	Themes	Темы	bf419633
+copy.themes_from_plugins	From plugins	Из плагинов	a32baec5
+copy.plugin_open_failed	No app here opens this.	Здесь нет приложения, которое это открывает.	167752fa
+copy.plugin_call_refused	Only your own programs can call plugin functions.	Вызывать функции плагинов могут только ваши собственные программы.	7417ee03
+copy.plugin_call_usage	A call names a plugin, a function and, if the function takes one, a value.	В вызове указываются плагин, функция и, если функция его принимает, значение.	6c138ce2
+copy.plugin_read_failed	The plugins could not be read.	Не удалось прочитать плагины.	b5c31b17
+copy.part_stopped	Everything else keeps working. Sign out and in again to bring it back.	Всё остальное работает. Чтобы вернуть это, выйдите и войдите снова.	c6cb5d2c
+copy.file_sheet_detail	Choose where this file goes.	Выберите, куда сохранить этот файл.	cb8d6d81
+copy.open_with_detail	Choose the app that opens it.	Выберите приложение, которое его откроет.	732f0c75
+copy.open_with_none	No app on this computer opens this kind of file.	На этом компьютере нет приложения, которое открывает файлы такого типа.	d9a2fc91
+copy.open_with_not_opened	That app could not open the file.	Это приложение не смогло открыть файл.	17ea6036
+copy.file_gone	That file is not there any more.	Этого файла там больше нет.	4455254e
+copy.trash_keeps	That folder cannot go to the Trash.	Эту папку нельзя переместить в Корзину.	d80b72a5
+copy.trash_already	That is in the Trash already.	Это уже в Корзине.	0d907b5c
+copy.trash_not_moved	That could not be moved to the Trash.	Не удалось переместить это в Корзину.	d3a50130
+copy.share_only_files	Only a file can be shared.	Поделиться можно только файлом.	c274fdc8
+copy.clipboard_unchanged	The clipboard could not be changed.	Не удалось изменить буфер обмена.	87b2db6b
+copy.copy_not_saved	That copy could not be saved.	Не удалось сохранить эту копию.	7534faf1
+installer.secure_boot_title	Change One Startup Setting First	Сначала измените одну настройку загрузки	4cbaebaa
+installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	Безопасная загрузка этого компьютера доверяет только Windows, поэтому WolOS пока не может запуститься.	d853a848
+installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	WolOS установлена, но ключ восстановления прочитать не удалось. Нажмите «Повторить»: «Перезагрузить» станет доступна, когда ключ будет показан.	87ec9bf0
+installer.key_screen_looks	It looks like an old computer screen: blue, white letters, a short menu. The mouse does not work there: use the arrow keys and Enter.	Он выглядит как экран старого компьютера: синий фон, белые буквы, короткое меню. Мышь там не работает: используйте клавиши со стрелками и Enter.	8d3ed7a5
+installer.secure_switch	Use Secure Boot	Использовать безопасную загрузку	2882cb4b
+installer.secure_switch_screen	One blue screen after the restart	Один синий экран после перезагрузки	03e1a6e9
+installer.secure_switch_own_keys	Nothing to click	Ничего нажимать не нужно	c505d6c3
+installer.summary_secure_screen	Secure Boot is on: after the restart, one blue screen asks you to accept this computer’s key.	Безопасная загрузка включена: после перезагрузки синий экран попросит принять ключ этого компьютера.	302e3a3d
+installer.summary_secure_own_keys	Secure Boot is on: WolOS puts its own keys into this computer’s startup settings.	Безопасная загрузка включена: WolOS записывает свои ключи в настройки загрузки этого компьютера.	fc77de82
+installer.summary_secure_off	Secure Boot stays off. You can turn it on later in System Settings.	Безопасная загрузка остаётся выключенной. Её можно включить позже в Системных настройках.	409f1c68
+installer.codecs_switch	Add Media Formats	Добавить медиаформаты	b468cc00
+installer.summary_codecs	Adds the media formats: MP3, AAC, H.264, HEVC, AC3 and common fonts.	Добавляет медиаформаты MP3, AAC, H.264, HEVC, AC3 и распространённые шрифты.	3feb4438
+installer.deferred_both	Media formats and modules are added at first start with a network.	Медиаформаты и модули добавятся при первом запуске с подключением к сети.	20e8f907
+installer.deferred_codecs	Media formats are added at first start with a network.	Медиаформаты добавятся при первом запуске с подключением к сети.	d9218087
+installer.deferred_modules	Modules are added at first start with a network.	Модули добавятся при первом запуске с подключением к сети.	1db37b2c
+installer.choose_disk	Choose a disk to install on.	Выберите диск для установки.	fa54c9fb
+installer.choose_replace	Choose the partition WolOS takes over.	Выберите раздел, который займёт WolOS.	da0d4679
+installer.password_short	Use at least 8 characters.	Используйте не меньше 8 символов.	5aa9fe2a
+installer.passwords_differ	Passwords don’t match.	Пароли не совпадают.	c84c2970
+installer.hostname_rule	Use letters, digits and hyphens for the computer’s name.	В имени компьютера используйте латинские буквы, цифры и дефисы.	127a6081
+installer.looking_at_disks	Looking at your disks…	Проверка дисков…	abfceb38
+installer.bitlocker_recovery	Windows uses BitLocker, so it asks once for its recovery key after this Secure Boot change.	Windows использует BitLocker, поэтому после этого изменения безопасной загрузки один раз запросит ключ восстановления.	d966d135
+installer.bitlocker_key_where	Have the key ready: it is saved at account.microsoft.com/devices/recoverykey.	Держите ключ под рукой: он сохранён на account.microsoft.com/devices/recoverykey.	67d9e566
+installer.bitlocker_avoid_own_keys	To avoid it, restore the factory Secure Boot keys in your startup settings first. WolOS then uses a one-time key screen.	Чтобы этого избежать, сначала восстановите заводские ключи безопасной загрузки в настройках загрузки. Тогда WolOS использует одноразовый экран ключа.	5142089f
+installer.bitlocker_avoid_setting	To avoid it, suspend BitLocker in Windows before you change the startup setting.	Чтобы этого избежать, приостановите BitLocker в Windows, прежде чем менять настройку загрузки.	2ca6bc1b
+installer.clock_local	The clock keeps local time, as Windows does.	Часы показывают местное время, как в Windows.	01f89c88
+installer.failed_see_details	Click Details to see what the computer said.	Нажмите «Подробнее», чтобы увидеть, что сообщил компьютер.	937420a6
+installer.refused_stopped	Nothing on the disk was changed. Fix what is said below, then click Try Again.	На диске ничего не изменено. Исправьте то, что указано ниже, и нажмите «Повторить».	c157e3fb
+installer.everything_on_this_disk_will_be	Everything on this disk will be erased.	Всё на этом диске будет стёрто.	ed966a51
+installer.this_disk_has_one_on_it	This disk has {one} on it. Erasing removes it.	На этом диске есть {one}. Стирание удалит эту систему.	8f70740d
+installer.this_disk_has_some_and_last	This disk has {some} and {last} on it. Erasing removes them.	На этом диске есть {some} и {last}. Стирание удалит их.	d0948737
+installer.title_is_too_small_wolos_needs	“{title}” is too small. WolOS needs at least 16 GB.	«{title}» слишком мал. Для WolOS нужно не меньше 16 ГБ.	a118dc62
+installer.title_can_t_be_erased_it	“{title}” can’t be erased: it’s the disk WolOS started from, or it’s gone. Choose another disk.	«{title}» нельзя стереть: с этого диска запущена WolOS, или он отключён. Выберите другой диск.	d4a22650
+installer.after_installing_open_your_computer_s	After installing, open your computer’s startup settings (often F2, F10, F12 or Delete) and allow third-party certificates.	После установки откройте настройки загрузки компьютера (обычно клавиши F2, F10, F12 или Delete) и разрешите сторонние сертификаты.	105fd317
+installer.they_are_sometimes_called_microsoft_uefi	They are sometimes called Microsoft UEFI CA or Other OS. Then a blue screen asks once to accept this computer’s WolOS key.	Иногда этот параметр называется Microsoft UEFI CA или Other OS. Затем синий экран один раз попросит принять ключ WolOS этого компьютера.	79eecbfe
+installer.install_it_on_this_computer_or	Install it on this computer, or try it first. Trying changes nothing.	Установите систему на этот компьютер или сначала попробуйте её. Пробный запуск ничего не меняет.	96d433f3
+installer.choose_your_language_and_the_keyboard	Choose your language and the keyboard you type on.	Выберите язык и клавиатуру, на которой вы печатаете.	909faf26
+installer.your_clock_follows_this_place	Your clock follows this place.	Часы будут идти по времени этого места.	fefadd99
+installer.choose_where_wolos_goes	Choose where WolOS goes.	Выберите, куда установить WolOS.	0fd4fa73
+installer.nothing_changes_until_the_last_step	Nothing changes until the last step.	До последнего шага ничего не меняется.	b035305c
+installer.choose_the_partition_wolos_takes_over	Choose the partition WolOS takes over. It is erased; the rest of the disk stays.	Выберите раздел, который займёт WolOS. Он будет стёрт; остальная часть диска сохранится.	ee367cb9
+installer.drag_to_choose_how_much_room	Drag to choose how much room each system gets.	Перетащите, чтобы выбрать, сколько места получит каждая система.	be9d859c
+installer.choose_a_partition_to_change_it	Choose a partition to change it, or free space to add one.	Выберите раздел, чтобы изменить его, или свободное место, чтобы добавить новый.	3f2ccefa
+installer.choose_what_this_partition_is_for	Choose what this partition is for.	Выберите, для чего этот раздел.	ca8096e3
+installer.encryption_keeps_your_files_private_if	Encryption keeps your files private if this computer is lost.	Шифрование защитит ваши файлы, если компьютер потеряется.	443a3c57
+installer.secure_boot_checks_at_every_start	Secure Boot checks at every start that nobody changed WolOS while the computer was off.	Безопасная загрузка при каждом запуске проверяет, что никто не изменил WolOS, пока компьютер был выключен.	ac702ca2
+installer.you_use_this_to_sign_in	You use this to sign in.	Она нужна для входа в систему.	d536c298
+installer.add_sets_of_apps_for_what	Add sets of apps for what you do, or none. You can change this later.	Добавьте наборы приложений для своих занятий или ничего не добавляйте. Это можно изменить позже.	a974df61
+installer.play_the_music_and_video_files	Play the music and video files most people have, in one click.	Воспроизводите музыку и видео в самых распространённых форматах — в один клик.	530be885
+installer.nothing_has_changed_yet_this_is	Nothing has changed yet. This is exactly what will happen.	Пока ничего не изменилось. Вот что именно произойдёт.	1b9eaf5a
+installer.this_takes_a_few_minutes_keep	This takes a few minutes. Keep your computer plugged in.	Это займёт несколько минут. Не отключайте компьютер от сети.	cd553105
+installer.the_installer_asks_a_few_questions	The installer asks a few questions first. Nothing on this computer changes until you click Install on the last page.	Сначала установщик задаст несколько вопросов. На компьютере ничего не изменится, пока вы не нажмёте «Установить» на последней странице.	4edaca75
+installer.this_is_the_language_of_menus	This is the language of menus and apps, and what your keys type. Both can be changed later in System Settings.	Это язык меню и приложений и то, что печатают клавиши. И то и другое можно изменить позже в Системных настройках.	367e22a5
+installer.type_a_big_city_near_you	Type a big city near you: the clock and calendar follow its time.	Введите ближайший крупный город: часы и календарь будут идти по его времени.	e318ed02
+installer.a_disk_is_the_drive_inside	A disk is the drive inside your computer that holds Windows, macOS or Linux and your files. Choosing one changes nothing yet.	Диск — это накопитель внутри компьютера, на котором хранятся Windows, macOS или Linux и ваши файлы. Выбор диска пока ничего не меняет.	294f5903
+installer.sharing_keeps_your_other_system_and	Sharing keeps your other system and its files, and you pick one when the computer starts.	При совместной установке ваша другая система и её файлы сохраняются, а при включении компьютера вы выбираете, какую запустить.	2a1cae41
+installer.erase_disk_removes_everything_on_the	Erase Disk removes everything on the disk. Manual is for people who already know partitions.	«Стереть диск» удаляет с диска всё. «Вручную» — для тех, кто уже разбирается в разделах.	db91320b
+installer.a_partition_is_one_section_of	A partition is one section of a disk, like a drive letter on Windows. Every other partition and its files stay.	Раздел — это часть диска, как буква диска в Windows. Все остальные разделы и их файлы сохраняются.	b567d7d6
+installer.your_other_system_and_its_files	Your other system and its files stay; it only gets smaller. As with any change to a disk, back up what matters first.	Ваша другая система и её файлы сохраняются; она лишь станет меньше. Как и перед любым изменением диска, сначала сохраните копию важного.	aa82df34
+installer.a_partition_is_one_section_of_2	A partition is one section of a disk. WolOS needs one for its system and a startup partition, the small part your computer starts from.	Раздел — это часть диска. WolOS нужны раздел для системы и загрузочный раздел — небольшая часть, с которой запускается компьютер.	8a8e06c4
+installer.nothing_changes_until_you_click_install	Nothing changes until you click Install.	Ничего не изменится, пока вы не нажмёте «Установить».	b3f81ed7
+installer.turn_on_erase_to_clear_this	Turn on Erase to clear this partition for its new job. Leave it off and the files on it stay.	Включите «Стереть», чтобы очистить этот раздел для новой задачи. Если оставить выключенным, файлы на нём сохранятся.	e31177a2
+installer.it_works_like_bitlocker_on_windows	It works like BitLocker on Windows or FileVault on a Mac: without your password or this computer, nobody can read the disk.	Это работает как BitLocker в Windows или FileVault на Mac: без вашего пароля или этого компьютера никто не сможет прочитать диск.	711912dd
+installer.it_is_like_your_windows_or	It is like your Windows or Mac user account: it signs in, installs apps and changes settings.	Это как учётная запись пользователя в Windows или на Mac: с ней входят в систему, устанавливают приложения и меняют настройки.	0973b658
+installer.none_are_chosen_for_you_they	None are chosen for you. They download while WolOS installs; without the internet, WolOS adds them at its first start.	Ничего не выбрано заранее. Они загружаются во время установки WolOS; без интернета WolOS добавит их при первом запуске.	0916ae24
+installer.not_added_unless_you_turn_this	Not added unless you turn this on. They download while WolOS installs; without the internet, find Media Codecs in the App Store.	Не добавляются, если вы это не включите. Они загружаются во время установки WolOS; без интернета найдите «Медиакодеки» в App Store.	e29994d1
+installer.install_starts_the_changes_and_takes	Install starts the changes and takes a few minutes. Back lets you change anything first.	«Установить» запускает изменения, это займёт несколько минут. «Назад» позволяет сначала что-нибудь изменить.	4fb02ab2
+installer.nothing_restarts_until_you_click_restart	Nothing restarts until you click Restart. The tips below show a few things worth knowing.	Ничего не перезагрузится, пока вы не нажмёте «Перезагрузить». Ниже — несколько полезных советов.	27ff513c
+installer.next_your_language_and_keyboard	Next: your language and keyboard.	Далее: язык и клавиатура.	2f62f1d5
+installer.next_your_time_zone	Next: your time zone.	Далее: часовой пояс.	434e2e06
+installer.next_the_disk_wolos_goes_on	Next: the disk WolOS goes on.	Далее: диск, на который встанет WolOS.	44c1a14d
+installer.next_whether_wolos_shares_the_disk	Next: whether WolOS shares the disk or takes all of it.	Далее: делит ли WolOS диск с другой системой или занимает его целиком.	6b3391fd
+installer.next_how_your_files_are_protected	Next: how your files are protected.	Далее: как защищены ваши файлы.	ce5a8886
+installer.next_whether_wolos_uses_secure_boot	Next: whether WolOS uses Secure Boot.	Далее: будет ли WolOS использовать безопасную загрузку.	90613fb4
+installer.next_your_account	Next: your account.	Далее: ваша учётная запись.	0a4875b4
+installer.next_optional_apps_for_what_you	Next: optional apps for what you do.	Далее: дополнительные приложения для ваших занятий.	c00d2f83
+installer.next_music_and_video_formats	Next: music and video formats.	Далее: форматы музыки и видео.	f9547087
+installer.next_a_summary_of_everything_before	Next: a summary of everything, before anything changes.	Далее: сводка всего до каких-либо изменений.	dddaf213
+installer.it_is_optional_and_off_unless	It is optional, and off unless you turn it on.	Это необязательно и выключено, пока вы это не включите.	cb1c4690
+installer.on_one_blue_screen_appears_after	On: one blue screen appears after the restart and asks you to accept this computer’s key, once. Off: WolOS starts straight away.	Вкл.: после перезагрузки один раз появится синий экран и попросит принять ключ этого компьютера. Выкл.: WolOS запустится сразу.	6c798d34
+installer.you_can_turn_it_on_later	You can turn it on later in System Settings.	Её можно включить позже в Системных настройках.	a768989c
+installer.on_wolos_puts_its_own_keys	On: WolOS puts its own keys into your computer’s startup settings, with nothing to click. Off: nothing there changes.	Вкл.: WolOS записывает свои ключи в настройки загрузки компьютера, нажимать ничего не нужно. Выкл.: там ничего не меняется.	d9556cdf
+installer.your_computer_already_has_secure_boot	Your computer already has Secure Boot turned on, so WolOS uses it too.	На вашем компьютере уже включена безопасная загрузка, поэтому WolOS тоже её использует.	29724c70
+installer.one_blue_screen_appears_after_the	One blue screen appears after the restart and asks you to accept this computer’s key, once.	После перезагрузки один раз появится синий экран и попросит принять ключ этого компьютера.	8fa6b981
+installer.developer_tools	Developer Tools	Инструменты разработчика	eaad6816
+installer.code_editor_git_containers_and_programming	Code editor, Git, containers and programming languages	Редактор кода, Git, контейнеры и языки программирования	9f61173c
+installer.ai_assistants	AI Assistants	ИИ-помощники	d7e1c7a4
+installer.claude_code_and_other_agents_inside	Claude Code and other agents, inside WolOS’s rules	Claude Code и другие агенты в рамках правил WolOS	2b4edcae
+installer.local_ai	Local AI	Локальный ИИ	34d9ec16
+installer.ai_models_that_run_on_this	AI models that run on this computer, also offline	Модели ИИ, работающие на этом компьютере, в том числе без сети	65696a97
+installer.creative_apps	Creative Apps	Творческие приложения	17a1ddc0
+installer.blender_gimp_krita_inkscape_obs_kdenlive	Blender, GIMP, Krita, Inkscape, OBS, Kdenlive and more	Blender, GIMP, Krita, Inkscape, OBS, Kdenlive и другие	7b3e8a69
+installer.gaming	Gaming	Игры	c17bd710
+installer.steam_controllers_and_game_tools	Steam, controllers and game tools	Steam, контроллеры и игровые инструменты	5a43d8ba
+installer.nothing_extra_to_download	Nothing extra to download.	Дополнительно загружать нечего.	1964932f
+installer.about_size_to_download	About {size} to download.	Загрузка около {size}.	e1688ef0
+installer.some_and_last	{some} and {last}	{some} и {last}	ee948018
+installer.adds_names_about_size_to_download	Adds {names}, about {size} to download.	Добавляет {names}, загрузка около {size}.	083830b2
+installer.no_matching_place	No matching place	Место не найдено	84763fda
+installer.try_the_name_of_a_big	Try the name of a big city near you.	Попробуйте название ближайшего крупного города.	240941c2
+installer.no_disk_found	No disk found	Диск не найден	c091246b
+installer.connect_the_disk_you_want_to	Connect the disk you want to install on, then click Look Again.	Подключите диск, на который хотите установить систему, и нажмите «Искать снова».	285b2b85
+installer.estimating_time_remaining	Estimating time remaining…	Оценка оставшегося времени…	6881130b
+installer.less_than_a_minute_remaining	Less than a minute remaining	Осталось меньше минуты	adbb21cc
+installer.about_a_minute_remaining	About a minute remaining	Осталось около минуты	55e4d1ef
+installer.about_n_minutes_remaining#one	About {n} minute remaining	Осталось около {n} минуты	f8b31ada
+installer.about_n_minutes_remaining#few	About {n} minutes remaining	Осталось около {n} минут	02138083
+installer.about_n_minutes_remaining#many	About {n} minutes remaining	Осталось около {n} минут	02138083
+installer.about_n_minutes_remaining#other	About {n} minutes remaining	Осталось около {n} минуты	02138083
+installer.preparing_the_disk	Preparing the disk…	Подготовка диска…	01479957
+installer.copying_system_files	Copying system files…	Копирование системных файлов…	7bd52fb6
+installer.making_this_computer_s_keys	Making this computer’s keys…	Создание ключей этого компьютера…	5b4137c7
+installer.encrypting_the_disk	Encrypting the disk…	Шифрование диска…	d8c90a82
+installer.preparing_the_first_start	Preparing the first start…	Подготовка первого запуска…	530a7df6
+installer.installing_the_startup_files	Installing the startup files…	Установка загрузочных файлов…	3f89da43
+installer.saving_settings	Saving settings…	Сохранение настроек…	ee1a1230
+installer.locking_the_disk_key_to_this	Locking the disk key to this computer…	Привязка ключа диска к этому компьютеру…	b8c73071
+installer.installing_apps	Installing apps…	Установка приложений…	8d6fa0dc
+installer.finishing_up	Finishing up…	Завершение…	95524331
+installer.done	Done	Готово	8dd31791
+installer.the_disk_couldn_t_be_prepared	The disk couldn’t be prepared. Check that it’s connected, then try again or choose another disk.	Не удалось подготовить диск. Проверьте, что он подключён, и повторите попытку или выберите другой диск.	f0d919ee
+installer.the_system_files_couldn_t_be	The system files couldn’t be copied. Check the installer disk, then try again.	Не удалось скопировать системные файлы. Проверьте установочный диск и повторите попытку.	ed47f3af
+installer.the_disk_couldn_t_be_encrypted	The disk couldn’t be encrypted. Try again, or choose Don’t Encrypt.	Не удалось зашифровать диск. Повторите попытку или выберите «Не шифровать».	ccd0b7dc
+installer.the_startup_files_couldn_t_be	The startup files couldn’t be installed. Try again, or choose another disk.	Не удалось установить загрузочные файлы. Повторите попытку или выберите другой диск.	01038166
+installer.your_settings_couldn_t_be_saved	Your settings couldn’t be saved. Try again, and check the language, keyboard and account.	Не удалось сохранить настройки. Повторите попытку и проверьте язык, клавиатуру и учётную запись.	5b94d8ad
+installer.the_installation_stopped_before_it_finished	The installation stopped before it finished. Try again, or choose another disk.	Установка остановилась, не завершившись. Повторите попытку или выберите другой диск.	5c87a5c4
+installer.updates_install_into_a_second_copy	Updates install into a second copy of WolOS, so you can always start the previous one.	Обновления устанавливаются во вторую копию WolOS, поэтому всегда можно запустить предыдущую.	8914e193
+installer.press_command_space_to_search_apps	Press Command Space to search apps, files and settings from anywhere.	Нажмите Command Пробел, чтобы искать приложения, файлы и настройки откуда угодно.	582eb710
+installer.the_app_store_installs_apps_for	The App Store installs apps for everyone on this computer, with a restore point first.	App Store устанавливает приложения для всех пользователей этого компьютера, предварительно создавая точку восстановления.	3a18c26f
+installer.control_center_at_the_top_right	Control Center, at the top right, has Wi-Fi, sound, brightness and Do Not Disturb.	В Пункте управления в правом верхнем углу есть Wi-Fi, звук, яркость и режим «Не беспокоить».	fd4a1078
+installer.your_files_stay_private_with_encryption	Your files stay private: with encryption on, the disk opens only on this computer.	Ваши файлы под защитой: при включённом шифровании диск открывается только на этом компьютере.	c4a7f6a4
+installer.system_settings_looks_like_the_one	System Settings looks like the one you know, and every change there can be undone.	Системные настройки выглядят привычно, и любое изменение в них можно отменить.	8afeb015
+installer.to_start_name_open_your_computer	To start {name}, open your computer’s startup menu while it starts, often with F12, F9 or Esc.	Чтобы запустить {name}, откройте меню загрузки во время включения компьютера — обычно клавишей F12, F9 или Esc.	d5bc402c
+installer.after_the_restart_a_blue_screen	After the restart a blue screen appears. It comes from your computer’s firmware, not from WolOS, and it waits for you.	После перезагрузки появится синий экран. Его показывает прошивка компьютера, а не WolOS, и он будет ждать вас.	1a723b20
+installer.press_a_key_choose_enroll_mok	Press a key, choose Enroll MOK, then Continue, then Yes.	Нажмите любую клавишу, выберите Enroll MOK, затем Continue, затем Yes.	6bde3970
+installer.when_it_asks_for_a_password	When it asks for a password, type {password}. Nothing shows while you type.	Когда появится запрос пароля, введите {password}. При вводе символы не отображаются.	ab0eaa85
+installer.choose_reboot_you_will_not_see	Choose Reboot. You will not see this screen again.	Выберите Reboot. Больше этот экран не появится.	23681952
+installer.missed_it_run_wol_boot_enroll	Missed it? Run wol boot enroll and restart.	Пропустили? Выполните wol boot enroll и перезагрузите компьютер.	4f965bc7
+installer.welcome_to_wolos	Welcome to WolOS	Добро пожаловать в WolOS	2d1ffcb0
+installer.language_and_keyboard	Language and Keyboard	Язык и клавиатура	b4e5e9cb
+installer.time_zone	Time Zone	Часовой пояс	64af27fa
+installer.choose_a_disk	Choose a Disk	Выбор диска	5e7c55a0
+installer.how_to_install	How to Install	Способ установки	17f6f29d
+installer.replace_a_partition	Replace a Partition	Замена раздела	58223c2e
+installer.share_the_disk	Share the Disk	Совместная установка	e5ebd0b0
+installer.partitions	Partitions	Разделы	92fe9b2e
+installer.partition	Partition	Раздел	b7682ca9
+installer.protect_your_files	Protect Your Files	Защита файлов	63189dc8
+installer.secure_boot	Secure Boot	Безопасная загрузка	e5e1c8b8
+installer.create_your_account	Create Your Account	Создание учётной записи	5399e473
+installer.apps_for_what_you_do	Apps for What You Do	Приложения для ваших занятий	be17d0c4
+installer.music_and_video_formats	Music and Video Formats	Форматы музыки и видео	6fbad28a
+installer.ready_to_install	Ready to Install	Всё готово к установке	04fb6736
+installer.installing_wolos	Installing WolOS	Установка WolOS	c94dd680
+installer.wolos_is_installed	WolOS Is Installed	WolOS установлена	66f597f7
+installer.wolos_couldn_t_be_installed	WolOS Couldn't Be Installed	Не удалось установить WolOS	3356efae
+installer.the_recovery_key_could_not_be	The Recovery Key Could Not Be Read	Не удалось прочитать ключ восстановления	46890ebf
+installer.compressed_memory	Compressed memory	Сжатая память	7620479f
+installer.recommended_uses_no_disk_space	Recommended. Uses no disk space	Рекомендуется. Не занимает место на диске	a3526934
+installer.swap_file	Swap file	Файл подкачки	46f920cc
+installer.a_file_on_the_system_partition	A file on the system partition	Файл на системном разделе	058adc1b
+installer.none	None	Нет	304ff7fb
+installer.for_computers_with_plenty_of_memory	For computers with plenty of memory	Для компьютеров с большим объёмом памяти	b9b5465a
+installer.don_t_use	Don't use	Не использовать	7a93d17e
+installer.wolos_system	WolOS system	Система WolOS	ccbe0ddc
+installer.startup_files	Startup files	Загрузочные файлы	a4dcd131
+installer.your_files	Your files	Ваши файлы	8cb360b1
+installer.swap	Swap	Подкачка	e519d36e
+installer.a_folder	A folder	Папка	e84ceb50
+installer.btrfs_recommended	Btrfs (recommended)	Btrfs (рекомендуется)	89eeae4a
+installer.will_be_deleted	Will be deleted	Будет удалён	8e880f53
+installer.new_use	New: {use}	Новый: {use}	4ff3f572
+installer.rest_of_the_disk	Rest of the disk	Остаток диска	c4518510
+installer.free_space	Free space	Свободное место	d75aad01
+installer.install_alongside_name	Install Alongside {name}	Установить рядом с {name}	84b5f087
+installer.install_in_the_free_space	Install in the Free Space	Установить в свободное место	70e77b00
+installer.new_partition	New Partition	Новый раздел	b5e687c7
+installer.sd_card_or_emmc	SD card or eMMC	SD-карта или eMMC	df43ce19
+installer.virtual_disk	Virtual disk	Виртуальный диск	cfedcee9
+installer.cancel	Cancel	Отмена	35afca3b
+installer.back	Back	Назад	c2954bc2
+installer.install_wolos	Install WolOS	Установить WolOS	43297728
+installer.try_wolos	Try WolOS	Попробовать WolOS	671fb30e
+installer.search_for_a_city	Search for a city	Поиск города	2a508cdc
+installer.security_chip	Security Chip	Чип безопасности	0a598c6b
+installer.opens_on_this_computer	Opens on this computer	Открывается на этом компьютере	a8a65d36
+installer.password	Password	Пароль	2cc30838
+installer.asked_at_every_start	Asked at every start	Запрашивается при каждом запуске	dcd7fae7
+installer.don_t_encrypt	Don’t Encrypt	Не шифровать	1a1ed998
+installer.anyone_with_the_disk_can_read	Anyone with the disk can read it	Любой, у кого диск, может его прочитать	73f22a74
+installer.at_least_8_characters	At least 8 characters	Не меньше 8 символов	10cdcf9b
+installer.type_it_again	Type it again	Введите ещё раз	a4c19926
+installer.verify	Verify	Повтор	2d5c0c44
+installer.choose_a_password	Choose a password	Придумайте пароль	d74f1a34
+installer.full_name	Full name	Полное имя	9010932f
+installer.account_name	Account name	Имя учётной записи	16970f4f
+installer.computer_name	Computer name	Имя компьютера	e9e790eb
+installer.log_in_automatically	Log in automatically	Входить автоматически	2c3b0d89
+installer.install	Install	Установить	b50cbd40
+installer.install_anyway	Install Anyway	Всё равно установить	437f9f01
+installer.restart	Restart	Перезагрузить	2f44ed8c
+installer.save_to_usb	Save to USB	Сохранить на USB	b179acf3
+installer.restart_later	Restart Later	Перезагрузить позже	329498ee
+installer.details	Details	Подробнее	0ec24245
+installer.look_again	Look Again	Искать снова	f285f082
+installer.keeps_what_s_there	Keeps what’s there	Сохраняет то, что есть	ae48ab6d
+installer.erases_one_partition_keeps_the_rest	Erases one partition, keeps the rest	Стирает один раздел, остальное сохраняет	4b97fec9
+installer.erase_disk	Erase Disk	Стереть диск	b75def9e
+installer.starts_clean	Starts clean	С чистого листа	a94c2925
+installer.manual	Manual	Вручную	f819f303
+installer.for_experts	For experts	Для опытных	8d4c62a9
+installer.use_for	Use for	Назначение	0a8e6c13
+installer.folder_name	Folder name	Имя папки	11a1b2e4
+installer.folder	Folder	Папка	06357afd
+installer.erase	Erase	Стереть	0e3c6075
+installer.file_system	File system	Файловая система	15c55918
+installer.size	Size	Размер	a6478e7c
+installer.delete	Delete	Удалить	5797ea6a
+setup.the_hint_can_t_be_the	The hint can’t be the password.	Подсказка не может совпадать с паролем.	2e960def
+setup.welcome	Welcome	Добро пожаловать	588a5993
+setup.finish_secure_boot_setup	Finish Secure Boot Setup	Завершите настройку безопасной загрузки	b2e6edcc
+setup.language_region	Language & Region	Язык и регион	ac7c8337
+setup.appearance	Appearance	Оформление	31018b9f
+setup.you_re_all_set	You're All Set	Всё готово	e392aa73
+setup.let_s_get_you_set_up	Let’s get you set up.	Давайте всё настроим.	58847076
+setup.this_computer_hasn_t_accepted_its	This computer hasn’t accepted its WolOS key yet. At the next restart a blue screen asks once.	Этот компьютер ещё не принял свой ключ WolOS. При следующей перезагрузке синий экран один раз спросит об этом.	01a45b07
+setup.wolos_uses_this_language_and_keyboard	WolOS uses this language and keyboard. You can change them later.	WolOS использует этот язык и эту клавиатуру. Их можно изменить позже.	39861878
+setup.choose_a_network_to_get_online	Choose a network to get online. You can skip this and join later.	Выберите сеть, чтобы подключиться к интернету. Можно пропустить этот шаг и подключиться позже.	4271d3d8
+setup.you_ll_use_this_name_and	You’ll use this name and password to sign in.	Это имя и пароль нужны для входа в систему.	2d211ae0
+setup.choose_a_look_you_can_change	Choose a look. You can change it any time in System Settings.	Выберите оформление. Его можно изменить в любое время в Системных настройках.	a0df5832
+setup.your_account_is_ready	Your account is ready.	Учётная запись готова.	b1fb71ee
+setup.light	Light	Светлое	8ad2f8cf
+setup.dark	Dark	Тёмное	45570065
+setup.auto	Auto	Авто	126befb6
+setup.enter_your_full_name	Enter your full name.	Введите полное имя.	1dfbedb2
+setup.use_lowercase_letters_and_digits_starting	Use lowercase letters and digits, starting with a letter.	Используйте строчные латинские буквы и цифры, начиная с буквы.	0bbb58a6
+setup.choose_a_password	Choose a password.	Придумайте пароль.	0b8616ee
+setup.use_at_most_128_characters_none	Use at most 128 characters, none of them control characters.	Не больше 128 символов, без управляющих символов.	231ca727
+setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	Сделайте подсказку короткой, без двоеточий.	1c337ecc
+setup.remove_colons_from_the_name	Remove colons from the name.	Уберите двоеточия из имени.	16c7211d
+setup.choose_a_different_password	Choose a different password.	Выберите другой пароль.	df3affd3
+setup.enter_the_password_for_network	Enter the password for “{network}”.	Введите пароль для «{network}».	9514013f
+setup.network_didn_t_accept_that_password	“{network}” didn’t accept that password. Check it and try again.	«{network}» не принимает этот пароль. Проверьте его и повторите попытку.	d5be1517
+setup.network_didn_t_answer_try_again	“{network}” didn’t answer. Try again, or choose Not Now and join later.	«{network}» не отвечает. Повторите попытку или выберите «Не сейчас» и подключитесь позже.	bfcfef63
+setup.that_account_name_can_t_be	That account name can’t be used. Press Back and choose another one.	Это имя учётной записи использовать нельзя. Нажмите «Назад» и выберите другое.	9e84f8dc
+setup.your_account_couldn_t_be_created	Your account couldn’t be created just now. Press Continue to try again.	Сейчас не удалось создать учётную запись. Нажмите «Продолжить», чтобы повторить попытку.	4405504c
+setup.hint	Hint	Подсказка	cbf455d8
+setup.keyboard	Keyboard	Клавиатура	27d1a714
+setup.type_here_to_try_the_keyboard	Type here to try the keyboard	Напечатайте здесь, чтобы проверить клавиатуру	dd676e75
+setup.try_it	Try it	Проверка	adc589d7
+setup.joining_network	Joining “{network}”…	Подключение к «{network}»…	88bbac20
+setup.setting_up_your_account	Setting up your account…	Настройка учётной записи…	8ce5fe48
+setup.continue	Continue	Продолжить	ab43d664
+setup.welcome_to_wolos	Welcome to\nWolOS	Добро пожаловать\nв WolOS	25458542
+setup.network_password	Network password	Пароль сети	4bd89a36
+setup.not_now	Not Now	Не сейчас	c9b2d82e
+setup.looking_for_networks	Looking for networks…	Поиск сетей…	73d55a28
+setup.no_networks_found	No networks found	Сети не найдены	fab41b49
+setup.move_closer_to_your_wi_fi	Move closer to your Wi-Fi and look again, or choose Not Now.	Подойдите ближе к Wi-Fi и поищите снова или выберите «Не сейчас».	04ab876b
+setup.this_account_is_the_administrator_it	This account is the administrator: it can install apps and change any setting.	Это учётная запись администратора: она может устанавливать приложения и менять любые настройки.	3685873b
+setup.you_can_also_start_this_later	You can also start this later from System Settings > Privacy & Security.	Это можно сделать и позже в разделе Системные настройки > Конфиденциальность и безопасность.	d9367445
+setup.get_started	Get Started	Начать	d0e07f4e
+kit.n_of_total	{n} of {total}	{n} из {total}	4a099ba8
+language.apps_use_the_new_language_the	Apps use the new language the next time you log in.	Приложения начнут использовать новый язык при следующем входе в систему.	31850050
+language.preferred_language	Preferred language	Предпочитаемый язык	cbb78ae8
+language.menus_and_messages	Menus and messages.	Меню и сообщения.	c333785c
+language.input_sources	Input Sources	Источники ввода	84948e1d
+language.keyboard_layouts_you_type_with	Keyboard layouts you type with	Раскладки клавиатуры, на которых вы печатаете	92c1c248
+kit.caps_lock_is_on	⇪ Caps Lock is on	⇪ Включён Caps Lock	51fded41
+login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords	Необязательно, показывается после трёх неверных паролей	c5d6f057

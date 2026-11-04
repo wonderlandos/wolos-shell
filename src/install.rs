@@ -15,8 +15,8 @@ pub const CHECK: &str = "/usr/lib/wolos/install-check";
 
 // The pages' sentences live in `copy::installer` (R2B-20); these names stay for the callers.
 pub use crate::copy::installer::{
-    SECURE_BOOT_TEXT, SECURE_BOOT_TITLE, TIPS, doing, erase_warning, refusal_text, remaining_text,
-    stopped_text,
+    SECURE_BOOT_TEXT, SECURE_BOOT_TITLE, doing, erase_warning, refusal_text, remaining_text,
+    stopped_text, tips,
 };
 
 /// What `install-check <disk>` found.
@@ -560,7 +560,8 @@ pub const TIP_SECS: f64 = 12.0;
 
 /// The tip to show `secs` after the install began.
 pub fn tip_at(secs: f64) -> &'static str {
-    TIPS[((secs.max(0.0) / TIP_SECS) as usize) % TIPS.len()]
+    let tips = tips();
+    tips[((secs.max(0.0) / TIP_SECS) as usize) % tips.len()]
 }
 
 #[cfg(test)]
@@ -965,12 +966,13 @@ mod tests {
 
     #[test]
     fn tips_rotate_and_read_well() {
-        assert_eq!(tip_at(0.0), TIPS[0]);
-        assert_eq!(tip_at(TIP_SECS - 0.1), TIPS[0]);
-        assert_eq!(tip_at(TIP_SECS), TIPS[1]);
-        assert_eq!(tip_at(TIP_SECS * TIPS.len() as f64), TIPS[0], "wraps");
-        assert_eq!(tip_at(-5.0), TIPS[0]);
-        for t in TIPS {
+        let tips = tips();
+        assert_eq!(tip_at(0.0), tips[0]);
+        assert_eq!(tip_at(TIP_SECS - 0.1), tips[0]);
+        assert_eq!(tip_at(TIP_SECS), tips[1]);
+        assert_eq!(tip_at(TIP_SECS * tips.len() as f64), tips[0], "wraps");
+        assert_eq!(tip_at(-5.0), tips[0]);
+        for t in tips {
             let l = crate::copy::lint(t);
             assert!(l.is_empty(), "{t}: {l:?}");
         }

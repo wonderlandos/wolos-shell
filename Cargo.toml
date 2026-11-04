@@ -37,6 +37,10 @@ wayland-scanner = "0.31"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 bitflags = "2"
 
+# The build compiles locale/shell into tables (ADR 0045): the same crate the runtime reads them with.
+[build-dependencies]
+shared.workspace = true
+
 [[test]]
 name = "golden"
 harness = false

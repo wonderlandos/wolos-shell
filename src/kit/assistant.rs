@@ -242,6 +242,7 @@ pub struct Card {
     pub next: gtk::Button,
     /// Problem or progress line at the foot (hidden when empty).
     pub status: gtk::Label,
+    pub title: gtk::Label,
     pub subtitle: gtk::Label,
     pub busy: gtk::Spinner,
     /// "N of M", at the right of the title row (hidden until [`Card::set_step`]).
@@ -339,7 +340,7 @@ impl Card {
         c.append(&b);
         let foot = w::hbox(S3);
         foot.add_css_class("assistant-foot");
-        let back = w::button("Back", w::Kind::Default, || {});
+        let back = w::button(crate::i18n::tr("Back"), w::Kind::Default, || {});
         back.set_size_request(BACK_WIDTH, -1);
         foot.append(&back);
         let status = w::label("", "assistant-status");
@@ -353,7 +354,7 @@ impl Card {
         busy.add_css_class("assistant-busy");
         busy.set_visible(false);
         foot.append(&busy);
-        let next = w::button("Continue", w::Kind::Primary, || {});
+        let next = w::button(crate::i18n::tr("Continue"), w::Kind::Primary, || {});
         next.set_size_request(NEXT_WIDTH, -1);
         foot.append(&next);
         c.append(&foot);
@@ -362,6 +363,7 @@ impl Card {
             back,
             next,
             status,
+            title: t,
             subtitle: sub,
             busy,
             step,
@@ -373,7 +375,10 @@ impl Card {
     pub fn set_step(&self, at: Option<(usize, usize)>) {
         match at {
             Some((n, of)) => {
-                self.step.set_label(&format!("{n} of {of}"));
+                self.step.set_label(&crate::i18n::tr_fill(
+                    "{n} of {total}",
+                    &[("n", &n.to_string()), ("total", &of.to_string())],
+                ));
                 self.step.set_visible(true);
             }
             None => self.step.set_visible(false),
@@ -439,6 +444,17 @@ impl ChoiceList {
         selected: Option<usize>,
         picked: impl Fn(usize) + 'static,
     ) -> Self {
+        Self::with_rows(rows, selected, ROWS, picked)
+    }
+
+    /// [`ChoiceList::new`] showing up to `shown` whole rows before it scrolls: the language list
+    /// shows every official language (L10N-2), the others keep [`ROWS`].
+    pub fn with_rows(
+        rows: Vec<Choice>,
+        selected: Option<usize>,
+        shown: i32,
+        picked: impl Fn(usize) + 'static,
+    ) -> Self {
         let list = w::vbox(0);
         list.set_valign(gtk::Align::Start);
         let n = rows.len() as i32;
@@ -475,7 +491,7 @@ impl ChoiceList {
             list.append(&b);
             buttons.push(b);
         }
-        let h = ROW * n.clamp(1, ROWS);
+        let h = ROW * n.clamp(1, shown.max(ROWS));
         let root = gtk::ScrolledWindow::builder()
             .child(&list)
             .hscrollbar_policy(gtk::PolicyType::Never)

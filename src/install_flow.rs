@@ -4,6 +4,7 @@
 //! here. Layouts are `wol_core::install`'s: the summary and the run read the same data.
 use super::size_text;
 use crate::copy;
+use crate::i18n::tr;
 use crate::setup::{Draft, Field, Hints, KEYBOARDS, LANGUAGES};
 use wol_core::boot::{Tier, changes_windows_keys};
 use wol_core::install::disk::{Disk, GIB, MIB, Table};
@@ -103,26 +104,26 @@ impl Step {
 
     pub fn title(self) -> &'static str {
         match self {
-            Step::Begin => "Welcome to WolOS",
-            Step::Language => "Language and Keyboard",
-            Step::Zone => "Time Zone",
-            Step::Disk => "Choose a Disk",
-            Step::Method => "How to Install",
-            Step::Replace => "Replace a Partition",
-            Step::Alongside => "Share the Disk",
-            Step::Manual => "Partitions",
-            Step::Edit => "Partition",
-            Step::Protect => "Protect Your Files",
-            Step::SecureBootChoice => "Secure Boot",
-            Step::Account => "Create Your Account",
-            Step::Modules => "Apps for What You Do",
-            Step::Extras => "Music and Video Formats",
-            Step::Summary => "Ready to Install",
-            Step::SecureBoot => super::SECURE_BOOT_TITLE,
-            Step::Installing => "Installing WolOS",
-            Step::Done => "WolOS Is Installed",
-            Step::Failed => "WolOS Couldn't Be Installed",
-            Step::KeyUnread => "The Recovery Key Could Not Be Read",
+            Step::Begin => tr("Welcome to WolOS"),
+            Step::Language => tr("Language and Keyboard"),
+            Step::Zone => tr("Time Zone"),
+            Step::Disk => tr("Choose a Disk"),
+            Step::Method => tr("How to Install"),
+            Step::Replace => tr("Replace a Partition"),
+            Step::Alongside => tr("Share the Disk"),
+            Step::Manual => tr("Partitions"),
+            Step::Edit => tr("Partition"),
+            Step::Protect => tr("Protect Your Files"),
+            Step::SecureBootChoice => tr("Secure Boot"),
+            Step::Account => tr("Create Your Account"),
+            Step::Modules => tr("Apps for What You Do"),
+            Step::Extras => tr("Music and Video Formats"),
+            Step::Summary => tr("Ready to Install"),
+            Step::SecureBoot => tr(super::SECURE_BOOT_TITLE),
+            Step::Installing => tr("Installing WolOS"),
+            Step::Done => tr("WolOS Is Installed"),
+            Step::Failed => tr("WolOS Couldn't Be Installed"),
+            Step::KeyUnread => tr("The Recovery Key Could Not Be Read"),
         }
     }
 
@@ -166,15 +167,19 @@ impl Swap {
 pub const SWAPS: [(Swap, &str, &str); 3] = [
     (
         Swap::Zram,
-        "Compressed memory",
-        "Recommended. Uses no disk space",
+        crate::i18n::n_("Compressed memory"),
+        crate::i18n::n_("Recommended. Uses no disk space"),
     ),
     (
         Swap::Swapfile(0),
-        "Swap file",
-        "A file on the system partition",
+        crate::i18n::n_("Swap file"),
+        crate::i18n::n_("A file on the system partition"),
     ),
-    (Swap::None, "None", "For computers with plenty of memory"),
+    (
+        Swap::None,
+        crate::i18n::n_("None"),
+        crate::i18n::n_("For computers with plenty of memory"),
+    ),
 ];
 
 /// Swap file size for a computer with `mem_bytes` of memory: as much as the memory, 2 to 8 GiB.
@@ -216,9 +221,9 @@ pub struct ModuleChoice {
 }
 
 /// The Modules page's rows from the registry records on the image, in the page's order
-/// (`copy::installer::MODULE_ROWS`); a record the page has no words for is not offered.
+/// (`copy::installer::module_rows()`); a record the page has no words for is not offered.
 pub fn module_choices(records: &[wol_core::modules::Module]) -> Vec<ModuleChoice> {
-    copy::installer::MODULE_ROWS
+    copy::installer::module_rows()
         .iter()
         .filter_map(|(id, title, detail)| {
             let m = records.iter().find(|m| m.id == *id)?;
@@ -269,17 +274,17 @@ pub enum Use {
 
 /// The edit page's choices, in order.
 pub const USES: [(Use, &str); 6] = [
-    (Use::Nothing, "Don't use"),
-    (Use::System, "WolOS system"),
-    (Use::Startup, "Startup files"),
-    (Use::Home, "Your files"),
-    (Use::Swap, "Swap"),
-    (Use::Folder, "A folder"),
+    (Use::Nothing, crate::i18n::n_("Don't use")),
+    (Use::System, crate::i18n::n_("WolOS system")),
+    (Use::Startup, crate::i18n::n_("Startup files")),
+    (Use::Home, crate::i18n::n_("Your files")),
+    (Use::Swap, crate::i18n::n_("Swap")),
+    (Use::Folder, crate::i18n::n_("A folder")),
 ];
 
 /// The file systems a new or erased partition can have. Btrfs first: it keeps the two copies.
 pub const FILE_SYSTEMS: [(Fs, &str); 3] = [
-    (Fs::Btrfs, "Btrfs (recommended)"),
+    (Fs::Btrfs, crate::i18n::n_("Btrfs (recommended)")),
     (Fs::Ext4, "Ext4"),
     (Fs::Xfs, "XFS"),
 ];
@@ -357,7 +362,7 @@ pub fn manual_lines(l: &Layout, d: &Disk) -> Vec<Line> {
             .find(|r| r.part == p.uuid)
             .map_or(d.bytes_of(p), |r| r.bytes);
         let what = if deleted {
-            "Will be deleted".to_string()
+            tr("Will be deleted").to_string()
         } else {
             role_text(l, &p.uuid).unwrap_or_else(|| "Not used".into())
         };
@@ -370,14 +375,14 @@ pub fn manual_lines(l: &Layout, d: &Disk) -> Vec<Line> {
     for (i, n) in l.create.iter().enumerate() {
         v.push((
             Row::New(i),
-            format!("New: {}", copy::install_use(&n.mount)),
-            n.bytes.map_or("Rest of the disk".into(), size_text),
+            crate::i18n::tr_fill("New: {use}", &[("use", &copy::install_use(&n.mount))]),
+            n.bytes.map_or(tr("Rest of the disk").into(), size_text),
         ));
     }
     for (_, sectors) in room(l, d) {
         let bytes = sectors * d.sector;
         if bytes >= GIB {
-            v.push((Row::Free(bytes), "Free space".into(), size_text(bytes)));
+            v.push((Row::Free(bytes), tr("Free space").into(), size_text(bytes)));
         }
     }
     v
@@ -455,11 +460,11 @@ pub fn online_now() -> bool {
 /// Where a time zone guess starts: the language's biggest city zone.
 pub fn zone_for_language(i: usize) -> &'static str {
     match LANGUAGES[i.min(LANGUAGES.len() - 1)].locale {
-        "en_GB.UTF-8" => "Europe/London",
         "pt_BR.UTF-8" => "America/Sao_Paulo",
-        "pt_PT.UTF-8" => "Europe/Lisbon",
-        "es_ES.UTF-8" => "Europe/Madrid",
+        "ja_JP.UTF-8" => "Asia/Tokyo",
         "fr_FR.UTF-8" => "Europe/Paris",
+        "ru_RU.UTF-8" => "Europe/Moscow",
+        "it_IT.UTF-8" => "Europe/Rome",
         "de_DE.UTF-8" => "Europe/Berlin",
         _ => "America/New_York",
     }
@@ -609,12 +614,14 @@ impl Flow {
         let mut v: Vec<&str> = vec![step.subtitle()];
         if step == Step::SecureBootChoice {
             v.extend(match self.secure_offer() {
-                SecureOffer::Choice { screen: true } => &copy::installer::SECURE_CHOICE_SCREEN[..],
-                SecureOffer::Choice { screen: false } => {
-                    &copy::installer::SECURE_CHOICE_OWN_KEYS[..]
+                SecureOffer::Choice { screen: true } => {
+                    copy::installer::secure_choice_screen().to_vec()
                 }
-                SecureOffer::AlreadyOn => &copy::installer::SECURE_ALREADY_ON[..],
-                SecureOffer::Nothing => &[],
+                SecureOffer::Choice { screen: false } => {
+                    copy::installer::secure_choice_own_keys().to_vec()
+                }
+                SecureOffer::AlreadyOn => copy::installer::secure_already_on().to_vec(),
+                SecureOffer::Nothing => Vec::new(),
             });
         } else {
             v.extend(copy::installer::explain(step));
@@ -735,8 +742,8 @@ impl Flow {
     /// Install Alongside's title, by the system it shares the disk with.
     pub fn alongside_title(&self) -> String {
         match self.disk().map(Disk::others).unwrap_or_default().first() {
-            Some(n) => format!("Install Alongside {n}"),
-            None => "Install in the Free Space".into(),
+            Some(n) => crate::i18n::tr_fill("Install Alongside {name}", &[("name", n)]),
+            None => tr("Install in the Free Space").into(),
         }
     }
 
@@ -747,7 +754,7 @@ impl Flow {
             return Some(copy::install_refusal(&Refusal::NotGpt, d));
         }
         if d.parts.is_empty() {
-            return Some(copy::INSTALL_BLANK.to_string());
+            return Some(crate::i18n::tr(copy::INSTALL_BLANK).to_string());
         }
         if self.alongside_slider().is_some() || compile(&alongside(d, None), d, false).is_ok() {
             return None;
@@ -788,7 +795,7 @@ impl Flow {
             return Some(copy::install_refusal(&Refusal::NotGpt, d));
         }
         if self.replace_candidates().is_empty() {
-            return Some(copy::INSTALL_NOTHING_TO_REPLACE.to_string());
+            return Some(crate::i18n::tr(copy::INSTALL_NOTHING_TO_REPLACE).to_string());
         }
         None
     }
@@ -902,7 +909,7 @@ impl Flow {
             Step::Zone => self.go(Step::Disk),
             Step::Disk => {
                 let Some(i) = self.chosen else {
-                    return stay(copy::installer::CHOOSE_DISK);
+                    return stay(crate::i18n::tr(copy::installer::CHOOSE_DISK));
                 };
                 let f = &self.disks[i];
                 if let Some(t) = f
@@ -937,7 +944,7 @@ impl Flow {
             },
             Step::Replace => {
                 if self.replace.is_none() {
-                    return stay(copy::installer::CHOOSE_REPLACE);
+                    return stay(crate::i18n::tr(copy::installer::CHOOSE_REPLACE));
                 }
                 self.after_layout()
             }
@@ -951,19 +958,19 @@ impl Flow {
                     if self.disk_password.chars().count() < 8 {
                         return Next::Stay(
                             Some(Field::Password),
-                            copy::installer::PASSWORD_SHORT.into(),
+                            crate::i18n::tr(copy::installer::PASSWORD_SHORT).into(),
                         );
                     }
                     if !passphrase_typable(&self.disk_password) {
                         return Next::Stay(
                             Some(Field::Password),
-                            copy::INSTALL_PASSPHRASE_ASCII.into(),
+                            crate::i18n::tr(copy::INSTALL_PASSPHRASE_ASCII).into(),
                         );
                     }
                     if self.disk_password != self.disk_verify {
                         return Next::Stay(
                             Some(Field::Verify),
-                            copy::installer::PASSWORDS_DIFFER.into(),
+                            crate::i18n::tr(copy::installer::PASSWORDS_DIFFER).into(),
                         );
                     }
                 }
@@ -977,11 +984,15 @@ impl Flow {
                 Some((f, why)) => Next::Stay(Some(f), why.into()),
                 // The chip's fallback is the account password, typed on the console keymap (B9).
                 None if unlock_problem(self.protect, Some(&self.draft.password)).is_some() => {
-                    Next::Stay(Some(Field::Password), copy::INSTALL_TPM_FALLBACK.into())
+                    Next::Stay(
+                        Some(Field::Password),
+                        crate::i18n::tr(copy::INSTALL_TPM_FALLBACK).into(),
+                    )
                 }
-                None if !super::is_valid_hostname(&self.hostname()) => {
-                    Next::Stay(Some(Field::Hostname), copy::installer::HOSTNAME_RULE.into())
-                }
+                None if !super::is_valid_hostname(&self.hostname()) => Next::Stay(
+                    Some(Field::Hostname),
+                    crate::i18n::tr(copy::installer::HOSTNAME_RULE).into(),
+                ),
                 None => match self.next_after(Step::Account) {
                     Some(s) => self.go(s),
                     None => self.go(Step::Extras),
@@ -1014,7 +1025,7 @@ impl Flow {
     /// The page opens on `row`.
     pub fn open_edit(&mut self, row: &Row) -> Next {
         let Some(d) = self.disk().cloned() else {
-            return stay(copy::installer::CHOOSE_DISK);
+            return stay(crate::i18n::tr(copy::installer::CHOOSE_DISK));
         };
         let e = match row {
             Row::Part(uuid) => {
@@ -1048,7 +1059,7 @@ impl Flow {
                     .unwrap_or(0);
                 Edit {
                     row: row.clone(),
-                    title: "New Partition".into(),
+                    title: tr("New Partition").into(),
                     usage: use_of(&n.mount),
                     erase: true,
                     fs: n.fs,
@@ -1060,7 +1071,7 @@ impl Flow {
             }
             Row::Free(bytes) => Edit {
                 row: row.clone(),
-                title: "New Partition".into(),
+                title: tr("New Partition").into(),
                 usage: Use::System,
                 erase: true,
                 fs: Fs::Btrfs,
@@ -1181,11 +1192,11 @@ impl Flow {
             v.push(w);
         }
         if self.windows_stays() {
-            v.push(copy::installer::CLOCK_LOCAL.to_string());
+            v.push(crate::i18n::tr(copy::installer::CLOCK_LOCAL).to_string());
         }
         v.push(copy::install_hostname(&self.hostname()));
         if self.autologin {
-            v.push(copy::INSTALL_AUTOLOGIN.to_string());
+            v.push(crate::i18n::tr(copy::INSTALL_AUTOLOGIN).to_string());
         }
         if let Some(line) = self.secure_line() {
             v.push(line.to_string());
@@ -1193,7 +1204,7 @@ impl Flow {
         let names: Vec<&str> = self.ticked().iter().map(|m| m.title).collect();
         v.extend(copy::installer::summary_modules(&names, self.modules_mb()));
         if self.codecs {
-            v.push(copy::installer::SUMMARY_CODECS.to_string());
+            v.push(crate::i18n::tr(copy::installer::SUMMARY_CODECS).to_string());
         }
         v.extend(self.deferred_line().map(String::from));
         v
@@ -1272,7 +1283,7 @@ impl Flow {
     /// The Secure Boot sheet's lines under its subtitle: the firmware steps, then what BitLocker
     /// needs when it applies ([`Self::bitlocker_notes`]).
     pub fn secure_boot_notes(&self) -> Vec<&'static str> {
-        let mut notes = copy::installer::SECURE_BOOT_STEPS.to_vec();
+        let mut notes = copy::installer::secure_boot_steps().to_vec();
         notes.extend(self.bitlocker_notes(false));
         notes
     }
@@ -1309,13 +1320,16 @@ impl Flow {
         } else if l.wipe && !d.others().is_empty() {
             Some(super::erase_warning(&d.others()))
         } else if erases {
-            Some(copy::INSTALL_POINT_OF_NO_RETURN.to_string())
+            Some(crate::i18n::tr(copy::INSTALL_POINT_OF_NO_RETURN).to_string())
         } else {
             None
         };
         match (disk, self.protect == Protect::Off) {
-            (Some(w), true) => Some(format!("{w} {}", copy::INSTALL_UNENCRYPTED)),
-            (None, true) => Some(copy::INSTALL_UNENCRYPTED.to_string()),
+            (Some(w), true) => Some(format!(
+                "{w} {}",
+                crate::i18n::tr(copy::INSTALL_UNENCRYPTED)
+            )),
+            (None, true) => Some(crate::i18n::tr(copy::INSTALL_UNENCRYPTED).to_string()),
             (w, false) => w,
         }
     }
@@ -1375,9 +1389,9 @@ pub fn disk_detail(d: &Disk) -> String {
     let bus = if dev.starts_with("nvme") {
         Some("NVMe")
     } else if dev.starts_with("mmcblk") {
-        Some("SD card or eMMC")
+        Some(tr("SD card or eMMC"))
     } else if dev.starts_with("vd") || dev.starts_with("xvd") {
-        Some("Virtual disk")
+        Some(tr("Virtual disk"))
     } else {
         None
     };
