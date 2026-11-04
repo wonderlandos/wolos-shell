@@ -726,6 +726,27 @@ pub const CITY_SEARCH: &str =
 /// Weather with nothing cached and no network.
 pub const WEATHER_OFFLINE: &str = "No forecast right now. It updates when you’re back online.";
 
+/// Under the clipboard list: what the history keeps (`copies` entries, text up to `kb` KB) and
+/// what it leaves out (QA-PWR-23).
+pub fn clipboard_limits(copies: usize, kb: usize) -> String {
+    format!(
+        "Keeps the last {copies} copies of text up to {kb} KB. Passwords, card numbers, codes and images are not kept."
+    )
+}
+
+/// A removable disk was plugged in: summary, body (`name` is the maker and model, empty when the
+/// disk does not say; QA-FDAY-13).
+pub fn stick_plugged(name: &str) -> (String, String) {
+    let name = name.trim();
+    let summary = if name.is_empty() {
+        "A Disk Was Plugged In".to_string()
+    } else {
+        let short: String = name.chars().take(40).collect();
+        format!("{short} Was Plugged In")
+    };
+    (summary, "Open Files to see what is on it.".into())
+}
+
 // ---- Battery, disk and session power (notifications and the confirm sheet) ----
 
 /// Battery notification at 20, 10 and 5 %: summary, body.

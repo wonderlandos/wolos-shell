@@ -313,7 +313,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     ));
 
     let picture = kit::pickers::desktop_wallpaper();
-    let (st, pic) = (status.clone(), picture.clone());
+    let (st, pic, env) = (status.clone(), picture.clone(), Rc::downgrade(e));
     p.append(&w::section(
         "",
         &[
@@ -329,7 +329,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 "Make Theme",
                 move || {
                     // The decode can take hundreds of ms on a large PNG: off the GTK thread.
-                    let (st, path) = (st.clone(), pic.clone());
+                    let (st, path, env) = (st.clone(), pic.clone(), env.clone());
                     off_thread(
                         move || path.as_deref().and_then(theme_from),
                         move |made| {
@@ -341,6 +341,13 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                             let saved = save_journaled("theme", &rel, Some(&json))
                                 .and_then(|()| choose(Some(FROM_WALLPAPER)));
                             say(&st, if saved.is_ok() { "" } else { SAVE_FAILED });
+                            // The new theme is the checked card and the accent row goes with it
+                            // (QA-SET-21: the old pick stayed checked until the pane was reopened).
+                            if saved.is_ok()
+                                && let Some(e) = env.upgrade()
+                            {
+                                e.refresh();
+                            }
                         },
                     );
                 },

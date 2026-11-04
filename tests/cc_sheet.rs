@@ -10,7 +10,6 @@ mod broadway;
 use gtk::prelude::*;
 use shell::system::{Action, ActionError, Done, System};
 use shell::ui;
-use std::rc::Rc;
 use std::sync::Mutex;
 
 /// wol-admind for an account that has to type its password: NeedsAuth, every time; what was sent
@@ -111,7 +110,7 @@ fn escape_and_hide_drop_the_authenticate_sheet() {
         eprintln!("skipped: no display for the toolkit");
         return;
     }
-    let sys = Rc::new(Asking::default());
+    let sys = std::sync::Arc::new(Asking::default());
     let win = gtk::Window::new();
     ui::control_center::dress(&win, sys.clone());
     win.present();

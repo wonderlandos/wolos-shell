@@ -249,7 +249,7 @@ installer.after_the_restart_a_blue_screen	After the restart a blue screen appear
 installer.press_a_key_choose_enroll_mok	Press a key, choose Enroll MOK, then Continue, then Yes.		
 installer.when_it_asks_for_a_password	When it asks for a password, type {password}. Nothing shows while you type.		
 installer.choose_reboot_you_will_not_see	Choose Reboot. You will not see this screen again.		
-installer.missed_it_run_wol_boot_enroll	Missed it? Run wol boot enroll and restart.		
+installer.missed_it_start_from_the_usb	Missed it? Start from the USB stick again: its blue screen shows Enroll MOK. Or choose Enroll key from disk and pick ENROL_THIS_KEY_FOR_WOLOS.cer.		
 installer.welcome_to_wolos	Welcome to WolOS		35
 installer.language_and_keyboard	Language and Keyboard		30
 installer.time_zone	Time Zone		17

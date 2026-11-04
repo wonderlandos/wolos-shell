@@ -1832,11 +1832,11 @@ fn reload_after_undo(c: &Controls, r: &wol_core::journal::Reload) {
 }
 
 /// `WOL_FAKE_SYSTEM=1` -> `Fake`, else [`CoreSystem`].
-pub fn default_system() -> std::rc::Rc<dyn System> {
+pub fn default_system() -> std::sync::Arc<dyn System> {
     if std::env::var_os("WOL_FAKE_SYSTEM").is_some() {
-        std::rc::Rc::new(Fake)
+        std::sync::Arc::new(Fake)
     } else {
-        std::rc::Rc::new(CoreSystem::new())
+        std::sync::Arc::new(CoreSystem::new())
     }
 }
 

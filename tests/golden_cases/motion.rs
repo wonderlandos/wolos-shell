@@ -6,7 +6,7 @@ use super::Case;
 use gtk::{gdk, prelude::*};
 use shell::kit::anim::Clock;
 use shell::ui;
-use std::rc::Rc;
+use std::sync::Arc;
 
 const MS: u64 = 1_000_000;
 
@@ -79,7 +79,7 @@ pub fn cases() -> Vec<Case> {
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
-                let root = ui::control_center::content(Rc::new(shell::system::Fake));
+                let root = ui::control_center::content(Arc::new(shell::system::Fake));
                 let clock = Clock::manual();
                 let moves = ui::control_center::open_stagger(&root, &clock);
                 let mods = ui::control_center::main_modules(&root);
@@ -271,7 +271,7 @@ pub fn cases() -> Vec<Case> {
 pub fn reduce_motion_snaps() {
     let clock = Clock::manual();
     clock.set_reduced(Some(true));
-    let root = ui::control_center::content(Rc::new(shell::system::Fake));
+    let root = ui::control_center::content(Arc::new(shell::system::Fake));
     let _moves = ui::control_center::open_stagger(&root, &clock);
     assert!(
         ui::control_center::main_modules(&root)

@@ -326,6 +326,19 @@ pub fn search_field(placeholder: &str) -> gtk::SearchEntry {
     s
 }
 
+/// A key handler on `w` that sees keys before its children do (capture phase); return `Stop` to
+/// take the key. For fields whose arrow keys mean something beyond the field (a search field
+/// walking its hits).
+pub fn on_key_captured(
+    w: &impl IsA<gtk::Widget>,
+    f: impl Fn(gtk::gdk::Key, gtk::gdk::ModifierType) -> glib::Propagation + 'static,
+) {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    keys.connect_key_pressed(move |_, k, _, m| f(k, m));
+    w.add_controller(keys);
+}
+
 pub fn password_field(placeholder: &str) -> gtk::PasswordEntry {
     let p = gtk::PasswordEntry::builder()
         .placeholder_text(placeholder)

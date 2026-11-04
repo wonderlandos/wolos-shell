@@ -251,11 +251,15 @@ pub fn avatar_tone(text: &str) -> Option<&'static str> {
 
 /// The avatar file for `user` (`/var/db/wolos/avatars/<user>`, written by wol-login at setup).
 pub fn read_avatar(user: &str) -> Option<&'static str> {
+    read_avatar_in(std::path::Path::new(shared::login::AVATARS_DIR), user)
+}
+
+/// [`read_avatar`] under `dir`.
+pub fn read_avatar_in(dir: &std::path::Path, user: &str) -> Option<&'static str> {
     if user.is_empty() || user.contains(['/', '\0']) || user.starts_with('.') {
         return None;
     }
-    let p = std::path::Path::new(shared::login::AVATARS_DIR).join(user);
-    avatar_tone(&std::fs::read_to_string(p).ok()?)
+    avatar_tone(&std::fs::read_to_string(dir.join(user)).ok()?)
 }
 
 /// Owned-argument form for worker threads.
@@ -599,6 +603,24 @@ starting a new one (attempt 3)"
         assert_eq!(avatar_tone("neon"), None);
         assert_eq!(avatar_tone("../x"), None);
         assert_eq!(read_avatar("../etc/passwd"), None);
+    }
+
+    /// QA-SET-73: the colour Setup wrote is the one Users & Groups reads for that account (it drew
+    /// the name's colour instead: violet in Setup, pink in Settings).
+    #[test]
+    fn the_avatar_file_of_an_account_gives_its_tone() {
+        let d = std::env::temp_dir().join(format!("wol-avatars-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("alice"), "violet\n").unwrap();
+        assert_eq!(read_avatar_in(&d, "alice"), Some("violet"));
+        assert_eq!(
+            read_avatar_in(&d, "bob"),
+            None,
+            "no file: the name's colour"
+        );
+        assert_eq!(read_avatar_in(&d, "../alice"), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

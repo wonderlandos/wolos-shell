@@ -6,7 +6,7 @@
 use super::super::Case;
 use gtk::prelude::*;
 use shell::ui::store::{self, plugins};
-use std::rc::Rc;
+use std::sync::Arc;
 use wopkg::index::plugins::{Entry, PluginIndex};
 
 fn entry(id: &str, name: &str, version: &str, summary: &str, perms: &[&str]) -> Entry {
@@ -146,7 +146,7 @@ pub fn cases() -> Vec<Case> {
     let page = |l: Make| -> Build {
         Box::new(move || {
             let s = store::content(
-                Rc::new(shell::system::Fake),
+                Arc::new(shell::system::Fake),
                 store::Env {
                     data_dirs: vec![],
                     pkg_search: false,

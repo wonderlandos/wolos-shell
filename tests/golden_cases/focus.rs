@@ -5,10 +5,10 @@ use super::{Case, find_type, pump};
 use gtk::prelude::*;
 use shell::kit::{self, widgets as w};
 use shell::ui;
-use std::rc::Rc;
+use std::sync::Arc;
 
 fn settings() -> w::AppWindow {
-    ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo())
+    ui::settings::content(Arc::new(shell::system::Fake), &ui::settings::Host::demo())
 }
 
 fn row(a: &w::AppWindow, title: &str) -> gtk::ListBoxRow {
@@ -109,7 +109,7 @@ pub(super) fn sidebar_arrows_go_from_group_to_group() {
     );
     win.close();
     let s = ui::settings::content_searching(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "o",
     );

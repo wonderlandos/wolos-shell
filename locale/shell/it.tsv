@@ -250,7 +250,7 @@ installer.after_the_restart_a_blue_screen	After the restart a blue screen appear
 installer.press_a_key_choose_enroll_mok	Press a key, choose Enroll MOK, then Continue, then Yes.	Premi un tasto, scegli Enroll MOK, poi Continue, poi Yes.	6bde3970
 installer.when_it_asks_for_a_password	When it asks for a password, type {password}. Nothing shows while you type.	Quando chiede una password, digita {password}. Mentre digiti non compare nulla.	ab0eaa85
 installer.choose_reboot_you_will_not_see	Choose Reboot. You will not see this screen again.	Scegli Reboot. Non vedrai più questa schermata.	23681952
-installer.missed_it_run_wol_boot_enroll	Missed it? Run wol boot enroll and restart.	Te la sei persa? Esegui wol boot enroll e riavvia.	4f965bc7
+installer.missed_it_start_from_the_usb	Missed it? Start from the USB stick again: its blue screen shows Enroll MOK. Or choose Enroll key from disk and pick ENROL_THIS_KEY_FOR_WOLOS.cer.	Te la sei persa? Riavvia dalla chiavetta USB: la sua schermata blu mostra Enroll MOK. Oppure scegli Enroll key from disk e seleziona ENROL_THIS_KEY_FOR_WOLOS.cer.	9b1902f8
 installer.welcome_to_wolos	Welcome to WolOS	Ti diamo il benvenuto in WolOS	2d1ffcb0
 installer.language_and_keyboard	Language and Keyboard	Lingua e tastiera	b4e5e9cb
 installer.time_zone	Time Zone	Fuso orario	64af27fa

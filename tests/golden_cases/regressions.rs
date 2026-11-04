@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Regression checks that run before the screenshots: each one fails on the bug it was written for.
 use super::*;
+use std::sync::Arc;
 
 /// Settings > Effects & Looks keeps its state alive once built: picking a look and then Restore
 /// Defaults checks the WolOS card again (every card, control and button did nothing when the
 /// page's state was dropped at the end of building it).
 pub(super) fn effects_page_answers_after_it_is_built() {
-    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+    let a = ui::settings::content(Arc::new(shell::system::Fake), &ui::settings::Host::demo());
     a.open("Effects & Looks");
     pump(50);
     let root: gtk::Widget = a.root.clone().upcast();
@@ -222,7 +223,7 @@ pub(super) fn a_stalled_page_fade_settles() {
 /// place of the content, picking a row returns to the content, and widening the window brings the
 /// two-pane layout back.
 pub(super) fn a_narrow_window_can_bring_the_sidebar_back() {
-    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+    let a = ui::settings::content(Arc::new(shell::system::Fake), &ui::settings::Host::demo());
     let (aw, ah) = w::APP_NARROW;
     let win = gtk::Window::builder()
         .decorated(false)
@@ -341,7 +342,7 @@ pub(super) fn installed_is_a_state_and_open_the_action() {
     }
     let page = |flatpaks: Vec<String>, subject: ui::store::Subject, installed: Option<&str>| {
         let s = ui::store::content(
-            Rc::new(shell::system::Fake),
+            std::sync::Arc::new(shell::system::Fake),
             ui::store::Env {
                 data_dirs: vec![],
                 pkg_search: false,

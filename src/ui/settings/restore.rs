@@ -118,29 +118,51 @@ pub(crate) fn point_line(created: &str, space: &str) -> String {
 
 fn history(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label) {
     clear(into);
-    let all = e.sys().history();
+    // The journal is read off the GTK thread (QA-SET-2).
+    let (sys, env, st) = (e.sys().clone(), e.clone(), status.clone());
+    later(
+        into,
+        move || sys.history(),
+        move |into, all| history_rows(&env, into, &st, &all),
+    );
+}
+
+fn history_rows(
+    e: &Rc<Env>,
+    into: &gtk::Box,
+    status: &gtk::Label,
+    all: &[wol_core::journal::Entry],
+) {
     let now = wol_core::journal::now();
-    let rows: Vec<gtk::Widget> = listed(&all, 8)
+    let rows: Vec<gtk::Widget> = listed(all, 8)
         .into_iter()
         .map(|x| {
             let (env, h, st, id) = (e.clone(), into.clone(), status.clone(), x.id);
             let undo = w::button("Undo", w::Kind::Default, move || {
-                // `undo` also reloads what the change touched (`system::after_undo`, per topic).
-                match env.sys().undo(Some(id)) {
-                    Ok(_) => {
-                        say(&st, "");
-                        // The other open pages show the restored files too, as after the toast's
-                        // Undo; once this click is over, since this page is built again with them.
-                        let env = Rc::downgrade(&env);
-                        glib::idle_add_local_once(move || {
-                            if let Some(env) = env.upgrade() {
-                                env.refresh()
+                // `undo` also reloads what the change touched (`system::after_undo`, per topic);
+                // it runs off the GTK thread (QA-SET-2).
+                let (sys, env, h, st) = (env.sys().clone(), env.clone(), h.clone(), st.clone());
+                off_thread(
+                    move || sys.undo(Some(id)),
+                    move |r| {
+                        match r {
+                            Ok(_) => {
+                                say(&st, "");
+                                // The other open pages show the restored files too, as after the
+                                // toast's Undo; once this click is over, since this page is built
+                                // again with them.
+                                let env = Rc::downgrade(&env);
+                                glib::idle_add_local_once(move || {
+                                    if let Some(env) = env.upgrade() {
+                                        env.refresh()
+                                    }
+                                });
                             }
-                        });
-                    }
-                    Err(m) => say(&st, &m),
-                }
-                history(&env, &h, &st);
+                            Err(m) => say(&st, &m),
+                        }
+                        history(&env, &h, &st);
+                    },
+                );
             });
             w::list_row(
                 "",
@@ -169,7 +191,21 @@ fn history(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label) {
 
 fn points(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label) {
     clear(into);
-    let mut bes = e.sys().boot_environments();
+    // bootctl and the slot files are read off the GTK thread (QA-SET-2).
+    let (sys, env, st) = (e.sys().clone(), e.clone(), status.clone());
+    later(
+        into,
+        move || sys.boot_environments(),
+        move |into, bes| point_rows(&env, into, &st, bes),
+    );
+}
+
+fn point_rows(
+    e: &Rc<Env>,
+    into: &gtk::Box,
+    status: &gtk::Label,
+    mut bes: Vec<wol_core::update::be::BootEnv>,
+) {
     if bes.is_empty() {
         // One copy of WolOS says so, in the place the list would be (QA-STORE-5).
         if e.machine().single_copy() {

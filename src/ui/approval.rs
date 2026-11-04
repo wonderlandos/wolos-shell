@@ -19,6 +19,7 @@ use shared::shell::{APPROVAL_TIMEOUT_SECS, Answer, Approval, ApprovalRequest};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
+use std::sync::Arc;
 use wol_core::automation::{Outcome, Record, audit, policy};
 
 /// Requests waiting beyond the one on screen; more are refused (a helper cannot flood the screen).
@@ -239,7 +240,7 @@ impl Pending {
 pub struct Approvals {
     pub root: gtk::Box,
     sheet: w::AuthSheet,
-    sys: Rc<dyn System>,
+    sys: Arc<dyn System>,
     queue: RefCell<Queue<Pending>>,
     /// The administrator change on screen is running (wol-admind): its result answers it, not the
     /// timeout.
@@ -250,7 +251,7 @@ pub struct Approvals {
 }
 
 impl Approvals {
-    pub fn new(sys: Rc<dyn System>) -> Rc<Self> {
+    pub fn new(sys: Arc<dyn System>) -> Rc<Self> {
         let root = w::glass_panel(0);
         root.add_css_class("approval");
         root.set_width_request(w::CONTROL_CENTER_WIDTH + w::S4);
@@ -530,7 +531,7 @@ fn log(a: &Approval, o: Outcome, detail: &str) {
 
 /// wol-shell: the approval surface (centred, takes the keyboard while it asks) and the socket's
 /// `approve` handler: answers on the request's connection, then closes it.
-pub fn handler(app: &gtk::Application, sys: Rc<dyn System>) -> super::ipc::Approver {
+pub fn handler(app: &gtk::Application, sys: Arc<dyn System>) -> super::ipc::Approver {
     let ap = Approvals::new(sys);
     let win = super::window(
         app,
@@ -626,7 +627,7 @@ fn wold_sheets(ap: &Rc<Approvals>) {
 }
 
 /// The sheet as it asks for `a` (goldens, previews).
-pub fn content(sys: Rc<dyn System>, a: Approval) -> gtk::Widget {
+pub fn content(sys: Arc<dyn System>, a: Approval) -> gtk::Widget {
     let ap = Approvals::new(sys);
     let _answer = ap.ask(a);
     // A still picture: no blinking caret.

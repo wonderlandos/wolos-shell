@@ -18,7 +18,7 @@ struct Dressed {
 
 pub struct Displays {
     app: gtk::Application,
-    sys: Rc<dyn crate::system::System>,
+    sys: std::sync::Arc<dyn crate::system::System>,
     /// On the main display; move with it.
     primary_bar: gtk::ApplicationWindow,
     primary: Rc<super::menubar::Bar>,
@@ -77,7 +77,7 @@ impl Displays {
     /// frame); they are pinned to the main display here.
     pub fn start(
         app: &gtk::Application,
-        sys: Rc<dyn crate::system::System>,
+        sys: std::sync::Arc<dyn crate::system::System>,
         primary_bar: gtk::ApplicationWindow,
         primary: Rc<super::menubar::Bar>,
         main_only: Vec<gtk::Window>,

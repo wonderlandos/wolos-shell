@@ -1257,7 +1257,7 @@ fn covers(mode: crate::hypr::Fullscreen) -> bool {
 
 struct Live {
     board: Rc<Board>,
-    sys: Rc<dyn crate::system::System>,
+    sys: std::sync::Arc<dyn crate::system::System>,
     schedule: RefCell<Schedule>,
     scheduled: RefCell<HashSet<String>>,
     timer: RefCell<Option<glib::SourceId>>,
@@ -1687,7 +1687,7 @@ fn read_disk() -> (Desktop, PathBuf, Vec<Package>) {
 /// A desktop widget surface for `desk`, with its live data, ended with `life` (its window).
 fn surface_for(
     app: &gtk::Application,
-    sys: Rc<dyn crate::system::System>,
+    sys: std::sync::Arc<dyn crate::system::System>,
     desk: Desktop,
     packages: Vec<Package>,
 ) -> (gtk::ApplicationWindow, Rc<Board>) {
@@ -1823,7 +1823,7 @@ struct Part {
 /// others come and go with their display. Each board saves its part; the parts fold into the file.
 pub struct Desks {
     app: gtk::Application,
-    sys: Rc<dyn crate::system::System>,
+    sys: std::sync::Arc<dyn crate::system::System>,
     file: PathBuf,
     master: RefCell<Desktop>,
     /// By connector; "" is the main display's board until the display list is known.
@@ -1925,7 +1925,7 @@ impl Desks {
 /// The main display's desktop widget surface, and the per-display boards beside it.
 pub fn build(
     app: &gtk::Application,
-    sys: Rc<dyn crate::system::System>,
+    sys: std::sync::Arc<dyn crate::system::System>,
 ) -> (gtk::ApplicationWindow, Rc<Board>) {
     let (desk, file, packages) = read_disk();
     let (win, board) = surface_for(app, sys.clone(), Desktop::default(), packages);

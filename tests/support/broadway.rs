@@ -22,6 +22,12 @@ impl Drop for Display {
 /// points GTK at it; None when there is none or broadwayd is not installed (the test skips). Call
 /// it in the test's only `#[test]`, before `gtk::init`.
 pub fn start(base: u32) -> Option<Display> {
+    start_with_config(base, None)
+}
+
+/// [`start`], and `XDG_CONFIG_HOME` pointed at `config` when given (a test that saves settings
+/// and must not touch the real ones), in the same single `unsafe` block.
+pub fn start_with_config(base: u32, config: Option<&Path>) -> Option<Display> {
     let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
     let n = (0..200)
         .map(|i| base + (std::process::id() + i) % 200)
@@ -54,6 +60,9 @@ pub fn start(base: u32) -> Option<Display> {
     unsafe {
         std::env::set_var("GDK_BACKEND", "broadway");
         std::env::set_var("BROADWAY_DISPLAY", &display);
+        if let Some(c) = config {
+            std::env::set_var("XDG_CONFIG_HOME", c);
+        }
     }
     Some(d)
 }

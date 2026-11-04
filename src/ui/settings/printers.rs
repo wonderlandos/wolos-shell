@@ -280,6 +280,9 @@ fn render(
             move |found| {
                 b.set_sensitive(true);
                 b.set_label("Add Printer…");
+                let Some(found) = found else {
+                    return say(&st, copy::PRINTER_LIST_REFUSED);
+                };
                 let new: Vec<(String, String)> = found
                     .into_iter()
                     .filter(|u| !taken.contains(u))

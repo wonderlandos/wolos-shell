@@ -30,6 +30,8 @@ pub enum Notice {
     /// A sign-in page holds the network (a café, a hotel): summary, body; Open shows the page
     /// NetworkManager probes (`wol_core::netinfo::nm_connectivity_uri`).
     Portal(String, String),
+    /// A removable disk was plugged in (QA-FDAY-13): summary, body; Open in Files shows it.
+    Stick(String, String),
 }
 
 /// What a banner's chosen action starts.
@@ -159,6 +161,9 @@ pub struct Alerts {
     malware_shown: u64,
     /// The connectivity of the last poll ([`portal`] tells on a change to a sign-in page).
     connectivity: wol_core::netinfo::Connectivity,
+    /// The removable disks of the last poll (None before the first: a stick that is already in at
+    /// login is not news).
+    sticks: Option<Vec<String>>,
 }
 
 impl Alerts {
@@ -274,6 +279,22 @@ impl Alerts {
         })
     }
 
+    /// The removable disks now: a notice for each one that was not there at the last poll. The
+    /// first poll only remembers (QA-FDAY-13: plugging a stick said nothing).
+    pub fn sticks(&mut self, now: Vec<Stick>) -> Vec<Notice> {
+        let ids: Vec<String> = now.iter().map(|s| s.dev.clone()).collect();
+        let Some(before) = self.sticks.replace(ids) else {
+            return Vec::new();
+        };
+        now.into_iter()
+            .filter(|s| !before.contains(&s.dev))
+            .map(|s| {
+                let (summary, body) = crate::copy::stick_plugged(&s.name);
+                Notice::Stick(summary, body)
+            })
+            .collect()
+    }
+
     /// Disk is checked on every [`DISK_EVERY_POLLS`]th poll, starting with the first.
     pub fn disk_due(&mut self) -> bool {
         let due = self.polls.is_multiple_of(DISK_EVERY_POLLS);
@@ -310,6 +331,8 @@ pub struct Reads {
     pub due: Option<DueReads>,
     /// The account's malware lists, only when a file changed since the last read.
     pub malware: Option<Vec<String>>,
+    /// The removable disks plugged in now.
+    pub sticks: Vec<Stick>,
 }
 
 #[derive(Debug, Default)]
@@ -359,6 +382,7 @@ fn read(due: bool) -> Reads {
     Reads {
         due,
         malware: malware_read(),
+        sticks: wol_core::storage::removable_disks(std::path::Path::new("/sys/block")),
     }
 }
 
@@ -381,8 +405,12 @@ pub fn notices(a: &mut Alerts, r: Reads) -> Vec<Notice> {
         let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         out.extend(a.malware(&wol_core::malware::merge(&refs)));
     }
+    out.extend(a.sticks(r.sticks));
     out
 }
+
+/// A removable disk with a medium in it ([`wol_core::storage::removable_disks`]).
+pub type Stick = wol_core::storage::Removable;
 
 /// Menu bar poll hook: battery every time (a reading already in hand), the rest read in
 /// `gio::spawn_blocking`: `df` hung the menu bar, dock and panels for its 2 s timeout on a
@@ -472,6 +500,16 @@ pub(crate) fn portal_banner(summary: String, body: String) -> Banner {
     )
 }
 
+/// The plugged-in banner: Open in Files shows the disk in the sidebar (QA-FDAY-13).
+pub(crate) fn stick_banner(summary: String, body: String) -> Banner {
+    banner(
+        summary,
+        body,
+        false,
+        vec![("open", "Open in Files", Then::Run(vec!["nautilus".into()]))],
+    )
+}
+
 fn act(n: Notice) {
     let notify = |s: &str, body: &str, critical: bool| {
         let mut argv = vec!["notify-send".to_string(), "-a".into(), "WolOS".into()];
@@ -496,6 +534,7 @@ fn act(n: Notice) {
         }
         Notice::Updates(s, body) => show_banner(updates_banner(s, body)),
         Notice::Portal(s, body) => show_banner(portal_banner(s, body)),
+        Notice::Stick(s, body) => show_banner(stick_banner(s, body)),
         Notice::Malware(s, body, path) => {
             // Open Anyway is a deliberate step in Settings; a notification only offers the safe one.
             let trash = vec!["gio".into(), "trash".into(), "--".into(), path];
@@ -520,6 +559,66 @@ fn act(n: Notice) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The notice comes once per plug: not for what was in at login, not again while it stays, and
+    /// again after it was out.
+    #[test]
+    fn a_plugged_stick_is_told_once() {
+        let stick = |d: &str, n: &str| Stick {
+            dev: d.into(),
+            name: n.into(),
+        };
+        let mut a = Alerts::default();
+        assert!(
+            a.sticks(vec![stick("sda", "Old")]).is_empty(),
+            "in at login: not news"
+        );
+        assert!(a.sticks(vec![stick("sda", "Old")]).is_empty());
+        let got = a.sticks(vec![
+            stick("sda", "Old"),
+            stick("sdb", "Kingston DataTraveler"),
+        ]);
+        assert_eq!(got.len(), 1, "{got:?}");
+        let Notice::Stick(s, body) = &got[0] else {
+            panic!("{got:?}")
+        };
+        assert_eq!(s, "Kingston DataTraveler Was Plugged In");
+        assert_eq!(body, "Open Files to see what is on it.");
+        assert!(
+            a.sticks(vec![
+                stick("sda", "Old"),
+                stick("sdb", "Kingston DataTraveler")
+            ])
+            .is_empty()
+        );
+        assert!(
+            a.sticks(vec![stick("sda", "Old")]).is_empty(),
+            "unplugged: quiet"
+        );
+        assert_eq!(
+            a.sticks(vec![stick("sda", "Old"), stick("sdb", "K")]).len(),
+            1,
+            "plugged again"
+        );
+        // A disk that does not say what it is.
+        assert_eq!(crate::copy::stick_plugged("").0, "A Disk Was Plugged In");
+        // The banner waits for the click on Open in Files, which opens Files (no shell string).
+        let b = stick_banner("S".into(), "B".into());
+        assert_eq!(
+            b.notify,
+            [
+                "notify-send",
+                "-a",
+                "WolOS",
+                "-w",
+                "-A",
+                "open=Open in Files",
+                "S",
+                "B"
+            ]
+        );
+        assert_eq!(b.then, [("open", Then::Run(vec!["nautilus".to_string()]))]);
+    }
 
     /// QA-NET2-3: the sign-in notice comes once, when the network turns to a portal.
     #[test]
@@ -660,7 +759,8 @@ mod tests {
                     Notice::Restart(..)
                     | Notice::Malware(..)
                     | Notice::Updates(..)
-                    | Notice::Portal(..),
+                    | Notice::Portal(..)
+                    | Notice::Stick(..),
                 ) => {
                     unreachable!()
                 }
@@ -847,6 +947,7 @@ mod tests {
                 ..Default::default()
             }),
             malware: None,
+            ..Default::default()
         };
         assert!(
             notices(&mut next_login, r).is_empty(),
@@ -953,6 +1054,7 @@ mod tests {
                 disk: Some((2 * G, 100 * G)),
             }),
             malware: Some(vec![]),
+            ..Default::default()
         };
         let got = notices(&mut a, r);
         assert_eq!(got.len(), 4, "{got:?}");

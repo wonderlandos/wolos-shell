@@ -265,7 +265,7 @@ fn child() {
         .flags(gtk::gio::ApplicationFlags::NON_UNIQUE)
         .build();
     app.connect_activate(|app| {
-        let (win, board) = shell::ui::widgets::build(app, Rc::new(shell::system::Fake));
+        let (win, board) = shell::ui::widgets::build(app, std::sync::Arc::new(shell::system::Fake));
         assert!(board.widgets().is_empty(), "a fresh home has no widget");
         win.present();
         // A panel app's click-catcher (Search opens one under itself): a full-screen layer with

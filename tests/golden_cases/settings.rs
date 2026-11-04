@@ -11,7 +11,6 @@ use shell::status::{Audio, Battery, Network};
 use shell::system::{Action, ActionError, System};
 use shell::ui;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::Arc;
 
 pub fn cases() -> Vec<Case> {
@@ -25,7 +24,7 @@ pub fn cases() -> Vec<Case> {
                 wallpaper: false,
                 build: Box::new(move || {
                     let a = ui::settings::content_searching(
-                        Rc::new(shell::system::Fake),
+                        Arc::new(shell::system::Fake),
                         &ui::settings::Host::demo(),
                         query,
                     );
@@ -41,7 +40,7 @@ pub fn cases() -> Vec<Case> {
         class: "preview-app",
         wallpaper: false,
         build: Box::new(|| {
-            let a = ui::settings::content(Rc::new(shell::system::Fake), &edge_host().0);
+            let a = ui::settings::content(Arc::new(shell::system::Fake), &edge_host().0);
             a.open("Modules");
             pump(50);
             a.root.clone().upcast()
@@ -59,7 +58,7 @@ pub fn cases() -> Vec<Case> {
                 one_copy: true,
                 ..Default::default()
             });
-            let a = ui::settings::content(Rc::new(shell::system::Fake), &h);
+            let a = ui::settings::content(Arc::new(shell::system::Fake), &h);
             a.open("Software Update");
             pump(300);
             a.root.clone().upcast()
@@ -72,7 +71,7 @@ pub fn cases() -> Vec<Case> {
         class: "preview-app",
         wallpaper: false,
         build: Box::new(|| {
-            let a = ui::settings::content(Rc::new(shell::system::Fake), &gave_up_host());
+            let a = ui::settings::content(Arc::new(shell::system::Fake), &gave_up_host());
             a.open("Modules");
             pump(50);
             a.root.clone().upcast()
@@ -86,7 +85,7 @@ pub fn cases() -> Vec<Case> {
         wallpaper: false,
         build: Box::new(|| {
             let a = in_japanese(|| {
-                let a = ui::settings::content(Rc::new(shell::system::Fake), &ime_host());
+                let a = ui::settings::content(Arc::new(shell::system::Fake), &ime_host());
                 a.open("Keyboard");
                 pump(300);
                 a
@@ -103,7 +102,7 @@ pub fn cases() -> Vec<Case> {
             class: "preview-app",
             wallpaper: false,
             build: Box::new(|| {
-                let a = ui::settings::content(Rc::new(TwoDisplays), &ui::settings::Host::demo());
+                let a = ui::settings::content(Arc::new(TwoDisplays), &ui::settings::Host::demo());
                 a.open("Displays");
                 a.root.clone().upcast()
             }),
@@ -122,7 +121,7 @@ pub fn cases() -> Vec<Case> {
                 airplane: Some(false),
                 ..Default::default()
             });
-            let a = ui::settings::content(Rc::new(shell::system::Fake), &h);
+            let a = ui::settings::content(std::sync::Arc::new(shell::system::Fake), &h);
             a.open("Network");
             pump(300);
             a.root.clone().upcast()
@@ -139,7 +138,7 @@ pub fn cases() -> Vec<Case> {
                 let f = config_file(wol_core::terminal_shell::FILE);
                 std::fs::create_dir_all(f.parent().expect("dir")).expect("config dir");
                 std::fs::write(&f, "pwsh\n").expect("terminal shell");
-                let a = ui::settings::content(Rc::new(shell::system::Fake), &all_shells_host());
+                let a = ui::settings::content(Arc::new(shell::system::Fake), &all_shells_host());
                 a.open("General");
                 pump(50);
                 let p = a.content.visible_child().expect("a page shows");
@@ -287,7 +286,11 @@ fn in_japanese<T>(build: impl FnOnce() -> T) -> T {
 }
 
 /// The page `name` of a Settings window on `sys`, built and loaded.
-fn page(sys: Rc<dyn System>, host: &ui::settings::Host, name: &str) -> (w::AppWindow, gtk::Widget) {
+fn page(
+    sys: Arc<dyn System>,
+    host: &ui::settings::Host,
+    name: &str,
+) -> (w::AppWindow, gtk::Widget) {
     let a = ui::settings::content(sys, host);
     a.open(name);
     pump(300);
@@ -359,7 +362,7 @@ fn config_file(rel: &str) -> PathBuf {
 /// S7-5: wol-admind refusing (here: no such action) leaves "Download new updates" on, as it is.
 fn software_update_switch_flips_back_when_the_change_fails() {
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Software Update",
     );
@@ -383,7 +386,7 @@ fn appearance_puts_the_old_look_back_when_the_save_fails() {
     let blocked = config_file(shared::theme::ACTIVE_FILE);
     std::fs::create_dir_all(&blocked).expect("block the theme file");
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Appearance",
     );
@@ -426,7 +429,7 @@ fn appearance_puts_the_old_look_back_when_the_save_fails() {
 /// S7-10: a slider whose save failed shows the saved value again (Desk read the file back).
 fn effects_controls_show_the_saved_look_after_a_failed_save() {
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Effects & Looks",
     );
@@ -481,7 +484,7 @@ fn visible_resets(p: &gtk::Widget) -> usize {
 fn restore_defaults_hides_every_reset_button() {
     let f = one_changed_shortcut();
     let (_a, p) = page(
-        Rc::new(Accepts),
+        Arc::new(Accepts),
         &ui::settings::Host::demo(),
         "Keyboard Shortcuts",
     );
@@ -498,7 +501,7 @@ fn restore_defaults_hides_every_reset_button() {
 fn a_failed_shortcut_save_shows_the_saved_shortcuts() {
     let f = one_changed_shortcut();
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Keyboard Shortcuts",
     );
@@ -515,7 +518,7 @@ fn a_failed_shortcut_save_shows_the_saved_shortcuts() {
 /// S7-12: Install waits (spinner, off) until its run ended; a second click starts nothing.
 fn modules_run_one_job_at_a_time() {
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Modules",
     );
@@ -534,7 +537,7 @@ fn modules_run_one_job_at_a_time() {
 /// What modules-install gave up on shows under "Could Not Be Added" with Retry (not also under
 /// Available); Retry is one job at a time, as Install is.
 fn modules_offer_retry_for_what_could_not_be_added() {
-    let (_a, p) = page(Rc::new(shell::system::Fake), &gave_up_host(), "Modules");
+    let (_a, p) = page(Arc::new(shell::system::Fake), &gave_up_host(), "Modules");
     assert!(says(&p, "Could Not Be Added"), "the section shows");
     // A media format package reads as the formats it brings, not its package name.
     assert!(says(&p, "Craft Suite") && says(&p, "AAC, H.264, HEVC (H.265), AC3 (Dolby Digital)"));
@@ -570,7 +573,7 @@ fn modules_offer_retry_for_what_could_not_be_added() {
 /// The slider on `page` titled `title`, after its save failed: back at the saved value.
 fn slider_shows_saved_value_after_failed_save(page_name: &str, title: &str) {
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         page_name,
     );
@@ -631,7 +634,7 @@ fn scroll_speed_is_lines_per_notch_from_one_to_ten() {
     let spy = WheelSpy::default();
     let saved = spy.0.clone();
     let (_a, p) = page(
-        Rc::new(spy),
+        std::sync::Arc::new(spy),
         &ui::settings::Host::demo(),
         "Trackpad & Mouse",
     );
@@ -670,7 +673,7 @@ fn scroll_speed_is_lines_per_notch_from_one_to_ten() {
 /// not promise it for the next login.
 fn language_menu_shows_the_saved_language_after_a_failed_save() {
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Language & Region",
     );
@@ -694,7 +697,7 @@ fn login_items_show_the_saved_list_after_a_failed_save() {
     prefs.login_items = vec!["k8-test-app --start".into()];
     std::fs::write(&f, prefs.to_json()).expect("desktop prefs");
     let (_a, p) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Login Items",
     );
@@ -724,7 +727,7 @@ fn login_items_show_the_saved_list_after_a_failed_save() {
 /// S7-13: after Finish Setup queued the key the button stays off and the footnote shows.
 fn startup_security_finish_setup_runs_once() {
     let (host, m) = edge_host();
-    let (_a, p) = page(Rc::new(Accepts), &host, "Startup Security");
+    let (_a, p) = page(Arc::new(Accepts), &host, "Startup Security");
     let queued = shell::copy::settings::STARTUP_KEY_QUEUED;
     assert!(!says(&p, queued), "nothing queued yet");
     let finish = button(&p, "Finish Setup");
@@ -752,7 +755,7 @@ fn terminal_shell_choice_is_saved_or_put_back() {
     let _ = std::fs::remove_file(&f);
     let mut host = ui::settings::Host::demo();
     host.terminal_shells = vec!["zsh", "bash", "pwsh"];
-    let (_a, p) = page(Rc::new(shell::system::Fake), &host, "General");
+    let (_a, p) = page(Arc::new(shell::system::Fake), &host, "General");
     let d: gtk::DropDown = on_row(&p, "Shell in the terminal");
     let labels: Vec<String> = (0..d.model().expect("model").n_items())
         .map(|i| {
@@ -818,7 +821,7 @@ impl System for Records {
 /// checks that need the plain GTK look: it applies the kit sheet.
 pub fn larger_text_is_a_switch_and_grows_the_shell_text() {
     use shell::kit::style;
-    let sys = Rc::new(Records(Default::default()));
+    let sys = Arc::new(Records(Default::default()));
     let (_a, p) = page(sys.clone(), &ui::settings::Host::demo(), "Accessibility");
     let sw: gtk::Switch = on_row(&p, "Larger text");
     assert!(!sw.is_active(), "normal text until asked");
@@ -835,7 +838,7 @@ pub fn larger_text_is_a_switch_and_grows_the_shell_text() {
         "Zoom row names why it is off"
     );
     let (_z, with_zoom) = page(
-        Rc::new(shell::system::Fake),
+        Arc::new(shell::system::Fake),
         &ui::settings::Host::demo(),
         "Accessibility",
     );
@@ -857,7 +860,7 @@ pub fn larger_text_is_a_switch_and_grows_the_shell_text() {
     // window wakes the menu bar's bus watch, which this part of the run has no session bus for).
     let natural = || {
         let (a, p) = page(
-            Rc::new(Accepts),
+            Arc::new(Accepts),
             &ui::settings::Host::demo(),
             "Accessibility",
         );
@@ -889,7 +892,7 @@ pub fn larger_text_is_a_switch_and_grows_the_shell_text() {
 /// QA-ACC-11: Keyboard > Input Methods shows the `ime` module (Install) for a Japanese account and
 /// nothing for an English one; Install asks wol-admind for the module's meta package.
 fn keyboard_offers_input_methods_only_for_languages_that_need_them() {
-    let sys = Rc::new(Records(Default::default()));
+    let sys = Arc::new(Records(Default::default()));
     let (_a, p) = in_japanese(|| page(sys.clone(), &ime_host(), "Keyboard"));
     pump(300);
     assert!(says(&p, "Input Methods"), "the section shows for Japanese");
@@ -903,7 +906,7 @@ fn keyboard_offers_input_methods_only_for_languages_that_need_them() {
         "{got:?}"
     );
     // English: no section (the list is not even asked for).
-    let (_b, q) = page(Rc::new(Accepts), &ime_host(), "Keyboard");
+    let (_b, q) = page(Arc::new(Accepts), &ime_host(), "Keyboard");
     pump(300);
     assert!(!says(&q, "Input Methods"), "no input methods for English");
 }

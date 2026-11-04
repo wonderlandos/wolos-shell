@@ -15,6 +15,7 @@ use gtk::{glib, prelude::*};
 use shared::theme::Variant;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// Opened by the person (Settings > General): runs even after the last Later.
 pub const AGAIN: &str = "--again";
@@ -69,7 +70,7 @@ impl Facts {
 
 /// Saves `job` in this session. Location goes first: it needs no password, so a reports change
 /// that waits for one leaves it saved (`Flow::job_done` counts on it).
-async fn save(sys: Rc<dyn System>, job: Job, choices: Choices) -> Result<(), ActionError> {
+async fn save(sys: Arc<dyn System>, job: Job, choices: Choices) -> Result<(), ActionError> {
     match job {
         Job::Privacy {
             reports,
@@ -174,7 +175,7 @@ fn online_accounts() -> Option<Vec<OnlineAccount>> {
 pub struct FirstLogin {
     pub root: gtk::Widget,
     pager: gtk::Stack,
-    sys: Rc<dyn System>,
+    sys: Arc<dyn System>,
     marks: Marks,
     flow: RefCell<Flow>,
     cards: RefCell<Vec<(Page, Card)>>,
@@ -186,12 +187,12 @@ pub struct FirstLogin {
 }
 
 impl FirstLogin {
-    pub fn new(sys: Rc<dyn System>) -> Rc<FirstLogin> {
+    pub fn new(sys: Arc<dyn System>) -> Rc<FirstLogin> {
         let facts = Facts::read(&*sys);
         FirstLogin::with(sys, &facts)
     }
 
-    pub fn with(sys: Rc<dyn System>, facts: &Facts) -> Rc<FirstLogin> {
+    pub fn with(sys: Arc<dyn System>, facts: &Facts) -> Rc<FirstLogin> {
         a::set_header_icon("wolos-mark");
         let pager = a::pager();
         let s = Rc::new(FirstLogin {

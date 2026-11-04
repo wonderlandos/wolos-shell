@@ -488,7 +488,9 @@ const KEY_SCREEN_STEPS: [&str; 5] = [
     crate::i18n::n_("Press a key, choose Enroll MOK, then Continue, then Yes."),
     crate::i18n::n_("When it asks for a password, type {password}. Nothing shows while you type."),
     crate::i18n::n_("Choose Reboot. You will not see this screen again."),
-    crate::i18n::n_("Missed it? Run wol boot enroll and restart."),
+    crate::i18n::n_(
+        "Missed it? Start from the USB stick again: its blue screen shows Enroll MOK. Or choose Enroll key from disk and pick ENROL_THIS_KEY_FOR_WOLOS.cer.",
+    ),
 ];
 
 /// [`KEY_SCREEN_STEPS`] in the language in use, the password filled in.

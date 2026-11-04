@@ -56,7 +56,6 @@ impl Panel {
                 let found = h.search(&query);
                 if h.entries().is_empty() {
                     list.append(&w::label("Copied text shows up here", "secondary"));
-                    list.append(&w::label(NOT_KEPT, "secondary"));
                 } else if found.is_empty() {
                     list.append(&w::label("No matches", "secondary"));
                 }
@@ -89,6 +88,7 @@ impl Panel {
         root.append(&head);
         root.append(&search);
         root.append(&scroll);
+        root.append(&w::footnote(&limits_line()));
         draw();
         Panel {
             root,
@@ -104,9 +104,12 @@ impl Panel {
     }
 }
 
-/// What the history leaves out, said once on the empty list (QA-LN-17: an image copy was
-/// silently not listed).
-const NOT_KEPT: &str = "Passwords, card numbers, codes and images are not kept";
+/// What the history keeps and leaves out, said under the list whenever it is shown (QA-LN-17: an
+/// image copy was silently not listed; QA-PWR-23: a 70 KiB copy pasted fine and was missing from
+/// the list with no word why). Built from the limits, so the sentence cannot drift from them.
+pub fn limits_line() -> String {
+    crate::copy::clipboard_limits(clipboard::MAX, clipboard::MAX_TEXT / 1024)
+}
 
 /// One entry: the text (click copies and closes), Pin/Unpin and Remove.
 fn row(
@@ -217,6 +220,18 @@ pub fn panel(app: &gtk::Application) -> gtk::Window {
 
 #[cfg(test)]
 mod tests {
+    /// QA-PWR-23: the panel names its limits, from the constants.
+    #[test]
+    fn the_panel_says_how_much_it_keeps() {
+        let l = super::limits_line();
+        assert!(
+            l.contains(&format!("last {} copies", crate::clipboard::MAX)),
+            "{l}"
+        );
+        assert!(l.contains("64 KB"), "{l}");
+        assert!(l.contains("images are not kept"), "{l}");
+    }
+
     /// Audit2 A2-15/A2-17 carried over from the old panel: a pick closes, no expect on the display.
     #[test]
     fn a_pick_closes_and_no_display_never_panics() {

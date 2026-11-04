@@ -8,7 +8,7 @@ mod broadway;
 use gtk::prelude::*;
 use shell::system::{Action, ActionError, BtDevice, Done, System};
 use shell::ui;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The radio refuses every change (BlueZ down, rfkill): `Bluetooth` ends in `Failed`.
 struct Refusing(ActionError);
@@ -59,7 +59,7 @@ fn of<T: IsA<gtk::Widget>>(root: &impl IsA<gtk::Widget>) -> Vec<T> {
     v
 }
 
-fn open_page(sys: Rc<dyn System>) -> (shell::kit::widgets::AppWindow, gtk::Window, gtk::Widget) {
+fn open_page(sys: Arc<dyn System>) -> (shell::kit::widgets::AppWindow, gtk::Window, gtk::Widget) {
     let a = ui::settings::content(sys, &ui::settings::Host::demo());
     let win = gtk::Window::builder()
         .default_width(shell::kit::widgets::APP_SIZE.0)
@@ -92,7 +92,7 @@ fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
     }
 
     // --- pair_forget_rows_exist: every paired device has Forget; the page can add a device. ---
-    let (a, win, shown) = open_page(Rc::new(Refusing(ActionError::Failed)));
+    let (a, win, shown) = open_page(Arc::new(Refusing(ActionError::Failed)));
     let buttons = of::<gtk::Button>(&shown);
     let forgets: Vec<_> = buttons
         .iter()
@@ -186,7 +186,7 @@ fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
     drop(a);
 
     // --- QA-HUNT-1 (bluetooth.rs:75): Cancel on the sheet says so, never "Incorrect password". ---
-    let (a, win, shown) = open_page(Rc::new(Refusing(ActionError::Cancelled)));
+    let (a, win, shown) = open_page(Arc::new(Refusing(ActionError::Cancelled)));
     let device = of::<gtk::Button>(&shown)
         .into_iter()
         .find(|b| b.has_css_class("device-button"))
