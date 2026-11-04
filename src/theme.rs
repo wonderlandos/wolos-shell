@@ -414,7 +414,10 @@ mod tests {
         assert!(shelf(true, "wol-dark").contains("background: var(--bar-fill)"));
         assert!(shelf(true, "wol-dark-blue").contains("background: var(--bar-fill)"));
         let light = shelf(false, "wol-light");
-        assert!(light.contains("var(--glass) var(--dock-mix, 58%)"), "{light}");
+        assert!(
+            light.contains("var(--glass) var(--dock-mix, 58%)"),
+            "{light}"
+        );
         assert!(!light.contains("--bar-fill"), "{light}");
         assert!(!stylesheet(&resolve(Some("wol-light"), false), "").contains(DARK_CSS));
         assert!(KIT_CSS.contains("--bar-fill: alpha(var(--surface)"));

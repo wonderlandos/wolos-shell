@@ -153,7 +153,7 @@ impl PairSheet {
         let entry = w::text_field("PIN or code");
         let buttons = w::hbox(w::S2);
         buttons.append(&w::spacer());
-        let this = Rc::new_cyclic(|me: &std::rc::Weak<PairSheet>| {
+        Rc::new_cyclic(|me: &std::rc::Weak<PairSheet>| {
             let go = |me: std::rc::Weak<PairSheet>| {
                 move || {
                     if let Some(s) = me.upgrade() {
@@ -204,8 +204,7 @@ impl PairSheet {
                 on_accept: RefCell::new(None),
                 on_cancel: RefCell::new(None),
             }
-        });
-        this
+        })
     }
 
     #[allow(clippy::too_many_arguments)]

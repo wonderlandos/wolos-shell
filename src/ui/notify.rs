@@ -1324,7 +1324,7 @@ mod tests {
     fn notification_center_is_as_tall_as_its_cards() {
         let [top, bottom, left, right] = CENTER_SPEC.anchor;
         assert_eq!((top, bottom, left, right), (true, false, false, true));
-        assert!(CENTER_MAX_HEIGHT > 0);
+        const { assert!(CENTER_MAX_HEIGHT > 0) };
     }
 
     fn n(critical: bool, t: i32) -> Note {

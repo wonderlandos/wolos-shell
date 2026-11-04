@@ -645,7 +645,10 @@ mod settings_tests {
         );
         assert_eq!(anchor_rule(&[], "Virtual-1", None), None);
         // Already pinned, or placed by hand: left alone.
-        assert_eq!(anchor_rule(&[own.clone()], "Virtual-1", Some(&own)), None);
+        assert_eq!(
+            anchor_rule(std::slice::from_ref(&own), "Virtual-1", Some(&own)),
+            None
+        );
         let by_hand = ["Virtual-1,1920x1080@60.00,100x0,1".to_string()];
         assert_eq!(anchor_rule(&by_hand, "Virtual-1", Some(&own)), None);
         // The last rule wins (a held mode change comes after the file's).
@@ -656,7 +659,7 @@ mod settings_tests {
         assert_eq!(anchor_rule(&both, "Virtual-1", Some(&own)), None);
         // Another display's rule is not the main display's.
         assert_eq!(
-            anchor_rule(&[below.clone()], "Virtual-1", Some(&own)).as_deref(),
+            anchor_rule(std::slice::from_ref(&below), "Virtual-1", Some(&own)).as_deref(),
             Some(own.as_str())
         );
     }

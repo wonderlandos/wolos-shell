@@ -1094,7 +1094,7 @@ fn wifi_tile_usable(radio: Option<bool>) -> bool {
 }
 
 /// Wi-Fi tile subtitle: the connection, or that this machine has no Wi-Fi.
-fn wifi_label<'a>(radio: Option<bool>, connection: &'a str) -> &'a str {
+fn wifi_label(radio: Option<bool>, connection: &str) -> &str {
     if radio.is_none() {
         "Unavailable"
     } else {

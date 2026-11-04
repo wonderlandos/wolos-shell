@@ -25,6 +25,8 @@ mod form_kit;
 mod installer_cases;
 #[path = "golden_cases/maker.rs"]
 mod maker_cases;
+#[path = "golden_cases/menubar.rs"]
+mod menubar_cases;
 #[path = "golden_cases/motion.rs"]
 mod motion_cases;
 #[path = "golden_cases/offers.rs"]
@@ -41,8 +43,6 @@ mod settings_cases;
 mod setup_cases;
 #[path = "golden_cases/theme_picker.rs"]
 mod theme_picker_cases;
-#[path = "golden_cases/menubar.rs"]
-mod menubar_cases;
 #[path = "golden_cases/tray.rs"]
 mod tray_cases;
 #[path = "golden_cases/widgets.rs"]

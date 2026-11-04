@@ -650,10 +650,12 @@ mod tests {
     #[test]
     fn a_key_at_200ms_is_kept() {
         const KEY_AT_MS: u64 = 200;
-        assert!(
-            WARM_SHOW_BUDGET_MS + KEYBOARD_AFTER_MS < KEY_AT_MS,
-            "map {WARM_SHOW_BUDGET_MS} ms + keyboard {KEYBOARD_AFTER_MS} ms"
-        );
+        const {
+            assert!(
+                WARM_SHOW_BUDGET_MS + KEYBOARD_AFTER_MS < KEY_AT_MS,
+                "the warm map and the keyboard grab come before the key"
+            )
+        };
         // The warm process is what makes the budget possible: the app is activated, not started.
         let src = include_str!("mod.rs");
         assert!(src.contains("pub const WARM_ARG"));
