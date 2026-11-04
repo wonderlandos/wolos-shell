@@ -4,6 +4,7 @@
 use super::{Ui, WIFI_SETTINGS, launch};
 use crate::copy;
 use crate::focus::{self, Focus};
+use crate::i18n::{self, keys};
 use crate::kit::{
     controls::{DetailPage, DeviceRow},
     widgets as w,
@@ -43,8 +44,8 @@ impl Join {
     fn open(&self, ssid: Option<&str>) {
         *self.ssid.borrow_mut() = ssid.map(String::from);
         self.title.set_label(&match ssid {
-            Some(s) => format!("Join “{s}”"),
-            None => "Join Other Network".into(),
+            Some(s) => i18n::fill(keys::CC_JOIN_NETWORK, &[("name", s)]),
+            None => i18n::t(keys::CC_JOIN_OTHER).into(),
         });
         self.name.set_text("");
         self.name.set_visible(ssid.is_none());
@@ -119,9 +120,9 @@ fn join(ui: &Rc<Ui>, page: &DetailPage, j: &Join, ssid: String, password: Option
 
 fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
     let title = w::label("", "title");
-    let name = w::text_field("Network name");
+    let name = w::text_field(i18n::t(keys::CC_NETWORK_NAME));
     name.set_visible(false);
-    let password = w::password_field("Password");
+    let password = w::password_field(i18n::t(keys::CC_PASSWORD));
     let col = w::vbox(w::S2);
     col.append(&title);
     col.append(&name);
@@ -135,7 +136,7 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
     note.set_visible(false);
     col.append(&note);
     let row = w::hbox(w::S2);
-    let join_button = w::button("Join", w::Kind::Primary, || {});
+    let join_button = w::button(i18n::t(keys::CC_JOIN), w::Kind::Primary, || {});
     row.append(&w::spacer());
     let j = Join {
         sheet: w::sheet(&col),
@@ -148,9 +149,11 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
     };
     {
         let r = j.sheet.clone();
-        row.append(&w::button("Cancel", w::Kind::Default, move || {
-            r.set_reveal_child(false)
-        }));
+        row.append(&w::button(
+            i18n::t(keys::CC_CANCEL),
+            w::Kind::Default,
+            move || r.set_reveal_child(false),
+        ));
     }
     let go = {
         let (u, p, j) = (ui.clone(), page.clone(), j.clone());
@@ -188,7 +191,12 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
 
 impl Pages {
     pub fn build(ui: &Rc<Ui>) -> Self {
-        let wifi = DetailPage::new("Wi-Fi", Some(false), "Networks", Some("Wi-Fi Settings…"));
+        let wifi = DetailPage::new(
+            "Wi-Fi",
+            Some(false),
+            i18n::t(keys::CC_NETWORKS),
+            Some(i18n::t(keys::CC_WIFI_SETTINGS)),
+        );
         back(ui, &wifi);
         link(&wifi, WIFI_SETTINGS);
         if let Some(t) = &wifi.toggle {
@@ -198,7 +206,7 @@ impl Pages {
         let join = join_sheet(ui, &wifi);
         ui.pages.add_named(&wifi.root, Some("wifi"));
 
-        let bluetooth = DetailPage::new("Bluetooth", Some(false), "Devices", None);
+        let bluetooth = DetailPage::new("Bluetooth", Some(false), i18n::t(keys::CC_DEVICES), None);
         back(ui, &bluetooth);
         if let Some(t) = &bluetooth.toggle {
             let u = ui.clone();
@@ -206,25 +214,25 @@ impl Pages {
         }
         ui.pages.add_named(&bluetooth.root, Some("bluetooth"));
 
-        let focus_page = DetailPage::new("Focus", None, "", None);
+        let focus_page = DetailPage::new(i18n::t(keys::CC_FOCUS), None, "", None);
         back(ui, &focus_page);
         let dnd = DeviceRow::new(
             "weather-clear-night-symbolic",
-            "Do Not Disturb",
-            "Off",
+            i18n::t(keys::CC_DO_NOT_DISTURB),
+            i18n::t(keys::CC_OFF),
             false,
             None,
         );
         let hour = DeviceRow::new(
             "preferences-system-time-symbolic",
-            "For 1 hour",
+            i18n::t(keys::CC_FOR_ONE_HOUR),
             "",
             false,
             None,
         );
         let morning = DeviceRow::new(
             "preferences-system-time-symbolic",
-            "Until tomorrow morning",
+            i18n::t(keys::CC_UNTIL_MORNING),
             "",
             false,
             None,
@@ -287,12 +295,18 @@ impl Pages {
                 .map(|n| self.network_row(ui, n))
                 .collect();
             if s.wifi_enabled() == Some(true) {
-                let other = DeviceRow::new("view-more-symbolic", "Other Network…", "", false, None);
+                let other = DeviceRow::new(
+                    "view-more-symbolic",
+                    i18n::t(keys::CC_OTHER_NETWORK),
+                    "",
+                    false,
+                    None,
+                );
                 let j = self.join.clone();
                 other.button.connect_clicked(move |_| j.open(None));
                 rows.push(other.button.upcast());
             }
-            self.wifi.set_rows(&rows, "No networks found");
+            self.wifi.set_rows(&rows, i18n::t(keys::CC_NO_NETWORKS));
             *self.nets.borrow_mut() = Some(nets);
         }
 
@@ -309,7 +323,11 @@ impl Pages {
                     let r = DeviceRow::new(
                         "bluetooth-active-symbolic",
                         &d.name,
-                        if d.connected { "Connected" } else { "" },
+                        if d.connected {
+                            i18n::t(keys::CC_CONNECTED)
+                        } else {
+                            ""
+                        },
                         d.connected,
                         None,
                     );
@@ -320,9 +338,9 @@ impl Pages {
                 })
                 .collect();
             let empty = if bt.is_none() {
-                "Bluetooth is unavailable"
+                i18n::t(keys::CC_BT_UNAVAILABLE)
             } else {
-                "No paired devices"
+                i18n::t(keys::CC_NO_PAIRED)
             };
             self.bluetooth.set_rows(&rows, empty);
             *self.devices.borrow_mut() = Some(devices);
@@ -336,7 +354,11 @@ impl Pages {
         let r = DeviceRow::new(
             crate::system::signal_icon(n.signal),
             &n.ssid,
-            if n.connected { "Connected" } else { "" },
+            if n.connected {
+                i18n::t(keys::CC_CONNECTED)
+            } else {
+                ""
+            },
             n.connected,
             n.secure.then_some("system-lock-screen-symbolic"),
         );

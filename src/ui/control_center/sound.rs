@@ -8,6 +8,7 @@
 //! is the one drawing the page: its slider counts from 0 dB, which `System`'s `wpctl` does not.
 //! Invariant: 100% on a slider is 0 dB (`wol_core::audio::percent_of`), never the hardware maximum.
 use super::{SOUND_SETTINGS, Ui, launch};
+use crate::i18n::{self, keys};
 use crate::kit::{
     controls::{DetailPage, DeviceRow},
     widgets as w,
@@ -98,7 +99,7 @@ pub(super) fn snapshot(s: &dyn System) -> Snapshot {
         .mic
         .map(|_| Device {
             id: 0,
-            name: "Microphone".into(),
+            name: i18n::t(keys::CC_MICROPHONE).into(),
             kind: DeviceKind::Input,
             default: true,
             volume: level(a.mic),
@@ -273,7 +274,12 @@ fn shown_default(shown: &RefCell<Option<Snapshot>>, kind: DeviceKind) -> Option<
 
 impl SoundPage {
     pub fn build(ui: &Rc<Ui>) -> Self {
-        let page = DetailPage::new("Sound", None, "", Some("Sound Settings…"));
+        let page = DetailPage::new(
+            i18n::t(keys::CC_SOUND),
+            None,
+            "",
+            Some(i18n::t(keys::CC_SOUND_SETTINGS)),
+        );
         {
             let u = ui.clone();
             page.back.connect_clicked(move |_| u.show("main"));
@@ -286,14 +292,19 @@ impl SoundPage {
         let from_service: Rc<Cell<bool>> = Default::default();
         let output = {
             let (u, src, live) = (ui.clone(), src.clone(), from_service.clone());
-            Level::new(ui, "audio-volume-high-symbolic", "Mute", move |pct| {
-                if live.get() {
-                    // 100 = 0 dB, converted by the service (A6-2).
-                    send(&u, &src, AudioAction::OutputVolume(pct));
-                } else {
-                    u.act_latest("volume", Action::Volume(system_percent(pct)));
-                }
-            })
+            Level::new(
+                ui,
+                "audio-volume-high-symbolic",
+                i18n::t(keys::CC_MUTE),
+                move |pct| {
+                    if live.get() {
+                        // 100 = 0 dB, converted by the service (A6-2).
+                        send(&u, &src, AudioAction::OutputVolume(pct));
+                    } else {
+                        u.act_latest("volume", Action::Volume(system_percent(pct)));
+                    }
+                },
+            )
         };
         {
             let (u, shown) = (ui.clone(), shown.clone());
@@ -307,7 +318,7 @@ impl SoundPage {
             Level::new(
                 ui,
                 "audio-input-microphone-symbolic",
-                "Mute Microphone",
+                i18n::t(keys::CC_MUTE_MICROPHONE),
                 move |pct| send(&u, &src, AudioAction::MicVolume(pct)),
             )
         };
@@ -318,11 +329,11 @@ impl SoundPage {
                 send(&u, &src, AudioAction::MicMuted(!muted));
             });
         }
-        let input_heading = heading("Input");
+        let input_heading = heading(i18n::t(keys::CC_INPUT));
         let (outputs, inputs) = (w::vbox(0), w::vbox(0));
         page.set_rows(
             &[
-                heading("Output").upcast(),
+                heading(i18n::t(keys::CC_OUTPUT)).upcast(),
                 output.row.clone().upcast(),
                 outputs.clone().upcast(),
                 input_heading.clone().upcast(),
@@ -403,14 +414,19 @@ impl SoundPage {
         if self.shown.borrow().as_ref() == Some(&snap) {
             return;
         }
-        fill(&self.outputs, &snap.outputs, "No output devices", |i| {
-            let (u, key) = (ui.clone(), snap.keys.get(i).cloned());
-            move || {
-                if let Some(k) = &key {
-                    u.act(Action::Output(k.clone()))
+        fill(
+            &self.outputs,
+            &snap.outputs,
+            i18n::t(keys::CC_NO_OUTPUTS),
+            |i| {
+                let (u, key) = (ui.clone(), snap.keys.get(i).cloned());
+                move || {
+                    if let Some(k) = &key {
+                        u.act(Action::Output(k.clone()))
+                    }
                 }
-            }
-        });
+            },
+        );
         fill(&self.inputs, &snap.inputs, "", |i| {
             let (u, src) = (ui.clone(), self.src.clone());
             let id = snap.inputs.get(i).map(|d| d.id);

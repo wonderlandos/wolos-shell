@@ -5,6 +5,7 @@
 //! Mirroring tiles. Invariant: a mirror rule is built only from monitor names the compositor gave us
 //! that pass [`mirror_rule`]'s check, so nothing typed or read reaches `hyprctl` unchecked.
 use super::{DISPLAY_SETTINGS, Ui, launch};
+use crate::i18n::{self, keys};
 use crate::kit::{
     controls::{DetailPage, DeviceRow},
     widgets as w,
@@ -94,7 +95,12 @@ pub(super) struct DisplayPage {
 
 impl DisplayPage {
     pub fn build(ui: &Rc<Ui>) -> Self {
-        let page = DetailPage::new("Display", None, "", Some("Displays Settings…"));
+        let page = DetailPage::new(
+            i18n::t(keys::CC_DISPLAY),
+            None,
+            "",
+            Some(i18n::t(keys::CC_DISPLAYS_SETTINGS)),
+        );
         {
             let u = ui.clone();
             page.back.connect_clicked(move |_| u.show("main"));
@@ -120,15 +126,23 @@ impl DisplayPage {
                 )
             })
         };
-        let night = DeviceRow::new("night-light-symbolic", "Night Shift", "", false, None);
+        let night = DeviceRow::new(
+            "night-light-symbolic",
+            i18n::t(keys::CC_NIGHT_SHIFT),
+            "",
+            false,
+            None,
+        );
         {
             let u = ui.clone();
             night.button.connect_clicked(move |_| {
                 u.act(Action::NightLight(!u.sys.night_light().unwrap_or(false)))
             });
         }
-        let (brightness_heading, keyboard_heading) =
-            (heading("Brightness"), heading("Keyboard Brightness"));
+        let (brightness_heading, keyboard_heading) = (
+            heading(i18n::t(keys::CC_BRIGHTNESS)),
+            heading(i18n::t(keys::CC_KEYBOARD_BRIGHTNESS)),
+        );
         let mirrors = w::vbox(0);
         page.set_rows(
             &[
@@ -137,7 +151,7 @@ impl DisplayPage {
                 keyboard_heading.clone().upcast(),
                 keyboard.0.clone().upcast(),
                 night.button.clone().upcast(),
-                heading("Screen Mirroring").upcast(),
+                heading(i18n::t(keys::CC_SCREEN_MIRRORING)).upcast(),
                 mirrors.clone().upcast(),
             ],
             "",
@@ -177,8 +191,11 @@ impl DisplayPage {
         let night = s.night_light();
         self.night.button.set_visible(night.is_some());
         self.night.set_active(night.unwrap_or(false));
-        self.night
-            .set_subtitle(if night == Some(true) { "On" } else { "Off" });
+        self.night.set_subtitle(if night == Some(true) {
+            i18n::t(keys::CC_ON)
+        } else {
+            i18n::t(keys::CC_OFF)
+        });
 
         let monitors = s.monitors();
         let state = (monitors.clone(), self.mirrored.borrow().clone());
@@ -195,7 +212,7 @@ impl DisplayPage {
             let r = DeviceRow::new(
                 "video-display-symbolic",
                 display_name(m),
-                if on { "Mirroring" } else { "" },
+                if on { i18n::t(keys::CC_MIRRORING) } else { "" },
                 on,
                 on.then_some("object-select-symbolic"),
             );
@@ -211,7 +228,7 @@ impl DisplayPage {
             self.mirrors.append(&r.button);
         }
         if others.is_empty() {
-            let l = w::label("No other display", "secondary");
+            let l = w::label(i18n::t(keys::CC_NO_OTHER_DISPLAY), "secondary");
             l.add_css_class("detail-empty");
             self.mirrors.append(&l);
         }

@@ -13,6 +13,7 @@ mod sound;
 pub mod tiles;
 
 use crate::focus::{self, Focus};
+use crate::i18n::{self, keys};
 use crate::kit::{
     self,
     controls::{
@@ -515,7 +516,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         prefs: Cell::new(prefs),
         width: Cell::new(w::CONTROL_CENTER_WIDTH),
         message: w::label("", "secondary"),
-        auth: w::authenticate_sheet("Control Center"),
+        auth: w::authenticate_sheet(i18n::t(keys::CC_CONTROL_CENTER)),
         pending: Default::default(),
         busy: Default::default(),
         syncing: Cell::new(false),
@@ -548,7 +549,12 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let top = w::hbox(w::S2);
     top.set_homogeneous(true);
     let conn = w::vbox(w::S2);
-    let wifi = w::ControlTile::new("network-wireless-symbolic", "Wi-Fi", "Off", Some(false));
+    let wifi = w::ControlTile::new(
+        "network-wireless-symbolic",
+        "Wi-Fi",
+        i18n::t(keys::CC_OFF),
+        Some(false),
+    );
     {
         let (u, t) = (ui.clone(), wifi.circle.clone());
         wifi.circle
@@ -557,8 +563,12 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         wifi.detail.connect_clicked(move |_| u.show("wifi"));
     }
     conn.append(&wifi.root);
-    let bluetooth =
-        w::ControlTile::new("bluetooth-active-symbolic", "Bluetooth", "Off", Some(false));
+    let bluetooth = w::ControlTile::new(
+        "bluetooth-active-symbolic",
+        "Bluetooth",
+        i18n::t(keys::CC_OFF),
+        Some(false),
+    );
     {
         let (u, t) = (ui.clone(), bluetooth.circle.clone());
         bluetooth
@@ -572,8 +582,12 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     conn.append(&bluetooth.root);
     top.append(&w::module(&conn));
     let right = w::vbox(w::S2);
-    let focus_tile =
-        w::ControlTile::new("weather-clear-night-symbolic", "Focus", "Off", Some(false));
+    let focus_tile = w::ControlTile::new(
+        "weather-clear-night-symbolic",
+        i18n::t(keys::CC_FOCUS),
+        i18n::t(keys::CC_OFF),
+        Some(false),
+    );
     {
         let (u, c) = (ui.clone(), focus_tile.circle.clone());
         focus_tile.circle.connect_clicked(move |_| {
@@ -587,8 +601,12 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         focus_tile.detail.connect_clicked(move |_| u.show("focus"));
     }
     right.append(&focus_tile.root);
-    let appearance =
-        w::ControlTile::new("wolos-dark-mode-symbolic", "Dark Mode", "Off", Some(false));
+    let appearance = w::ControlTile::new(
+        "wolos-dark-mode-symbolic",
+        i18n::t(keys::CC_DARK_MODE),
+        i18n::t(keys::CC_OFF),
+        Some(false),
+    );
     {
         let c = appearance.circle.clone();
         appearance.circle.connect_clicked(move |_| {
@@ -610,11 +628,11 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let display = {
         let u = ui.clone();
         SliderModule::new(
-            "Display",
+            i18n::t(keys::CC_DISPLAY),
             "display-brightness-symbolic",
             0.0,
             move |v| u.act_latest("brightness", Action::Brightness(v as u8)),
-            Some("Display"),
+            Some(i18n::t(keys::CC_DISPLAY)),
         )
     };
     if let Some(d) = &display.detail {
@@ -625,11 +643,11 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let sound = {
         let u = ui.clone();
         SliderModule::new(
-            "Sound",
+            i18n::t(keys::CC_SOUND),
             "audio-volume-high-symbolic",
             0.0,
             move |v| u.act_latest("volume", Action::Volume(v as u8)),
-            Some("Output"),
+            Some(i18n::t(keys::CC_OUTPUT)),
         )
     };
     if let Some(d) = &sound.detail {
@@ -664,32 +682,41 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         });
     }
     // Screen Mirroring opens the Display page, where each external display can mirror this one.
-    let mirroring = ToggleTile::new("video-display-symbolic", "Screen Mirroring");
+    let mirroring = ToggleTile::new("video-display-symbolic", i18n::t(keys::CC_SCREEN_MIRRORING));
     {
         let u = ui.clone();
         mirroring.button.connect_clicked(move |_| u.show("display"));
     }
-    let keyboard = ToggleTile::new("keyboard-brightness-symbolic", "Keyboard Brightness");
+    let keyboard = ToggleTile::new(
+        "keyboard-brightness-symbolic",
+        i18n::t(keys::CC_KEYBOARD_BRIGHTNESS),
+    );
     {
         let u = ui.clone();
         keyboard.button.connect_clicked(move |_| u.show("display"));
     }
-    let night = ToggleTile::new("night-light-symbolic", "Night Shift");
+    let night = ToggleTile::new("night-light-symbolic", i18n::t(keys::CC_NIGHT_SHIFT));
     {
         let u = ui.clone();
         night.button.connect_clicked(move |_| {
             u.act(Action::NightLight(!u.sys.night_light().unwrap_or(false)))
         });
     }
-    let screenshot = ToggleTile::new("camera-photo-symbolic", "Screenshot").button;
+    let screenshot = ToggleTile::new("camera-photo-symbolic", i18n::t(keys::CC_SCREENSHOT)).button;
     screenshot.connect_clicked(|b| launch(b, SCREENSHOT));
-    let record = ToggleTile::new("media-record-symbolic", "Record").button;
+    let record = ToggleTile::new("media-record-symbolic", i18n::t(keys::CC_RECORD)).button;
     record.connect_clicked(|b| launch(b, RECORD));
 
     let a11y = {
-        let reduce_motion = ToggleTile::new("wolos-reduce-motion-symbolic", "Reduce Motion");
-        let contrast = ToggleTile::new("wolos-contrast-symbolic", "Increase Contrast");
-        let zoom = ToggleTile::new("zoom-in-symbolic", "Zoom");
+        let reduce_motion = ToggleTile::new(
+            "wolos-reduce-motion-symbolic",
+            i18n::t(keys::CC_REDUCE_MOTION),
+        );
+        let contrast = ToggleTile::new(
+            "wolos-contrast-symbolic",
+            i18n::t(keys::CC_INCREASE_CONTRAST),
+        );
+        let zoom = ToggleTile::new("zoom-in-symbolic", i18n::t(keys::CC_ZOOM));
         let read = |f: fn(crate::system::Accessibility) -> Option<bool>| f;
         for (t, get, make) in [
             (
@@ -778,9 +805,9 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
 /// `bt` -> Bluetooth tile subtitle.
 fn bluetooth_label(bt: Option<bool>) -> &'static str {
     match bt {
-        Some(true) => "On",
-        Some(false) => "Off",
-        None => "Unavailable",
+        Some(true) => i18n::t(keys::CC_ON),
+        Some(false) => i18n::t(keys::CC_OFF),
+        None => i18n::t(keys::CC_UNAVAILABLE),
     }
 }
 
@@ -805,14 +832,17 @@ impl ControlCenter {
         let f = focus::read();
         self.focus.set_on(f.active());
         self.focus.set_subtitle(&match f {
-            Focus::Off => "Off".to_string(),
-            Focus::On => "Do Not Disturb".to_string(),
+            Focus::Off => i18n::t(keys::CC_OFF).to_string(),
+            Focus::On => i18n::t(keys::CC_DO_NOT_DISTURB).to_string(),
             Focus::Until(_) => focus_label(f),
         });
         let dark = dark_now();
         self.appearance.set_on(dark);
-        self.appearance
-            .set_subtitle(if dark { "On" } else { "Off" });
+        self.appearance.set_subtitle(if dark {
+            i18n::t(keys::CC_ON)
+        } else {
+            i18n::t(keys::CC_OFF)
+        });
 
         let b = s.brightness();
         self.display.root.set_visible(b.is_some());

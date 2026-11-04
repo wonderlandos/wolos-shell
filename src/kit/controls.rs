@@ -51,7 +51,8 @@ impl ToggleTile {
         // Wraps to two lines, ellipsised only past them: the whole name reads in the tile.
         let l = w::centered(title, "secondary");
         l.set_wrap(true);
-        l.set_wrap_mode(gtk::pango::WrapMode::Word);
+        // WordChar: a long word (German compounds) breaks inside itself rather than widen the panel.
+        l.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         l.set_lines(TILE_LABEL_LINES);
         l.set_ellipsize(gtk::pango::EllipsizeMode::End);
         l.set_max_width_chars(TILE_LABEL_CHARS);
@@ -79,6 +80,9 @@ pub struct DeviceRow {
     subtitle: gtk::Label,
 }
 
+/// Characters of a device row's title or subtitle before it ends in an ellipsis.
+const DEVICE_ROW_CHARS: i32 = 24;
+
 impl DeviceRow {
     pub fn new(
         icon_name: &str,
@@ -97,8 +101,13 @@ impl DeviceRow {
         let t = w::label(title, "");
         t.set_ellipsize(gtk::pango::EllipsizeMode::End);
         t.add_css_class("may-ellipsize");
+        // The row asks for no more than a row of this panel holds, in any language.
+        t.set_max_width_chars(DEVICE_ROW_CHARS);
         text.append(&t);
         let sub = w::label(subtitle, "secondary");
+        sub.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        sub.add_css_class("may-ellipsize");
+        sub.set_max_width_chars(DEVICE_ROW_CHARS);
         sub.set_visible(!subtitle.is_empty());
         text.append(&sub);
         row.append(&text);

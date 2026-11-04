@@ -107,7 +107,7 @@ const fn lang(
     }
 }
 
-pub const LANGUAGES: [Language; 7] = [
+pub const LANGUAGES: [Language; 12] = [
     lang("English", "United States", "en_US.UTF-8", "us"),
     lang("English", "United Kingdom", "en_GB.UTF-8", "gb"),
     lang("Português", "Brasil", "pt_BR.UTF-8", "br"),
@@ -115,6 +115,13 @@ pub const LANGUAGES: [Language; 7] = [
     lang("Español", "España", "es_ES.UTF-8", "es"),
     lang("Français", "France", "fr_FR.UTF-8", "fr"),
     lang("Deutsch", "Deutschland", "de_DE.UTF-8", "de"),
+    // The other languages WolOS is translated into (ADR 0045), each in its own name. The keyboard
+    // is U.S. until Settings > Keyboard offers their layouts (and an input method).
+    lang("日本語", "日本", "ja_JP.UTF-8", "us"),
+    lang("한국어", "대한민국", "ko_KR.UTF-8", "us"),
+    lang("简体中文", "中国", "zh_CN.UTF-8", "us"),
+    lang("Bahasa Indonesia", "Indonesia", "id_ID.UTF-8", "us"),
+    lang("Tagalog", "Pilipinas", "tl_PH.UTF-8", "us"),
 ];
 
 /// (xkb layout, name): the same list Settings > Keyboard offers.
@@ -135,7 +142,7 @@ pub fn keyboard_command(k: &str) -> Vec<String> {
 }
 
 /// Time zone prefix -> locale, for machines that know where they are but not the language.
-const ZONES: [(&str, &str); 14] = [
+const ZONES: [(&str, &str); 19] = [
     ("America/Sao_Paulo", "pt_BR.UTF-8"),
     ("America/Fortaleza", "pt_BR.UTF-8"),
     ("America/Recife", "pt_BR.UTF-8"),
@@ -150,6 +157,11 @@ const ZONES: [(&str, &str); 14] = [
     ("Europe/Berlin", "de_DE.UTF-8"),
     ("Europe/Vienna", "de_DE.UTF-8"),
     ("Europe/Zurich", "de_DE.UTF-8"),
+    ("Asia/Tokyo", "ja_JP.UTF-8"),
+    ("Asia/Seoul", "ko_KR.UTF-8"),
+    ("Asia/Shanghai", "zh_CN.UTF-8"),
+    ("Asia/Jakarta", "id_ID.UTF-8"),
+    ("Asia/Manila", "tl_PH.UTF-8"),
 ];
 
 /// Console keymap (`KEYMAP=` in vconsole.conf, `br-abnt2`, `de-latin1`) -> xkb layout.
@@ -827,8 +839,18 @@ mod tests {
         );
         assert_eq!(
             pick(&h(None, Some("Asia/Tokyo"), Some("jp106"))),
-            ("en_US.UTF-8", "us")
+            ("ja_JP.UTF-8", "us"),
+            "Japan reads Japanese; no Japanese layout is offered yet"
         );
+        for (lang, zone, locale) in [
+            ("ko_KR.UTF-8", "Asia/Seoul", "ko_KR.UTF-8"),
+            ("zh_CN.UTF-8", "Asia/Shanghai", "zh_CN.UTF-8"),
+            ("id_ID.UTF-8", "Asia/Jakarta", "id_ID.UTF-8"),
+            ("tl_PH.UTF-8", "Asia/Manila", "tl_PH.UTF-8"),
+        ] {
+            assert_eq!(pick(&h(Some(lang), None, None)).0, locale);
+            assert_eq!(pick(&h(None, Some(zone), None)).0, locale);
+        }
         assert_eq!(
             pick(&h(None, None, Some("\"br-abnt2\""))),
             ("en_US.UTF-8", "br")

@@ -955,7 +955,13 @@ impl ControlTile {
         root.append(&circle);
         let t = vbox(0);
         t.set_valign(gtk::Align::Center);
-        t.append(&label(title, "title"));
+        // A longer language must not widen the panel or grow one card past the other: the title ends in
+        // an ellipsis and the circle's tooltip says it whole.
+        let head = label(title, "title");
+        head.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        head.set_max_width_chars(16);
+        head.add_css_class("may-ellipsize");
+        t.append(&head);
         let sub = label(subtitle, "secondary");
         sub.set_ellipsize(gtk::pango::EllipsizeMode::End);
         sub.set_max_width_chars(14);

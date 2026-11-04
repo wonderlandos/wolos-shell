@@ -1,2 +1,4 @@
 # path (relative to this directory)	module: the key prefix
 ../../src/copy_settings.rs	settings
+../../src/copy_sound.rs	sound
+../../src/copy_cc.rs	cc

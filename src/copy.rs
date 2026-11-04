@@ -17,6 +17,14 @@ pub mod installer;
 #[path = "copy_settings.rs"]
 pub mod settings;
 
+/// Settings > Sound's labels (ADR 0045): the pane holds none of its own.
+#[path = "copy_sound.rs"]
+pub mod sound;
+
+/// The Control Center's labels (ADR 0045): the panel holds none of its own.
+#[path = "copy_cc.rs"]
+pub mod cc;
+
 /// Plugin Maker's sentences (ADR 0031): its pages hold none of their own.
 #[path = "copy_maker.rs"]
 pub mod maker;

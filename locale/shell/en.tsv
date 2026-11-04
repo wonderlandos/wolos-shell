@@ -36,3 +36,79 @@ settings.auto_apps_failed	App updates couldn’t be turned on or off. Try again 
 settings.displays_none	Displays appear here once the desktop is running.	No display was reported (the desktop session is not running).	
 settings.search_none_title	No Results	Search found nothing: the empty state's title (a title, not a sentence: not in [`ALL`]) and its hint.	
 settings.search_none	No settings match. Try another word.		
+sound.title	Sound	The pane's title and the name of its sidebar row.	8
+sound.output_volume	Output volume	Slider row: volume of the chosen output.	21
+sound.mute	Mute	Switch row: silence the output.	8
+sound.allow_louder	Allow louder	Switch row; its subtitle says what it does.	20
+sound.output	Output	Section title above the list of speakers and headphones.	10
+sound.balance	Balance	Slider row: left and right loudness.	12
+sound.left	Left	Left end of the balance slider.	8
+sound.right	Right	Right end of the balance slider.	8
+sound.input	Input	Section title above the list of microphones.	8
+sound.input_volume	Input volume	Slider row: volume of the chosen microphone.	20
+sound.input_level	Input level	Live meter of what the microphone hears.	18
+sound.mute_input	Mute input	Switch row: silence the microphone.	16
+sound.auto_input_level	Automatic input level	Switch row; its subtitle says what it does.	34
+sound.reduce_noise	Reduce background noise	Switch row; its subtitle says what it does.	37
+sound.use_headset_mic	Use the headset microphone automatically	Switch row for Bluetooth headsets; its subtitle says what it does.	64
+sound.codec_of	{device} codec	Picker row: the audio codec of a Bluetooth device; {device} is its name.	23
+sound.pro_audio	Pro Audio	Section title for sample rate and buffer size.	15
+sound.sample_rate	Sample rate	Picker row: samples per second.	18
+sound.buffer_size	Buffer size	Picker row: how much sound is held before it plays.	18
+sound.automatic	Automatic	First choice of the sample rate and buffer pickers: WolOS decides.	15
+sound.rate_khz	{rate} kHz	A sample rate in a picker; {rate} is a number such as 44.1.	16
+sound.buffer_samples	{samples} samples ({ms} ms)	A buffer size in a picker; {samples} is a count and {ms} the delay it adds.	44
+sound.dropouts	Dropouts	Info row: how many times sound ran out.	13
+sound.dropouts_none	None	Dropouts row when sound never ran out.	8
+sound.dropouts_since	{n} since sound started	Dropouts row; {n} is the number of dropouts.	37
+sound.troubleshooting	Troubleshooting	Section title for repair switches.	24
+sound.keep_awake	Keep device awake	Switch row; its subtitle says what it does.	28
+sound.ignore_hw_volume	Ignore hardware volume	Switch row; its subtitle says what it does.	36
+sound.diagnostics	Diagnostics	Row: copies a report of the sound setup.	18
+sound.copy	Copy	Button in the Diagnostics row.	8
+sound.reset_audio	Reset audio	Row: forget stored volumes and devices.	18
+sound.reset	Reset	Button in the Reset audio row.	8
+cc.control_center	Control Center	Title of the sheet that asks for an administrator's password.	23
+cc.off	Off	State line of a tile or switch that is off.	8
+cc.on	On	State line of a tile or switch that is on.	8
+cc.unavailable	Unavailable	State line of a tile whose hardware is missing.	18
+cc.focus	Focus	Tile and page title for Do Not Disturb.	8
+cc.dark_mode	Dark Mode	Tile title: switches the whole look to dark.	15
+cc.display	Display	Slider title and page title for the screen's brightness.	12
+cc.sound	Sound	Slider title and page title for the volume.	8
+cc.output	Output	Detail button of the volume slider and heading of the output list.	10
+cc.input	Input	Heading of the microphone list.	8
+cc.screen_mirroring	Screen Mirroring	Tile title: show this screen on another display.	26
+cc.keyboard_brightness	Keyboard Brightness	Tile title: backlight of the keyboard.	31
+cc.night_shift	Night Shift	Tile title: warmer colors in the evening.	18
+cc.screenshot	Screenshot	Tile title: opens the capture bar.	16
+cc.record	Record	Tile title: opens the capture bar in recording mode.	10
+cc.reduce_motion	Reduce Motion	Tile title for the accessibility switch.	21
+cc.increase_contrast	Increase Contrast	Tile title for the accessibility switch.	28
+cc.zoom	Zoom	Tile title for the accessibility switch.	8
+cc.do_not_disturb	Do Not Disturb	Row and state line when notifications are silenced.	23
+cc.for_one_hour	For 1 hour	Row: Do Not Disturb for an hour.	16
+cc.until_morning	Until tomorrow morning	Row: Do Not Disturb until the morning.	36
+cc.displays_settings	Displays Settings…	Link at the bottom of the Display page; opens System Settings.	29
+cc.brightness	Brightness	Slider title on the Display page.	16
+cc.mirroring	Mirroring	Heading of the list of displays that can mirror this one.	15
+cc.no_other_display	No other display	Shown when no second display is connected.	26
+cc.join_network	Join “{name}”	Title of the password sheet; {name} is the Wi-Fi network.	21
+cc.join_other	Join Other Network	Title of the sheet for a hidden network.	29
+cc.network_name	Network name	Field in the Join Other Network sheet.	20
+cc.password	Password	Field in the Join sheet.	13
+cc.join	Join	Button of the Join sheet.	8
+cc.cancel	Cancel	Button of the Join sheet.	10
+cc.networks	Networks	Heading of the list of Wi-Fi networks.	13
+cc.wifi_settings	Wi-Fi Settings…	Link at the bottom of the Wi-Fi page; opens System Settings.	24
+cc.devices	Devices	Heading of the list of Bluetooth devices.	12
+cc.other_network	Other Network…	Row: join a network that is not in the list.	23
+cc.no_networks	No networks found	Shown when Wi-Fi sees no network.	28
+cc.connected	Connected	State line of the network or device in use.	15
+cc.bt_unavailable	Bluetooth is unavailable	Shown when the computer has no Bluetooth.	39
+cc.no_paired	No paired devices	Shown when no Bluetooth device is paired.	28
+cc.microphone	Microphone	Slider title on the Sound page.	16
+cc.sound_settings	Sound Settings…	Link at the bottom of the Sound page; opens System Settings.	24
+cc.mute	Mute	Slider title for the output on the Sound page.	8
+cc.mute_microphone	Mute Microphone	Slider title for the microphone on the Sound page.	24
+cc.no_outputs	No output devices	Shown when there is no speaker or headphone.	28

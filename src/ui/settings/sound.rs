@@ -191,10 +191,13 @@ pub fn device_icon(d: &Device) -> &'static str {
 
 /// Sample rate picker: "Automatic" (0), then the allowed rates.
 pub fn rate_options() -> Vec<(u32, String)> {
-    let mut v = vec![(0, "Automatic".to_string())];
+    let mut v = vec![(0, i18n::t(keys::SOUND_AUTOMATIC).to_string())];
     v.extend(ALLOWED_RATES.iter().map(|r| {
         let k = f64::from(*r) / 1000.0;
-        (*r, format!("{} kHz", trim_zero(k)))
+        (
+            *r,
+            i18n::fill(keys::SOUND_RATE_KHZ, &[("rate", &trim_zero(k))]),
+        )
     }));
     v
 }
@@ -202,13 +205,14 @@ pub fn rate_options() -> Vec<(u32, String)> {
 /// Buffer picker: "Automatic" (0), then each size with its delay at `rate` (48 kHz when automatic).
 pub fn quantum_options(rate: u32) -> Vec<(u32, String)> {
     let rate = if rate == 0 { 48_000 } else { rate };
-    let mut v = vec![(0, "Automatic".to_string())];
+    let mut v = vec![(0, i18n::t(keys::SOUND_AUTOMATIC).to_string())];
     v.extend(QUANTA.iter().map(|q| {
+        let ms = trim_zero((f64::from(quantum_ms(*q, rate)) * 10.0).round() / 10.0);
         (
             *q,
-            format!(
-                "{q} samples ({} ms)",
-                trim_zero((f64::from(quantum_ms(*q, rate)) * 10.0).round() / 10.0)
+            i18n::fill(
+                keys::SOUND_BUFFER_SAMPLES,
+                &[("samples", &q.to_string()), ("ms", &ms)],
             ),
         )
     }));
@@ -224,8 +228,8 @@ fn trim_zero(v: f64) -> String {
 /// "None", "1 since the sound service started", "12 since …".
 pub fn dropouts_label(xruns: u32) -> String {
     match xruns {
-        0 => "None".into(),
-        n => format!("{n} since sound started"),
+        0 => i18n::t(keys::SOUND_DROPOUTS_NONE).into(),
+        n => i18n::fill(keys::SOUND_DROPOUTS_SINCE, &[("n", &n.to_string())]),
     }
 }
 
@@ -586,7 +590,7 @@ impl View {
             let at = BT_CODECS.iter().position(|c| c.0 == codec).unwrap_or(3);
             let src = self.src.clone();
             rows.push(form::picker_row(
-                &format!("{} codec", d.name),
+                &i18n::fill(keys::SOUND_CODEC_OF, &[("device", &d.name)]),
                 "",
                 &labels,
                 at,
@@ -603,7 +607,7 @@ impl View {
         if !ex.bluetooth.is_empty() {
             let st = self.status.clone();
             rows.push(form::pending_toggle_row(
-                "Use the headset microphone automatically",
+                i18n::t(keys::SOUND_USE_HEADSET_MIC),
                 i18n::t(keys::SETTINGS_SOUND_AUTOSWITCH),
                 ex.autoswitch,
                 move |on, done| {
@@ -642,27 +646,43 @@ impl View {
         let q_labels: Vec<&str> = quanta.iter().map(|q| q.1.as_str()).collect();
         let (me, me2) = (Rc::downgrade(self), Rc::downgrade(self));
         let (rates2, quanta2) = (rates.clone(), quanta.clone());
-        let rate = form::picker_row("Sample rate", "", &r_labels, r_at, move |i| {
-            if let (Some(me), Some(r)) = (me.upgrade(), rates2.get(i)) {
-                let q = me.state.borrow().pro.quantum;
-                me.send(Request::Act(AudioAction::ProAudio {
-                    rate: r.0,
-                    quantum: q,
-                }));
-            }
-        });
-        let buffer = form::picker_row("Buffer size", "", &q_labels, q_at, move |i| {
-            if let (Some(me), Some(q)) = (me2.upgrade(), quanta2.get(i)) {
-                let r = me.state.borrow().pro.rate;
-                me.send(Request::Act(AudioAction::ProAudio {
-                    rate: r,
-                    quantum: q.0,
-                }));
-            }
-        });
+        let rate = form::picker_row(
+            i18n::t(keys::SOUND_SAMPLE_RATE),
+            "",
+            &r_labels,
+            r_at,
+            move |i| {
+                if let (Some(me), Some(r)) = (me.upgrade(), rates2.get(i)) {
+                    let q = me.state.borrow().pro.quantum;
+                    me.send(Request::Act(AudioAction::ProAudio {
+                        rate: r.0,
+                        quantum: q,
+                    }));
+                }
+            },
+        );
+        let buffer = form::picker_row(
+            i18n::t(keys::SOUND_BUFFER_SIZE),
+            "",
+            &q_labels,
+            q_at,
+            move |i| {
+                if let (Some(me), Some(q)) = (me2.upgrade(), quanta2.get(i)) {
+                    let r = me.state.borrow().pro.rate;
+                    me.send(Request::Act(AudioAction::ProAudio {
+                        rate: r,
+                        quantum: q.0,
+                    }));
+                }
+            },
+        );
         self.pro.append(&w::section(
-            "Pro Audio",
-            &[rate, buffer, info("Dropouts", &dropouts_label(pro.xruns))],
+            i18n::t(keys::SOUND_PRO_AUDIO),
+            &[
+                rate,
+                buffer,
+                info(i18n::t(keys::SOUND_DROPOUTS), &dropouts_label(pro.xruns)),
+            ],
         ));
         self.pro
             .append(&w::footnote(i18n::t(keys::SETTINGS_SOUND_PRO_NOTE)));
@@ -864,7 +884,7 @@ fn fragment_switch(
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
-    let p = w::page("Sound");
+    let p = w::page(i18n::t(keys::SOUND_TITLE));
     let status = status_label();
     let src = source(&e.machine());
     let quiet: Rc<Cell<bool>> = Rc::default();
@@ -950,14 +970,14 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         "",
         &[
             row(
-                "Output volume",
+                i18n::t(keys::SOUND_OUTPUT_VOLUME),
                 &volume_line(
                     &out_slider,
                     "audio-volume-low-symbolic",
                     "audio-volume-high-symbolic",
                 ),
             ),
-            row("Mute", &out_mute),
+            row(i18n::t(keys::SOUND_MUTE), &out_mute),
         ],
     ));
     // Balance: the default output's, from pactl; applied with the current volume.
@@ -966,34 +986,40 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     out_rows.append(&outputs);
     out_rows.append(&balance_holder);
     out_rows.append(&row_sub(
-        "Allow louder",
+        i18n::t(keys::SOUND_ALLOW_LOUDER),
         i18n::t(keys::SETTINGS_SOUND_LOUDER),
         &louder,
     ));
-    p.append(&w::section("Output", &[out_rows.upcast()]));
+    p.append(&w::section(
+        i18n::t(keys::SOUND_OUTPUT),
+        &[out_rows.upcast()],
+    ));
     let input_rows = w::vbox(0);
     input_rows.append(&inputs);
     input_rows.append(&row(
-        "Input volume",
+        i18n::t(keys::SOUND_INPUT_VOLUME),
         &volume_line(
             &in_slider,
             "microphone-sensitivity-muted-symbolic",
             "microphone-sensitivity-high-symbolic",
         ),
     ));
-    input_rows.append(&row("Input level", &meter));
-    input_rows.append(&row("Mute input", &in_mute));
+    input_rows.append(&row(i18n::t(keys::SOUND_INPUT_LEVEL), &meter));
+    input_rows.append(&row(i18n::t(keys::SOUND_MUTE_INPUT), &in_mute));
     input_rows.append(&row_sub(
-        "Automatic input level",
+        i18n::t(keys::SOUND_AUTO_INPUT_LEVEL),
         i18n::t(keys::SETTINGS_SOUND_AUTO_LEVEL),
         &auto_level,
     ));
     input_rows.append(&row_sub(
-        "Reduce background noise",
+        i18n::t(keys::SOUND_REDUCE_NOISE),
         i18n::t(keys::SETTINGS_SOUND_NOISE),
         &noise,
     ));
-    p.append(&w::section("Input", &[input_rows.upcast()]));
+    p.append(&w::section(
+        i18n::t(keys::SOUND_INPUT),
+        &[input_rows.upcast()],
+    ));
     p.append(&bluetooth);
     p.append(&pro);
 
@@ -1095,10 +1121,10 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 fn balance_row(v: &Rc<View>, balance: f32) -> gtk::Widget {
     let me = Rc::downgrade(v);
     form::slider_row(
-        "Balance",
+        i18n::t(keys::SOUND_BALANCE),
         (-1.0, 1.0, 0.1),
         f64::from(balance),
-        ("Left", "Right"),
+        (i18n::t(keys::SOUND_LEFT), i18n::t(keys::SOUND_RIGHT)),
         move |b| {
             let Some(me) = me.upgrade() else { return };
             me.extras.borrow_mut().balance = b as f32;
@@ -1113,52 +1139,64 @@ fn balance_row(v: &Rc<View>, balance: f32) -> gtk::Widget {
 
 fn troubleshooting_section(v: &Rc<View>, ex: &Extras, st: &gtk::Label) -> gtk::Box {
     let awake = form::pending_toggle_row(
-        "Keep device awake",
+        i18n::t(keys::SOUND_KEEP_AWAKE),
         i18n::t(keys::SETTINGS_SOUND_AWAKE),
         ex.keep_awake,
         fragment_switch(AWAKE_FILE, awake_conf, st),
     );
     let soft = form::pending_toggle_row(
-        "Ignore hardware volume",
+        i18n::t(keys::SOUND_IGNORE_HW_VOLUME),
         i18n::t(keys::SETTINGS_SOUND_SOFT_VOLUME),
         ex.soft_volume,
         fragment_switch(SOFT_VOLUME_FILE, soft_volume_conf, st),
     );
     let diag = {
         let (st, anchor) = (st.clone(), v.status.clone());
-        form::button_row("Diagnostics", "", "Copy", move || {
-            let (st, anchor) = (st.clone(), anchor.clone());
-            off_thread(
-                || {
-                    wol_core::system::run_with_timeout(&DOCTOR, DOCTOR_TIMEOUT)
-                        .filter(|t| !t.trim().is_empty())
-                },
-                move |report| match report {
-                    Some(t) => {
-                        anchor.display().clipboard().set_text(&t);
-                        say(&st, i18n::t(keys::SETTINGS_SOUND_DIAG_COPIED));
-                    }
-                    None => say(&st, i18n::t(keys::SETTINGS_SOUND_DIAG_NONE)),
-                },
-            );
-        })
+        form::button_row(
+            i18n::t(keys::SOUND_DIAGNOSTICS),
+            "",
+            i18n::t(keys::SOUND_COPY),
+            move || {
+                let (st, anchor) = (st.clone(), anchor.clone());
+                off_thread(
+                    || {
+                        wol_core::system::run_with_timeout(&DOCTOR, DOCTOR_TIMEOUT)
+                            .filter(|t| !t.trim().is_empty())
+                    },
+                    move |report| match report {
+                        Some(t) => {
+                            anchor.display().clipboard().set_text(&t);
+                            say(&st, i18n::t(keys::SETTINGS_SOUND_DIAG_COPIED));
+                        }
+                        None => say(&st, i18n::t(keys::SETTINGS_SOUND_DIAG_NONE)),
+                    },
+                );
+            },
+        )
     };
     let reset = {
         let (me, st) = (Rc::downgrade(v), st.clone());
         row_sub(
-            "Reset audio",
+            i18n::t(keys::SOUND_RESET_AUDIO),
             i18n::t(keys::SETTINGS_SOUND_RESET_ABOUT),
-            &w::button("Reset", w::Kind::Destructive, move || {
-                if let Some(me) = me.upgrade() {
-                    // The "done" sentence waits for a state that shows the reset (audit5 S7-1).
-                    say(&st, "");
-                    me.reset_pending.set(true);
-                    me.send(Request::Act(AudioAction::ResetAudio));
-                }
-            }),
+            &w::button(
+                i18n::t(keys::SOUND_RESET),
+                w::Kind::Destructive,
+                move || {
+                    if let Some(me) = me.upgrade() {
+                        // The "done" sentence waits for a state that shows the reset (audit5 S7-1).
+                        say(&st, "");
+                        me.reset_pending.set(true);
+                        me.send(Request::Act(AudioAction::ResetAudio));
+                    }
+                },
+            ),
         )
     };
-    w::section("Troubleshooting", &[awake, soft, diag, reset])
+    w::section(
+        i18n::t(keys::SOUND_TROUBLESHOOTING),
+        &[awake, soft, diag, reset],
+    )
 }
 
 #[cfg(test)]

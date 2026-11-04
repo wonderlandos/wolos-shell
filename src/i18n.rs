@@ -37,6 +37,11 @@ pub fn t(key: Key) -> &'static str {
     CATALOG.text(key, shared::i18n::lang())
 }
 
+/// The text of `key` in the language in use with each `{name}` replaced by its value in `args`.
+pub fn fill(key: Key, args: &[(&str, &str)]) -> String {
+    shared::i18n::fill(t(key), args)
+}
+
 /// The text of `key` in `lang`.
 pub fn tl(key: Key, lang: Lang) -> &'static str {
     CATALOG.text(key, lang)
