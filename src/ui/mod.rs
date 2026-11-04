@@ -38,7 +38,7 @@ pub mod widgets_layout;
 
 use crate::kit::{self, fence, surface};
 use gtk::{glib, prelude::*};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -296,8 +296,37 @@ fn apply_setup() {
     let _ = std::fs::rename(file, done);
 }
 
+/// `wol-search --warm`: the process stays up with no window, started by the session
+/// (`wolos-search.service`), so a press of Super+Space only activates it over D-Bus: the display,
+/// the portal registry and the theme were paid for at login, not on the press (QA-LN-3: 0.4-0.9 s
+/// and the first letters lost).
+pub const WARM_ARG: &str = "--warm";
+
+/// What an activation of a panel app asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Activation {
+    /// The warm process's own start: theme in, no window.
+    Park,
+    /// The panel is open: a second press closes it.
+    Close,
+    /// Build and show the panel.
+    Show,
+}
+
+/// The activation for: the warm process's first one (its own start), and whether a window is open.
+pub fn activation(first_of_warm: bool, window_open: bool) -> Activation {
+    if first_of_warm {
+        Activation::Park
+    } else if window_open {
+        Activation::Close
+    } else {
+        Activation::Show
+    }
+}
+
 /// One-window panel app (Control Center, Search): Esc, a click outside, another app in front
-/// or a workspace switch quits.
+/// or a workspace switch quits. With [`WARM_ARG`] it does not quit: the app is held with no
+/// window and each activation shows the panel again.
 pub fn run_panel_app(
     id: &str,
     class: &'static str,
@@ -307,6 +336,10 @@ pub fn run_panel_app(
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder().application_id(id).build();
     app.connect_startup(move |_| mark(t0, "startup"));
+    let warm = std::env::args().any(|a| a == WARM_ARG);
+    // Held until the process ends: closing the panel's window does not end a warm process.
+    let _hold = warm.then(|| app.hold());
+    let (parked, css_in) = (Rc::new(Cell::new(warm)), Rc::new(Cell::new(false)));
     // `hide` over D-Bus: a shell panel opened (`transient::close_outside_members`).
     let hide = gtk::gio::SimpleAction::new("hide", None);
     {
@@ -319,13 +352,30 @@ pub fn run_panel_app(
     }
     app.add_action(&hide);
     app.connect_activate(move |app| {
+        // A warm process times each press from the press, not from the process start.
+        let t0 = if css_in.get() {
+            std::time::Instant::now()
+        } else {
+            t0
+        };
         mark(t0, "activate");
         // Second launch toggles: the running instance closes.
-        if !app.windows().is_empty() {
-            app.windows().iter().for_each(|w| w.close());
-            return;
+        match activation(parked.replace(false), !app.windows().is_empty()) {
+            Activation::Close => {
+                app.windows().iter().for_each(|w| w.close());
+                return;
+            }
+            Activation::Park => {
+                kit::style::install("");
+                css_in.set(true);
+                mark(t0, "parked");
+                return;
+            }
+            Activation::Show => {}
         }
-        kit::style::install("");
+        if !css_in.replace(true) {
+            kit::style::install("");
+        }
         mark(t0, "css");
         let w = window(app, class, spec);
         w.set_child(Some(&build(&w, crate::system::default_system())));
@@ -363,5 +413,58 @@ fn hide_shell_panels() {
     let path = crate::protocol::socket_path(&kit::runtime_dir());
     if let Ok(mut s) = std::os::unix::net::UnixStream::connect(path) {
         let _ = s.write_all(format!("hide {}\n", transient::GROUP).as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// QA-LN-3: the warm process parks on its own start and shows on every later activation; an
+    /// open panel closes on the next press (the toggle).
+    #[test]
+    fn warm_process_parks_then_shows_every_time() {
+        assert_eq!(activation(true, false), Activation::Park);
+        assert_eq!(activation(false, false), Activation::Show);
+        assert_eq!(activation(false, true), Activation::Close);
+        // The panel closed (Esc, a launch): the next press shows it again, not a dead toggle.
+        let mut open = false;
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            let a = activation(false, open);
+            open = a == Activation::Show;
+            seen.push(a);
+        }
+        assert_eq!(
+            seen,
+            [
+                Activation::Show,
+                Activation::Close,
+                Activation::Show,
+                Activation::Close
+            ]
+        );
+    }
+
+    /// The unit that keeps Search warm restarts it, ends with the session, is wanted by the
+    /// session target and has a memory ceiling above the idle budget.
+    #[test]
+    fn the_warm_search_unit_restarts_and_belongs_to_the_session() {
+        let u = include_str!("../../../../files/usr/lib/systemd/user/wolos-search.service");
+        let lines: Vec<&str> = u.lines().map(str::trim).collect();
+        for want in [
+            "Restart=on-failure",
+            "PartOf=wolos-session.target",
+            "ExecStart=/usr/bin/wol-search --warm",
+        ] {
+            assert!(lines.contains(&want), "{want}: {u}");
+        }
+        assert!(
+            lines.iter().any(|l| l.starts_with("MemoryMax=")),
+            "a ceiling: {u}"
+        );
+        let target = include_str!("../../../../files/usr/lib/systemd/user/wolos-session.target");
+        assert!(target.contains("wolos-search.service"), "{target}");
+        assert_eq!(WARM_ARG, "--warm");
     }
 }

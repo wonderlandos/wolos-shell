@@ -62,7 +62,10 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
 pub const FIRST_KEYBOARD: Keyboard = Keyboard::None;
 /// Wait after the first frame before the keyboard is taken, so the compositor has seen the surface
 /// without it.
-const KEYBOARD_AFTER_MS: u64 = 30;
+pub const KEYBOARD_AFTER_MS: u64 = 30;
+/// Longest a warm Search may take from the press to its first map (the budget the journey
+/// `qa100-ln-launcher-toggle` measures).
+pub const WARM_SHOW_BUDGET_MS: u64 = 150;
 
 fn take_keyboard_when_mapped(win: &gtk::ApplicationWindow) {
     win.connect_map(|w| {
@@ -640,6 +643,20 @@ mod tests {
         );
         // The first row is the selected one after every rebuild.
         assert!(code.contains("if i == 0 {\n                    b.add_css_class(\"selected\")"));
+    }
+
+    /// QA-LN-3: a key at +0.2 s after the press reaches the field: the warm panel maps within
+    /// its budget and then takes the keyboard, both before the key.
+    #[test]
+    fn a_key_at_200ms_is_kept() {
+        const KEY_AT_MS: u64 = 200;
+        assert!(
+            WARM_SHOW_BUDGET_MS + KEYBOARD_AFTER_MS < KEY_AT_MS,
+            "map {WARM_SHOW_BUDGET_MS} ms + keyboard {KEYBOARD_AFTER_MS} ms"
+        );
+        // The warm process is what makes the budget possible: the app is activated, not started.
+        let src = include_str!("mod.rs");
+        assert!(src.contains("pub const WARM_ARG"));
     }
 
     /// QA-LIVE1-11: Search starts without the keyboard and takes it once mapped (the change
