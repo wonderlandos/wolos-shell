@@ -1248,26 +1248,11 @@ impl Installer {
     fn save_key_to_usb(self: &Rc<Self>) {
         let roots: Vec<PathBuf> = install::MEDIA_ROOTS.iter().map(PathBuf::from).collect();
         let key = self.recovery_key.label().to_string();
-        let said = match install::media_dirs(&roots).first() {
-            None => (copy::INSTALL_NO_USB.to_string(), true),
-            Some(dir) => match install::save_key(dir, &key) {
-                Ok(_) => {
-                    let name = dir
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    if let Some(ack) = &*self.ack.borrow() {
-                        ack.set_active(true);
-                    }
-                    (copy::install_key_saved(&name), false)
-                }
-                Err(e) => {
-                    eprintln!("wol-installer: recovery key not saved: {e}");
-                    (copy::INSTALL_KEY_NOT_SAVED.to_string(), true)
-                }
-            },
-        };
-        self.with_card(Step::Done, |c| c.say(&said.0, said.1));
+        let said = key_to_usb(&roots, &key);
+        if let (true, Some(ack)) = (said.saved, &*self.ack.borrow()) {
+            ack.set_active(true);
+        }
+        self.with_card(Step::Done, |c| c.say(&said.text, said.problem));
     }
 
     fn failed(self: &Rc<Self>) -> Card {
@@ -1572,11 +1557,32 @@ fn output(argv: &[String]) -> String {
 /// Every disk `install-disks` allows, with what `install-check` found on it. Reads only.
 pub fn system_disks() -> Vec<Found> {
     let allowed = output(&[install::DISKS.to_string()]);
-    install::parse_disks(&allowed)
+    disks_from(
+        &allowed,
+        |name| output(&install::probe_command(name)),
+        |name| output(&install::check_command(name, true)),
+    )
+}
+
+/// [`system_disks`] over the three readings: the allowed list, then each disk's probe and check.
+/// A disk whose probe is not JSON (the tool could not run, or said something else) is left out
+/// and named on stderr, not silently (QA-SHADOW-3, QA-SHADOW-4).
+fn disks_from(
+    allowed: &str,
+    probe: impl Fn(&str) -> String,
+    check: impl Fn(&str) -> String,
+) -> Vec<Found> {
+    install::parse_disks(allowed)
         .iter()
         .filter_map(|name| {
-            let disk = serde_json::from_str(&output(&install::probe_command(name))).ok()?;
-            let check: Check = install::parse_check(&output(&install::check_command(name, true)));
+            let disk = match serde_json::from_str(&probe(name)) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("wol-installer: {name}: probe gave no disk: {e}");
+                    return None;
+                }
+            };
+            let check: Check = install::parse_check(&check(name));
             Some(Found { disk, check })
         })
         .collect()
@@ -1648,6 +1654,41 @@ pub fn run() -> glib::ExitCode {
         let s3 = s.clone();
         a::keys(win, move || s.next(), move || s3.back());
     })
+}
+
+/// What saving the recovery key to a USB stick came to: the foot's sentence, whether it is a
+/// problem, and whether the key is on a stick now (the acknowledgement switch follows).
+#[derive(Debug, PartialEq)]
+struct KeySaved {
+    text: String,
+    problem: bool,
+    saved: bool,
+}
+
+/// The key onto the first stick mounted under `roots`: no stick, a stick that cannot be written
+/// (the foot says so and Restart stays blocked: QA-SHADOW-1), or saved.
+fn key_to_usb(roots: &[PathBuf], key: &str) -> KeySaved {
+    let (text, problem, saved) = match install::media_dirs(roots).first() {
+        None => (copy::INSTALL_NO_USB.to_string(), true, false),
+        Some(dir) => match install::save_key(dir, key) {
+            Ok(_) => {
+                let name = dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (copy::install_key_saved(&name), false, true)
+            }
+            Err(e) => {
+                eprintln!("wol-installer: recovery key not saved: {e}");
+                (copy::INSTALL_KEY_NOT_SAVED.to_string(), true, false)
+            }
+        },
+    };
+    KeySaved {
+        text,
+        problem,
+        saved,
+    }
 }
 
 /// Starts `command(plan)` for the plan just written. When there is no plan (it could not be

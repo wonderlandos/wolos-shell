@@ -88,6 +88,13 @@ pub const PRIVACY_NONE: &str =
 /// Add User: the name belongs to the system (`wol_core::settings::users::is_reserved`).
 pub const ACCOUNT_RESERVED: &str = "That name is reserved by the system. Choose another.";
 
+/// Displays: the mark on the main display's title when there are several (QA-GFX-20); a label,
+/// not a sentence, so not in [`ALL`].
+pub const DISPLAY_MAIN: &str = "Main";
+
+/// Add User: Create User with the full name empty (QA-LIVE-27: it did nothing visible).
+pub const ACCOUNT_NAME_REQUIRED: &str = "Type the person’s full name first.";
+
 // ---- Appearance ----
 
 /// "Theme from your wallpaper" subtitle.
@@ -228,7 +235,7 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 60] = [
+pub const ALL: [&str; 61] = [
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -275,6 +282,7 @@ pub const ALL: [&str; 60] = [
     PRIVACY_SCREEN_NOTE,
     PRIVACY_NONE,
     ACCOUNT_RESERVED,
+    ACCOUNT_NAME_REQUIRED,
     THEME_FROM_WALLPAPER,
     THEME_PICTURE_UNREADABLE,
     AUTO_APPS_FAILED,

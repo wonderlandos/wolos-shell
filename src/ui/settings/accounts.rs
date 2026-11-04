@@ -236,6 +236,11 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         });
     }
     let body = w::vbox(w::S3);
+    // Esc closes the sheet like Cancel (QA-LIVE-27).
+    {
+        let r = sheet.clone();
+        crate::kit::surface::on_escape(&body, move || r.set_reveal_child(false));
+    }
     body.append(&w::label("New account", "title"));
     body.append(&full);
     body.append(&short);
@@ -274,19 +279,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         let verify = verify2.clone();
         let create: Rc<dyn Fn()> = Rc::new(move || {
             let (name, full_name) = (short.text().to_string(), full.text().to_string());
-            // wol-admind refuses longer ones; saying so here keeps the typing (QA-SET-34).
-            if full_name.chars().count() > wol_core::admin::MAX_FULL_NAME {
-                return say(
-                    &st,
-                    &crate::copy::full_name_too_long(wol_core::admin::MAX_FULL_NAME),
-                );
-            }
-            if !wol_core::settings::users::is_valid_name(&name) {
-                return say(&st, "Account names use lowercase letters, digits, - and _.");
-            }
-            // wol-admind refuses these too (S4-6); saying so here keeps the sheet's typing.
-            if wol_core::settings::users::is_reserved(&name) {
-                return say(&st, crate::copy::settings::ACCOUNT_RESERVED);
+            if let Some(e) = name_problem(&full_name, &name) {
+                return say(&st, &e);
             }
             let password = pass.text().to_string();
             if let Some(e) = password_problem(&password, &verify.text()) {
@@ -355,6 +349,24 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p
 }
 
+/// Inline error for the Add User name fields, None when acceptable. wol-admind refuses the same
+/// ones; saying so here keeps the sheet's typing (QA-SET-34, S4-6, QA-LIVE-27).
+pub fn name_problem(full_name: &str, name: &str) -> Option<String> {
+    if full_name.chars().count() > wol_core::admin::MAX_FULL_NAME {
+        Some(crate::copy::full_name_too_long(
+            wol_core::admin::MAX_FULL_NAME,
+        ))
+    } else if full_name.trim().is_empty() && name.is_empty() {
+        Some(crate::copy::settings::ACCOUNT_NAME_REQUIRED.into())
+    } else if !wol_core::settings::users::is_valid_name(name) {
+        Some("Account names use lowercase letters, digits, - and _.".into())
+    } else if wol_core::settings::users::is_reserved(name) {
+        Some(crate::copy::settings::ACCOUNT_RESERVED.into())
+    } else {
+        None
+    }
+}
+
 /// Inline error for the Add User password fields, None when acceptable.
 pub fn password_problem(password: &str, verify: &str) -> Option<&'static str> {
     if !wol_core::settings::users::is_valid_password(password) {
@@ -369,6 +381,32 @@ pub fn password_problem(password: &str, verify: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-LIVE-27: Create User on an empty sheet says what is missing, in this order.
+    #[test]
+    fn add_user_names_what_is_missing() {
+        assert_eq!(
+            name_problem("", "").as_deref(),
+            Some(crate::copy::settings::ACCOUNT_NAME_REQUIRED)
+        );
+        assert_eq!(
+            name_problem("  ", "").as_deref(),
+            Some(crate::copy::settings::ACCOUNT_NAME_REQUIRED)
+        );
+        assert!(
+            name_problem("Mara", "Bad Name")
+                .unwrap()
+                .contains("lowercase")
+        );
+        assert_eq!(
+            name_problem("Root", "root").as_deref(),
+            Some(crate::copy::settings::ACCOUNT_RESERVED)
+        );
+        assert_eq!(name_problem("Mara Costa", "maracosta"), None);
+        assert!(password_problem("", "").is_some());
+        assert!(password_problem("abc", "abc").is_some());
+        assert_eq!(password_problem("longenough1", "longenough1"), None);
+    }
 
     /// QA-LIVE3-24: the Setup Assistant and Add User suggest the same account name for the same
     /// full name (Setup made `maracosta`, Add User `tomas`).

@@ -227,6 +227,12 @@ pub fn metered_shown(can_download: bool, main_on: bool, download_on: bool) -> bo
     can_download && main_on && download_on
 }
 
+/// The option rows stay while the main switch is on, while an option is on and while one waits
+/// for its change: Cancel on the Authenticate sheet must find them where they were (QA-LIVE-42).
+pub fn options_shown(main_on: bool, any_option_on: bool, any_waiting: bool) -> bool {
+    main_on || any_option_on || any_waiting
+}
+
 /// What the main switch (now `on`) asks of an option: `Some(on)` when the option is shown
 /// (`usable`), idle and not there yet; `None` for one that waits for its change or already
 /// matches (a second `set_active` on a waiting switch starts a second change).
@@ -307,27 +313,39 @@ fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool, mete
         dl.is_active(),
     ));
     ap_row.set_visible(main.is_active());
+    // Set while the main switch follows an option that went back (a cancelled change): it must
+    // not drive the other option on the way.
+    let following = Rc::new(std::cell::Cell::new(false));
+    // Shows the option rows as `options_shown` says; called after every change of a switch.
+    let show: Rc<dyn Fn()> = {
+        let (main, dl, ap) = (main.clone(), dl.clone(), ap.clone());
+        let (dl_row, met_row, ap_row) = (dl_row.clone(), met_row.clone(), ap_row.clone());
+        Rc::new(move || {
+            let waiting = !dl.is_sensitive() || !ap.is_sensitive();
+            let shown = options_shown(
+                main.is_active(),
+                (can_download && dl.is_active()) || ap.is_active(),
+                waiting,
+            );
+            dl_row.set_visible(can_download && shown);
+            met_row.set_visible(metered_shown(can_download, shown, dl.is_active()));
+            ap_row.set_visible(shown);
+        })
+    };
     {
-        let (main, met_row) = (main.clone(), met_row.clone());
-        dl.connect_active_notify(move |d| {
-            met_row.set_visible(metered_shown(can_download, main.is_active(), d.is_active()));
-        });
-    }
-    {
-        let (dl, ap, dl_row, ap_row) = (dl.clone(), ap.clone(), dl_row.clone(), ap_row.clone());
-        let met_row = met_row.clone();
+        let (dl, ap, show, following) = (dl.clone(), ap.clone(), show.clone(), following.clone());
         main.connect_active_notify(move |m| {
             let on = m.is_active();
-            dl_row.set_visible(can_download && on);
-            met_row.set_visible(metered_shown(can_download, on, dl.is_active()));
-            ap_row.set_visible(on);
             // Only an option that is idle and differs is driven: one that waits for its change
             // would run a second one on top of the first (audit6 S6-3).
-            for (o, usable) in [(&dl, can_download), (&ap, true)] {
-                if let Some(want) = drive(on, usable, o.is_active(), o.is_sensitive()) {
-                    o.set_active(want);
+            if !following.get() {
+                for (o, usable) in [(&dl, can_download), (&ap, true)] {
+                    if let Some(want) = drive(on, usable, o.is_active(), o.is_sensitive()) {
+                        o.set_active(want);
+                    }
                 }
             }
+            show();
         });
     }
     // The main switch waits while an option waits for its change: a second answer to either
@@ -338,15 +356,28 @@ fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool, mete
             main.set_sensitive(dl.is_sensitive() && ap.is_sensitive())
         });
     }
-    // An option that ends off (turned off, or a change that failed) turns the main switch off
-    // once neither is on.
+    // The main switch follows the options once they settle: off when neither is on (turned off,
+    // or a change that failed), back on when a cancelled change put an option back.
     for s in [&dl, &ap] {
-        let (main, dl, ap) = (main.clone(), dl.clone(), ap.clone());
-        s.connect_active_notify(move |_| {
-            if !auto_main(dl.is_active(), ap.is_active()) && main.is_active() {
-                main.set_active(false);
+        let (main, dl, ap, show, following) = (
+            main.clone(),
+            dl.clone(),
+            ap.clone(),
+            show.clone(),
+            following.clone(),
+        );
+        let settle = Rc::new(move || {
+            let any = auto_main(dl.is_active(), ap.is_active());
+            if any != main.is_active() && dl.is_sensitive() && ap.is_sensitive() {
+                following.set(true);
+                main.set_active(any);
+                following.set(false);
             }
+            show();
         });
+        let s2 = settle.clone();
+        s.connect_active_notify(move |_| s2());
+        s.connect_sensitive_notify(move |_| settle());
     }
     into.append(&w::section(
         "",
@@ -563,6 +594,19 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-LIVE-42: turning Automatic updates off removed the option rows before the Authenticate
+    /// sheet was answered; Cancel then found them gone. They stay while an option is on or waits.
+    #[test]
+    fn subrows_stay_until_confirmed() {
+        assert!(options_shown(true, false, false), "main on");
+        assert!(options_shown(false, true, false), "an option still on");
+        assert!(
+            options_shown(false, false, true),
+            "a change waits for the sheet"
+        );
+        assert!(!options_shown(false, false, false), "settled off");
+    }
 
     /// B6 follow-up: the metered option sits under the download switch: shown only while the
     /// download is there and on and automatic updates are on.

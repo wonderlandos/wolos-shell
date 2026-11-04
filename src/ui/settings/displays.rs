@@ -372,6 +372,31 @@ fn save_displays(rel: &str, text: &str) -> std::io::Result<()> {
         .map(drop)
 }
 
+/// The title of each display's section: what the display calls itself; where two share that
+/// name (three "Red Hat Inc. QEMU Monitor", two same-model Dells) the connector too, and with
+/// several displays the main one says so (QA-GFX-20).
+pub(crate) fn section_titles(mons: &[crate::system::Monitor], main: Option<&str>) -> Vec<String> {
+    let base = |m: &crate::system::Monitor| {
+        if m.description.is_empty() {
+            m.name.clone()
+        } else {
+            m.description.clone()
+        }
+    };
+    mons.iter()
+        .map(|m| {
+            let mut t = base(m);
+            if mons.iter().filter(|o| base(o) == t).count() > 1 && t != m.name {
+                t = format!("{t} ({})", m.name);
+            }
+            if mons.len() > 1 && main == Some(m.name.as_str()) {
+                t = format!("{t} · {}", crate::copy::settings::DISPLAY_MAIN);
+            }
+            t
+        })
+        .collect()
+}
+
 /// One display's section: Resolution, Refresh Rate, Scale and, for a display that is not the
 /// main one, Arrangement. Night Shift is not here: it is one setting for every display.
 fn display_section(
@@ -381,6 +406,7 @@ fn display_section(
     main: Option<&(String, Geometry)>,
     main_rule: Option<&str>,
     status: &gtk::Label,
+    title: &str,
 ) -> gtk::Widget {
     let res = resolutions(m);
     let is_main = main.is_some_and(|(n, _)| *n == m.name);
@@ -457,12 +483,7 @@ fn display_section(
         on(p, |c, place| Choice { place, ..c });
         rows.push(row("Arrangement", p));
     }
-    let title = if m.description.is_empty() {
-        m.name.clone()
-    } else {
-        m.description.clone()
-    };
-    let section = w::section(&title, &rows);
+    let section = w::section(title, &rows);
     // The menus' handlers hold the display weakly: the section keeps it.
     let keep = d.clone();
     section.connect_destroy(move |_| {
@@ -552,7 +573,8 @@ impl Page {
                 main.as_ref().map(|(n, g)| (n.as_str(), *g)),
             )
         });
-        for m in &mons {
+        let titles = section_titles(&mons, main.as_ref().map(|(n, _)| n.as_str()));
+        for (m, title) in mons.iter().zip(&titles) {
             self.body.append(&display_section(
                 self,
                 m,
@@ -560,6 +582,7 @@ impl Page {
                 main.as_ref(),
                 main_rule.as_deref(),
                 &status,
+                title,
             ));
         }
         // Night Shift is one setting for every display (`Action::NightLight` has no output), so
@@ -901,6 +924,34 @@ mod tests {
         assert_eq!(
             settle(Ok(()), || Err(std::io::Error::other("disk full"))),
             Settled::NotSaved
+        );
+    }
+
+    /// QA-GFX-20: identical displays tell apart by connector; the main one is marked.
+    #[test]
+    fn identical_displays_tell_apart() {
+        let m = |name: &str, d: &str| crate::system::Monitor {
+            name: name.into(),
+            description: d.into(),
+            ..Default::default()
+        };
+        let q = "Red Hat Inc. QEMU Monitor";
+        let three = [m("Virtual-1", q), m("Virtual-2", q), m("Virtual-3", q)];
+        let t = section_titles(&three, Some("Virtual-1"));
+        assert_eq!(
+            t,
+            [
+                "Red Hat Inc. QEMU Monitor (Virtual-1) · Main",
+                "Red Hat Inc. QEMU Monitor (Virtual-2)",
+                "Red Hat Inc. QEMU Monitor (Virtual-3)"
+            ]
+        );
+        // One display: its name as it was, no mark; different names stay alone.
+        assert_eq!(section_titles(&three[..1], Some("Virtual-1")), [q]);
+        let two = [m("eDP-1", "Built-in"), m("HDMI-A-1", "")];
+        assert_eq!(
+            section_titles(&two, Some("eDP-1")),
+            ["Built-in · Main", "HDMI-A-1"]
         );
     }
 

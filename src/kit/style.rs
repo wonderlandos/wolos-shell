@@ -234,16 +234,13 @@ fn auto_timer(load: Rc<dyn Fn()>) {
 }
 
 /// Writes the active theme id; every shell process reloads through its file monitor.
-/// Third-party apps (GTK, Qt, foot) follow on a worker thread: files + gsettings (live dark mode).
+/// Third-party apps (GTK, Qt, foot) follow: their files are written here (quick text, so a full
+/// disk is an Err the caller can name: QA-LIVE-19), gsettings and foot on a worker thread.
 pub fn set_active(id: &str) -> std::io::Result<()> {
     theme::save(id)?;
-    let id = id.to_string();
-    std::thread::spawn(move || {
-        let home = wol_core::theme::config_home();
-        if let Err(e) = wol_core::theme::apps::apply(&id, &home) {
-            crate::diag::say!("wol: app themes: {e}");
-        }
-    });
+    let home = wol_core::theme::config_home();
+    let t = wol_core::theme::apps::write_files(id, &home).map_err(std::io::Error::other)?;
+    std::thread::spawn(move || wol_core::theme::apps::push(&t, &home));
     Ok(())
 }
 

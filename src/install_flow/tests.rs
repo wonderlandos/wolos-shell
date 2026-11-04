@@ -387,6 +387,39 @@ fn the_disk_password_is_typable_before_any_desktop() {
     assert!(!passphrase_typable("tab\there"));
 }
 
+/// QA-SHADOW-7: Continue with no disk chosen asks for a disk; it does not judge a plan for an
+/// empty default disk.
+#[test]
+fn no_disk_chosen_asks_for_a_disk_not_a_default_plan() {
+    let mut f = flow(dual());
+    to_method(&mut f);
+    f.chosen = None;
+    for step in [Step::Method, Step::Summary] {
+        f.step = step;
+        f.method = Method::Erase;
+        assert_eq!(
+            f.advance(),
+            Next::Stay(None, copy::installer::CHOOSE_DISK.into()),
+            "{step:?}"
+        );
+    }
+}
+
+/// QA-LIVE1-23: Replace on a blank disk says why on the How to Install page and Continue stays
+/// there with the same sentence (it looked like a dead button).
+#[test]
+fn replace_unavailable_on_blank_disk() {
+    let mut blank = dual();
+    blank.parts.clear();
+    blank.table = Table::None;
+    let mut f = flow(blank);
+    to_method(&mut f);
+    f.method = Method::Replace;
+    let why = f.replace_problem().expect("nothing to take over");
+    assert_eq!(f.method_warning().as_deref(), Some(why.as_str()));
+    assert_eq!(f.advance(), Next::Stay(None, why));
+}
+
 #[test]
 fn replace_takes_one_partition_and_keeps_the_rest() {
     let mut f = flow(dual());
