@@ -5,6 +5,8 @@ use super::*;
 /// Row titles, as the page shows them and Settings search finds them (`super::search::ROWS`).
 pub(super) mod rows {
     pub const SPEED: &str = "Tracking speed";
+    /// The mouse wheel: lines per notch, 1 to 10 (`hyprprefs::SCROLL_LINES`).
+    pub const SCROLL: &str = "Scroll speed";
     pub const TAP: &str = "Tap to click";
     pub const SECONDARY: &str = "Secondary click";
     /// Both the trackpad's and the mouse's.
@@ -71,14 +73,40 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             }),
         ],
     ));
+    // Lines per wheel notch, as KDE has it; the compositor scales every app's wheel events.
+    let scroll = Rc::new(glib::WeakRef::<gtk::Scale>::new());
+    let (dk, st, sc) = (e.desk.clone(), status.clone(), scroll.clone());
+    let lines = wol_core::hyprprefs::SCROLL_LINES;
+    let wheel = form::slider_row(
+        rows::SCROLL,
+        (f64::from(*lines.start()), f64::from(*lines.end()), 1.0),
+        f64::from(d.scroll_lines.clamp(*lines.start(), *lines.end())),
+        ("1 line", "10 lines"),
+        move |v| {
+            let (dk2, sc) = (dk.clone(), sc.clone());
+            dk.set_or(
+                &st,
+                |p| p.scroll_lines = v.round() as u32,
+                move || {
+                    if let Some(s) = sc.upgrade() {
+                        s.set_value(f64::from(dk2.get().scroll_lines));
+                    }
+                },
+            )
+        },
+    );
+    scroll.set(control_in::<gtk::Scale>(&wheel).as_ref());
     p.append(&w::section(
         "Mouse",
-        &[toggle(
-            rows::NATURAL,
-            "Content follows the wheel like a trackpad.",
-            d.mouse_natural_scroll,
-            |p, v| p.mouse_natural_scroll = v,
-        )],
+        &[
+            wheel,
+            toggle(
+                rows::NATURAL,
+                "Content follows the wheel like a trackpad.",
+                d.mouse_natural_scroll,
+                |p, v| p.mouse_natural_scroll = v,
+            ),
+        ],
     ));
     p.append(&status);
     p

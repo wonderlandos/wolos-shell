@@ -235,6 +235,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
         "Trackpad & Mouse",
         &[
             tp::SPEED,
+            tp::SCROLL,
             tp::TAP,
             tp::SECONDARY,
             tp::NATURAL,
@@ -755,6 +756,7 @@ mod tests {
                 include_str!("trackpad.rs"),
                 &[
                     tp::SPEED,
+                    tp::SCROLL,
                     tp::TAP,
                     tp::SECONDARY,
                     tp::NATURAL,
