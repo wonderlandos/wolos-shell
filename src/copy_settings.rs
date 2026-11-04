@@ -36,6 +36,12 @@ pub const SOUND_NOT_SAVED: &str =
     "This sound setting couldn’t be changed. Try again, or use Reset Audio below.";
 /// No microphone is connected.
 pub const SOUND_NO_INPUT: &str = "No microphone is connected.";
+/// Printers: the test page was handed to CUPS (QA-DEV-5).
+pub const PRINTER_TEST_SENT: &str = "The test page is on its way.";
+/// Printers: CUPS refused the test page or the cancel.
+pub const PRINTER_JOB_FAILED: &str = "The printer did not take it. Try again.";
+/// No speakers or headphones: no sound card, or only WirePlumber's Dummy Output (QA-DEV-6).
+pub const SOUND_NO_OUTPUT: &str = "No speakers or headphones are connected.";
 /// A Troubleshooting switch was saved, but sound did not restart to use it.
 pub const SOUND_SAVED_LATER: &str = "Saved. It takes effect after you log out and back in.";
 
@@ -228,7 +234,7 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 60] = [
+pub const ALL: [&str; 63] = [
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -260,6 +266,9 @@ pub const ALL: [&str; 60] = [
     SOUND_PRO_NOTE,
     SOUND_NOT_SAVED,
     SOUND_NO_INPUT,
+    SOUND_NO_OUTPUT,
+    PRINTER_TEST_SENT,
+    PRINTER_JOB_FAILED,
     SOUND_SAVED_LATER,
     MODULES_ABOUT,
     MODULES_NONE,

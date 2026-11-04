@@ -426,12 +426,14 @@ pub fn slider_row(
     let b = w::vbox(S1);
     b.add_css_class("list-row");
     b.add_css_class("slider-row");
-    b.append(&w::label(title, ""));
+    let tl = w::label(title, "");
+    b.append(&tl);
     let line = w::hbox(S2);
     let lo = w::label(low, "secondary");
     let hi = w::label(high, "secondary");
     let settled = settle(SETTLE_MS, changed);
     let s = w::row_slider(value, |_| {});
+    w::name_controls(s.upcast_ref(), &tl, None);
     s.set_range(min, max);
     s.set_increments(step, step);
     s.set_value(value);

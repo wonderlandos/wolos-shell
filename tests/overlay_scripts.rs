@@ -120,6 +120,18 @@ fn the_mic_key_mutes_the_default_input_and_shows_the_osd() {
         "the mic key shows the microphone's state (audit5 S9-3)"
     );
     assert_eq!(run("dance").status.code(), Some(64));
+    // QA-DEV-8: no default output (WirePlumber down): wpctl fails, the OSD shows all the same.
+    let _ = std::fs::remove_file(&log);
+    stub(
+        &d,
+        "wpctl",
+        &log,
+        "echo 'Translate ID error: 0' >&2; exit 3",
+    );
+    let o = run("up");
+    assert_eq!(o.status.code(), Some(3), "wpctl's status");
+    let said = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(said.ends_with("wol shell show osd\n"), "{said}");
     let _ = std::fs::remove_dir_all(&d);
 }
 

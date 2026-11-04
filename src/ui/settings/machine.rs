@@ -87,6 +87,11 @@ pub trait Machine: Send + Sync {
     fn printers(&self) -> Option<Vec<Printer>>;
     /// Device URIs CUPS can see (slow: probes the network).
     fn discover_printers(&self) -> Vec<String>;
+    /// Runs a printing command as the person (`lp` test page, `cancel -a`; no admin); true when
+    /// CUPS took it (slow: call off the UI thread).
+    fn printer_job(&self, _argv: &[String]) -> bool {
+        false
+    }
     fn hardware(&self) -> HardwareSnapshot;
     /// The installed WolOS version (`/etc/os-release` VERSION_ID). None: not known here (demo
     /// machines), About shows the build's own.
@@ -263,6 +268,10 @@ impl Machine for Live {
     }
     fn printers(&self) -> Option<Vec<Printer>> {
         wol_core::printers::read(self.os())
+    }
+    fn printer_job(&self, argv: &[String]) -> bool {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        self.os().run(&a).is_some()
     }
     fn discover_printers(&self) -> Vec<String> {
         wol_core::printers::discover(self.os())
@@ -546,12 +555,15 @@ impl Machine for Demo {
                 uri: "ipp://192.168.1.40/ipp/print".into(),
                 default: true,
                 state: "Idle".into(),
+                ..Default::default()
             },
             Printer {
                 name: "Office_Laser".into(),
                 uri: "ipp://192.168.1.41/ipp/print".into(),
                 default: false,
                 state: "Stopped".into(),
+                jobs: 2,
+                ..Default::default()
             },
         ])
     }

@@ -241,7 +241,28 @@ pub const SCALES: [(&str, f64); 5] = [
 /// rule says 1.333), so changing only the refresh rate keeps the scale instead of writing 1.0
 /// (QA-SET-18).
 pub fn scale_choices(current: f64) -> Vec<(String, f64)> {
-    let mut v: Vec<(String, f64)> = SCALES.iter().map(|s| (s.0.to_string(), s.1)).collect();
+    scale_choices_for(current, None)
+}
+
+/// Smallest logical size (points) the shell's own windows are laid out for: a scale that leaves
+/// less made Settings taller than the screen (1366 × 768 at 200 % is 683 × 384, QA-ACC-5).
+pub const MIN_LOGICAL: (u32, u32) = (1024, 600);
+
+/// [`scale_choices`] for a display of `pixels` (its mode): scales that leave it smaller than
+/// [`MIN_LOGICAL`] are not offered. 100 % and the scale it runs at always stay.
+pub fn scale_choices_for(current: f64, pixels: Option<(u32, u32)>) -> Vec<(String, f64)> {
+    let fits = |s: f64| {
+        pixels.is_none_or(|(w, h)| {
+            s <= 1.0
+                || (f64::from(w) / s >= f64::from(MIN_LOGICAL.0)
+                    && f64::from(h) / s >= f64::from(MIN_LOGICAL.1))
+        })
+    };
+    let mut v: Vec<(String, f64)> = SCALES
+        .iter()
+        .filter(|s| fits(s.1) || (s.1 - current).abs() < 0.01)
+        .map(|s| (s.0.to_string(), s.1))
+        .collect();
     if current.is_finite() && !v.iter().any(|s| (s.1 - current).abs() < 0.01) {
         let at = v.iter().position(|s| s.1 > current).unwrap_or(v.len());
         v.insert(
@@ -683,6 +704,33 @@ mod settings_tests {
         let c = scale_choices(1.6);
         assert_eq!(c[3].1, 1.6);
         assert!(scale_choices(f64::NAN).len() == SCALES.len());
+    }
+
+    /// QA-ACC-5: 200 % on a 1366 × 768 panel left 683 × 384 points and Settings taller than the
+    /// screen. Only scales that keep 1024 × 600 points are offered; the one in use stays.
+    #[test]
+    fn scales_that_leave_too_little_room_are_not_offered() {
+        let names = |v: Vec<(String, f64)>| v.into_iter().map(|s| s.0).collect::<Vec<_>>();
+        assert_eq!(
+            names(scale_choices_for(1.0, Some((1366, 768)))),
+            ["100%", "125%"]
+        );
+        assert_eq!(
+            names(scale_choices_for(1.0, Some((1280, 800)))),
+            ["100%", "125%"]
+        );
+        assert_eq!(names(scale_choices_for(1.0, Some((1024, 600)))), ["100%"]);
+        assert_eq!(names(scale_choices_for(1.0, Some((800, 600)))), ["100%"]);
+        assert_eq!(
+            names(scale_choices_for(1.0, Some((3840, 2160)))).len(),
+            SCALES.len()
+        );
+        assert_eq!(
+            names(scale_choices_for(2.0, Some((1366, 768)))),
+            ["100%", "125%", "200%"],
+            "the scale in use stays (and can be left)"
+        );
+        assert_eq!(scale_choices_for(1.5, None), scale_choices(1.5));
     }
 
     /// QA-GFX-6: the Dock, Settings and the Control Center name one main display: the built-in

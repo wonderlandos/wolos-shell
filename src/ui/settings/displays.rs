@@ -401,7 +401,7 @@ fn display_section(
         (Some((_, mg)), Some(r)) if !is_main => disp::place_of(r, *mg, geometry(m)),
         _ => Place::Auto,
     };
-    let scales = disp::scale_choices(m.scale);
+    let scales = disp::scale_choices_for(m.scale, Some((m.width, m.height)));
     let now = Choice {
         res: r0,
         rate: rates(m, rw, rh)

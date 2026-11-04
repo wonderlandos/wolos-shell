@@ -11,8 +11,9 @@ use wol_core::install::layout::{
     Assign, Compiled, Fs, Layout, MIN_ROOT, New, ROOMY_ROOT, Refusal, Resize, compile, room, verify,
 };
 use wol_core::install::plan::{
-    Account, Plan, Protect, alongside, alongside_blocked, alongside_range, alongside_target,
-    changes, console_typable, keeps_bitlocker, keeps_windows, other_boot, replace, unlock_problem,
+    Account, Plan, Protect, alongside, alongside_blocked, alongside_default, alongside_range,
+    alongside_target, changes, console_typable, keeps_bitlocker, keeps_windows, other_boot,
+    replace, unlock_problem,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -722,9 +723,8 @@ impl Flow {
         self.replace = None;
         self.method = Method::Erase;
         if let Some(d) = self.disk() {
-            let keep = alongside_target(d)
-                .and_then(|p| alongside_range(d, p))
-                .map(|(lo, hi)| lo + (hi - lo) / 2);
+            // Half way, or WolOS at 40 GB when half way is less (QA-DOC-32).
+            let keep = alongside_target(d).and_then(|p| alongside_default(d, p));
             self.keep = keep.unwrap_or(0);
             if self.alongside_problem().is_none() {
                 self.method = Method::Alongside;

@@ -175,6 +175,24 @@ pub fn codec_label(codec: &str) -> String {
     }
 }
 
+/// What a device row says beside its name: the Bluetooth codec and the card profile that made
+/// it, when that profile is not the plain one ("Pro Audio", "Calls"). QA-DEV-18: a Pro Audio
+/// sink read like the speakers it replaced; QA-DEV-2: call mode was shown nowhere.
+pub fn device_badge(d: &Device) -> String {
+    let profile = match d.profile.as_deref() {
+        Some("pro-audio") => Some("Pro Audio"),
+        Some(p) if p.starts_with("headset-head-unit") => Some("Calls"),
+        _ => None,
+    };
+    d.codec
+        .as_deref()
+        .map(codec_label)
+        .into_iter()
+        .chain(profile.map(String::from))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 /// The icon for a device: Bluetooth headphones, a display, speakers or a microphone.
 pub fn device_icon(d: &Device) -> &'static str {
     let name = d.name.to_lowercase();
@@ -522,11 +540,15 @@ impl View {
         ] {
             clear(list);
             let devs: Vec<&Device> = s.devices.iter().filter(|d| d.kind == kind).collect();
-            if devs.is_empty() && kind == DeviceKind::Input {
-                list.append(&w::list_row("", copy::SOUND_NO_INPUT, "", None));
+            if devs.is_empty() {
+                let none = match kind {
+                    DeviceKind::Input => copy::SOUND_NO_INPUT,
+                    _ => copy::SOUND_NO_OUTPUT,
+                };
+                list.append(&w::list_row("", none, "", None));
             }
             for d in devs {
-                let badge = d.codec.as_deref().map(codec_label).unwrap_or_default();
+                let badge = device_badge(d);
                 let b = w::choice_row(device_icon(d), &d.name, &badge, d.default);
                 let (me, id) = (Rc::downgrade(self), d.id);
                 b.connect_clicked(move |_| {
@@ -1272,6 +1294,26 @@ fn troubleshooting_section(v: &Rc<View>, ex: &Extras, st: &gtk::Label) -> gtk::B
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-DEV-18 / QA-DEV-2: the profile that made a device is named in its row.
+    #[test]
+    fn rows_name_pro_audio_and_call_mode() {
+        let d = |codec: Option<&str>, profile: Option<&str>| Device {
+            codec: codec.map(String::from),
+            profile: profile.map(String::from),
+            ..Device::default()
+        };
+        assert_eq!(device_badge(&d(None, Some("pro-audio"))), "Pro Audio");
+        assert_eq!(
+            device_badge(&d(Some("msbc"), Some("headset-head-unit"))),
+            "mSBC · Calls"
+        );
+        assert_eq!(
+            device_badge(&d(Some("aptx_hd"), Some("a2dp-sink"))),
+            "aptX HD"
+        );
+        assert_eq!(device_badge(&d(None, Some("output:analog-stereo"))), "");
+    }
 
     #[test]
     fn codecs_read_as_their_names() {

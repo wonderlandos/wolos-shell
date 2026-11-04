@@ -141,7 +141,9 @@ fn volume_keys_ask_the_shell_for_the_osd() {
     assert!(
         script
             .lines()
-            .any(|l| l.trim() == "exec wol shell show osd"),
+            // QA-DEV-8: shown also when wpctl failed (no default output), so not `exec`ed
+            // straight after it under `set -e`.
+            .any(|l| l.trim() == "wol shell show \"$osd\" || :"),
         "{script}"
     );
 }
