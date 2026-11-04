@@ -5,12 +5,13 @@ use super::*;
 
 /// Restarts hypridle on its new file ([`wol_core::journal::IDLE_RESTART`], the same steps an
 /// undo takes): it reads its config only at start.
+/// Between stopping hypridle and starting it again: the old one lets go of its display first.
+const HYPRIDLE_GAP: std::time::Duration = std::time::Duration::from_millis(300);
+
 pub(super) fn restart_hypridle() {
     let [stop, start] = wol_core::journal::IDLE_RESTART;
     background(vec![argv(stop)]);
-    glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
-        kit::spawn(&argv(start))
-    });
+    glib::timeout_add_local_once(HYPRIDLE_GAP, move || kit::spawn(&argv(start)));
 }
 
 /// The menu position of `secs`: one of the choices, or a row of its own for a value written by

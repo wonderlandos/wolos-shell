@@ -635,15 +635,17 @@ impl Page {
             col.append(&line);
             col.append(&buttons);
             let revealer = w::sheet(&col);
-            match self.root.ancestor(gtk::Overlay::static_type()) {
+            let overlay = self
+                .root
+                .ancestor(gtk::Overlay::static_type())
+                .and_then(|o| o.downcast::<gtk::Overlay>().ok());
+            match overlay {
                 Some(o) => {
                     revealer.set_halign(gtk::Align::Center);
                     revealer.set_valign(gtk::Align::Start);
                     revealer.set_width_request(w::SHEET_WIDTH);
                     revealer.add_css_class("toolbar-sheet");
-                    o.downcast::<gtk::Overlay>()
-                        .expect("an overlay")
-                        .add_overlay(&revealer);
+                    o.add_overlay(&revealer);
                 }
                 // No window overlay (a bare preview): the sheet is the first thing on the page.
                 None => self

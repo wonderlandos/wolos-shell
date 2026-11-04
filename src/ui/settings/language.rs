@@ -14,7 +14,7 @@ pub(crate) fn language_index(saved: Option<&str>, system: &str) -> usize {
 
 /// The session's `LANG` (empty when unset).
 fn system_locale() -> String {
-    std::env::var("LANG").unwrap_or_default()
+    crate::envv::var("LANG").unwrap_or_default()
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {

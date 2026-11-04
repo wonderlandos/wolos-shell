@@ -1407,7 +1407,8 @@ fn pane_stems() -> Vec<String> {
     )
     .iter()
     .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
-    .filter(|s| s != "mod")
+    // mod.rs is the shell of the panes, tests.rs their split-out unit tests: neither is a pane.
+    .filter(|s| s != "mod" && s != "tests")
     .collect()
 }
 

@@ -28,13 +28,82 @@ pub enum Notice {
     /// Notify; a click on it opens Settings > Software Update (`software_update::OPEN`).
     Updates(String, String),
     /// A sign-in page holds the network (a café, a hotel): summary, body; Open shows the page
-    /// ([`PORTAL_URL`]).
+    /// NetworkManager probes (`wol_core::netinfo::nm_connectivity_uri`).
     Portal(String, String),
 }
 
-/// The plain-http address NetworkManager probes: a captive portal intercepts it and answers with
-/// its sign-in page, so opening it in the browser lands there (QA-NET2-3).
-pub const PORTAL_URL: &str = "http://ping.archlinux.org/nm-check.txt";
+/// What a banner's chosen action starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Then {
+    /// This argv.
+    Run(Vec<String>),
+    /// The page NetworkManager probes, in the browser (`wol_core::netinfo::nm_connectivity_uri`).
+    PortalPage,
+}
+
+/// A banner that waits for its click (`notify-send -w`): the notify-send argv and, per action id,
+/// what the click starts. [`show_banner`] runs it; no shell string carries it (RR-020).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Banner {
+    pub notify: Vec<String>,
+    pub then: Vec<(&'static str, Then)>,
+}
+
+/// A banner with `actions` (id, button label, what it starts) after the summary and body.
+fn banner(
+    summary: String,
+    body: String,
+    critical: bool,
+    actions: Vec<(&'static str, &str, Then)>,
+) -> Banner {
+    let mut notify: Vec<String> = ["notify-send", "-a", "WolOS"].map(String::from).to_vec();
+    if critical {
+        notify.extend(["-u".into(), "critical".into()]);
+    }
+    notify.push("-w".into());
+    for (id, label, _) in &actions {
+        notify.extend(["-A".into(), format!("{id}={label}")]);
+    }
+    notify.extend([summary, body]);
+    Banner {
+        notify,
+        then: actions.into_iter().map(|(id, _, t)| (id, t)).collect(),
+    }
+}
+
+/// Shows `b` on its own thread (notify-send waits for the click, as long as it takes); the
+/// action chosen starts what it names. Nothing runs when the banner is closed.
+pub(crate) fn show_banner(b: Banner) {
+    let waiter = std::thread::Builder::new().name("banner-wait".into());
+    let started = waiter.spawn(move || {
+        let out = std::process::Command::new(&b.notify[0])
+            .args(&b.notify[1..])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+        let chosen = match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_owned(),
+            Err(e) => {
+                crate::diag::say!("wol-shell: notify-send: {e}");
+                return;
+            }
+        };
+        let argv = match b.then.iter().find(|(id, _)| *id == chosen) {
+            Some((_, Then::Run(argv))) => argv.clone(),
+            Some((_, Then::PortalPage)) => {
+                match wol_core::netinfo::nm_connectivity_uri(&wol_core::system::PosixHost) {
+                    Some(u) => vec!["xdg-open".into(), u],
+                    None => return,
+                }
+            }
+            None => return,
+        };
+        crate::kit::spawn(&argv);
+    });
+    if let Err(e) = started {
+        crate::diag::say!("wol-shell: no thread for a banner: {e}");
+    }
+}
 
 /// The notice for a change of connectivity: once per portal, when the network turns to a sign-in
 /// page, never again while it stays one.
@@ -379,27 +448,28 @@ fn malware_read_in(
     )
 }
 
-/// The command of the updates banner: `notify-send` waits for the click on its `default` action
-/// and then runs `software_update::OPEN` (arguments after the summary and body).
-pub(crate) fn updates_argv(summary: String, body: String) -> Vec<String> {
-    let script = "[ \"$(notify-send -a WolOS -w -A default=Open \"$1\" \"$2\")\" = default ] && { shift 2; exec \"$@\"; }";
-    let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
-    argv.extend([summary, body]);
-    argv.extend(
-        crate::software_update::OPEN
-            .iter()
-            .map(|a| (*a).to_string()),
-    );
-    argv
+/// The updates banner: a click on it (its `default` action) opens `software_update::OPEN`.
+pub(crate) fn updates_banner(summary: String, body: String) -> Banner {
+    let open = crate::software_update::OPEN
+        .iter()
+        .map(|a| (*a).to_string())
+        .collect();
+    banner(
+        summary,
+        body,
+        false,
+        vec![("default", "Open", Then::Run(open))],
+    )
 }
 
-/// The command of the sign-in banner: `notify-send` waits for the click on Open and then opens
-/// [`PORTAL_URL`] in the browser.
-pub(crate) fn portal_argv(summary: String, body: String) -> Vec<String> {
-    let script = "[ \"$(notify-send -a WolOS -w -A open=Open \"$1\" \"$2\")\" = open ] && exec xdg-open \"$3\"";
-    let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
-    argv.extend([summary, body, PORTAL_URL.to_string()]);
-    argv
+/// The sign-in banner: Open shows the page NetworkManager probes.
+pub(crate) fn portal_banner(summary: String, body: String) -> Banner {
+    banner(
+        summary,
+        body,
+        false,
+        vec![("open", "Open", Then::PortalPage)],
+    )
 }
 
 fn act(n: Notice) {
@@ -415,27 +485,30 @@ fn act(n: Notice) {
         Notice::Show(s, body, critical) => notify(&s, &body, critical),
         Notice::Restart(s, body) => {
             // The action button asks first like every Restart (`wol power restart`).
-            let script = format!(
-                "[ \"$(notify-send -a WolOS -w -A restart={} \"$1\" \"$2\")\" = restart ] && exec wol power restart",
-                wol_core::hardware::online::RESTART
-            );
-            crate::kit::spawn(&["sh".into(), "-c".into(), script, "sh".into(), s, body]);
-        }
-        Notice::Updates(s, body) => crate::kit::spawn(&updates_argv(s, body)),
-        Notice::Portal(s, body) => crate::kit::spawn(&portal_argv(s, body)),
-        Notice::Malware(s, body, path) => {
-            // Open Anyway is a deliberate step in Settings; a notification only offers the safe one.
-            let script = "case \"$(notify-send -a WolOS -u critical -w -A trash='Move to Trash' -A details=Details \"$1\" \"$2\")\" in \
-                 trash) exec gio trash -- \"$3\" ;; details) exec wol-settings ;; esac";
-            crate::kit::spawn(&[
-                "sh".into(),
-                "-c".into(),
-                script.into(),
-                "sh".into(),
+            let restart = ["wol", "power", "restart"].map(String::from).to_vec();
+            let label = wol_core::hardware::online::RESTART;
+            show_banner(banner(
                 s,
                 body,
-                path,
-            ]);
+                false,
+                vec![("restart", label, Then::Run(restart))],
+            ));
+        }
+        Notice::Updates(s, body) => show_banner(updates_banner(s, body)),
+        Notice::Portal(s, body) => show_banner(portal_banner(s, body)),
+        Notice::Malware(s, body, path) => {
+            // Open Anyway is a deliberate step in Settings; a notification only offers the safe one.
+            let trash = vec!["gio".into(), "trash".into(), "--".into(), path];
+            let details = vec!["wol-settings".to_string()];
+            show_banner(banner(
+                s,
+                body,
+                true,
+                vec![
+                    ("trash", "Move to Trash", Then::Run(trash)),
+                    ("details", "Details", Then::Run(details)),
+                ],
+            ));
         }
         Notice::Sleep(s, body) => {
             notify(&s, &body, true);
@@ -463,9 +536,22 @@ mod tests {
         assert!(a.connectivity(Portal).is_none());
         assert!(a.connectivity(Full).is_none());
         assert!(a.connectivity(Portal).is_some());
-        let argv = portal_argv("T".into(), "B".into());
-        assert_eq!(argv.last().map(String::as_str), Some(PORTAL_URL));
-        assert!(argv[2].contains("-A open=Open") && argv[2].contains("xdg-open"));
+        let b = portal_banner("T".into(), "B".into());
+        assert_eq!(
+            b.notify,
+            [
+                "notify-send",
+                "-a",
+                "WolOS",
+                "-w",
+                "-A",
+                "open=Open",
+                "T",
+                "B"
+            ]
+        );
+        // The page is the one NetworkManager probes (core netinfo the_portal_page_is_*).
+        assert_eq!(b.then, [("open", Then::PortalPage)]);
     }
 
     #[test]
@@ -672,7 +758,8 @@ mod tests {
     }
 
     /// The check's `base` file (a signed release manifest).
-    const BASE: &str = r#"{"version":"2026.11","snapshot":"2026/11/02","wolos_repo":"r42","kernel":"6.17.3-1","image":"wolos-2026.11.iso","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+    const BASE: &str = r#"{"version":"2026.11","snapshot":"2026/11/02","wolos_repo":"r42","kernel":"6.17.3-1","image":"wolos-2026.11.iso",
+"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
 
     /// QA-STORE-57: the release this computer runs is not an update, whatever the image's own
     /// `wolos-release.json` looks like, and a newer one still is.
@@ -702,25 +789,27 @@ mod tests {
     /// `default` action when the banner is clicked, `ui/notify.rs::click_action`).
     #[test]
     fn update_notice_has_default_action() {
-        let argv = updates_argv(
+        let b = updates_banner(
             "Updates Available".into(),
             "WolOS has 1 update ready.".into(),
         );
-        assert_eq!(&argv[..2], ["sh", "-c"]);
-        let script = &argv[2];
-        assert!(
-            script.contains("notify-send -a WolOS -w -A default=Open"),
-            "{script}"
-        );
-        assert!(
-            script.contains("= default ] && { shift 2; exec \"$@\"; }"),
-            "{script}"
-        );
         assert_eq!(
-            &argv[4..6],
-            ["Updates Available", "WolOS has 1 update ready."]
+            b.notify,
+            [
+                "notify-send",
+                "-a",
+                "WolOS",
+                "-w",
+                "-A",
+                "default=Open",
+                "Updates Available",
+                "WolOS has 1 update ready."
+            ]
         );
-        assert_eq!(&argv[6..], ["wol-settings", "Software Update"]);
+        let open = ["wol-settings", "Software Update"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(b.then, [("default", Then::Run(open))]);
         // The banner side: a note with a `default` action is clicked through to it.
         let note = crate::ui::notify::Note {
             id: 1,

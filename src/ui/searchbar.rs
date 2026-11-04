@@ -250,7 +250,8 @@ pub fn web_search(query: &str) -> Item {
     )
 }
 
-pub fn run() -> glib::ExitCode {
+/// `wol-search [--warm]`; `warm`: the binary was given [`super::WARM_ARG`].
+pub fn run(warm: bool) -> glib::ExitCode {
     super::run_panel_app(
         "org.wolos.search",
         "searchbar",
@@ -260,6 +261,7 @@ pub fn run() -> glib::ExitCode {
             [true, false, false, false],
             FIRST_KEYBOARD,
         ),
+        warm,
         |win, _| {
             take_keyboard_when_mapped(win);
             let items: Rc<RefCell<Vec<Item>>> = Default::default();
@@ -565,7 +567,7 @@ mod tests {
 
     /// QA-LN-18: 'lock', 'shut down', 'log out', 'sleep', 'screenshot' find the action, first.
     #[test]
-    fn actions_indexed() {
+    fn session_actions_are_found_first() {
         let idx = index(vec![]);
         let top = |q: &str| {
             search::search(&idx, q, 1)

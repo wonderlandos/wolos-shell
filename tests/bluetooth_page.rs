@@ -3,53 +3,12 @@
 //! failed power change flips the switch back (QA-SET-9/HUNT-10), and Forget asks first. Needs
 //! the toolkit: runs on a private Broadway display (the golden harness's `gtk4-broadwayd`), and
 //! skips without one.
+#[path = "support/broadway.rs"]
+mod broadway;
 use gtk::prelude::*;
 use shell::system::{Action, ActionError, BtDevice, Done, System};
 use shell::ui;
-use std::path::Path;
 use std::rc::Rc;
-
-/// Kills the private broadwayd on every exit path.
-struct Kill(std::process::Child);
-impl Drop for Kill {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// A free Broadway display (the golden harness's scheme, its own port range), or None.
-fn broadway() -> Option<Kill> {
-    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    let n = (0..200)
-        .map(|i| 460 + (std::process::id() + i) % 200)
-        .find(|n| {
-            !Path::new(&runtime)
-                .join(format!("broadway{}.socket", n + 1))
-                .exists()
-                && std::net::TcpListener::bind(("127.0.0.1", (18000 + n) as u16)).is_ok()
-        })?;
-    let display = format!(":{n}");
-    let child = std::process::Command::new("gtk4-broadwayd")
-        .args([display.as_str(), "--port", &(18000 + n).to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    let kill = Kill(child);
-    let sock = Path::new(&runtime).join(format!("broadway{}.socket", n + 1));
-    for _ in 0..100 {
-        if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    unsafe {
-        std::env::set_var("GDK_BACKEND", "broadway");
-        std::env::set_var("BROADWAY_DISPLAY", &display);
-    }
-    Some(kill)
-}
 
 /// The radio refuses every change (BlueZ down, rfkill): `Bluetooth` ends in `Failed`.
 struct Refusing(ActionError);
@@ -83,15 +42,6 @@ impl System for Refusing {
     }
 }
 
-fn pump(ms: u64) {
-    let ctx = gtk::glib::MainContext::default();
-    let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-    while std::time::Instant::now() < end {
-        while ctx.iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-}
-
 fn all<T: IsA<gtk::Widget>>(root: &gtk::Widget, out: &mut Vec<T>) {
     let mut c = root.first_child();
     while let Some(w) = c {
@@ -117,9 +67,9 @@ fn open_page(sys: Rc<dyn System>) -> (shell::kit::widgets::AppWindow, gtk::Windo
         .child(&a.root)
         .build();
     win.present();
-    pump(200);
+    broadway::pump(200);
     a.open("Bluetooth");
-    pump(400);
+    broadway::pump(400);
     let shown = a.content.visible_child().expect("Bluetooth shows");
     (a, win, shown)
 }
@@ -135,7 +85,7 @@ fn label_text(root: &impl IsA<gtk::Widget>) -> Vec<String> {
 /// One test: GTK lives on the thread that started it.
 #[test]
 fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
-    let _display = broadway();
+    let _display = broadway::start(460);
     if gtk::init().is_err() {
         eprintln!("skipped: no display for the toolkit");
         return;
@@ -168,7 +118,7 @@ fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
         .expect("the pairing sheet");
     assert!(!sheet.reveals_child());
     forgets[0].emit_clicked();
-    pump(100);
+    broadway::pump(100);
     assert!(sheet.reveals_child(), "Forget opens the sheet");
     let said = label_text(&sheet);
     assert!(
@@ -183,7 +133,7 @@ fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
     // One sheet at a time: a second Forget (or a pairing) does nothing while the first is open.
     let first_title = label_text(&sheet);
     forgets[1].emit_clicked();
-    pump(100);
+    broadway::pump(100);
     assert_eq!(
         label_text(&sheet),
         first_title,
@@ -196,13 +146,13 @@ fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
         "the second click says why"
     );
     cancel.emit_clicked();
-    pump(100);
+    broadway::pump(100);
     assert!(!sheet.reveals_child(), "Cancel keeps the device");
     forgets[1].emit_clicked();
-    pump(100);
+    broadway::pump(100);
     assert!(sheet.reveals_child(), "free again after Cancel");
     cancel.emit_clicked();
-    pump(100);
+    broadway::pump(100);
 
     // --- set_bt_err_restores_switch: the change fails, the switch and the list go back. ---
     let power = of::<gtk::Switch>(&shown)
@@ -215,7 +165,7 @@ fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
         .filter(|b| b.has_css_class("device-button"))
         .count();
     power.set_active(false);
-    pump(400);
+    broadway::pump(400);
     assert!(
         power.is_active() && power.state() && power.is_sensitive(),
         "a refused change flips the switch back"
@@ -242,7 +192,7 @@ fn pair_forget_rows_exist_and_set_bt_err_restores_switch() {
         .find(|b| b.has_css_class("device-button"))
         .expect("a device row");
     device.emit_clicked();
-    pump(300);
+    broadway::pump(300);
     let said = label_text(&shown);
     assert!(
         !said

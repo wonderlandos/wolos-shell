@@ -11,6 +11,9 @@ use super::*;
 use crate::copy::settings as copy;
 use wol_core::modules::Status;
 
+/// How long removing a module (its packages, through wol-admind) may take.
+const MODULE_REMOVE_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// What a module's row says and offers, from its state (`Status::state`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Offer {
@@ -303,7 +306,7 @@ fn undo_user_side(id: &str) -> bool {
     if !wol_core::modules::valid_id(id) {
         return false;
     }
-    let limit = std::time::Duration::from_secs(600);
+    let limit = MODULE_REMOVE_WAIT;
     wol_core::system::run_with_timeout(&["wol", "modules", "remove", id], limit).is_some()
 }
 

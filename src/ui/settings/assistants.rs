@@ -102,7 +102,10 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: &Status, status: &gtk::Label) {
                             changed_latest(wol_core::journal::HELPERS);
                             render(&env, &into2, &env.sys().helpers(), &st);
                         }
-                        Err(()) => say(&st, SAVE_FAILED),
+                        Err(why) => {
+                            crate::diag::say!("wol-settings: helpers policy not saved: {why}");
+                            say(&st, SAVE_FAILED);
+                        }
                     },
                 );
                 b.set_tooltip_text(Some(&crate::copy::helper_ask_again(helper)));
@@ -130,15 +133,15 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: &Status, status: &gtk::Label) {
     into.append(&more);
 }
 
-/// Takes back every Always Allow of `helper` (journaled, undoable: `wol helpers forget`).
-fn forget(helper: &str) -> Result<(), ()> {
+/// Takes back every Always Allow of `helper` (journaled, undoable: `wol helpers forget`); the
+/// reason when it could not be saved.
+fn forget(helper: &str) -> Result<(), String> {
     let j = wol_core::journal::Journal::for_config(&PathBuf::from(kit::config_home()));
     wol_core::automation::set_policy(&j, "settings", wol_core::journal::now(), |p| {
         p.forget(helper);
         Ok(())
     })
     .map(drop)
-    .map_err(drop)
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {

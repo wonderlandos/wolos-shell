@@ -12,6 +12,11 @@ use wol_core::bluetooth::{
     self as bt, AgentAnswer, AgentEvent, BtDevice, BtKind, BtLink, BtState, PairOutcome,
 };
 
+/// How long a pairing prompt (a PIN, a passkey, Confirm) waits for the person before it cancels.
+const ANSWER_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+/// How often the page looks for the pairing thread's next message.
+const PAIR_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
 pub(crate) fn kind_icon(k: BtKind) -> &'static str {
     match k {
         BtKind::Audio => "audio-headphones-symbolic",
@@ -207,7 +212,7 @@ impl PairSheet {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)] // one sheet, each part of a pairing prompt its own argument
     fn show(
         &self,
         title: &str,
@@ -546,7 +551,8 @@ fn pair(e: &Rc<Env>, ui: &Rc<Ui>, addr: &str, name: &str) {
     }
     let addr = addr.to_string();
     let flag = cancelled.clone();
-    std::thread::spawn(move || {
+    let pairing = std::thread::Builder::new().name("bt-pair".into());
+    let started = pairing.spawn(move || {
         let outcome = match bt::BluetoothctlProc::spawn() {
             None => PairOutcome::Failed(words::BLUETOOTH_NO_CLIENT),
             Some(proc) => {
@@ -561,15 +567,18 @@ fn pair(e: &Rc<Env>, ui: &Rc<Ui>, addr: &str, name: &str) {
                         return AgentAnswer::Ack;
                     }
                     ans_rx
-                        .recv_timeout(std::time::Duration::from_secs(120))
+                        .recv_timeout(ANSWER_WAIT)
                         .unwrap_or(AgentAnswer::Cancel)
                 })
             }
         };
         let _ = tx.send(Msg::Done(outcome));
     });
+    if let Err(e) = started {
+        crate::diag::say!("wol-settings: no thread for pairing: {e}");
+    }
     let (e, ui, name) = (e.clone(), ui.clone(), name.to_string());
-    glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+    glib::timeout_add_local(PAIR_POLL, move || {
         while let Ok(m) = rx.try_recv() {
             match m {
                 Msg::Ask(ev) => {

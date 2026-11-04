@@ -16,6 +16,16 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wol_core::shortcuts::{self, Combo};
 
+/// A list index as GTK's position (no menu has more than u32::MAX entries: none is selected).
+fn pos(i: usize) -> u32 {
+    u32::try_from(i).unwrap_or(gtk::INVALID_LIST_POSITION)
+}
+
+/// GTK's position as a list index (`INVALID_LIST_POSITION`, nothing selected, stays out of range).
+fn index(p: u32) -> usize {
+    usize::try_from(p).unwrap_or(usize::MAX)
+}
+
 /// App icon size in permission and login-item rows.
 pub const ICON_ROW: i32 = 24;
 /// Wallpaper thumbnail (16:10).
@@ -73,8 +83,8 @@ pub fn picker_row(
     selected: usize,
     changed: impl Fn(usize) + 'static,
 ) -> gtk::Widget {
-    let d = w::dropdown(options, selected as u32);
-    d.connect_selected_notify(move |d| changed(d.selected() as usize));
+    let d = w::dropdown(options, pos(selected));
+    d.connect_selected_notify(move |d| changed(index(d.selected())));
     row(title, subtitle, &d)
 }
 
@@ -90,9 +100,9 @@ pub fn search_picker_row(
     selected: usize,
     changed: impl Fn(usize) + 'static,
 ) -> gtk::Widget {
-    let d = w::dropdown(options, selected as u32);
+    let d = w::dropdown(options, pos(selected));
     searchable(&d);
-    d.connect_selected_notify(move |d| changed(d.selected() as usize));
+    d.connect_selected_notify(move |d| changed(index(d.selected())));
     row(title, subtitle, &d)
 }
 
@@ -109,7 +119,7 @@ pub fn pending_picker(
     selected: usize,
     run: impl Fn(usize, Box<dyn FnOnce(bool)>) + 'static,
 ) -> gtk::DropDown {
-    let d = w::dropdown(options, selected as u32);
+    let d = w::dropdown(options, pos(selected));
     pend_on(&d, selected, run);
     d
 }
@@ -120,7 +130,7 @@ pub fn pending_search_picker(
     selected: usize,
     run: impl Fn(usize, Box<dyn FnOnce(bool)>) + 'static,
 ) -> gtk::DropDown {
-    let d = w::dropdown(options, selected as u32);
+    let d = w::dropdown(options, pos(selected));
     searchable(&d);
     pend_on(&d, selected, run);
     d
@@ -144,7 +154,7 @@ fn pend_on(
     selected: usize,
     run: impl Fn(usize, Box<dyn FnOnce(bool)>) + 'static,
 ) {
-    let confirmed = Rc::new(Cell::new(selected as u32));
+    let confirmed = Rc::new(Cell::new(pos(selected)));
     d.connect_selected_notify(move |d| {
         let want = d.selected();
         if want == confirmed.get() || want == gtk::INVALID_LIST_POSITION {
@@ -153,7 +163,7 @@ fn pend_on(
         d.set_sensitive(false);
         let (d2, c2) = (d.downgrade(), confirmed.clone());
         run(
-            want as usize,
+            index(want),
             Box::new(move |ok| {
                 if ok {
                     c2.set(want);

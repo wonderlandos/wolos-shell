@@ -4,6 +4,11 @@
 use super::*;
 use wol_core::update::check::Updates;
 
+/// How long `df` may take for the free space the update needs.
+const DF_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long the download size of the pending update may take to read.
+const SIZE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 // ---- Software Update ----
 
 #[derive(Clone, Debug, PartialEq)]
@@ -52,11 +57,8 @@ pub fn parse_check(out: Option<&str>) -> UpdateState {
 
 /// Free bytes on the disk `wol update check` measures. Blocking: off the GTK thread.
 pub fn check_disk_free() -> Option<u64> {
-    wol_core::system::run_with_timeout(
-        &shared::update::FREE_ARGV,
-        std::time::Duration::from_secs(5),
-    )
-    .and_then(|o| shared::update::free_from_df(&o))
+    wol_core::system::run_with_timeout(&shared::update::FREE_ARGV, DF_WAIT)
+        .and_then(|o| shared::update::free_from_df(&o))
 }
 
 /// [`parse_check`] for a check that got no answer on a computer whose check disk (`/var`, the
@@ -480,11 +482,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             let (show, size, shown, s) = (show.clone(), size.clone(), shown.clone(), s.clone());
             off_thread(
                 || {
-                    wol_core::system::run_with_timeout(
-                        &SIZE_ARGV,
-                        std::time::Duration::from_secs(30),
-                    )
-                    .and_then(|o| download_bytes(&o))
+                    wol_core::system::run_with_timeout(&SIZE_ARGV, SIZE_WAIT)
+                        .and_then(|o| download_bytes(&o))
                 },
                 move |bytes| {
                     if bytes.is_some() && weigh_applies(&shown.borrow(), &s) {

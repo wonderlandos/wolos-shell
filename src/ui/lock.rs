@@ -833,39 +833,26 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
 /// The keyring daemon's own unlock: it reads the password on stdin.
 pub const KEYRING_UNLOCK: [&str; 2] = ["gnome-keyring-daemon", "--unlock"];
 /// Longest the unlock may take before it is given up (the lock screen is gone by then anyway).
-const KEYRING_UNLOCK_SECS: u64 = 10;
-/// Wait between two looks at the unlock process.
-const KEYRING_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+const KEYRING_UNLOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Runs `program --unlock` with `password` and a newline on its stdin; true when it exited 0. The
-/// password goes on stdin only (never in an argument, never in the environment).
+/// password goes on stdin only (never in an argument, never in the environment). A failure says
+/// why; a daemon that is not installed is nothing to unlock.
 pub fn run_keyring_unlock(program: &str, args: &[&str], password: &str) -> bool {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return false; // No gnome-keyring: nothing to unlock.
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = writeln!(stdin, "{password}");
-    }
-    let t0 = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(st)) => return st.success(),
-            Ok(None) if t0.elapsed().as_secs() < KEYRING_UNLOCK_SECS => {
-                std::thread::sleep(KEYRING_POLL)
-            }
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
+    use wol_core::system::{RunFail, run_full};
+    let argv: Vec<&str> = std::iter::once(program)
+        .chain(args.iter().copied())
+        .collect();
+    match run_full(&argv, Some(&format!("{password}\n")), KEYRING_UNLOCK_WAIT) {
+        Ok((0, ..)) => true,
+        Ok((code, _, err)) => {
+            crate::diag::say!("wol-lock: {program} exited {code}: {}", err.trim());
+            false
+        }
+        Err(RunFail::Start(_)) => false,
+        Err(RunFail::TimedOut) => {
+            crate::diag::say!("wol-lock: {program} did not answer within {KEYRING_UNLOCK_WAIT:?}");
+            false
         }
     }
 }
@@ -880,7 +867,7 @@ fn unlock_keyring(password: &str, startup: bool) {
             .and_then(|c| login::unlock_login_keyring(&c, password));
         match r {
             Ok(()) => return,
-            Err(e) => eprintln!("wol-lock: login keyring: {e}"),
+            Err(e) => crate::diag::say!("wol-lock: login keyring: {e}"),
         }
     }
     let [prog, arg] = KEYRING_UNLOCK;
@@ -925,12 +912,12 @@ fn set_locked_hint(on: bool) {
             .map(|_| ())
     });
     if let Err(e) = r {
-        eprintln!("wol-lock: logind locked hint {on}: {e}");
+        crate::diag::say!("wol-lock: logind locked hint {on}: {e}");
     }
 }
 
-/// The user unit that supervises the lock screen (files/usr/lib/systemd/user/wol-lock.service).
-pub const LOCK_UNIT: &str = "wol-lock.service";
+/// The user unit that supervises the lock screen (files/usr/lib/systemd/user/wolos-lock.service).
+pub const LOCK_UNIT: &str = "wolos-lock.service";
 
 /// A `wol-lock` started by hand (Super+L, the menu, hypridle, the sleep hook) hands the lock to
 /// [`LOCK_UNIT`]; one already running under systemd (`INVOCATION_ID`) or the boot lock does not.
@@ -954,39 +941,48 @@ pub fn lock_unit_argvs() -> [Vec<&'static str>; 2] {
     ]
 }
 
-/// True when the unit took the lock; false (no user manager, the unit refused) and this process
-/// supervises the lock itself, as before.
+/// How long one `systemctl --user` call of [`start_lock_unit`] may take.
+const UNIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// True when the unit took the lock; false (no user manager, the unit refused: said) and this
+/// process supervises the lock itself, as before.
 fn start_lock_unit() -> bool {
-    lock_unit_argvs().iter().all(|a| {
-        std::process::Command::new(a[0])
-            .args(&a[1..])
-            .stdin(std::process::Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    })
+    lock_unit_argvs()
+        .iter()
+        .all(|a| match wol_core::system::run_full(a, None, UNIT_WAIT) {
+            Ok((0, ..)) => true,
+            Ok((code, _, err)) => {
+                crate::diag::say!("wol-lock: {} exited {code}: {}", a.join(" "), err.trim());
+                false
+            }
+            Err(e) => {
+                crate::diag::say!("wol-lock: {}: {e:?}", a.join(" "));
+                false
+            }
+        })
 }
 
 /// `wol-lock [--startup]`: a supervisor that keeps a lock screen up until one reports a real
 /// unlock (ADR 0012). A crashed lock screen leaves the session locked (ext-session-lock) and the next
-/// one takes it over (`misc:allow_session_lock_restore`). Nothing here ever unlocks.
-pub fn run_lock() -> glib::ExitCode {
-    let startup = std::env::args().any(|a| a == login::STARTUP);
+/// one takes it over (`misc:allow_session_lock_restore`). Nothing here ever unlocks. `args`: the
+/// binary's arguments (without its name).
+pub fn run_lock(args: &[String]) -> glib::ExitCode {
+    let startup = args.iter().any(|a| a == login::STARTUP);
     if refuses_lock(crate::apps::is_live(), startup) {
         crate::diag::say!("wol-lock: the live session has no password to unlock with; not locking");
         return glib::ExitCode::SUCCESS;
     }
     if crate::envv::is_set(login::LOCK_UI_ENV) {
-        let startup = std::env::args().any(|a| a == login::STARTUP);
         return run_lock_screen(startup);
     }
-    // QA-LIVE-41: the supervisor runs as the user unit wol-lock.service, which the user manager
+    // QA-LIVE-41: the supervisor runs as the user unit wolos-lock.service, which the user manager
     // starts again when it is killed (Restart=on-failure), so a session locked by
     // ext-session-lock always gets its lock screen back. At boot (--startup) the compositor's
     // --locked-cmd supervises it instead.
     if hands_off_to_unit(startup, crate::envv::is_set("INVOCATION_ID")) && start_lock_unit() {
         return glib::ExitCode::SUCCESS;
     }
-    let ui_args = login::lock_ui_args(&std::env::args().skip(1).collect::<Vec<_>>());
+    let ui_args = login::lock_ui_args(args);
     let exe = std::env::current_exe().unwrap_or_else(|_| "wol-lock".into());
     let var = |k: &str| crate::envv::var(k).unwrap_or_default();
     let runtime = var("XDG_RUNTIME_DIR");
@@ -1019,7 +1015,7 @@ pub fn run_lock() -> glib::ExitCode {
             .as_ref()
             .is_ok_and(|o| o.status.code() == Some(LOCK_UNSUPPORTED))
         {
-            // wol-lock.service does not restart on this code (RestartPreventExitStatus).
+            // wolos-lock.service does not restart on this code (RestartPreventExitStatus).
             return glib::ExitCode::from(u8::try_from(LOCK_UNSUPPORTED).unwrap_or(1));
         }
         match login::lock_exit(unlocked, socket.exists(), attempt) {
@@ -1035,7 +1031,7 @@ pub fn run_lock() -> glib::ExitCode {
                     .map(|o| o.status.to_string())
                     .unwrap_or_else(|e| format!("not started: {:?}", e.kind()));
                 let note = login::respawn_note(&st, started.elapsed(), attempt);
-                eprintln!("wol-lock: {note}");
+                crate::diag::say!("wol-lock: {note}");
                 // To the journal too: the next crash shows its cause (`journalctl -t wol-lock`).
                 let _ = std::process::Command::new("logger")
                     .args(["-t", "wol-lock", "-p", "user.warning", "--", &note])
@@ -1124,7 +1120,23 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
         );
         panel.field.grab_focus();
     });
-    app.run_with_args::<&str>(&[])
+    let code = app.run_with_args::<&str>(&[]);
+    // A lock surface that could not lock ended the app with its own code (`lock_surface`).
+    match LOCK_EXIT.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => code,
+        c => glib::ExitCode::from(u8::try_from(c).unwrap_or(1)),
+    }
+}
+
+/// The exit code `lock_surface` ends the lock screen with when no lock can be had (0: none): it
+/// quits the app instead of exiting the process under GTK, and [`run_lock_screen`] returns it.
+static LOCK_EXIT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Ends the lock screen with `code` (see [`LOCK_EXIT`]).
+#[cfg(feature = "layer-shell")]
+fn end_lock_screen(app: &gtk::Application, code: i32) {
+    LOCK_EXIT.store(code, std::sync::atomic::Ordering::Relaxed);
+    app.quit();
 }
 
 /// Session lock on every monitor (this window on the first); returns the unlock action.
@@ -1136,7 +1148,7 @@ fn lock_surface(app: &gtk::Application, win: &gtk::ApplicationWindow) -> Rc<dyn 
         // and leave the session unlocked rather than pretend (QA-FILES-13).
         let line =
             "wol-lock: this compositor has no session lock (ext-session-lock-v1): NOT locked";
-        eprintln!("{line}");
+        crate::diag::say!("{line}");
         crate::kit::spawn(&[
             "logger".into(),
             "-t".into(),
@@ -1146,9 +1158,11 @@ fn lock_surface(app: &gtk::Application, win: &gtk::ApplicationWindow) -> Rc<dyn 
             "--".into(),
             line.into(),
         ]);
-        std::process::exit(code);
+        end_lock_screen(app, code);
+        return Rc::new(|| {});
     }
     let lock = gtk4_session_lock::Instance::new();
+    let ender = app.clone();
     let (app, first) = (app.clone(), win.clone());
     let used = std::cell::Cell::new(false);
     lock.connect_monitor(move |l, m: &gdk::Monitor| {
@@ -1163,22 +1177,27 @@ fn lock_surface(app: &gtk::Application, win: &gtk::ApplicationWindow) -> Rc<dyn 
     });
     // Refused or ended by the compositor: no lock surface will ever show. Exit non-zero so the
     // supervisor starts a new one instead of waiting on a window nobody sees.
-    lock.connect_failed(|_| {
-        eprintln!("wol-lock: the compositor refused the session lock");
-        std::process::exit(1);
+    let refused = ender.clone();
+    lock.connect_failed(move |_| {
+        crate::diag::say!("wol-lock: the compositor refused the session lock");
+        end_lock_screen(&refused, 1);
     });
     if !lock.lock() {
-        eprintln!("wol-lock: the session lock could not start");
-        std::process::exit(1);
+        crate::diag::say!("wol-lock: the session lock could not start");
+        end_lock_screen(&ender, 1);
+        return Rc::new(|| {});
     }
     // Off the UI thread (a bus connect): the lock is up whatever logind says.
-    std::thread::spawn(|| set_locked_hint(true));
+    let hint = std::thread::Builder::new().name("locked-hint".into());
+    if let Err(e) = hint.spawn(|| set_locked_hint(true)) {
+        crate::diag::say!("wol-lock: no thread for logind's locked hint: {e}");
+    }
     Rc::new(move || lock.unlock())
 }
 
 #[cfg(not(feature = "layer-shell"))]
 fn lock_surface(_app: &gtk::Application, win: &gtk::ApplicationWindow) -> Rc<dyn Fn()> {
-    eprintln!("wol-lock: built without layer-shell: NOT a secure lock (dev window)");
+    crate::diag::say!("wol-lock: built without layer-shell: NOT a secure lock (dev window)");
     win.present();
     Rc::new(|| {})
 }
@@ -1284,7 +1303,7 @@ mod tests {
         assert_eq!(LOCK_UNSUPPORTED, 69);
     }
 
-    /// QA-LIVE-41: a lock started by hand runs under wol-lock.service (restarted when killed);
+    /// QA-LIVE-41: a lock started by hand runs under wolos-lock.service (restarted when killed);
     /// the unit's own process and the boot lock supervise themselves.
     #[test]
     fn lock_hands_off_to_the_user_unit() {
@@ -1294,7 +1313,10 @@ mod tests {
         let [import, start] = lock_unit_argvs();
         assert_eq!(import[..3], ["systemctl", "--user", "import-environment"]);
         assert!(import.contains(&"WAYLAND_DISPLAY"));
-        assert_eq!(start, ["systemctl", "--user", "start", "wol-lock.service"]);
+        assert_eq!(
+            start,
+            ["systemctl", "--user", "start", "wolos-lock.service"]
+        );
     }
 
     /// QA-LIVE-41: the lock tells logind the session is locked, and unlocked again.

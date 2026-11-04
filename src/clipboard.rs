@@ -245,14 +245,17 @@ pub fn session_command(action: &str) -> Option<&'static [&'static str]> {
         "sleep" => &["wol", "power", "sleep"],
         "restart" => &["wol", "power", "restart"],
         "shutdown" => &["wol", "power", "shutdown"],
-        "logout" => &["sh", "-c", STOP_IDLE_THEN, "hyprctl", "dispatch", "exit"],
+        "logout" => &["hyprctl", "dispatch", "exit"],
         _ => return None,
     })
 }
 
-/// Log Out (compositor exit) stops hypridle first: it aborted (SIGABRT) when its display went
-/// (QA-LIVE-32); then runs the action in its argv.
-pub const STOP_IDLE_THEN: &str = "pkill -x hypridle; exec \"$0\" \"$@\"";
+/// What runs (and is waited for) right before an action's command: Log Out (compositor exit)
+/// stops hypridle first, which aborted (SIGABRT) when its display went (QA-LIVE-32). An argv,
+/// never a shell string (RR-020).
+pub fn before_end(action: &str) -> Option<&'static [&'static str]> {
+    (action == "logout").then_some(&["pkill", "-x", "hypridle"][..])
+}
 
 /// Restart, Shut Down and Log Out end every app: the shell asks the open windows to close first
 /// (`ui::panels::end_session`, QA-LIVE1-22); Lock and Sleep end nothing.
@@ -452,11 +455,7 @@ mod tests {
             ("sleep", &["wol", "power", "sleep"][..], false),
             ("restart", &["wol", "power", "restart"][..], true),
             ("shutdown", &["wol", "power", "shutdown"][..], true),
-            (
-                "logout",
-                &["sh", "-c", STOP_IDLE_THEN, "hyprctl", "dispatch", "exit"][..],
-                true,
-            ),
+            ("logout", &["hyprctl", "dispatch", "exit"][..], true),
         ] {
             assert_eq!(session_command(a), Some(argv), "{a}");
             assert_eq!(needs_confirm(a), confirm, "{a}");
@@ -466,6 +465,8 @@ mod tests {
             );
         }
         assert_eq!(session_command("dance"), None);
+        assert_eq!(before_end("logout"), Some(&["pkill", "-x", "hypridle"][..]));
+        assert_eq!(before_end("restart"), None);
         let (q, line, button) = crate::copy::session_confirm("shutdown", 60).unwrap();
         assert_eq!(q, "Are you sure you want to shut down your computer now?");
         assert_eq!(

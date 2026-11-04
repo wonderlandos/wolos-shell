@@ -1143,12 +1143,22 @@ pub fn local_now() -> Now {
     };
     Now {
         y: t.year(),
-        month: t.month() as u32,
-        day: t.day_of_month() as u32,
-        weekday: (t.day_of_week() as u32).saturating_sub(1),
-        hour: t.hour() as u32,
-        minute: t.minute() as u32,
+        month: field(t.month()),
+        day: field(t.day_of_month()),
+        weekday: field(t.day_of_week()).saturating_sub(1),
+        hour: field(t.hour()),
+        minute: field(t.minute()),
     }
+}
+
+/// A GLib date or time field (month, day, hour, minute: never negative) as an unsigned field.
+fn field(v: i32) -> u32 {
+    u32::try_from(v).unwrap_or(0)
+}
+
+/// A calendar field (month, day, hour, minute: small) as GLib's `i32`.
+fn gfield(v: u32) -> i32 {
+    i32::try_from(v).unwrap_or(i32::MAX)
 }
 
 /// The World Clock rows for `zones` now (`WOL_FAKE_NOW`: the golden cities).
@@ -1186,19 +1196,24 @@ fn to_local(wh: &calendar::When) -> Option<calendar::DateTime> {
     let t = match wh {
         When::Date { .. } => return None,
         When::Floating(at) => return Some(*at),
-        When::Utc(a) => {
-            glib::DateTime::from_utc(a.y, a.m as i32, a.d as i32, a.hh as i32, a.mm as i32, 0.0)
-                .ok()?
-        }
+        When::Utc(a) => glib::DateTime::from_utc(
+            a.y,
+            gfield(a.m),
+            gfield(a.d),
+            gfield(a.hh),
+            gfield(a.mm),
+            0.0,
+        )
+        .ok()?,
         When::Zoned { tzid, at: a } => {
             let tz = glib::TimeZone::new(Some(tzid));
             glib::DateTime::new(
                 &tz,
                 a.y,
-                a.m as i32,
-                a.d as i32,
-                a.hh as i32,
-                a.mm as i32,
+                gfield(a.m),
+                gfield(a.d),
+                gfield(a.hh),
+                gfield(a.mm),
                 0.0,
             )
             .ok()?
@@ -1208,10 +1223,10 @@ fn to_local(wh: &calendar::When) -> Option<calendar::DateTime> {
     .ok()?;
     Some(calendar::DateTime {
         y: t.year(),
-        m: t.month() as u32,
-        d: t.day_of_month() as u32,
-        hh: t.hour() as u32,
-        mm: t.minute() as u32,
+        m: field(t.month()),
+        d: field(t.day_of_month()),
+        hh: field(t.hour()),
+        mm: field(t.minute()),
     })
 }
 
@@ -1220,8 +1235,8 @@ fn today_utc(n: &Now) -> Option<(String, String)> {
     let start = glib::DateTime::new(
         &glib::TimeZone::local(),
         n.y,
-        n.month as i32,
-        n.day as i32,
+        gfield(n.month),
+        gfield(n.day),
         0,
         0,
         0.0,
@@ -1963,73 +1978,7 @@ pub fn build(
 }
 
 #[cfg(test)]
-mod gallery_tests {
-    use super::{gallery_margins, mark_presence};
-
-    /// QA-100 H17-01: the empty desktop draws a pixel (alpha 1 of 255), so GTK has a frame to attach.
-    #[test]
-    fn the_empty_desktop_paints_a_pixel_for_the_buffer() {
-        let mut s = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 4, 4).unwrap();
-        let blank = {
-            let cr = gtk::cairo::Context::new(&s).unwrap();
-            drop(cr);
-            s.flush();
-            s.data().unwrap().iter().all(|b| *b == 0)
-        };
-        assert!(blank, "a fresh surface is transparent");
-        mark_presence(&gtk::cairo::Context::new(&s).unwrap());
-        s.flush();
-        let d = s.data().unwrap();
-        let alphas: Vec<u8> = d.chunks(4).map(|px| px[3]).collect();
-        assert_eq!(alphas[0], 1, "the first pixel is at alpha 1/255");
-        assert_eq!(
-            alphas.iter().filter(|a| **a != 0).count(),
-            1,
-            "and only that pixel"
-        );
-    }
-
-    #[test]
-    fn the_gallery_never_covers_a_card() {
-        assert_eq!(gallery_margins([(24, 368)].into_iter(), 1920, 24), (392, 0));
-        assert_eq!(
-            gallery_margins([(1500, 1896)].into_iter(), 1920, 24),
-            (0, 444)
-        );
-        assert_eq!(gallery_margins(std::iter::empty(), 1920, 24), (0, 0));
-    }
-
-    /// QA hunt F1: Esc ends Edit Widgets even while Settings has the keyboard. The gallery is a
-    /// `wol-panel-*` layer, so while it is mapped wol-hypr forwards every Esc as `hide transient`
-    /// (`wm_gates::SwitchKeys`, never consumed), and that command runs `transient::also_close`,
-    /// which ui/mod.rs points at `Board::set_edit(false)`. Its own Esc handler covers the case
-    /// where the gallery has the keyboard (an on-demand layer gets it when it maps).
-    #[test]
-    fn esc_reaches_the_gallery_without_its_keyboard() {
-        use crate::kit::surface::Spec;
-        assert!(Spec::widgets_gallery().namespace.starts_with("wol-panel-"));
-        let esc = crate::protocol::parse("hide transient").unwrap();
-        assert!(super::super::transient::closes_all(&esc));
-    }
-}
-
-/// QA bug 5: `wol shell hide widgets` is Done (the gallery's button and Esc call `set_edit(false)`
-/// too); other targets are not the board's.
-#[cfg(test)]
-mod edit_command_tests {
-    use super::edit_after;
-    use crate::protocol::parse;
-
-    #[test]
-    fn hide_widgets_is_done() {
-        let c = |l: &str| parse(l).expect(l);
-        assert_eq!(edit_after(&c("hide widgets"), true), Some(false));
-        assert_eq!(edit_after(&c("hide widgets"), false), Some(false));
-        assert_eq!(edit_after(&c("show widgets"), false), Some(true));
-        assert_eq!(edit_after(&c("toggle widgets"), true), Some(false));
-        assert_eq!(edit_after(&c("hide transient"), true), None);
-    }
-}
+mod tests;
 
 #[cfg(test)]
 mod fullscreen_tests {

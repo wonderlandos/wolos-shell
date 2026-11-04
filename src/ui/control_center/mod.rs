@@ -31,6 +31,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use wol_core::prefs::ControlCenterPrefs;
 
+/// How long a tile's `wol` command may take before the tile reads its state again anyway.
+const TOGGLE_CLI_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Every argv the Control Center spawns (tests/cc_spawns.rs checks each resolves).
 pub const SPAWNS: &[&[&str]] = &[
     SCREENSHOT,
@@ -708,7 +711,11 @@ impl Ui {
         let f = self.volume_out.borrow().clone();
         match f {
             Some(f) => f(pct),
-            None => self.act_latest("volume", Action::Volume(pct.min(100) as u8)),
+            // At most 100, so it fits a u8.
+            None => self.act_latest(
+                "volume",
+                Action::Volume(u8::try_from(pct.min(100)).unwrap_or(100)),
+            ),
         }
     }
     /// Night Shift tile and Display page row: flips what they show, not the last snapshot.
@@ -1021,7 +1028,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
                     // The CLI moves the state file: read again once it ended, not after a guess.
                     let _ = gtk::gio::spawn_blocking(move || {
                         let a: Vec<&str> = argv.iter().map(String::as_str).collect();
-                        wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(10))
+                        wol_core::system::run_with_timeout(&a, TOGGLE_CLI_WAIT)
                     })
                     .await;
                     running.set(false);

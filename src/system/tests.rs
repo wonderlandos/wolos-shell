@@ -579,17 +579,20 @@ fn bluetooth_connect_reasons_are_kept_per_device() {
 #[ignore]
 fn live_host_snapshot() {
     let sys = CoreSystem::new();
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    sys.inner.refresh(true);
     let s = sys.snapshot();
     println!("{s:#?}\nnetwork {:?}", sys.network());
     assert!(s.volume.is_some() || s.wifi_on.is_some());
 }
 
-/// A FakeHost whose Bluetooth and monitor helpers take `delay` (the slow topic, as on a VM with
-/// bluetoothctl waiting on its daemon).
+/// A FakeHost whose Bluetooth and monitor helpers are slow (the slow topic, as on a VM with
+/// bluetoothctl waiting on its daemon): each says it has started on `entered`, then waits until the
+/// test opens `gate` (sends or drops its end), at most `delay`. No sleep: the test waits for events.
 struct SlowHost {
     fake: wol_core::system::fake::FakeHost,
     delay: std::time::Duration,
+    entered: Mutex<std::sync::mpsc::Sender<()>>,
+    gate: Mutex<std::sync::mpsc::Receiver<()>>,
 }
 
 impl wol_core::system::Host for SlowHost {
@@ -601,7 +604,8 @@ impl wol_core::system::Host for SlowHost {
     }
     fn run(&self, argv: &[&str]) -> Option<String> {
         if matches!(argv.first(), Some(&"bluetoothctl" | &"hyprctl")) {
-            std::thread::sleep(self.delay);
+            let _ = self.entered.lock().unwrap().send(());
+            let _ = self.gate.lock().unwrap().recv_timeout(self.delay);
         }
         self.fake.run(argv)
     }
@@ -645,10 +649,13 @@ fn admin_action(action: shared::admin::AdminAction, arg: &str) -> Action {
 #[test]
 fn needs_auth_is_answered_before_any_refresh() {
     use shared::admin::AdminAction as A;
-    let delay = std::time::Duration::from_millis(500);
+    let (entered, started) = std::sync::mpsc::channel();
+    let (open, gate) = std::sync::mpsc::channel();
     let h = Arc::new(SlowHost {
         fake: wol_core::system::fake::FakeHost::new(false),
-        delay,
+        delay: std::time::Duration::from_secs(5),
+        entered: Mutex::new(entered),
+        gate: Mutex::new(gate),
     });
     let mut c = Controls::new(h);
     let sent = asking_admin(&mut c);
@@ -659,7 +666,9 @@ fn needs_auth_is_answered_before_any_refresh() {
         let i = sys.inner.clone();
         std::thread::spawn(move || i.refresh(true))
     };
-    std::thread::sleep(std::time::Duration::from_millis(50));
+    started
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("the poll reaches the slow topic");
     for a in [
         admin_action(A::Hostname, "alice-pc"),
         // Its topics (slow, panel) are the slow ones: an answer that changed nothing skips them.
@@ -674,6 +683,7 @@ fn needs_auth_is_answered_before_any_refresh() {
             "{a:?}: NeedsAuth after {took:?}"
         );
     }
+    drop(open);
     poll.join().unwrap();
     assert_eq!(sent.lock().unwrap().len(), 2);
 }
@@ -799,9 +809,14 @@ fn a_desktop_undo_sets_the_restored_keywords_live() {
 fn approve_replies_before_refresh_under_100ms() {
     use shared::admin::AdminReply;
     use shared::shell::ApprovalRequest as R;
+    // Nobody opens the gate: every helper call takes the whole half second.
+    let (entered, _started) = std::sync::mpsc::channel();
+    let (_open, gate) = std::sync::mpsc::channel();
     let h = Arc::new(SlowHost {
         fake: wol_core::system::fake::FakeHost::new(false),
         delay: std::time::Duration::from_millis(500),
+        entered: Mutex::new(entered),
+        gate: Mutex::new(gate),
     });
     let mut c = Controls::new(h);
     c.admin = Arc::new(|_, pw| {

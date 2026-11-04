@@ -434,9 +434,12 @@ pub const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 /// goes ahead (the way out when an app never answers).
 pub const FORCE_WITHIN: std::time::Duration = std::time::Duration::from_secs(120);
 
-thread_local! {
-    /// When the last session end stopped for open windows.
-    static HELD: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+/// When the last session end stopped for open windows (one per process, not per UI thread).
+static HELD: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+fn held() -> std::sync::MutexGuard<'static, Option<std::time::Instant>> {
+    HELD.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// One request that asks every window to close (`closewindow`: the app's own close, so a
@@ -476,25 +479,60 @@ pub fn held_notice(action: &str, names: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Saves the window set (the autosave is every 60 s; QA-FILES-5), then asks every window to close,
-/// off the UI thread, and waits up to [`CLOSE_WAIT`] for them to go. The names of those still
-/// open. No compositor answer = nothing to wait for.
-fn close_open_windows() -> Vec<String> {
+/// Saves the window set (the autosave is every 60 s; QA-FILES-5) and asks every window to close;
+/// false when there is nothing to wait for (no compositor answer, no window). Blocking.
+fn ask_windows_to_close() -> bool {
     crate::sessions::save_now();
     let Some(clients) = crate::hypr::read_clients() else {
-        return Vec::new();
+        return false;
     };
     let Some(req) = close_requests(&clients) else {
-        return Vec::new();
+        return false;
     };
     let _ = crate::hypr::request(&req);
+    true
+}
+
+/// [`ask_windows_to_close`] off the UI thread, then a look every [`CLOSE_POLL`] (a GLib timer,
+/// nothing sleeps) for up to [`CLOSE_WAIT`]. The names of the windows still open.
+async fn close_open_windows() -> Vec<String> {
+    if !gio::spawn_blocking(ask_windows_to_close)
+        .await
+        .unwrap_or(false)
+    {
+        return Vec::new();
+    }
     let t0 = std::time::Instant::now();
     loop {
-        std::thread::sleep(CLOSE_POLL);
-        let left = crate::hypr::read_clients().unwrap_or_default();
+        glib::timeout_future(CLOSE_POLL).await;
+        let left = gio::spawn_blocking(|| crate::hypr::read_clients().unwrap_or_default())
+            .await
+            .unwrap_or_default();
         if left.is_empty() || t0.elapsed() >= CLOSE_WAIT {
             return left.into_iter().map(|c| c.class).collect();
         }
+    }
+}
+
+/// How long the step before an action's command ([`crate::clipboard::before_end`]) may take.
+const BEFORE_END_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Runs `argv` and waits for it (off the UI thread); a failure is said, the session still ends.
+async fn run_before_end(argv: &'static [&'static str]) {
+    let r =
+        gio::spawn_blocking(move || wol_core::system::run_full(argv, None, BEFORE_END_WAIT)).await;
+    match r {
+        // pkill: 1 = nothing to stop.
+        Ok(Ok((0 | 1, ..))) => {}
+        Ok(Ok((code, _, err))) => {
+            crate::diag::say!(
+                "wol-shell: {} exited {code}: {}",
+                argv.join(" "),
+                err.trim()
+            );
+        }
+        Ok(Err(e)) => crate::diag::say!("wol-shell: {}: {e:?}", argv.join(" ")),
+        Err(_) => crate::diag::say!("wol-shell: {} did not run", argv.join(" ")),
     }
 }
 
@@ -508,21 +546,22 @@ pub fn end_session(action: &'static str) {
     if !crate::clipboard::ends_apps(action) {
         return kit::spawn(&argv);
     }
-    let forced = HELD.get().is_some_and(|t| t.elapsed() < FORCE_WITHIN);
+    let forced = held().is_some_and(|t| t.elapsed() < FORCE_WITHIN);
     glib::spawn_future_local(async move {
         let left = if forced {
             Vec::new()
         } else {
-            gio::spawn_blocking(close_open_windows)
-                .await
-                .unwrap_or_default()
+            close_open_windows().await
         };
         // (A second try saved on the first; the set is not saved again over a half-closed one.)
         if session_may_end(left.len(), forced) {
-            HELD.set(None);
+            *held() = None;
+            if let Some(pre) = crate::clipboard::before_end(action) {
+                run_before_end(pre).await;
+            }
             kit::spawn(&argv);
         } else {
-            HELD.set(Some(std::time::Instant::now()));
+            *held() = Some(std::time::Instant::now());
             kit::spawn(&held_notice(action, &left));
         }
     });
@@ -701,7 +740,7 @@ mod tests {
     fn logout_saves_sessions_first() {
         let src = include_str!("panels.rs");
         let code = &src[..src.find("#[cfg(test)]").unwrap_or(src.len())];
-        let job = &code[code.find("fn close_open_windows").unwrap()..];
+        let job = &code[code.find("fn ask_windows_to_close").unwrap()..];
         let (save, close) = (
             job.find("crate::sessions::save_now()").expect("saves"),
             job.find("close_requests(&clients)").expect("closes"),

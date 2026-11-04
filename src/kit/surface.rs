@@ -390,6 +390,22 @@ pub fn on_escape(w: &impl IsA<gtk::Widget>, f: impl Fn() + 'static) {
     w.add_controller(keys);
 }
 
+/// Escape on `w` before the focused control sees it (capture phase), taken only while `f` takes it:
+/// `f` returns true when it handled the key (a sheet that Escape cancels, say) and false to let
+/// Escape go on to the focused control as usual. The one place a conditional Escape is wired.
+pub fn on_escape_first(w: &impl IsA<gtk::Widget>, f: impl Fn() -> bool + 'static) {
+    let keys = gtk::EventControllerKey::new();
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    keys.connect_key_pressed(move |_, k, _, _| {
+        if k == gtk::gdk::Key::Escape && f() {
+            gtk::glib::Propagation::Stop
+        } else {
+            gtk::glib::Propagation::Proceed
+        }
+    });
+    w.add_controller(keys);
+}
+
 /// Which screen size to use: the display under the surface, else the first display; a display
 /// that reports 0×0 (headless at start, an output being unplugged) does not count. None when
 /// neither is known; the caller picks its own fallback (audit2 A2-2, A2-11; audit3 R2A-22).

@@ -7,54 +7,13 @@
 //! page's watcher goes with the window (QA-SET-8). Needs the toolkit: runs on a private Broadway
 //! display (the golden harness's `gtk4-broadwayd`), and skips without one. One `#[test]`: GTK
 //! lives on the thread that started it; the stages are the functions below.
+#[path = "support/broadway.rs"]
+mod broadway;
 use gtk::prelude::*;
 use shell::system::{Action, ActionError, BtDevice, Done, System};
 use shell::ui;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::Mutex;
-
-/// Kills the private broadwayd on every exit path.
-struct Kill(std::process::Child);
-impl Drop for Kill {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-/// A free Broadway display (the golden harness's scheme, its own port range), or None.
-fn broadway() -> Option<Kill> {
-    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    let n = (0..200)
-        .map(|i| 460 + (std::process::id() + i) % 200)
-        .find(|n| {
-            !Path::new(&runtime)
-                .join(format!("broadway{}.socket", n + 1))
-                .exists()
-                && std::net::TcpListener::bind(("127.0.0.1", (18000 + n) as u16)).is_ok()
-        })?;
-    let display = format!(":{n}");
-    let child = std::process::Command::new("gtk4-broadwayd")
-        .args([display.as_str(), "--port", &(18000 + n).to_string()])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .ok()?;
-    let kill = Kill(child);
-    let sock = Path::new(&runtime).join(format!("broadway{}.socket", n + 1));
-    for _ in 0..100 {
-        if std::os::unix::net::UnixStream::connect(&sock).is_ok() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-    unsafe {
-        std::env::set_var("GDK_BACKEND", "broadway");
-        std::env::set_var("BROADWAY_DISPLAY", &display);
-    }
-    Some(kill)
-}
 
 /// wol-admind as an administrator meets it: the radios want the password (NeedsAuth until one
 /// is typed); a Bluetooth device's connect waits until the test answers it.
@@ -117,15 +76,6 @@ impl System for Asking {
     }
 }
 
-fn pump(ms: u64) {
-    let ctx = gtk::glib::MainContext::default();
-    let end = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-    while std::time::Instant::now() < end {
-        while ctx.iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-}
-
 fn all<T: IsA<gtk::Widget>>(root: &gtk::Widget, out: &mut Vec<T>) {
     let mut c = root.first_child();
     while let Some(w) = c {
@@ -168,7 +118,7 @@ fn blames(root: &gtk::Widget) -> Vec<String> {
 /// The page on screen after opening `page`.
 fn open(a: &shell::kit::widgets::AppWindow, page: &str) -> gtk::Widget {
     a.open(page);
-    pump(200);
+    broadway::pump(200);
     a.content.visible_child().expect("a page shows")
 }
 
@@ -181,7 +131,7 @@ fn flip_wifi(a: &shell::kit::widgets::AppWindow, sheet: &gtk::Revealer) -> gtk::
         .expect("the power switch");
     assert!(power.is_active() && power.state(), "Wi-Fi: on at start");
     power.set_active(false);
-    pump(100);
+    broadway::pump(100);
     assert!(sheet.reveals_child(), "Wi-Fi: the sheet asks");
     assert!(!power.is_sensitive(), "Wi-Fi: the switch waits");
     power
@@ -200,7 +150,7 @@ fn cancel_says_nothing_wrong(
         .find(|b| b.label().as_deref() == Some("Cancel"))
         .expect("Cancel on the sheet");
     cancel.emit_clicked();
-    pump(100);
+    broadway::pump(100);
     assert!(!sheet.reveals_child(), "Cancel closes the sheet");
     assert!(
         power.is_active() && power.state() && power.is_sensitive(),
@@ -217,21 +167,21 @@ fn cancel_on_sharing_says_nothing_wrong(
     sheet: &gtk::Revealer,
 ) {
     let shown = open(a, "Sharing");
-    pump(300);
+    broadway::pump(300);
     let remote = of::<gtk::Switch>(&shown)
         .into_iter()
         .next()
         .expect("the Remote Login switch");
     let was = remote.is_active();
     remote.set_active(!was);
-    pump(100);
+    broadway::pump(100);
     assert!(sheet.reveals_child(), "Sharing: the sheet asks");
     of::<gtk::Button>(sheet)
         .into_iter()
         .find(|b| b.label().as_deref() == Some("Cancel"))
         .expect("Cancel on the sheet")
         .emit_clicked();
-    pump(100);
+    broadway::pump(100);
     assert_eq!(remote.is_active(), was, "Remote Login flips back");
     assert_eq!(
         blames(root),
@@ -269,7 +219,7 @@ fn sheet_is_modal_esc_cancels(
             &gtk::gdk::ModifierType::empty(),
         ],
     );
-    pump(100);
+    broadway::pump(100);
     assert!(stopped, "Esc is the sheet's");
     assert!(!sheet.reveals_child(), "Esc cancels");
     assert!(
@@ -304,9 +254,9 @@ fn act_without_status_shows_checking(
         .find(|b| b.has_css_class("device-button"))
         .expect("a device row");
     device.emit_clicked();
-    pump(100);
+    broadway::pump(100);
     assert!(!checking.reveals_child(), "not before a moment passed");
-    pump(400);
+    broadway::pump(400);
     assert!(checking.reveals_child(), "a late change says Checking…");
     let tx = sys
         .held
@@ -315,7 +265,7 @@ fn act_without_status_shows_checking(
         .pop()
         .expect("the connect was sent");
     tx.try_send(Ok(())).unwrap();
-    pump(100);
+    broadway::pump(100);
     assert!(!checking.reveals_child(), "gone once it answered");
 }
 
@@ -329,7 +279,7 @@ fn dead_worker_puts_the_switch_back(a: &shell::kit::widgets::AppWindow, sys: &As
     sys.dead.store(true, std::sync::atomic::Ordering::Relaxed);
     let was = power.is_active();
     power.set_active(!was);
-    pump(200);
+    broadway::pump(200);
     sys.dead.store(false, std::sync::atomic::Ordering::Relaxed);
     assert_eq!(power.is_active(), was, "no answer: the switch goes back");
     assert!(power.is_sensitive(), "and takes input again");
@@ -344,16 +294,16 @@ fn search_paste_capped_esc_clears(a: &shell::kit::widgets::AppWindow) {
         .and_downcast::<gtk::SearchEntry>()
         .expect("the search field");
     field.set_text(&"wallpaper ".repeat(500));
-    pump(300);
+    broadway::pump(300);
     assert!(field.text().chars().count() <= 64, "{}", field.text().len());
     field.emit_by_name::<()>("stop-search", &[]);
-    pump(300);
+    broadway::pump(300);
     assert_eq!(field.text(), "", "Esc clears the field");
 }
 
 #[test]
 fn cancel_has_no_incorrect_password() {
-    let _display = broadway();
+    let _display = broadway::start(460);
     if gtk::init().is_err() {
         eprintln!("skipped: no display for the toolkit");
         return;
@@ -366,7 +316,7 @@ fn cancel_has_no_incorrect_password() {
         .child(&a.root)
         .build();
     win.present();
-    pump(200);
+    broadway::pump(200);
     let root: gtk::Widget = a.root.clone().upcast();
     let sheet = auth_sheet(&root);
     cancel_on_sharing_says_nothing_wrong(&a, &root, &sheet);
@@ -400,6 +350,6 @@ fn wifi_watcher_goes_with_its_page(a: &shell::kit::widgets::AppWindow, sys: &Ask
     while let Some(c) = holder.first_child() {
         holder.remove(&c);
     }
-    pump(300);
+    broadway::pump(300);
     assert_eq!(open_now(), 0, "its loop ended with the page");
 }

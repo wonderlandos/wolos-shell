@@ -254,10 +254,11 @@ const LOGIND_SESSION: &str = "org.freedesktop.login1.Session";
 /// Longest wait for logind's answer to `GetSession`.
 const LOGIND_TIMEOUT_MS: i32 = 5000;
 
-/// What `Lock` on this session runs: the lock screen unless one is up
-/// (`wol_core::power::policy::LOCK_CMD`, the same as hypridle and the sleep hook).
-pub fn logind_lock_argv() -> [&'static str; 3] {
-    ["sh", "-c", wol_core::power::policy::LOCK_CMD]
+/// What `Lock` on this session runs: `wol-lock`, which keeps one supervisor per session (its
+/// guard) and hands the lock to its unit, so a second Lock while one is up does nothing. No
+/// shell string (RR-020).
+pub fn logind_lock_argv() -> [&'static str; 1] {
+    ["wol-lock"]
 }
 
 /// The session id `GetSession` is asked for: `$XDG_SESSION_ID` when the session has one, else
@@ -267,12 +268,6 @@ pub fn logind_session_id(env: Option<&str>) -> String {
         .filter(|s| !s.is_empty())
         .unwrap_or("auto")
         .to_string()
-}
-
-thread_local! {
-    /// The `Lock` subscription: lives as long as the shell.
-    static LOGIND_SUB: std::cell::RefCell<Option<gio::SignalSubscription>> =
-        const { std::cell::RefCell::new(None) };
 }
 
 /// `loginctl lock-session` (logind's `Lock` signal on this session) starts the lock screen
@@ -319,7 +314,10 @@ fn logind_lock() {
                 crate::kit::spawn(&argv);
             },
         );
-        LOGIND_SUB.set(Some(sub));
+        // Followed for the whole session: this future holds the subscription (dropping it
+        // unsubscribes) and never ends.
+        let _held = sub;
+        std::future::pending::<()>().await;
     });
 }
 
@@ -1103,10 +1101,12 @@ mod tests {
     /// for this session's id or logind's `auto`.
     #[test]
     fn logind_lock_runs_the_lock_command() {
-        let [sh, c, cmd] = logind_lock_argv();
-        assert_eq!((sh, c), ("sh", "-c"));
-        assert_eq!(cmd, wol_core::power::policy::LOCK_CMD);
-        assert!(cmd.starts_with("pgrep "), "no second lock screen");
+        assert_eq!(logind_lock_argv(), ["wol-lock"]);
+        // No second lock screen: wol-lock holds one supervisor per session and a second one
+        // returns at once.
+        let lock = include_str!("lock.rs");
+        assert!(lock.contains("take_guard(&runtime, login::LOCK_GUARD)"));
+        assert!(lock.contains("crate::supervise::Guard::Busy => return glib::ExitCode::SUCCESS"));
         assert_eq!(logind_session_id(Some("3")), "3");
         assert_eq!(logind_session_id(Some(" ")), "auto");
         assert_eq!(logind_session_id(None), "auto");

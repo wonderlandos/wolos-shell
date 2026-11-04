@@ -325,18 +325,18 @@ pub fn activation(first_of_warm: bool, window_open: bool) -> Activation {
 }
 
 /// One-window panel app (Control Center, Search): Esc, a click outside, another app in front
-/// or a workspace switch quits. With [`WARM_ARG`] it does not quit: the app is held with no
-/// window and each activation shows the panel again.
+/// or a workspace switch quits. `warm` (the binary was given [`WARM_ARG`]): it does not quit, the
+/// app is held with no window and each activation shows the panel again.
 pub fn run_panel_app(
     id: &str,
     class: &'static str,
     spec: surface::Spec,
+    warm: bool,
     build: fn(&gtk::ApplicationWindow, Rc<dyn crate::system::System>) -> gtk::Widget,
 ) -> glib::ExitCode {
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder().application_id(id).build();
     app.connect_startup(move |_| mark(t0, "startup"));
-    let warm = std::env::args().any(|a| a == WARM_ARG);
     // Held until the process ends: closing the panel's window does not end a warm process.
     let _hold = warm.then(|| app.hold());
     let (parked, css_in) = (Rc::new(Cell::new(warm)), Rc::new(Cell::new(false)));

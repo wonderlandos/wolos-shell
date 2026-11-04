@@ -540,8 +540,17 @@ pub const CENTER_SPEC: Spec = Spec::panel(
     [true, false, false, true],
     Keyboard::OnDemand,
 );
-/// Tallest the card list grows before it scrolls (px).
+/// Tallest the card list grows before it scrolls (px), on a screen that has the room: see
+/// [`center_list_cap`], which keeps it to 70% of the screen it is on.
 pub const CENTER_MAX_HEIGHT: i32 = 560;
+
+/// The card list's cap on a screen `screen_h` logical px tall: [`CENTER_MAX_HEIGHT`], or 70% of
+/// the screen when that is less (a 1366x768 VM at scale 2 is 384 px tall: RH-231).
+pub fn center_list_cap(screen_h: i32) -> i32 {
+    CENTER_MAX_HEIGHT
+        .min(screen_h.saturating_mul(7) / 10)
+        .max(w::S10)
+}
 
 /// The Notification Center's content: title, Clear, and the list `rows` fills (no golden yet).
 /// `on_clear` runs after Clear (the held banners go too, audit5 S6-1).
@@ -562,14 +571,19 @@ pub fn center_panel(
         on_clear();
     }));
     g.append(&head);
-    g.append(
-        &gtk::ScrolledWindow::builder()
-            .child(&list)
-            .propagate_natural_height(true)
-            .max_content_height(CENTER_MAX_HEIGHT)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build(),
-    );
+    let scroller = gtk::ScrolledWindow::builder()
+        .child(&list)
+        .propagate_natural_height(true)
+        .max_content_height(CENTER_MAX_HEIGHT)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+    // Mapped: the screen it is on is known, and the cap fits it.
+    scroller.connect_map(|sw| {
+        if let Some((_, h)) = crate::kit::surface::screen_of(sw) {
+            sw.set_max_content_height(center_list_cap(h));
+        }
+    });
+    g.append(&scroller);
     (g, list)
 }
 
@@ -1325,6 +1339,10 @@ mod tests {
         let [top, bottom, left, right] = CENTER_SPEC.anchor;
         assert_eq!((top, bottom, left, right), (true, false, false, true));
         const { assert!(CENTER_MAX_HEIGHT > 0) };
+        // Fits the smallest screens, never more than the cap on big ones.
+        assert_eq!(center_list_cap(1080), CENTER_MAX_HEIGHT);
+        assert_eq!(center_list_cap(400), 280);
+        assert_eq!(center_list_cap(384), 268);
     }
 
     fn n(critical: bool, t: i32) -> Note {

@@ -140,7 +140,8 @@ pub const INSTALL_PASSPHRASE_ASCII: &str = "Use letters, digits and common symbo
 /// An account name a system user already has on this computer.
 pub const INSTALL_NAME_TAKEN: &str = "That name is already used on this computer. Choose another.";
 /// Own keys: the firmware now trusts only this computer's keys and Microsoft's.
-pub const INSTALL_OWN_KEYS_MEDIA: &str = "The install media is not signed with those keys, so it will no longer start on this computer. Remove it when the screen goes dark.";
+pub const INSTALL_OWN_KEYS_MEDIA: &str = "The install media is not signed with those keys, so it will no longer start on this computer. Remove it \
+    when the screen goes dark.";
 /// The Done page's key screen card.
 pub const INSTALL_KEY_SCREEN_TITLE: &str = "One blue screen after restart";
 /// The live system runs from the stick until the screen goes dark: never pulled before Restart.
@@ -763,7 +764,8 @@ pub fn analyze_offer(f: &wol_core::malware::Full) -> (String, String) {
     } else {
         (
             "Signatures Are Off".into(),
-            "The full check needs its signature set. You can turn it on in Settings > Privacy & Security, which downloads it to this computer. Nothing was checked.".into(),
+            "The full check needs its signature set. You can turn it on in Settings > Privacy & Security, which downloads it to this computer. \
+                Nothing was checked.".into(),
         )
     }
 }
@@ -947,7 +949,8 @@ pub const LOGIN_UNUSABLE: &str =
     "Your password can’t be checked: it is too long or has a character that isn’t allowed.";
 /// The encrypted home opens only with a password of typed characters (QA-SHADOW-39; the window's
 /// form of controller::login::TEXT_PASSWORD_SENTENCE, within RU-001's 140 characters).
-pub const LOGIN_TEXT_PASSWORD: &str = "Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks after this computer.";
+pub const LOGIN_TEXT_PASSWORD: &str = "Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks \
+    after this computer.";
 /// Login window with no account that can sign in (audit4 S3-7): (title, hint).
 pub const LOGIN_NO_ACCOUNTS: (&str, &str) = (
     "No Accounts",
@@ -986,7 +989,8 @@ pub const STORE_NOT_FINISHED: &str = "That did not finish. Nothing was changed."
 pub const STORE_KITS_INTRO: &str =
     "Sets of extras added in one step. Nothing here is installed until you choose it.";
 /// Plugins page, under the title.
-pub const STORE_PLUGINS_INTRO: &str = "Plugins add to the menu bar, the desktop and search. They install for you only and update on their own, apart from WolOS updates.";
+pub const STORE_PLUGINS_INTRO: &str = "Plugins add to the menu bar, the desktop and search. They install for you only and update on their own, apart \
+    from WolOS updates.";
 /// Plugins page, last row.
 pub const STORE_PLUGINS_SIGNED: &str =
     "Every plugin here was checked and signed by the WolOS plugin index.";
