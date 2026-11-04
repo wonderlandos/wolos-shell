@@ -163,9 +163,9 @@ pub trait System: Send + Sync {
     fn bt_devices(&self) -> Vec<BtDevice> {
         Vec::new()
     }
-    /// Why the last Bluetooth connect failed, as BlueZ said it (page-timeout, profile
+    /// Why the last connect of device `addr` failed, as BlueZ said it (page-timeout, profile
     /// unavailable, not powered), as a sentence; None when it worked or there is no reason.
-    fn bt_connect_reason(&self) -> Option<&'static str> {
+    fn bt_connect_reason(&self, _addr: &str) -> Option<&'static str> {
         None
     }
     /// 0..=100, None without a keyboard backlight.
@@ -689,9 +689,11 @@ impl System for FakeDesktop {
 
 use std::sync::{Arc, Mutex, Weak};
 
-/// [`System::bt_connect_reason`] for the real host: set by the last `Action::BtConnect`.
-static BT_REASON: Mutex<Option<&'static str>> = Mutex::new(None);
 use wol_core::controls::{A11y, BatteryState, Charge, Controls, Media, Volume, WifiNet};
+
+/// [`System::bt_connect_reason`] for the real host: why the last connect of each device failed,
+/// by address (two devices connecting at once keep their own reasons).
+static BT_REASON: Mutex<Vec<(String, &'static str)>> = Mutex::new(Vec::new());
 
 /// Everything the UI reads; refreshed by the worker, cached to `$XDG_RUNTIME_DIR/wol-controls.json`
 /// so a freshly opened Control Center shows real values before the first refresh lands.
@@ -937,7 +939,12 @@ impl Inner {
             Action::Power(m) => c.set_low_power(*m == PowerMode::LowPower, &pw),
             Action::BtConnect(addr, on) => {
                 let r = c.bt_connect_reason(addr, *on);
-                *BT_REASON.lock().unwrap_or_else(|e| e.into_inner()) = r.err().map(|e| e.1);
+                let mut why = BT_REASON.lock().unwrap_or_else(|e| e.into_inner());
+                why.retain(|(a, _)| a != addr);
+                if let Err((_, sentence)) = &r {
+                    why.push((addr.clone(), *sentence));
+                }
+                drop(why);
                 r.map_err(|e| e.0)
             }
             Action::KeyboardBrightness(p) => c.set_keyboard_brightness(*p),
@@ -1303,8 +1310,9 @@ impl System for CoreSystem {
     fn bt_devices(&self) -> Vec<BtDevice> {
         self.inner.lock().bt_devices.clone()
     }
-    fn bt_connect_reason(&self) -> Option<&'static str> {
-        *BT_REASON.lock().unwrap_or_else(|e| e.into_inner())
+    fn bt_connect_reason(&self, addr: &str) -> Option<&'static str> {
+        let why = BT_REASON.lock().unwrap_or_else(|e| e.into_inner());
+        why.iter().find(|(a, _)| a == addr).map(|(_, s)| *s)
     }
     fn keyboard_brightness(&self) -> Option<u8> {
         self.inner.lock().keyboard
