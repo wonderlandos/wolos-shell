@@ -277,7 +277,12 @@ fn nothing_is_written_before_keep() {
     pump(200);
     let text = std::fs::read_to_string(&f).expect("Keep writes displays.lua");
     assert!(text.contains("1920x1200"), "{text}");
-    assert!(text.contains("DP-1") && text.contains("0x800"), "{text}");
+    // Below the main display as it is now: 1920x1200 at scale 2 is 600 logical pixels high, not
+    // the 800 of the mode it had (QA-GFX-19 follow-up: placements follow the main display).
+    assert!(
+        text.contains(r#"output = "DP-1", mode = "1920x1080@60.00", position = "0x600""#),
+        "{text}"
+    );
     assert!(text.contains("position = \"0x0\""), "main pinned: {text}");
     // Undo: both displays go back, the file stays as it was.
     let _ = std::fs::remove_file(&f);
