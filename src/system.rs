@@ -1185,7 +1185,6 @@ fn admin_topics(a: shared::admin::AdminAction) -> [bool; TOPICS] {
         A::WifiJoin => (0, 1, 1, 0, 0),
         A::Bluetooth => (0, 0, 1, 0, 1),
         A::BtPair | A::BtForget | A::PowerMode => (0, 0, 0, 0, 1),
-        A::AudioDefault => (1, 0, 1, 0, 0),
         // A kernel module can bring any device: read everything again.
         A::HwLoad => (1, 1, 1, 1, 1),
         A::Appearance
