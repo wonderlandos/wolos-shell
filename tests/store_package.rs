@@ -106,12 +106,20 @@ fn clean(s: &str) {
 /// ADR 0046: every certificate verdict has its row; withdrawn and invalid can't be installed.
 #[test]
 fn each_certificate_verdict_maps_to_its_row() {
-    use shell::ui::store::{ROW_VERIFIED, ROW_WITHDRAWN, trust_row};
+    use shell::ui::store::{ROW_LEGACY, ROW_ORIGIN, ROW_TRUSTED, ROW_WITHDRAWN, trust_row};
     use wol_core::woltrust::Trust as T;
     assert_eq!(trust_row(T::Wolos), (TRUST_ROWS[ROW_WOLOS], Some("signed")));
     assert_eq!(
-        trust_row(T::Verified),
-        (TRUST_ROWS[ROW_VERIFIED], Some("signed"))
+        trust_row(T::Trusted),
+        (TRUST_ROWS[ROW_TRUSTED], Some("signed"))
+    );
+    assert_eq!(
+        trust_row(T::Origin),
+        (TRUST_ROWS[ROW_ORIGIN], Some("signed"))
+    );
+    assert_eq!(
+        trust_row(T::Legacy),
+        (TRUST_ROWS[ROW_LEGACY], Some("signed"))
     );
     assert_eq!(
         trust_row(T::Community),
@@ -121,14 +129,33 @@ fn each_certificate_verdict_maps_to_its_row() {
     assert_eq!(trust_row(T::Invalid), (TRUST_ROWS[ROW_REFUSED], None));
 }
 
-/// ADR 0046 origin: the verified row names the maker and the repository.
+/// Lead wording 2026-11-04: origin is "From Ana (ana on GitHub), from <repo>", trusted is
+/// "Trusted developer Ana"; who vouches and the file certificate lines are clean copy too.
 #[test]
-fn the_made_by_line_names_the_person_and_the_repository() {
-    let line = shell::copy::trust_made_by("Ana Lima", "ana", Some("github.com/ana/notes"), "1.2");
+fn the_maker_lines_name_the_person_and_the_repository() {
+    let line = shell::copy::trust_from("Ana Lima", "ana", Some("github.com/ana/notes"), "1.2");
     assert_eq!(
         line,
-        "Made by Ana Lima (ana on GitHub), from github.com/ana/notes, version 1.2."
+        "From Ana Lima (ana on GitHub), from github.com/ana/notes, version 1.2."
     );
     clean(&line);
-    clean(&shell::copy::trust_made_by("Ana Lima", "ana", None, "1.2"));
+    clean(&shell::copy::trust_from("Ana Lima", "ana", None, "1.2"));
+    let line = shell::copy::trust_trusted("Ana Lima", "ana", None, "1.2");
+    assert_eq!(
+        line,
+        "Trusted developer Ana Lima (ana on GitHub), version 1.2."
+    );
+    clean(&line);
+    clean(&shell::copy::trust_trusted(
+        "Ana Lima",
+        "ana",
+        Some("github.com/ana/notes"),
+        "1.2",
+    ));
+    clean(&format!(
+        "{}.",
+        shell::copy::trust_vouched_by("WolOS test authority")
+    ));
+    clean(&shell::copy::trust_checked_on("4 November 2026"));
+    clean(shell::copy::TRUST_VERSION_WITHDRAWN);
 }

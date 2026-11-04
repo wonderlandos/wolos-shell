@@ -805,21 +805,47 @@ pub const TIMER_DONE: (&str, &str) = ("Timer done", "Your countdown has finished
 
 // ---- App Store: who made a .wol (ADR 0046) ----
 
-/// Install page row "Verified author".
-pub const TRUST_VERIFIED: &str =
-    "Made by an author WolOS has verified, and unchanged since it was signed.";
+/// Install page row "Trusted developer" (a `trusted` certificate: an administrator approved them).
+pub const TRUST_TRUSTED: &str =
+    "Made by a developer WolOS Hub approved, and unchanged since it was signed.";
+/// Install page row "Known developer" (an `origin` certificate: GitHub sign-in and the CLA).
+pub const TRUST_ORIGIN: &str = "WolOS knows who published this app and that it is unchanged since. Nobody at WolOS Hub has reviewed this developer yet.";
+/// Install page row "Previous key" (a legacy `SHA256.sig` only, audit H1).
+pub const TRUST_LEGACY: &str =
+    "Signed with the previous WolOS key, which has no certificate and no post-quantum signature.";
+/// Install page, the line under the trust row naming who vouches (the roots' subject text).
+pub fn trust_vouched_by(text: &str) -> String {
+    format!("Who vouches: {text}")
+}
+/// Install page, a file certificate: what WolOS Hub checked about this exact file.
+pub fn trust_checked_on(date: &str) -> String {
+    format!("Checked by WolOS Hub on {date}.")
+}
+/// Install page, a file certificate withdrawn by version.
+pub const TRUST_VERSION_WITHDRAWN: &str = "This version was withdrawn.";
 /// Install page row "Withdrawn".
 pub const TRUST_WITHDRAWN: &str =
     "WolOS no longer trusts the certificate this app was signed with. It won’t be installed.";
 
-/// Install page, verified author: who made it and, when the signature carries it, where from
-/// ("Made by Ana Lima (ana on GitHub), from github.com/ana/notes, version 1.2.").
-pub fn trust_made_by(name: &str, login: &str, from: Option<&str>, version: &str) -> String {
+/// Install page, origin certificate: who published it and, when the signature carries it,
+/// where from ("From Ana Lima (ana on GitHub), from github.com/ana/notes, version 1.2.").
+pub fn trust_from(name: &str, login: &str, from: Option<&str>, version: &str) -> String {
     match from {
         Some(repo) => {
-            format!("Made by {name} ({login} on GitHub), from {repo}, version {version}.")
+            format!("From {name} ({login} on GitHub), from {repo}, version {version}.")
         }
-        None => format!("Made by {name} ({login} on GitHub), version {version}."),
+        None => format!("From {name} ({login} on GitHub), version {version}."),
+    }
+}
+
+/// Install page, trusted certificate ("Trusted developer Ana Lima (ana on GitHub), from
+/// github.com/ana/notes, version 1.2.").
+pub fn trust_trusted(name: &str, login: &str, from: Option<&str>, version: &str) -> String {
+    match from {
+        Some(repo) => {
+            format!("Trusted developer {name} ({login} on GitHub), from {repo}, version {version}.")
+        }
+        None => format!("Trusted developer {name} ({login} on GitHub), version {version}."),
     }
 }
 

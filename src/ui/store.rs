@@ -265,19 +265,33 @@ pub struct PackageSheet {
     pub install: Option<&'static str>,
     /// "Install", "Update", or "Open" when this version is installed already.
     pub button: &'static str,
-    /// Who made it and where from, for a verified author (shown instead of the row's sentence).
+    /// Who made it and where from, for a trusted or origin author (shown instead of the row's
+    /// sentence).
     pub maker: Option<String>,
+    /// "Who vouches: <the roots' subject text>", when the chain reached a root that carries it.
+    pub vouched_by: Option<String>,
 }
 
-/// Trust rows of the install page (ADR 0046): made by WolOS, a verified author, not signed,
-/// withdrawn, refused. Indexes: [`ROW_WOLOS`], [`ROW_VERIFIED`], [`ROW_UNSIGNED`],
-/// [`ROW_WITHDRAWN`], [`ROW_REFUSED`].
-pub const TRUST_ROWS: [(&str, &str, &str); 5] = [
+/// Trust rows of the install page (ADR 0046): made by WolOS, a trusted developer, a known
+/// developer (origin), the previous key, not signed, withdrawn, refused. Indexes: [`ROW_WOLOS`],
+/// [`ROW_TRUSTED`], [`ROW_ORIGIN`], [`ROW_LEGACY`], [`ROW_UNSIGNED`], [`ROW_WITHDRAWN`],
+/// [`ROW_REFUSED`].
+pub const TRUST_ROWS: [(&str, &str, &str); 7] = [
     ("security-high-symbolic", "WolOS", "Made by WolOS."),
     (
         "security-high-symbolic",
-        "Verified author",
-        crate::copy::TRUST_VERIFIED,
+        "Trusted developer",
+        crate::copy::TRUST_TRUSTED,
+    ),
+    (
+        "security-high-symbolic",
+        "Known developer",
+        crate::copy::TRUST_ORIGIN,
+    ),
+    (
+        "security-high-symbolic",
+        "Previous key",
+        crate::copy::TRUST_LEGACY,
     ),
     (
         "dialog-warning-symbolic",
@@ -295,16 +309,20 @@ pub const TRUST_ROWS: [(&str, &str, &str); 5] = [
         "This file is damaged, was changed after it was signed, or comes from a developer WolOS doesn’t know.",
     ),
 ];
-/// Row of a file made by WolOS (its own keys or the Packages CA).
+/// Row of a file made by WolOS (the Packages CA).
 pub const ROW_WOLOS: usize = 0;
-/// Row of a file signed by a verified author or organisation.
-pub const ROW_VERIFIED: usize = 1;
-/// Row of an unsigned file (also an expired certificate or a revocation list too old to trust).
-pub const ROW_UNSIGNED: usize = 2;
+/// Row of a file signed with a trusted certificate.
+pub const ROW_TRUSTED: usize = 1;
+/// Row of a file signed with an origin certificate (or a trusted one superseded).
+pub const ROW_ORIGIN: usize = 2;
+/// Row of a file signed only with WolOS's previous flat key.
+pub const ROW_LEGACY: usize = 3;
+/// Row of an unsigned file (also an expired certificate).
+pub const ROW_UNSIGNED: usize = 4;
 /// Row of a file whose certificate was withdrawn.
-pub const ROW_WITHDRAWN: usize = 3;
+pub const ROW_WITHDRAWN: usize = 5;
 /// Row of a file that can't be installed.
-pub const ROW_REFUSED: usize = 4;
+pub const ROW_REFUSED: usize = 6;
 
 /// The row and the wol-admind trust argument for a certificate verdict (None: not installable).
 pub fn trust_row(
@@ -316,7 +334,9 @@ pub fn trust_row(
     use wol_core::woltrust::Trust as T;
     match t {
         T::Wolos => (TRUST_ROWS[ROW_WOLOS], Some("signed")),
-        T::Verified => (TRUST_ROWS[ROW_VERIFIED], Some("signed")),
+        T::Trusted => (TRUST_ROWS[ROW_TRUSTED], Some("signed")),
+        T::Origin => (TRUST_ROWS[ROW_ORIGIN], Some("signed")),
+        T::Legacy => (TRUST_ROWS[ROW_LEGACY], Some("signed")),
         T::Community => (TRUST_ROWS[ROW_UNSIGNED], Some("unsigned")),
         T::Withdrawn => (TRUST_ROWS[ROW_WITHDRAWN], None),
         T::Invalid => (TRUST_ROWS[ROW_REFUSED], None),
@@ -354,12 +374,13 @@ pub fn package_sheet(f: &PackageFile) -> PackageSheet {
             install: None,
             button: "Install",
             maker: None,
+            vouched_by: None,
         };
     };
     let i = &v.info;
     let (trust, install) = match (&f.outcome, v.trust) {
         (Some(o), _) => trust_row(o.trust),
-        (None, package::Trust::Signed(_)) => (TRUST_ROWS[ROW_WOLOS], Some("signed")),
+        (None, package::Trust::Signed(_)) => (TRUST_ROWS[ROW_LEGACY], Some("signed")),
         (None, package::Trust::Unsigned) => (TRUST_ROWS[ROW_UNSIGNED], Some("unsigned")),
     };
     if install.is_none() {
@@ -372,6 +393,7 @@ pub fn package_sheet(f: &PackageFile) -> PackageSheet {
             install: None,
             button: "Install",
             maker: None,
+            vouched_by: None,
         };
     }
     PackageSheet {
@@ -391,15 +413,22 @@ pub fn package_sheet(f: &PackageFile) -> PackageSheet {
         maker: f.outcome.as_ref().and_then(|o| {
             let c = o.cert.as_ref()?;
             let (name, login) = (c.subject.name.as_deref()?, c.subject.login.as_deref()?);
-            (o.trust == wol_core::woltrust::Trust::Verified).then(|| {
-                crate::copy::trust_made_by(
-                    name,
-                    login,
-                    o.origin.as_ref().map(|x| x.shown()),
-                    &i.version,
-                )
-            })
+            let from = o.origin.as_ref().map(|x| x.shown());
+            match o.trust {
+                wol_core::woltrust::Trust::Trusted => {
+                    Some(crate::copy::trust_trusted(name, login, from, &i.version))
+                }
+                wol_core::woltrust::Trust::Origin => {
+                    Some(crate::copy::trust_from(name, login, from, &i.version))
+                }
+                _ => None,
+            }
         }),
+        vouched_by: f
+            .outcome
+            .as_ref()
+            .and_then(|o| o.root_text.as_deref())
+            .map(crate::copy::trust_vouched_by),
         install,
         button: match &f.installed {
             Some(v) if *v == i.version => "Open",
@@ -1490,14 +1519,15 @@ fn fill_package(sh: &Rc<Shared>, page: &gtk::Box, f: Option<PackageFile>) {
     text.append(&get);
     head.append(&text);
     page.append(&head);
-    page.append(&w::section(
-        "",
-        &[note_row(
-            s.trust.0,
-            s.trust.1,
-            s.maker.as_deref().unwrap_or(s.trust.2),
-        )],
-    ));
+    let mut trust_rows = vec![note_row(
+        s.trust.0,
+        s.trust.1,
+        s.maker.as_deref().unwrap_or(s.trust.2),
+    )];
+    if let Some(v) = &s.vouched_by {
+        trust_rows.push(note_row("security-high-symbolic", "Who vouches", v));
+    }
+    page.append(&w::section("", &trust_rows));
     let (Ok(v), Some(trust)) = (&f.verified, s.install) else {
         return;
     };
