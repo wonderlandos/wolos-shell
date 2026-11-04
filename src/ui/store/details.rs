@@ -111,6 +111,8 @@ pub fn load(s: &Subject) -> Loaded {
         }
     }
     if s.flathub {
+        // The verified ids for the "Source" row (this runs off the UI thread).
+        super::warm_flathub();
         let home = std::env::var("HOME").unwrap_or_default();
         for (xml, icons) in appstream::flathub_paths(&home) {
             let Some(d) = std::fs::read_to_string(&xml)
@@ -173,17 +175,25 @@ pub fn info_rows(s: &Subject, l: &Loaded) -> Vec<(&'static str, String)> {
     if let Some(z) = &l.size {
         v.push(("Size", z.clone()));
     }
+    let standing = wol_core::flathub::standing(&s.target, wol_core::flathub::cached());
     v.push((
         "Source",
         if s.aur {
             "Community"
         } else if s.flathub {
-            "Flathub"
+            crate::copy::store_source_label(standing)
         } else {
             "System packages"
         }
         .into(),
     ));
+    // Said once for what WolOS or Flathub did; a plain community app keeps just "Flathub".
+    if s.flathub && standing != wol_core::flathub::Standing::Community {
+        v.push((
+            crate::copy::STORE_ABOUT_SOURCE,
+            crate::copy::store_source_about(standing).into(),
+        ));
+    }
     if l.system {
         v.push(("Installed for", "All accounts".into()));
     }

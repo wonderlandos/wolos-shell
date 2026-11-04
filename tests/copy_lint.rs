@@ -789,3 +789,34 @@ fn credited_projects_are_banned() {
         assert!(!copy::lint(&format!("Made with {id}.")).is_empty(), "{id}");
     }
 }
+
+/// IMAGE-F: the Flathub standing sentences the Store shows are clean copy, say what was done, and
+/// never claim the app is "safe" or "audited" (WolOS picked it; it did not read it).
+#[test]
+fn flathub_standing_copy_is_clean_and_makes_no_safety_claim() {
+    use wol_core::flathub::Standing::{Community, Picked, Verified};
+    let all = [
+        Picked { verified: true },
+        Picked { verified: false },
+        Verified,
+        Community,
+    ];
+    for s in all {
+        let about = copy::store_source_about(s);
+        assert_clean("flathub about", about);
+        let low = about.to_lowercase();
+        assert!(!low.contains("safe") && !low.contains("audit"), "{about}");
+        assert!(about.ends_with('.'), "{about}");
+    }
+    assert_eq!(copy::store_source_label(Community), "Flathub");
+    assert_eq!(
+        copy::store_source_label(Verified),
+        "Flathub · Verified by Flathub"
+    );
+    assert_eq!(
+        copy::store_source_label(Picked { verified: false }),
+        "Flathub · Picked by WolOS"
+    );
+    assert!(copy::store_source_about(Picked { verified: false }).contains("community"));
+    assert!(copy::store_source_about(Picked { verified: true }).contains("developer"));
+}

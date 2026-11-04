@@ -1223,7 +1223,9 @@ fn admin_topics(a: shared::admin::AdminAction) -> [bool; TOPICS] {
         | A::PkgInstallFile
         | A::SystemRollback
         | A::SystemChannel
-        | A::Reports => (0, 0, 0, 0, 0),
+        | A::Reports
+        | A::MirrorGate
+        | A::CoolingHelper => (0, 0, 0, 0, 0),
     };
     [audio, wifi, slow, media, panel].map(|t| t == 1)
 }
