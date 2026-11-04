@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Keyboard: key repeat, input sources (desktop prefs, applied live) and the way into Keyboard Shortcuts.
 use super::*;
+use crate::copy::settings as copy;
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let desk = &e.desk;
@@ -57,6 +58,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     delay.set(control_in::<gtk::Scale>(&delay_row).as_ref());
     p.append(&w::section("", &[rate_row, delay_row, shortcuts.upcast()]));
     p.append(&sources(desk, &status));
+    p.append(&input_methods(e, &status));
     let field = w::text_field("Type here to test");
     field.set_hexpand(true);
     p.append(&w::section("", &[form::row("Try it", "", &field)]));
@@ -150,4 +152,96 @@ fn sources(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
     }
     fill(&holder, desk, status);
     holder.upcast()
+}
+
+/// Whether `locale` (`ja_JP.UTF-8`, `zh_CN`, `ko`) is a language a keyboard layout alone cannot
+/// type: Japanese, Chinese and Korean need an input method (fcitx5, the `ime` module).
+pub fn needs_input_method(locale: &str) -> bool {
+    let lang = locale
+        .split(['_', '.', '@', '-'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(lang.as_str(), "ja" | "zh" | "ko")
+}
+
+/// The language in use: the saved choice, else the computer's (`LANG`), as Language & Region shows it.
+fn language_in_use(saved: Option<&str>) -> String {
+    saved.map_or_else(language::system_locale, str::to_owned)
+}
+
+/// The registry record of the input methods (`files/usr/share/wolos/modules/ime.json`).
+pub const IME_MODULE: &str = "ime";
+
+/// QA-ACC-11: Input Methods, the `ime` module (fcitx5 with Mozc, Pinyin and Hangul) in the
+/// Modules rows' own words and buttons, offered while the language in use cannot be typed with a
+/// layout alone. Nothing for other languages, and nothing when the module list cannot be read.
+fn input_methods(e: &Rc<Env>, status: &gtk::Label) -> gtk::Widget {
+    let holder = w::vbox(w::S2);
+    if !needs_input_method(&language_in_use(e.desk.get().language.as_deref())) {
+        holder.set_visible(false);
+        return holder.upcast();
+    }
+    let busy: modules::Busy = Rc::default();
+    fn fill(e: &Rc<Env>, holder: &gtk::Box, status: &gtk::Label, busy: &modules::Busy) {
+        while let Some(c) = holder.first_child() {
+            holder.remove(&c);
+        }
+        let (e2, st, b) = (e.clone(), status.clone(), busy.clone());
+        let m = e.machine();
+        let reload: Rc<dyn Fn()> = {
+            let (e, h, st, b) = (e.clone(), holder.downgrade(), status.clone(), busy.clone());
+            Rc::new(move || {
+                if let Some(h) = h.upgrade() {
+                    fill(&e, &h, &st, &b);
+                }
+            })
+        };
+        later(
+            holder,
+            move || m.modules(),
+            move |into, list| {
+                let Some(s) = list.and_then(|l| l.into_iter().find(|s| s.id == IME_MODULE)) else {
+                    return;
+                };
+                let rows = [modules::module_row(&e2, &s, &reload, &st, &b)];
+                into.append(&w::section("Input Methods", &rows));
+                into.append(&w::footnote(copy::INPUT_METHODS_ABOUT));
+            },
+        );
+    }
+    fill(e, &holder, status, &busy);
+    holder.upcast()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn japanese_chinese_and_korean_need_an_input_method() {
+        for yes in [
+            "ja_JP.UTF-8",
+            "zh_CN.UTF-8",
+            "zh_TW",
+            "ko_KR.UTF-8",
+            "ja",
+            "JA_jp",
+            "zh-Hans",
+        ] {
+            assert!(needs_input_method(yes), "{yes}");
+        }
+        for no in [
+            "",
+            "C.UTF-8",
+            "en_US.UTF-8",
+            "de_DE",
+            "pt_BR.UTF-8",
+            "jam_XX",
+            "ru_RU",
+            "xx",
+        ] {
+            assert!(!needs_input_method(no), "{no}");
+        }
+    }
 }

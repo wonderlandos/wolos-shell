@@ -2,9 +2,19 @@
 //! Accessibility: contrast, transparency, motion, pointer size and zoom. Desktop prefs apply live
 //! through one `hyprctl` batch and are journaled; contrast restyles every shell process.
 use super::*;
+use crate::copy::settings as copy;
+use shared::patience::Patience;
 
 /// Pointer size in px: normal … large, in steps the eye can tell apart.
 const CURSOR: (f64, f64, f64) = (24.0, 64.0, 8.0);
+
+/// Give me more time, in the order of [`Patience::ALL`].
+const TIMEOUT_CHOICES: [&str; 4] = [
+    "Normal",
+    "Twice as long",
+    "Five times as long",
+    "Until I dismiss them",
+];
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let p = w::page("Accessibility");
@@ -29,9 +39,19 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             move |on, done| ctx.act_switch(Action::IncreaseContrast(on), &st, done),
         )
     };
+    let larger = {
+        let (ctx, st) = (e.ctx.clone(), status.clone());
+        form::pending_toggle_row(
+            "Larger text",
+            copy::LARGER_TEXT_ABOUT,
+            a.larger_text,
+            move |on, done| ctx.act_switch(Action::LargerText(on), &st, done),
+        )
+    };
     p.append(&w::section(
         "Display",
         &[
+            larger,
             contrast,
             toggle(
                 "Reduce transparency",
@@ -46,6 +66,26 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 |p, v| p.reduce_motion = v,
             ),
         ],
+    ));
+    p.append(&w::section(
+        "Timing",
+        &[{
+            let (ctx, st) = (e.ctx.clone(), status.clone());
+            let now = Patience::ALL
+                .iter()
+                .position(|x| *x == a.patience)
+                .unwrap_or(0);
+            form::pending_picker_row(
+                "Give me more time",
+                copy::TIMEOUTS_ABOUT,
+                &TIMEOUT_CHOICES,
+                now,
+                move |i, done| {
+                    let p = Patience::ALL[i.min(Patience::ALL.len() - 1)];
+                    ctx.act_switch(Action::Timeouts(p), &st, done)
+                },
+            )
+        }],
     ));
     // The slider, so a failed save can put it back to the saved size (Desk::set_or).
     let slider = Rc::new(glib::WeakRef::<gtk::Scale>::new());
@@ -70,14 +110,18 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     );
     slider.set(control_in::<gtk::Scale>(&size).as_ref());
     let mut pointer = vec![size];
-    if let Some(on) = a.zoom {
-        let (ctx, st) = (e.ctx.clone(), status.clone());
-        pointer.push(form::pending_toggle_row(
-            "Zoom",
-            "Magnifies the screen around the pointer.",
-            on,
-            move |v, done| ctx.act_switch(Action::Zoom(v), &st, done),
-        ));
+    match a.zoom {
+        Some(on) => {
+            let (ctx, st) = (e.ctx.clone(), status.clone());
+            pointer.push(form::pending_toggle_row(
+                "Zoom",
+                "Magnifies the screen around the pointer.",
+                on,
+                move |v, done| ctx.act_switch(Action::Zoom(v), &st, done),
+            ));
+        }
+        // No row would leave the person looking for a switch that is not there (QA-ACC-9).
+        None => pointer.push(form::info_row("Zoom", copy::ZOOM_UNAVAILABLE)),
     }
     p.append(&w::section("Pointer and Zoom", &pointer));
     p.append(&w::footnote(

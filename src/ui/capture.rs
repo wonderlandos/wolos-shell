@@ -288,7 +288,9 @@ pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
             crate::kit::spawn(&capture::saved_notice_argv(&p));
             let id = shown.get().wrapping_add(1);
             shown.set(id);
-            glib::timeout_add_seconds_local_once(THUMB_SECS, move || {
+            // Give me more time (QA-ACC-6): up to two minutes, so it is not left on screen all day.
+            let stay = crate::kit::patience::current().capped_secs(THUMB_SECS, 120);
+            glib::timeout_add_seconds_local_once(stay, move || {
                 if shown.get() == id {
                     tw.set_visible(false);
                 }

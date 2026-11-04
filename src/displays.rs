@@ -328,22 +328,39 @@ pub enum Tick {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Confirm {
     left: u32,
+    /// The countdown's length: what it starts over from.
+    total: u32,
     undo: Vec<Undo>,
     saves: Vec<String>,
 }
 
+/// The longest a changed mode waits for "Keep", whatever Give me more time says: a picture that
+/// cannot be read is put back within two minutes.
+pub const REVERT_SECS_MAX: u32 = 120;
+
+/// [`REVERT_SECS`] stretched by Give me more time (QA-ACC-6), at most [`REVERT_SECS_MAX`].
+pub fn revert_secs(p: shared::patience::Patience) -> u32 {
+    p.capped_secs(REVERT_SECS, REVERT_SECS_MAX)
+}
+
 impl Confirm {
-    /// A countdown of [`REVERT_SECS`] for `first`; `saves` are the rules to write on Keep.
+    /// A countdown of [`REVERT_SECS`] (more with Give me more time) for `first`; `saves` are the
+    /// rules to write on Keep.
     pub fn arm(first: Undo, saves: Vec<String>) -> Self {
+        Self::arm_for(first, saves, crate::kit::patience::current())
+    }
+    /// [`Self::arm`] for a given setting.
+    pub fn arm_for(first: Undo, saves: Vec<String>, p: shared::patience::Patience) -> Self {
         Confirm {
-            left: REVERT_SECS,
+            left: revert_secs(p),
+            total: revert_secs(p),
             undo: vec![first],
             saves,
         }
     }
     /// Another mode change while waiting: the countdown starts over.
     pub fn change(&mut self, next: Undo, saves: Vec<String>) {
-        self.left = REVERT_SECS;
+        self.left = self.total;
         self.undo.push(next);
         self.saves.extend(saves);
     }
@@ -921,6 +938,36 @@ mod settings_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-ACC-6: Give me more time stretches the Keep countdown, never past two minutes.
+    #[test]
+    fn the_keep_countdown_stretches_with_give_me_more_time() {
+        use shared::patience::Patience;
+        let undo = || Undo {
+            name: "eDP-1".into(),
+            rule: "monitor=eDP-1,preferred,auto,1".into(),
+        };
+        let secs = |p| revert_secs(p);
+        assert_eq!(secs(Patience::Normal), 15);
+        assert_eq!(secs(Patience::Double), 30);
+        assert_eq!(secs(Patience::Five), 75);
+        assert_eq!(
+            secs(Patience::Never),
+            120,
+            "a picture nobody can read is still put back"
+        );
+        let mut c = Confirm::arm_for(undo(), Vec::new(), Patience::Five);
+        assert_eq!(c.left(), 75);
+        for _ in 0..74 {
+            assert!(matches!(c.tick(), Tick::Left(_)));
+        }
+        assert_eq!(c.tick(), Tick::Revert);
+        // Another mode starts over from the same length.
+        let mut c = Confirm::arm_for(undo(), Vec::new(), Patience::Double);
+        c.tick();
+        c.change(undo(), Vec::new());
+        assert_eq!(c.left(), 30);
+    }
 
     fn v(s: &[&str]) -> Vec<Connector> {
         s.iter().map(|x| x.to_string()).collect()

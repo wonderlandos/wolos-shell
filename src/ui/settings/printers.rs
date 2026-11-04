@@ -4,7 +4,7 @@
 //! `printer-remove`; the Authenticate sheet asks first).
 use super::*;
 use crate::copy::settings as copy;
-use wol_core::printers::{Printer, queue_name};
+use wol_core::printers::{Printer, unique_queue_name};
 
 /// What people call a device URI: "dnssd://HP%20LaserJet._ipp._tcp.local/" -> "HP LaserJet",
 /// "ipp://10.0.0.5/ipp/print" -> "10.0.0.5".
@@ -12,7 +12,9 @@ pub(crate) fn device_name(uri: &str) -> String {
     let rest = uri.split_once("://").map_or(uri, |x| x.1);
     let host = rest.split('/').next().unwrap_or(rest);
     let name = host.split("._").next().unwrap_or(host);
-    let mut out = String::new();
+    // Bytes first, then UTF-8: "Caf%C3%A9" is two bytes of one letter (QA-SET-14: each byte used to
+    // become its own character, "CafÃ©").
+    let mut out: Vec<u8> = Vec::new();
     let b = name.as_bytes();
     let mut i = 0;
     while i < b.len() {
@@ -21,14 +23,28 @@ pub(crate) fn device_name(uri: &str) -> String {
                 .get(i + 1..i + 3)
                 .and_then(|h| u8::from_str_radix(h, 16).ok())
         {
-            out.push(char::from(v));
+            out.push(v);
             i += 3;
             continue;
         }
-        out.push(char::from(b[i]));
+        out.push(b[i]);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The queue name for each of `names`: none that `existing` queues or the earlier names of this
+/// menu already have, so two printers of one model get "_2", never the first one's queue (QA-SET-14).
+fn queue_names(names: &[&str], existing: &[String]) -> Vec<String> {
+    let mut used = existing.to_vec();
+    names
+        .iter()
+        .map(|n| {
+            let q = unique_queue_name(n, &used);
+            used.push(q.clone());
+            q
+        })
+        .collect()
 }
 
 /// "Brother_HL_L2350DW" -> "Brother HL L2350DW".
@@ -166,22 +182,24 @@ fn render(e: &Rc<Env>, into: &gtk::Box, printers: Option<Vec<Printer>>, status: 
     if !can_add {
         return;
     }
-    let (env, st, holder, taken) = (
+    let (env, st, holder, taken, queues) = (
         e.clone(),
         status.clone(),
         into.clone(),
         printers.iter().map(|p| p.uri.clone()).collect::<Vec<_>>(),
+        printers.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
     );
     let add = w::button("Add Printer…", w::Kind::Default, || {});
     add.connect_clicked(move |b| {
         b.set_sensitive(false);
         b.set_label("Looking for printers…");
-        let (m, env, st, holder, taken, b) = (
+        let (m, env, st, holder, taken, queues, b) = (
             env.machine(),
             env.clone(),
             st.clone(),
             holder.clone(),
             taken.clone(),
+            queues.clone(),
             b.clone(),
         );
         off_thread(
@@ -200,16 +218,13 @@ fn render(e: &Rc<Env>, into: &gtk::Box, printers: Option<Vec<Printer>>, status: 
                         "No other printers found. Check that the printer is on and on the same network.",
                     );
                 }
+                let names: Vec<&str> = new.iter().map(|n| n.0.as_str()).collect();
                 let items: Vec<w::MenuItem> = new
                     .iter()
-                    .map(|(name, uri)| {
-                        let (env, st, holder, q, uri) = (
-                            env.clone(),
-                            st.clone(),
-                            holder.clone(),
-                            queue_name(name),
-                            uri.clone(),
-                        );
+                    .zip(queue_names(&names, &queues))
+                    .map(|((name, uri), q)| {
+                        let (env, st, holder, uri) =
+                            (env.clone(), st.clone(), holder.clone(), uri.clone());
                         let f: Box<dyn Fn()> = Box::new(move || {
                             let Some(a) = admin("printer-add", &[&q, &uri]) else { return };
                             say(&st, "Adding the printer…");
@@ -285,7 +300,29 @@ mod tests {
             "HP Color LaserJet MFP"
         );
         assert_eq!(device_name("ipp://192.168.1.40/ipp/print"), "192.168.1.40");
+        // QA-SET-14: percent-encoded UTF-8 is decoded as bytes, and a stray byte is not a panic.
+        assert_eq!(
+            device_name("dnssd://Caf%C3%A9%20Printer._ipp._tcp.local/"),
+            "Café Printer"
+        );
+        assert_eq!(
+            device_name("dnssd://%E6%97%A5%E6%9C%AC._ipp._tcp.local/"),
+            "日本"
+        );
+        assert_eq!(
+            device_name("dnssd://Bad%FFName._ipp._tcp.local/"),
+            "Bad\u{fffd}Name"
+        );
+        assert_eq!(device_name("dnssd://100%._ipp._tcp.local/"), "100%");
         assert_eq!(shown("Brother_HL_L2350DW"), "Brother HL L2350DW");
+        // Two printers of one model, and one a queue of that name already has: three queues.
+        assert_eq!(
+            queue_names(
+                &["HP LaserJet", "HP LaserJet"],
+                &["HP_LaserJet".to_string()]
+            ),
+            ["HP_LaserJet_2", "HP_LaserJet_3"]
+        );
         let mut p = Printer {
             name: "x".into(),
             uri: String::new(),

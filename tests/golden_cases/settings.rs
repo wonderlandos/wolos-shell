@@ -78,6 +78,22 @@ pub fn cases() -> Vec<Case> {
             a.root.clone().upcast()
         }),
     });
+    // QA-ACC-11: a Japanese account's Keyboard page offers the input methods (the `ime` module).
+    v.push(Case {
+        name: "settings-keyboard-japanese-wide".into(),
+        size: w::APP_SIZE,
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let a = in_japanese(|| {
+                let a = ui::settings::content(Rc::new(shell::system::Fake), &ime_host());
+                a.open("Keyboard");
+                pump(300);
+                a
+            });
+            a.root.clone().upcast()
+        }),
+    });
     // Two displays: one section each (the built-in one first, it is the main display), one Night
     // Shift switch for both.
     for (tag, size) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
@@ -179,6 +195,7 @@ pub fn checks() {
     language_menu_shows_the_saved_language_after_a_failed_save();
     login_items_show_the_saved_list_after_a_failed_save();
     terminal_shell_choice_is_saved_or_put_back();
+    keyboard_offers_input_methods_only_for_languages_that_need_them();
 }
 
 /// [`shell::system::Fake`], except that every action succeeds (Settings saves through actions).
@@ -219,6 +236,34 @@ fn gave_up_host() -> ui::settings::Host {
         ..Default::default()
     });
     h
+}
+
+/// The demo host whose module list has the input methods, not installed.
+fn ime_host() -> ui::settings::Host {
+    let mut h = ui::settings::Host::demo();
+    h.machine = Arc::new(ui::settings::DemoEdge {
+        ime: true,
+        ..Default::default()
+    });
+    h
+}
+
+/// `build` with the account's language set to Japanese in the desktop prefs; the prefs go back.
+fn in_japanese<T>(build: impl FnOnce() -> T) -> T {
+    let f = config_file(wol_core::hyprprefs::PREFS_FILE);
+    std::fs::create_dir_all(f.parent().expect("dir")).expect("config dir");
+    let had = std::fs::read_to_string(&f).ok();
+    let mut prefs = wol_core::hyprprefs::DesktopPrefs::parse(had.as_deref());
+    prefs.language = Some("ja_JP.UTF-8".into());
+    std::fs::write(&f, prefs.to_json()).expect("desktop prefs");
+    let out = build();
+    match had {
+        Some(t) => std::fs::write(&f, t).expect("put the prefs back"),
+        None => {
+            let _ = std::fs::remove_file(&f);
+        }
+    }
+    out
 }
 
 /// The page `name` of a Settings window on `sys`, built and loaded.
@@ -651,4 +696,125 @@ fn terminal_shell_choice_is_saved_or_put_back() {
         "a choice that could not be saved shows the saved shell again"
     );
     assert!(noted, "and says so");
+}
+
+/// Records every action it is asked to perform (and accepts it).
+struct Records(std::sync::Mutex<Vec<String>>);
+
+impl System for Records {
+    fn battery(&self) -> Option<Battery> {
+        shell::system::Fake.battery()
+    }
+    fn audio(&self) -> Audio {
+        shell::system::Fake.audio()
+    }
+    fn network(&self) -> Network {
+        shell::system::Fake.network()
+    }
+    fn brightness(&self) -> Option<u8> {
+        shell::system::Fake.brightness()
+    }
+    fn perform(&self, a: &Action) -> Result<(), ActionError> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(format!("{a:?}"));
+        Ok(())
+    }
+}
+
+/// QA-ACC-5, Settings > Accessibility > Larger text: the switch asks for `Action::LargerText`, on
+/// and off; and the text scale (gsettings `text-scaling-factor`) makes the shell's own text taller
+/// at once through the style sheet that `kit::style` loads. Leaves the scale at 1. Run after the
+/// checks that need the plain GTK look: it applies the kit sheet.
+pub fn larger_text_is_a_switch_and_grows_the_shell_text() {
+    use shell::kit::style;
+    let sys = Rc::new(Records(Default::default()));
+    let (_a, p) = page(sys.clone(), &ui::settings::Host::demo(), "Accessibility");
+    let sw: gtk::Switch = on_row(&p, "Larger text");
+    assert!(!sw.is_active(), "normal text until asked");
+    sw.set_active(true);
+    pump(200);
+    sw.set_active(false);
+    pump(200);
+    let got = sys.0.lock().unwrap().clone();
+    assert_eq!(got, ["LargerText(true)", "LargerText(false)"], "{got:?}");
+
+    // QA-ACC-9: without a compositor there is no Zoom switch, and the row says why; with one, the switch.
+    assert!(
+        says(&p, shell::copy::settings::ZOOM_UNAVAILABLE),
+        "Zoom row names why it is off"
+    );
+    let (_z, with_zoom) = page(
+        Rc::new(shell::system::Fake),
+        &ui::settings::Host::demo(),
+        "Accessibility",
+    );
+    let zoom: gtk::Switch = on_row(&with_zoom, "Zoom");
+    assert!(!says(&with_zoom, shell::copy::settings::ZOOM_UNAVAILABLE) && !zoom.is_active());
+
+    // Give me more time (QA-ACC-6): the menu asks for the multiplier and no other.
+    let menu: gtk::DropDown = on_row(&p, "Give me more time");
+    assert_eq!(menu.selected(), 0, "normal until asked");
+    menu.set_selected(2);
+    pump(200);
+    menu.set_selected(3);
+    pump(200);
+    let got = sys.0.lock().unwrap().clone();
+    assert_eq!(&got[2..], ["Timeouts(Five)", "Timeouts(Never)"], "{got:?}");
+
+    let t = shell::theme::resolve(Some("wol-light"), false);
+    // The kit sets its type on `window`, so the page is measured inside one (not shown: a shown
+    // window wakes the menu bar's bus watch, which this part of the run has no session bus for).
+    let natural = || {
+        let (a, p) = page(
+            Rc::new(Accepts),
+            &ui::settings::Host::demo(),
+            "Accessibility",
+        );
+        let win = gtk::Window::builder().decorated(false).build();
+        win.set_child(Some(&a.root));
+        let l = all::<gtk::Label>(&p)
+            .into_iter()
+            .find(|l| l.label() == "Larger text")
+            .expect("the row's title");
+        let h = l.measure(gtk::Orientation::Vertical, -1).1;
+        win.set_child(None::<&gtk::Widget>);
+        win.destroy();
+        h
+    };
+    assert!(style::set_larger_text(false).is_ok());
+    style::apply(&t, "");
+    let normal = natural();
+    assert!(style::set_larger_text(true).is_ok());
+    style::apply(&t, "");
+    let larger = natural();
+    assert!(style::set_larger_text(false).is_ok());
+    style::apply(&t, "");
+    assert!(
+        f64::from(larger) >= f64::from(normal) * 1.2,
+        "the row title is {normal} px tall at normal size and {larger} px at 1.25"
+    );
+}
+
+/// QA-ACC-11: Keyboard > Input Methods shows the `ime` module (Install) for a Japanese account and
+/// nothing for an English one; Install asks wol-admind for the module's meta package.
+fn keyboard_offers_input_methods_only_for_languages_that_need_them() {
+    let sys = Rc::new(Records(Default::default()));
+    let (_a, p) = in_japanese(|| page(sys.clone(), &ime_host(), "Keyboard"));
+    pump(300);
+    assert!(says(&p, "Input Methods"), "the section shows for Japanese");
+    assert!(says(&p, "Input methods"), "the module's row");
+    assert!(says(&p, shell::copy::settings::INPUT_METHODS_ABOUT));
+    button(&p, "Install").emit_clicked();
+    pump(300);
+    let got = sys.0.lock().unwrap().clone();
+    assert!(
+        got.iter().any(|a| a == "PkgInstall(\"wolos-module-ime\")"),
+        "{got:?}"
+    );
+    // English: no section (the list is not even asked for).
+    let (_b, q) = page(Rc::new(Accepts), &ime_host(), "Keyboard");
+    pump(300);
+    assert!(!says(&q, "Input Methods"), "no input methods for English");
 }

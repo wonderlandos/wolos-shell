@@ -1834,9 +1834,15 @@ fn info(title: &str, value: &str) -> gtk::Widget {
 
 /// Shell prefs file (shell.json), written then announced to the running shell (`reload`).
 fn save_shell(p: ShellPrefs) -> bool {
+    save_shell_as("shell", p)
+}
+
+/// [`save_shell`] under the journal topic `what`: the Undo toast and Restore name the pane that
+/// made the change (`shell` = Desktop & Dock, `control center` = Control Center, QA-SET-66).
+fn save_shell_as(what: &str, p: ShellPrefs) -> bool {
     // The bar and Dock layout (W2-C) is kept: only the prefs change.
     let text = prefs::keep_layout(read(&config(prefs::SHELL_FILE)).as_deref(), p);
-    let ok = save_journaled("shell", prefs::SHELL_FILE, Some(&text)).is_ok();
+    let ok = save_journaled(what, prefs::SHELL_FILE, Some(&text)).is_ok();
     if ok {
         reload_shell();
     }

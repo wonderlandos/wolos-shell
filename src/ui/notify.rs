@@ -280,6 +280,12 @@ pub fn banner_ms(n: &Note) -> Option<u32> {
     }
 }
 
+/// How long a banner of `ms` stays with Give me more time at `p` (QA-ACC-6): stretched, and for
+/// "until I dismiss them" no timer at all.
+pub fn banner_wait(ms: u32, p: shared::patience::Patience) -> Option<std::time::Duration> {
+    p.timer(std::time::Duration::from_millis(u64::from(ms)))
+}
+
 /// Focus (Do Not Disturb) keeps the banner away; the note still lands in Notification Center.
 pub fn quiet(n: &Note, focus: crate::focus::Focus) -> bool {
     focus.active() && !n.critical
@@ -844,7 +850,10 @@ fn take_offer(o: &Offer, b: &gtk::Button, close: Option<Rc<dyn Fn()>>) {
                 match copied {
                     Ok(Ok(ticket)) => {
                         b.set_label(copy::OFFER_COPIED);
-                        glib::timeout_add_local_once(offers::CLEAR_AFTER, move || {
+                        // The code leaves the clipboard later for whoever asked for more time (at most ten minutes).
+                        let clear_after =
+                            crate::kit::patience::current().bounded(offers::CLEAR_AFTER);
+                        glib::timeout_add_local_once(clear_after, move || {
                             gio::spawn_blocking(move || {
                                 let mut clip = offers::Wayland::default();
                                 if let Err(e) = offers::expire(&mut clip, &offers::SECRETS, &ticket)
@@ -1130,39 +1139,40 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                 render.clone(),
             );
             move |rev: gtk::Revealer, generation: u32, ms: u32| {
+                // Give me more time (QA-ACC-6): x2, x5, or no timer at all (until dismissed).
+                let Some(wait) = banner_wait(ms, crate::kit::patience::current()) else {
+                    return;
+                };
                 let (groups, drop_group, closed, render) = (
                     groups.clone(),
                     drop_group.clone(),
                     closed.clone(),
                     render.clone(),
                 );
-                glib::timeout_add_local_once(
-                    std::time::Duration::from_millis(ms as u64),
-                    move || {
-                        // Only the group's latest note expires it (a newer note has its own
-                        // timer); its sticky notes stay and show again (audit4 S3-4).
-                        let (gone, empty) = {
-                            let mut g = groups.borrow_mut();
-                            let Some(gr) = g
-                                .iter_mut()
-                                .find(|g| g.rev == rev && g.generation == generation)
-                            else {
-                                return;
-                            };
-                            let gone = gr.notes.expire();
-                            if !gr.notes.is_empty() {
-                                render(gr);
-                            }
-                            (gone, gr.notes.is_empty())
+                glib::timeout_add_local_once(wait, move || {
+                    // Only the group's latest note expires it (a newer note has its own
+                    // timer); its sticky notes stay and show again (audit4 S3-4).
+                    let (gone, empty) = {
+                        let mut g = groups.borrow_mut();
+                        let Some(gr) = g
+                            .iter_mut()
+                            .find(|g| g.rev == rev && g.generation == generation)
+                        else {
+                            return;
                         };
-                        if empty {
-                            drop_group(&rev);
+                        let gone = gr.notes.expire();
+                        if !gr.notes.is_empty() {
+                            render(gr);
                         }
-                        for id in gone {
-                            closed(id, CloseReason::Expired);
-                        }
-                    },
-                );
+                        (gone, gr.notes.is_empty())
+                    };
+                    if empty {
+                        drop_group(&rev);
+                    }
+                    for id in gone {
+                        closed(id, CloseReason::Expired);
+                    }
+                });
             }
         };
         while let Ok(ev) = rx.recv().await {
@@ -1317,6 +1327,17 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-ACC-6: a 5 s banner stays 10 s, 25 s, or until it is dismissed.
+    #[test]
+    fn banners_stay_as_long_as_the_person_asked() {
+        use shared::patience::Patience;
+        let secs = |p| banner_wait(5000, p).map(|d| d.as_secs());
+        assert_eq!(secs(Patience::Normal), Some(5));
+        assert_eq!(secs(Patience::Double), Some(10));
+        assert_eq!(secs(Patience::Five), Some(25));
+        assert_eq!(secs(Patience::Never), None);
+    }
 
     /// QA-DESIGN-21 second half: the center is anchored top and right only, so its height is
     /// its content's, and the list scrolls past [`CENTER_MAX_HEIGHT`].

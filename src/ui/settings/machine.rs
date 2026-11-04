@@ -817,6 +817,8 @@ pub struct DemoEdge {
     pub gave_up: bool,
     /// Installed with one copy of WolOS (Software Update says there is no restore point).
     pub one_copy: bool,
+    /// The module list holds the input methods (`ime`), not installed (Keyboard offers it).
+    pub ime: bool,
 }
 
 impl Machine for DemoEdge {
@@ -902,6 +904,25 @@ impl Machine for DemoEdge {
         self.queued.load(std::sync::atomic::Ordering::Relaxed)
     }
     fn modules(&self) -> Option<Vec<wol_core::modules::Status>> {
+        if self.ime {
+            let mut list = Demo.modules()?;
+            list.push(wol_core::modules::Status {
+                id: "ime".into(),
+                name: "Input methods".into(),
+                summary: "Type Japanese, Chinese and Korean".into(),
+                category: String::new(),
+                size_mb: 210,
+                package: format!("{}ime", wol_core::modules::PACKAGE_PREFIX),
+                installed: false,
+                enabled: false,
+                pending: false,
+                needs_enable: false,
+                offline: false,
+                needs: Vec::new(),
+                backend: None,
+            });
+            return Some(list);
+        }
         if self.gave_up { Demo.modules() } else { None }
     }
     fn modules_gave_up(&self) -> Vec<super::modules::GaveUp> {

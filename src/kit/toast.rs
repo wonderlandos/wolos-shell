@@ -71,13 +71,14 @@ impl Toast {
             old.remove();
         }
         let me = Rc::downgrade(self);
-        let id =
-            glib::timeout_add_local_once(std::time::Duration::from_millis(TOAST_MS), move || {
-                if let Some(t) = me.upgrade() {
-                    t.timer.borrow_mut().take();
-                    t.hide();
-                }
-            });
+        // Give me more time (QA-ACC-6); a toast has no close button, so never is ten minutes.
+        let stay = super::patience::current().bounded(std::time::Duration::from_millis(TOAST_MS));
+        let id = glib::timeout_add_local_once(stay, move || {
+            if let Some(t) = me.upgrade() {
+                t.timer.borrow_mut().take();
+                t.hide();
+            }
+        });
         *self.timer.borrow_mut() = Some(id);
     }
 
