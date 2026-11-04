@@ -262,7 +262,9 @@ pub struct Dock {
 }
 
 /// Scale of the tile under the pointer.
-pub const MAGNIFY: f32 = 1.15;
+pub const MAGNIFY: f32 = 68.0 / 60.0;
+/// Scale of the two tiles beside it: half a fen of growth where the hovered one has a whole fen.
+pub const NEIGHBOUR: f32 = 64.0 / 60.0;
 /// The hover follows the pointer: a spring (interruptible, a quick pass keeps its speed).
 pub const MAGNIFY_SPRING: Spring = Spring::SNAPPY;
 
@@ -275,6 +277,8 @@ pub struct Magnify {
     /// Hovered tiles so far: their lift and its spring.
     tiles: RefCell<Vec<(glib::WeakRef<gtk::Button>, Lift, Animated)>>,
     hovered: RefCell<Option<glib::WeakRef<gtk::Button>>>,
+    /// The tiles beside the hovered one, at [`NEIGHBOUR`].
+    beside: RefCell<Vec<glib::WeakRef<gtk::Button>>>,
     /// An explicit clock (goldens); else the tile's window clock.
     clock: RefCell<Option<Clock>>,
 }
@@ -285,6 +289,7 @@ impl Default for Magnify {
             on: std::cell::Cell::new(true),
             tiles: Default::default(),
             hovered: Default::default(),
+            beside: Default::default(),
             clock: Default::default(),
         }
     }
@@ -315,12 +320,25 @@ impl Magnify {
         if before.as_ref() == tile {
             return;
         }
-        if let Some(b) = before {
-            self.spring(&b, 1.0);
+        let near: Vec<gtk::Button> = tile.map(neighbours).unwrap_or_default();
+        // What had a scale and has none now springs back.
+        let old: Vec<gtk::Button> = before
+            .into_iter()
+            .chain(self.beside.borrow().iter().filter_map(|w| w.upgrade()))
+            .collect();
+        for b in old {
+            if Some(&b) != tile && !near.contains(&b) {
+                self.spring(&b, 1.0);
+            }
+        }
+        for n in &near {
+            self.spring(n, NEIGHBOUR);
         }
         if let Some(t) = tile {
             self.spring(t, MAGNIFY);
         }
+        self.beside
+            .replace(near.iter().map(|b| b.downgrade()).collect());
         self.hovered.replace(tile.map(|t| t.downgrade()));
     }
 
@@ -362,6 +380,31 @@ impl Magnify {
         };
         a.retarget(to, Motion::Spring(MAGNIFY_SPRING));
     }
+}
+
+/// The tiles on each side of `tile` (separators and other widgets are skipped).
+fn neighbours(tile: &gtk::Button) -> Vec<gtk::Button> {
+    let step = |from: Option<gtk::Widget>, back: bool| {
+        let mut at = from;
+        while let Some(w) = at {
+            if w.has_css_class("dock-tile") {
+                return w.downcast::<gtk::Button>().ok();
+            }
+            at = if back {
+                w.prev_sibling()
+            } else {
+                w.next_sibling()
+            };
+        }
+        None
+    };
+    [
+        step(tile.prev_sibling(), true),
+        step(tile.next_sibling(), false),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// The Dock tile under (`x`, `y`) of `root`.
@@ -914,6 +957,12 @@ impl Dock {
 
     /// The window of `class` came to the front: its bounce stops.
     pub fn focused(&self, class: &str) {
+        for t in &self.shelf.borrow().tiles {
+            t.set_focused(false);
+        }
+        if let Some((t, _)) = self.tile_for(class) {
+            t.set_focused(true);
+        }
         if let Some((t, epochs)) = self.tile_for(class).filter(|(t, _)| t.is_attention()) {
             epochs.set(epochs.get().wrapping_add(1));
             t.set_attention(false);

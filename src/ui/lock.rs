@@ -158,6 +158,20 @@ pub(crate) fn backdrop() -> gtk::Picture {
 
 /// Wallpaper + scrim under `content`.
 pub(crate) fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
+    screen_with(content, false)
+}
+
+/// Narrowest screen that shows the door mark and the word at the upper left: the table says 640, but a card
+/// (624 wide, centred) reaches the 60 + 40 + 12 + word column of the mark below 968, and the two would overlap.
+pub(crate) const CHROME_MIN_WIDTH: i32 = 968;
+
+/// [`screen`] for the installer and Setup: the door mark and the word at the upper left (60 from the
+/// edges), the entry of the page.
+pub(crate) fn assistant_screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
+    screen_with(content, true)
+}
+
+fn screen_with(content: &impl IsA<gtk::Widget>, chrome: bool) -> gtk::Widget {
     let o = gtk::Overlay::new();
     o.add_css_class("lock-screen");
     let tone = {
@@ -190,22 +204,75 @@ pub(crate) fn screen(content: &impl IsA<gtk::Widget>) -> gtk::Widget {
     fit.add_css_class("lock-fit");
     scrim.append(&fit);
     o.add_overlay(&scrim);
+    if chrome {
+        let mark = w::hbox(w::S3);
+        mark.add_css_class("screen-chrome");
+        mark.set_halign(gtk::Align::Start);
+        mark.set_valign(gtk::Align::Start);
+        mark.set_margin_start(w::S15);
+        mark.set_margin_top(w::S15);
+        mark.set_can_target(false);
+        mark.append(&w::app_icon("wolos-mark", w::S10));
+        mark.append(&w::label("WolOS", "screen-brand"));
+        o.add_overlay(&mark);
+        // Below 640 px the card needs the room: the mark steps out of the way.
+        let weak = mark.downgrade();
+        let first = weak.clone();
+        o.add_tick_callback(move |o, _| {
+            // The first frame with a width decides; the surface's layout signal follows later resizes.
+            if o.width() == 0 {
+                return glib::ControlFlow::Continue;
+            }
+            if let Some(m) = first.upgrade() {
+                m.set_visible(o.width() >= CHROME_MIN_WIDTH);
+            }
+            glib::ControlFlow::Break
+        });
+        o.connect_map(move |o| {
+            let Some(surface) = o.native().and_then(|n| n.surface()) else {
+                return;
+            };
+            let weak = weak.clone();
+            surface.connect_layout(move |_, width, _| {
+                if let Some(m) = weak.upgrade() {
+                    m.set_visible(width >= CHROME_MIN_WIDTH);
+                }
+            });
+        });
+    }
     o.upcast()
 }
 
-/// Clock on top, `bottom` (user panel, power row) at the foot.
-fn body(middle: &impl IsA<gtk::Widget>, footer: Option<&gtk::Widget>) -> gtk::Box {
+/// The clock at the upper left (the entry), the user panel at the lower right (the landing), the power row
+/// at the lower left; the wallpaper between them is the calm centre. `footer_at` is where the footer sits.
+fn body_at(
+    middle: &impl IsA<gtk::Widget>,
+    footer: Option<&gtk::Widget>,
+    footer_at: gtk::Align,
+) -> gtk::Box {
     let b = w::vbox(0);
     b.add_css_class("lock-body");
     b.append(&w::clock_header());
     let s = w::vbox(0);
     s.set_vexpand(true);
-    b.append(&s);
-    b.append(middle);
+    let stage = gtk::Overlay::new();
+    stage.set_vexpand(true);
+    stage.set_child(Some(&s));
+    middle.set_halign(gtk::Align::End);
+    middle.set_valign(gtk::Align::End);
+    stage.add_overlay(middle);
     if let Some(f) = footer {
-        b.append(f);
+        f.set_halign(footer_at);
+        f.set_valign(gtk::Align::End);
+        stage.add_overlay(f);
     }
+    b.append(&stage);
     b
+}
+
+/// [`body_at`] with the footer at the lower left (the power row).
+fn body(middle: &impl IsA<gtk::Widget>, footer: Option<&gtk::Widget>) -> gtk::Box {
+    body_at(middle, footer, gtk::Align::Start)
 }
 
 /// The lock screen for one user panel.
@@ -428,10 +495,10 @@ fn lock_screen_with_restart(panel: &w::UserPanel) -> (gtk::Widget, gtk::Box, Rc<
     });
     let foot = w::hbox(0);
     foot.add_css_class("login-power");
-    foot.set_halign(gtk::Align::Center);
     foot.append(&restart);
     foot.set_visible(false);
-    let b = body(&panel.root, Some(foot.upcast_ref()));
+    // Under the message, on the panel's right edge.
+    let b = body_at(&panel.root, Some(foot.upcast_ref()), gtk::Align::End);
     let entrance = Entrance::new(&b, panel, Some(foot.upcast_ref()));
     (screen(&b), foot, entrance)
 }
@@ -480,10 +547,9 @@ pub fn startup_lock_screen(panel: &w::UserPanel) -> gtk::Widget {
 /// [`startup_lock_screen`] with its [`Entrance`]: the power row enters and leaves with the
 /// password field.
 fn startup_screen(panel: &w::UserPanel) -> (gtk::Widget, Rc<Entrance>) {
-    let foot = w::hbox(w::S8);
-    foot.set_halign(gtk::Align::Center);
+    let foot = w::hbox(w::S10);
     foot.add_css_class("login-power");
-    let refused = w::centered("", "lock-caption");
+    let refused = w::label("", "lock-caption");
     refused.set_visible(false);
     for p in Power::ALL {
         let r = refused.clone();
@@ -542,8 +608,8 @@ impl Login {
             .vhomogeneous(false)
             .hhomogeneous(false)
             .build();
-        let tiles = w::hbox(w::S8);
-        tiles.set_halign(gtk::Align::Center);
+        let tiles = w::hbox(w::S6);
+        tiles.set_halign(gtk::Align::End);
         tiles.add_css_class("login-tiles");
         stack.add_named(&tiles, Some("users"));
         let pw = w::vbox(w::S4);
@@ -560,11 +626,10 @@ impl Login {
             );
             stack.set_visible_child_name("none");
         }
-        let foot = w::hbox(w::S8);
-        foot.set_halign(gtk::Align::Center);
+        let foot = w::hbox(w::S10);
         foot.add_css_class("login-power");
         // A power request wol-login did not take is said under the row (it was dropped).
-        let refused = w::centered("", "lock-caption");
+        let refused = w::label("", "lock-caption");
         refused.set_visible(false);
         for p in Power::ALL {
             let r = refused.clone();

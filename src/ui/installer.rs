@@ -163,6 +163,29 @@ fn holder() -> gtk::Box {
     b
 }
 
+/// "N of 7" on the main path: language, time zone, disk (and how), account, extras, summary, installing.
+/// The pages before and after (the welcome, the end) carry no count.
+fn position(step: Step) -> Option<(usize, usize)> {
+    let at = match step {
+        Step::Language => 1,
+        Step::Zone => 2,
+        Step::Disk
+        | Step::Method
+        | Step::Replace
+        | Step::Alongside
+        | Step::Manual
+        | Step::Edit
+        | Step::Protect
+        | Step::SecureBootChoice => 3,
+        Step::Account => 4,
+        Step::Modules | Step::Extras => 5,
+        Step::Summary | Step::SecureBoot => 6,
+        Step::Installing => 7,
+        Step::Begin | Step::Done | Step::Failed | Step::KeyUnread => return None,
+    };
+    Some((at, 7))
+}
+
 impl Installer {
     pub fn new(
         hints: &Hints,
@@ -171,6 +194,7 @@ impl Installer {
         zones: Vec<String>,
         disks: Option<Vec<Found>>,
     ) -> Rc<Installer> {
+        a::set_header_icon("wolos-installer");
         let pager = a::pager();
         let (along_warn, along_warning) = a::warning("");
         let (method_warn, method_warning) = a::warning("");
@@ -217,7 +241,7 @@ impl Installer {
             flow.set_disks(d);
         }
         let s = Rc::new(Installer {
-            root: super::lock::screen(&pager),
+            root: super::lock::assistant_screen(&pager),
             pager,
             flow: RefCell::new(flow),
             cards: Default::default(),
@@ -385,6 +409,7 @@ impl Installer {
             step,
             Step::Begin | Step::Done | Step::Failed | Step::Installing | Step::KeyUnread
         ));
+        card.set_step(position(step));
     }
 
     /// Refreshes `step`'s page and shows it.

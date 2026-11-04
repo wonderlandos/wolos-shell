@@ -88,7 +88,7 @@ pub fn cases() -> Vec<Case> {
         Case {
             // The Dock with the pointer on its first tile: the tile settled at 1.15.
             name: "motion-dock-hover".into(),
-            size: (960, 140),
+            size: (975, 140),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {

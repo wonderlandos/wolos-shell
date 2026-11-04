@@ -3,6 +3,7 @@
 pub mod anim;
 pub mod assistant;
 pub mod check;
+pub mod column;
 pub mod controls;
 pub mod data;
 pub mod fence;

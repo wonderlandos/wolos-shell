@@ -1,6 +1,20 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Dark appearance: appended after kit.css (theme::stylesheet) when the theme is dark. The Dock's
-   half-alpha glass read light over the bright default wallpaper in dark mode (MANUAL 0.12.0: only
-   the menu bar looked dark), so in dark the shelf takes the menu bar's material and both bars of
-   the desktop read dark together. */
+/* WolOS kit, dark scheme: the elevation shadows and the glass rim on a dark ground (kit.css has the light values).
+   Appended after kit.css while the active theme is dark (theme::stylesheet). One light upper left, shadows at 1:2
+   in the deep ink, never grey. */
+:root {
+  --elev-1: 1px 2px 4px rgba(2,2,6,0.25);
+  --elev-2: 2px 4px 12px rgba(2,2,6,0.32);
+  --elev-3: 3px 6px 24px rgba(2,2,6,0.43);
+  --glass-rim: rgba(255,255,255,0.20);
+  --tint-water: #35BEEE;
+  --tint-earth: #FFD189;
+  --tint-base: #9181FF;
+  --tint-wood: #6BC681;
+  --tint-fire: #EE7E66;
+}
+/* White on the lighter danger is 2.6:1: the destructive button takes the ground colour as its ink. */
+button.btn-destructive { color: var(--surface); }
+/* The Dock's glass read light over the bright default wallpaper in dark mode (MANUAL 0.12.0: only the menu bar
+   looked dark), so in dark the shelf takes the menu bar's material and both bars of the desktop read dark together. */
 .dock-shelf { background: var(--bar-fill); }

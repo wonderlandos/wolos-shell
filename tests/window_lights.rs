@@ -23,7 +23,7 @@ fn app_windows_draw_no_window_buttons() {
 #[test]
 fn the_toolbar_leaves_the_title_to_the_strip() {
     assert!(!WIDGETS.contains("toolbar-title"));
-    assert!(CSS.contains(".toolbar { min-height: 36px;"));
+    assert!(CSS.contains(".toolbar { min-height: 40px;"));
 }
 
 #[test]

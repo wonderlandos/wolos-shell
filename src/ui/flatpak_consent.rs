@@ -99,7 +99,7 @@ fn app_image(icon: &str) -> gtk::Image {
 pub fn content(i: &Info) -> (gtk::Widget, gtk::Button, gtk::Button) {
     let root = w::glass_panel(0);
     root.add_css_class("approval");
-    root.set_width_request(w::CONTROL_CENTER_WIDTH + w::S8);
+    root.set_width_request(w::CONTROL_CENTER_WIDTH + w::S4);
     let b = w::vbox(w::S3);
     let head = w::hbox(w::S3);
     head.append(&app_image(&i.icon));

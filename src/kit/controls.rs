@@ -16,7 +16,7 @@ pub const TILE_LABEL_CHARS: i32 = 13;
 /// Lines a tile caption wraps to before it is ellipsised.
 pub const TILE_LABEL_LINES: i32 = 2;
 /// Now Playing cover art edge.
-pub const ART: i32 = 48;
+pub const ART: i32 = 40;
 
 /// 16 px icon centred in a [`CIRCLE`] disc (the disc is the image's own CSS box).
 fn circle(icon_name: &str) -> gtk::Image {
@@ -45,7 +45,7 @@ pub struct ToggleTile {
 impl ToggleTile {
     pub fn new(icon_name: &str, title: &str) -> Self {
         let col = w::vbox(S1);
-        col.set_valign(gtk::Align::Center);
+        col.set_valign(gtk::Align::Start);
         let circle = circle(icon_name);
         col.append(&circle);
         // Wraps to two lines, ellipsised only past them: the whole name reads in the tile.
@@ -304,7 +304,7 @@ impl SliderModule {
         changed: impl Fn(f64) + 'static,
         detail: Option<&str>,
     ) -> Self {
-        let b = w::vbox(S2);
+        let b = w::vbox(0);
         let head = w::hbox(S2);
         let t = w::label(title, "title");
         t.set_hexpand(true);
@@ -664,7 +664,7 @@ pub struct BatteryTile {
 impl BatteryTile {
     pub fn new() -> Self {
         let col = w::vbox(S1);
-        col.set_valign(gtk::Align::Center);
+        col.set_valign(gtk::Align::Start);
         let disc = w::hbox(0);
         disc.add_css_class("icon-circle");
         disc.set_size_request(CIRCLE, CIRCLE);

@@ -176,10 +176,10 @@ fn journal_theme(text: Option<&str>) -> std::io::Result<()> {
 /// Kit stylesheet: the only visual style (HIG). Colours via `var(--token)`.
 pub const KIT_CSS: &str = include_str!("kit/kit.css");
 
-/// What only a dark theme changes, after the kit CSS (the Dock's shelf).
+/// The dark scheme's elevation shadows and glass rim, over the light values in [`KIT_CSS`].
 pub const DARK_CSS: &str = include_str!("kit/dark.css");
 
-/// Token block, then the kit CSS (and [`DARK_CSS`] for a dark theme), then surface glue.
+/// Token block, then the kit CSS (and the dark scheme's shadows), then surface glue.
 pub fn stylesheet(t: &Theme, extra: &str) -> String {
     let mut s = t.css();
     s.push_str(KIT_CSS);
@@ -414,7 +414,8 @@ mod tests {
         assert!(shelf(true, "wol-dark").contains("background: var(--bar-fill)"));
         assert!(shelf(true, "wol-dark-blue").contains("background: var(--bar-fill)"));
         let light = shelf(false, "wol-light");
-        assert!(light.contains("var(--glass) 50%"), "{light}");
+        assert!(light.contains("var(--glass) var(--dock-mix, 58%)"), "{light}");
+        assert!(!light.contains("--bar-fill"), "{light}");
         assert!(!stylesheet(&resolve(Some("wol-light"), false), "").contains(DARK_CSS));
         assert!(KIT_CSS.contains("--bar-fill: alpha(var(--surface)"));
     }

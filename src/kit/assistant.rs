@@ -8,21 +8,34 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 /// Card size: every question page has it, so Back/Continue never move between pages.
-pub const CARD: (i32, i32) = (600, 540);
+pub const CARD: (i32, i32) = (624, 588);
 /// List rows the card shows at once (whole rows; the rest scroll).
 pub const ROWS: i32 = 5;
-pub const ROW: i32 = 36;
-/// Header art on a card (illustrations; symbolic icons use `w::ICON_L`).
-pub const ART: i32 = 96;
-/// Smallest stage art on a moment card (it grows into the room the text leaves).
-pub const ART_L: i32 = 160;
+pub const ROW: i32 = 40;
+/// The app icon at the card's upper left (A2, the same on every page of one assistant).
+pub const ART: i32 = 40;
+/// The art tile of a moment card, at the right of the content (232 square).
+pub const ART_L: i32 = 232;
+/// Back, and an extra action beside Continue; Continue is the landing: 168 x 40.
+pub const BACK_WIDTH: i32 = 96;
+pub const NEXT_WIDTH: i32 = 168;
 /// Account avatar and the tone dots under it.
 pub const AVATAR: i32 = 64;
 pub const TONE: i32 = 20;
-/// Form label column on the account card.
-pub const LABEL_CHARS: i32 = 12;
+/// Form label column on the account card (left-aligned; fields start 12 after it).
+pub const LABEL_WIDTH: i32 = 120;
 /// Welcome title column: never wider than the calm left part of the art.
-pub const HERO_COLUMN: i32 = 520;
+pub const HERO_COLUMN: i32 = 480;
+thread_local! {
+    /// The icon in the header of every card of this assistant (the installer's, or the door mark in Setup).
+    static HEADER_ICON: std::cell::Cell<&'static str> = const { std::cell::Cell::new("wolos-installer") };
+}
+
+/// Sets the app icon every card of this assistant carries at its upper left.
+pub fn set_header_icon(name: &'static str) {
+    HEADER_ICON.set(name);
+}
+
 /// Cross-fade between pages (same as `--glass-motion`).
 pub const PAGE_MS: u32 = super::reveal::REVEAL_MS;
 
@@ -105,16 +118,20 @@ fn paint_with(area: &gtk::DrawingArea, img: gtk::cairo::ImageSurface, place: Pla
     });
 }
 
-/// Moment-card art: fills the room the text leaves (at least `ART_L` tall), fitted and centred,
-/// so the card's insets stay equal and nothing floats; the WolOS mark when not installed.
+/// Moment-card art: a 232 px square tile at the right of the content, the picture fitted and centred in
+/// it; the WolOS mark when not installed.
 pub fn stage(name: &str) -> gtk::Widget {
     let Some(img) = surface(name) else {
-        return w::icon("wolos-mark", ART_L).upcast();
+        let m = w::icon("wolos-mark", ART_L);
+        m.set_halign(gtk::Align::End);
+        m.set_valign(gtk::Align::Start);
+        return m.upcast();
     };
     let area = gtk::DrawingArea::builder()
-        .hexpand(true)
-        .vexpand(true)
+        .content_width(ART_L)
         .content_height(ART_L)
+        .halign(gtk::Align::End)
+        .valign(gtk::Align::Start)
         .build();
     area.add_css_class("assistant-stage");
     paint_with(&area, img, contain_centred);
@@ -227,33 +244,34 @@ pub struct Card {
     pub status: gtk::Label,
     pub subtitle: gtk::Label,
     pub busy: gtk::Spinner,
+    /// "N of M", at the right of the title row (hidden until [`Card::set_step`]).
+    pub step: gtk::Label,
     foot: gtk::Box,
 }
 
 impl Card {
     /// Question card: art, title and subtitle on top, `body` filling the middle.
     pub fn new(art: Art, title: &str, subtitle: &str, body: &impl IsA<gtk::Widget>) -> Card {
-        let art: gtk::Widget = match art {
-            Art::Icon(name) => {
-                let i = w::icon(name, w::ICON_L);
-                i.add_css_class("assistant-icon");
-                i.upcast()
+        // The header carries the app icon on every page; a page's own widget (the avatar picker) stands
+        // at the top of its body.
+        let art = match art {
+            Art::Widget(wd) => {
+                wd.set_halign(gtk::Align::Center);
+                Some(wd)
             }
-            Art::Illustration(name) => illustration(name, ART),
-            Art::Widget(wd) => wd,
+            Art::Icon(_) | Art::Illustration(_) => None,
         };
-        art.set_halign(gtk::Align::Center);
-        Card::build(&art, title, subtitle, body, false)
+        Card::build(art.as_ref(), title, subtitle, body, false)
     }
 
     /// Moment card (done, installing, failed): illustration `art` large (`stage`), then title,
     /// subtitle and `body` above the foot.
     pub fn moment(art: &str, title: &str, subtitle: &str, body: &impl IsA<gtk::Widget>) -> Card {
-        Card::build(&stage(art), title, subtitle, body, true)
+        Card::build(Some(&stage(art)), title, subtitle, body, true)
     }
 
     fn build(
-        art: &gtk::Widget,
+        art: Option<&gtk::Widget>,
         title: &str,
         subtitle: &str,
         body: &impl IsA<gtk::Widget>,
@@ -264,28 +282,65 @@ impl Card {
         c.set_size_request(CARD.0, CARD.1);
         c.set_halign(gtk::Align::Center);
         c.set_valign(gtk::Align::Center);
+        // The title row is the entry: icon and title at the upper left, the step at the upper right.
+        let row = w::hbox(S4);
+        row.append(&w::app_icon(HEADER_ICON.get(), ART));
+        let t = w::label(title, "large-title");
+        t.set_hexpand(true);
+        t.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        row.append(&t);
+        let step = w::label("", "assistant-step");
+        step.set_xalign(1.0);
+        step.set_visible(false);
+        row.append(&step);
         let head = w::vbox(S2);
-        head.append(art);
-        head.append(&w::centered(title, "large-title"));
-        let sub = w::centered(subtitle, "assistant-subtitle");
+        head.append(&row);
+        let sub = w::label(subtitle, "assistant-subtitle");
         wraps(&sub);
-        head.append(&sub);
-        let b = w::vbox(0);
+        let b = w::vbox(S4);
         b.add_css_class("assistant-body");
+        if moment {
+            // The words stand in a 232 px column at the left, the art answers at the right.
+            let mid = w::hbox(S6);
+            // As tall as the art (the row's children share one vertical centre); the words start at the top.
+            let words = w::vbox(0);
+            words.set_width_request(ART_L);
+            words.set_valign(gtk::Align::Fill);
+            sub.set_valign(gtk::Align::Start);
+            words.append(&sub);
+            mid.append(&words);
+            let gap = w::spacer();
+            gap.set_valign(gtk::Align::Fill);
+            mid.append(&gap);
+            if let Some(a) = art {
+                a.set_valign(gtk::Align::Fill);
+                mid.append(a);
+            }
+            head.append(&mid);
+        } else {
+            head.append(&sub);
+            if let Some(a) = art {
+                b.append(a);
+            }
+        }
         // Question: the body takes the spare room and sits in the middle of it, so a short list
         // (one disk) is balanced between the header and the foot instead of floating above dead
         // space; the card keeps its size, so Back and Continue never move between pages.
-        // Moment: the stage art takes the room.
+        // Moment: the body sits at the foot, under the art.
         if !moment && !body.vexpands() && body.valign() == gtk::Align::Fill {
             body.set_valign(gtk::Align::Center);
         }
         b.append(body);
-        b.set_vexpand(!moment);
+        b.set_vexpand(true);
+        if moment {
+            b.set_valign(gtk::Align::End);
+        }
         c.append(&head);
         c.append(&b);
-        let foot = w::hbox(S2);
+        let foot = w::hbox(S3);
         foot.add_css_class("assistant-foot");
         let back = w::button("Back", w::Kind::Default, || {});
+        back.set_size_request(BACK_WIDTH, -1);
         foot.append(&back);
         let status = w::label("", "assistant-status");
         wraps(&status);
@@ -299,6 +354,7 @@ impl Card {
         busy.set_visible(false);
         foot.append(&busy);
         let next = w::button("Continue", w::Kind::Primary, || {});
+        next.set_size_request(NEXT_WIDTH, -1);
         foot.append(&next);
         c.append(&foot);
         Card {
@@ -308,7 +364,19 @@ impl Card {
             status,
             subtitle: sub,
             busy,
+            step,
             foot,
+        }
+    }
+
+    /// "N of M" at the right of the title row; `None` hides it.
+    pub fn set_step(&self, at: Option<(usize, usize)>) {
+        match at {
+            Some((n, of)) => {
+                self.step.set_label(&format!("{n} of {of}"));
+                self.step.set_visible(true);
+            }
+            None => self.step.set_visible(false),
         }
     }
 
@@ -317,8 +385,9 @@ impl Card {
         self.foot.set_visible(false);
     }
 
-    /// Extra button left of Continue ("Not Now").
+    /// Extra button left of Continue ("Not Now"): plain, 96 wide.
     pub fn add_action(&self, b: &gtk::Button) {
+        b.set_size_request(BACK_WIDTH, -1);
         self.foot.insert_child_after(b, Some(&self.busy));
     }
 
@@ -448,8 +517,8 @@ pub fn form_row(title: &str, field: &impl IsA<gtk::Widget>) -> gtk::Box {
     let r = w::hbox(S3);
     r.add_css_class("assistant-form-row");
     let l = w::label(title, "assistant-form-label");
-    l.set_width_chars(LABEL_CHARS);
-    l.set_xalign(1.0);
+    l.set_width_request(LABEL_WIDTH);
+    l.set_xalign(0.0);
     r.append(&l);
     field.set_hexpand(true);
     r.append(field);
@@ -596,7 +665,7 @@ fn wraps(l: &gtk::Label) {
 pub const DISK_BAR: i32 = S6;
 pub const DISK_DOT: i32 = S2;
 /// The card's inside width: the bar fills it.
-pub const DISK_BAR_WIDTH: i32 = CARD.0 - 2 * S6 - 2 * super::widgets::S8;
+pub const DISK_BAR_WIDTH: i32 = CARD.0 - 2 * S6 - 2 * super::widgets::S10;
 /// A sliver of a partition still shows.
 pub const DISK_SEG_MIN: i32 = S1;
 

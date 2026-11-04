@@ -11,7 +11,10 @@ pub const S2: i32 = 8;
 pub const S3: i32 = 12;
 pub const S4: i32 = 16;
 pub const S6: i32 = 24;
-pub const S8: i32 = 32;
+/// 32 is retired (brand-screens): 40 or 24. The lengths past 24 are the fen's named ones: 40, 60, 84.
+pub const S10: i32 = 40;
+pub const S15: i32 = 60;
+pub const S21: i32 = 84;
 /// Padding of every glass panel and card, equal on all four sides (kit.css `--inset`).
 pub const INSET: i32 = S3;
 /// Icon sizes (HIG §2): rows/toolbar, file and app tiles.
@@ -22,23 +25,23 @@ pub const ICON_M: i32 = 32;
 pub const ICON_L: i32 = 48;
 pub const ICON_XL: i32 = 64;
 /// Shell metrics.
-pub const DOCK_TILE: i32 = 56;
+pub const DOCK_TILE: i32 = 60;
 /// Menu bar strip height. kit.css (`.menubar-strip`) and the desktop hyprland.conf (hyprbars
 /// `bar_height`) carry the same number; tests/css_classes.rs keeps them together.
 pub const MENUBAR_HEIGHT: i32 = 28;
-pub const CONTROL_CENTER_WIDTH: i32 = 320;
-pub const SEARCHBAR_WIDTH: i32 = 680;
+pub const CONTROL_CENTER_WIDTH: i32 = 336;
+pub const SEARCHBAR_WIDTH: i32 = 576;
 pub const PANEL_TOP: i32 = 160;
-pub const SIDEBAR_WIDTH: i32 = 220;
+pub const SIDEBAR_WIDTH: i32 = 240;
 /// Default app window and the narrow size every app must fit (HIG §5).
 pub const APP_SIZE: (i32, i32) = (900, 600);
 pub const APP_NARROW: (i32, i32) = (480, 360);
 /// Below this window width the sidebar collapses.
 pub const NARROW: i32 = 640;
-pub const LOCK_FIELD_WIDTH: i32 = 200;
-pub const LOCK_FIELD_HEIGHT: i32 = 28;
+pub const LOCK_FIELD_WIDTH: i32 = 240;
+pub const LOCK_FIELD_HEIGHT: i32 = 40;
 /// Gap between the password field's peek glyph and the submit disc inside the lock pill.
-pub const LOCK_PILL_GAP: i32 = 6;
+pub const LOCK_PILL_GAP: i32 = 8;
 /// Caption width under icon tiles (switcher).
 pub const TILE_CHARS: i32 = 14;
 /// Overview desktop thumbnail and window title line.
@@ -49,7 +52,7 @@ pub const CAPTURE_THUMB: (i32, i32) = (200, 125);
 /// About <App> panel width.
 pub const ABOUT_WIDTH: i32 = 280;
 /// Force Quit Applications panel: width, list height before it scrolls (about six apps).
-pub const FORCE_QUIT: (i32, i32) = (360, 240);
+pub const FORCE_QUIT: (i32, i32) = (336, 240);
 
 pub fn vbox(spacing: i32) -> gtk::Box {
     gtk::Box::new(gtk::Orientation::Vertical, spacing)
@@ -654,7 +657,7 @@ fn toggle_face(t: &gtk::Button, sidebar_shown: bool) {
     t.set_tooltip_text(Some(tip));
 }
 
-/// HIG §1 AppWindow: 36px glass toolbar (actions, search), 220px sidebar, content, status bar.
+/// HIG §1 AppWindow: 40px glass toolbar (actions, search), 240px sidebar, content, status bar.
 /// The compositor draws the window buttons and the title, in a 28px strip above the toolbar.
 pub struct AppWindow {
     pub root: gtk::Box,
@@ -667,6 +670,8 @@ pub struct AppWindow {
     pub sidebar_toggle: gtk::Button,
     /// Narrow only: true shows the sidebar alone, false goes back to the content (no-op when wide).
     show_sidebar: Rc<dyn Fn(bool)>,
+    /// Widest a page gets (0: the whole pane). Settings: one ruler of content, centred.
+    column: Cell<(i32, (i32, i32))>,
 }
 
 impl AppWindow {
@@ -825,6 +830,7 @@ impl AppWindow {
             status,
             sidebar_toggle,
             show_sidebar,
+            column: Cell::new((0, (0, 0))),
         }
     }
 
@@ -849,15 +855,36 @@ impl AppWindow {
         let r = gtk::ListBoxRow::builder().child(&row).name(title).build();
         r.add_css_class("source-item");
         self.sidebar.append(&r);
-        let scroll = gtk::ScrolledWindow::builder()
-            .child(page)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build();
+        let scroll = self.scrolled(page);
         self.content.add_named(&scroll, Some(title));
         if self.sidebar.selected_row().is_none() {
             self.sidebar.select_row(Some(&r));
             self.content.set_visible_child_name(title);
         }
+    }
+
+    /// Pages stand in a centred column at most `max` px wide (0: the whole pane).
+    pub fn set_column(&self, max: i32) {
+        self.column.set((max, (0, 0)));
+    }
+
+    /// As [`set_column`](Self::set_column), and `wide` = (room needed, width then) for a wide window.
+    pub fn set_column_wide(&self, max: i32, wide: (i32, i32)) {
+        self.column.set((max, wide));
+    }
+
+    /// A page in its scroller, and in the column when there is one.
+    fn scrolled(&self, page: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
+        let b = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .build();
+        let (max, wide) = self.column.get();
+        if max > 0 {
+            b.set_child(Some(&super::column::column(page, max, wide)));
+        } else {
+            b.set_child(Some(page));
+        }
+        b
     }
 
     pub fn select(&self, title: &str) {
@@ -938,6 +965,14 @@ impl DockTile {
         }
         if on {
             self.set_launching(false);
+        }
+    }
+    /// The app has the keys: its dot is the accent pill.
+    pub fn set_focused(&self, on: bool) {
+        if on {
+            self.dot.add_css_class("focused");
+        } else {
+            self.dot.remove_css_class("focused");
         }
     }
     pub fn is_running(&self) -> bool {
@@ -1051,15 +1086,34 @@ pub fn module(child: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
-/// Section colours of the icon language (kit.css `--tint-*`): a sidebar glyph carries one, chosen
-/// from its icon name, so a section keeps its colour wherever it is listed.
-pub const TINTS: [&str; 6] = [
-    "tint-wolos",
-    "tint-files",
-    "tint-web",
-    "tint-talk",
-    "tint-media",
-    "tint-store",
+/// The four phases of the sidebar (kit.css `--tint-*`): a sidebar glyph carries the tint of its group, not of
+/// its own: connect is water, alerts are earth, the system is the base violet, safety and power are wood.
+/// Fire (`--tint-fire`) is for errors only and never a sidebar tint.
+pub const TINTS: [&str; 4] = ["tint-water", "tint-earth", "tint-base", "tint-wood"];
+
+/// Glyphs of the groups that are not the system: connect (water), alerts (earth), safety and power (wood).
+const WATER: [&str; 4] = [
+    "network-wireless-symbolic",
+    "bluetooth-active-symbolic",
+    "network-wired-symbolic",
+    "package-x-generic-symbolic",
+];
+const EARTH: [&str; 7] = [
+    "preferences-system-notifications-symbolic",
+    "audio-volume-high-symbolic",
+    // The Store's own phase: Discover and the categories.
+    "starred-symbolic",
+    "applications-graphics-symbolic",
+    "applications-office-symbolic",
+    "applications-games-symbolic",
+    "applications-engineering-symbolic",
+];
+const WOOD: [&str; 5] = [
+    "system-lock-screen-symbolic",
+    "security-high-symbolic",
+    "system-users-symbolic",
+    "battery-full-symbolic",
+    "software-update-available-symbolic",
 ];
 
 /// FNV-1a: a hash that is the same on every run and every machine (std's is seeded).
@@ -1074,9 +1128,17 @@ fn pick(text: &str, len: usize) -> usize {
     usize::try_from(stable_hash(text)).map_or(0, |h| h % len)
 }
 
-/// The section colour class of `icon_name`.
+/// The phase colour class of `icon_name`'s group; the system violet for any glyph no group claims.
 pub fn tint_of(icon_name: &str) -> &'static str {
-    TINTS[pick(icon_name, TINTS.len())]
+    if WATER.contains(&icon_name) {
+        TINTS[0]
+    } else if EARTH.contains(&icon_name) {
+        TINTS[1]
+    } else if WOOD.contains(&icon_name) {
+        TINTS[3]
+    } else {
+        TINTS[2]
+    }
 }
 
 /// The avatar tone of a name nobody picked a colour for: the same name, the same colour, from the
@@ -1107,12 +1169,13 @@ pub fn avatar(name: &str, size: i32) -> gtk::Label {
     l.set_valign(gtk::Align::Center);
     l
 }
-pub const AVATAR_XL: i32 = 96;
+pub const AVATAR_XL: i32 = 84;
 
 /// Lock/login clock: big time + long date, ticking on minute boundaries.
 pub fn clock_header() -> gtk::Box {
     let b = vbox(0);
-    let (time, date) = (centered("", "lock-time"), centered("", "lock-date"));
+    b.set_halign(gtk::Align::Start);
+    let (time, date) = (label("", "lock-time"), label("", "lock-date"));
     b.append(&time);
     b.append(&date);
     super::every_minute(move || {
@@ -1242,7 +1305,7 @@ impl UserPanel {
 pub const PREVIEW: (i32, i32) = (112, 72);
 pub const SWATCH: i32 = 20;
 /// Toolbar sheet width (Authenticate, Join, Add User).
-pub const SHEET_WIDTH: i32 = 360;
+pub const SHEET_WIDTH: i32 = 336;
 
 /// Token colours one preview slice paints (from a resolved theme, never literals).
 #[derive(Clone, Copy, Debug)]
@@ -1524,13 +1587,13 @@ pub const VALUE_CHARS: i32 = 18;
 // ---- App Store components (appended) ----
 
 /// Store tile width (Discover rows, category grids) and hero icon size.
-pub const STORE_TILE: i32 = 196;
+pub const STORE_TILE: i32 = 264;
 /// Summary width in characters inside a store tile.
-pub const TILE_SUMMARY_CHARS: i32 = 18;
+pub const TILE_SUMMARY_CHARS: i32 = 12;
 pub const RING: i32 = 24;
 
 /// Hero banner icon size.
-pub const HERO_ICON: i32 = 128;
+pub const HERO_ICON: i32 = 120;
 /// App Store details: one screenshot (16:9).
 pub const SCREENSHOT_W: i32 = 400;
 pub const SCREENSHOT_H: i32 = 225;
@@ -1705,7 +1768,7 @@ pub fn hero_banner(
     icon: &gtk::Widget,
     action: &gtk::Button,
 ) -> gtk::Box {
-    let b = hbox(S4);
+    let b = hbox(S6);
     b.add_css_class("hero-banner");
     b.add_css_class(&gradient_class(colors));
     let t = vbox(S2);
@@ -1716,6 +1779,7 @@ pub fn hero_banner(
     tl.set_wrap(true);
     t.append(&tl);
     let s = label(subhead, "hero-subhead");
+    s.set_max_width_chars(46);
     s.set_wrap(true);
     t.append(&s);
     action.set_halign(gtk::Align::Start);
@@ -1822,10 +1886,7 @@ impl AppWindow {
 
     /// Content page with no sidebar row (search results); show it with `content.set_visible_child_name`.
     pub fn hidden_page(&self, name: &str, page: &impl IsA<gtk::Widget>) {
-        let scroll = gtk::ScrolledWindow::builder()
-            .child(page)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build();
+        let scroll = self.scrolled(page);
         self.content.add_named(&scroll, Some(name));
     }
 }
