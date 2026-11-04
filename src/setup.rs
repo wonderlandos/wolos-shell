@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Setup Assistant model (ADR 0004, ADR 0013): steps, choices, account draft and the flow that
 //! drives them. Pure; the UI (`ui::setup`) renders a [`Flow`] and runs its [`Job`]s.
+use crate::i18n::{tr, tr_fill};
 use crate::login::Verdict;
 use shared::login::{AVATAR_TONES, NewAccount};
 
@@ -19,8 +20,12 @@ pub enum Step {
 
 /// Welcome, the key screen when it is pending, four questions, Done.
 /// The account form's two problems that both checks report.
-const NO_MATCH: &str = "Passwords don’t match.";
-const HINT_IS_PASSWORD: &str = "The hint can’t be the password.";
+fn no_match() -> &'static str {
+    tr("Passwords don’t match.")
+}
+fn hint_is_password() -> &'static str {
+    tr("The hint can’t be the password.")
+}
 
 pub const STEPS: [Step; 7] = [
     Step::Welcome,
@@ -35,28 +40,30 @@ pub const STEPS: [Step; 7] = [
 impl Step {
     pub fn title(self) -> &'static str {
         match self {
-            Step::Welcome => "Welcome",
-            Step::KeyScreen => "Finish Secure Boot Setup",
-            Step::Language => "Language & Region",
+            Step::Welcome => tr("Welcome"),
+            Step::KeyScreen => tr("Finish Secure Boot Setup"),
+            Step::Language => tr("Language & Region"),
             Step::Wifi => "Wi-Fi",
-            Step::Account => "Create Your Account",
-            Step::Appearance => "Appearance",
-            Step::Done => "You're All Set",
+            Step::Account => tr("Create Your Account"),
+            Step::Appearance => tr("Appearance"),
+            Step::Done => tr("You're All Set"),
         }
     }
 
     /// One sentence under the title: what this page is for.
     pub fn subtitle(self) -> &'static str {
         match self {
-            Step::Welcome => "Let’s get you set up.",
-            Step::KeyScreen => {
-                "This computer hasn’t accepted its WolOS key yet. At the next restart a blue screen asks once."
+            Step::Welcome => tr("Let’s get you set up."),
+            Step::KeyScreen => tr(
+                "This computer hasn’t accepted its WolOS key yet. At the next restart a blue screen asks once.",
+            ),
+            Step::Language => {
+                tr("WolOS uses this language and keyboard. You can change them later.")
             }
-            Step::Language => "WolOS uses this language and keyboard. You can change them later.",
-            Step::Wifi => "Choose a network to get online. You can skip this and join later.",
-            Step::Account => "You’ll use this name and password to sign in.",
-            Step::Appearance => "Choose a look. You can change it any time in System Settings.",
-            Step::Done => "Your account is ready.",
+            Step::Wifi => tr("Choose a network to get online. You can skip this and join later."),
+            Step::Account => tr("You’ll use this name and password to sign in."),
+            Step::Appearance => tr("Choose a look. You can change it any time in System Settings."),
+            Step::Done => tr("Your account is ready."),
         }
     }
 
@@ -107,18 +114,22 @@ const fn lang(
     }
 }
 
+/// The languages Setup and the installer offer, in [`wol_core::region::LANGUAGES`]' order (the
+/// lead's priority, L10N-2; `languages_match_settings` keeps the two lists one). A Russian
+/// computer starts on the U.S. layout: the account name and password are typed in Latin letters
+/// (Russian is one pick away in the keyboard list).
 pub const LANGUAGES: [Language; 7] = [
     lang("English", "United States", "en_US.UTF-8", "us"),
-    lang("English", "United Kingdom", "en_GB.UTF-8", "gb"),
     lang("Português", "Brasil", "pt_BR.UTF-8", "br"),
-    lang("Português", "Portugal", "pt_PT.UTF-8", "pt"),
-    lang("Español", "España", "es_ES.UTF-8", "es"),
+    lang("日本語", "日本", "ja_JP.UTF-8", "jp"),
     lang("Français", "France", "fr_FR.UTF-8", "fr"),
+    lang("Русский", "Россия", "ru_RU.UTF-8", "us"),
+    lang("Italiano", "Italia", "it_IT.UTF-8", "it"),
     lang("Deutsch", "Deutschland", "de_DE.UTF-8", "de"),
 ];
 
 /// (xkb layout, name): the same list Settings > Keyboard offers.
-pub const KEYBOARDS: [(&str, &str); 8] = wol_core::prefs::LAYOUTS;
+pub const KEYBOARDS: [(&str, &str); 11] = wol_core::prefs::LAYOUTS;
 
 /// Applies xkb layout `k` (`us(intl)` = layout `us`, variant `intl`) to the running compositor, so
 /// the password typed in Setup is typed on the keyboard the session will use.
@@ -135,21 +146,26 @@ pub fn keyboard_command(k: &str) -> Vec<String> {
 }
 
 /// Time zone prefix -> locale, for machines that know where they are but not the language.
-const ZONES: [(&str, &str); 14] = [
+const ZONES: [(&str, &str); 19] = [
     ("America/Sao_Paulo", "pt_BR.UTF-8"),
     ("America/Fortaleza", "pt_BR.UTF-8"),
     ("America/Recife", "pt_BR.UTF-8"),
     ("America/Manaus", "pt_BR.UTF-8"),
     ("America/Bahia", "pt_BR.UTF-8"),
     ("Brazil/", "pt_BR.UTF-8"),
-    ("Europe/Lisbon", "pt_PT.UTF-8"),
-    ("Europe/London", "en_GB.UTF-8"),
-    ("Europe/Dublin", "en_GB.UTF-8"),
-    ("Europe/Madrid", "es_ES.UTF-8"),
+    ("Asia/Tokyo", "ja_JP.UTF-8"),
+    ("Japan", "ja_JP.UTF-8"),
     ("Europe/Paris", "fr_FR.UTF-8"),
+    ("Europe/Moscow", "ru_RU.UTF-8"),
+    ("Europe/Samara", "ru_RU.UTF-8"),
+    ("Asia/Yekaterinburg", "ru_RU.UTF-8"),
+    ("Asia/Novosibirsk", "ru_RU.UTF-8"),
+    ("Asia/Vladivostok", "ru_RU.UTF-8"),
+    ("Europe/Rome", "it_IT.UTF-8"),
     ("Europe/Berlin", "de_DE.UTF-8"),
     ("Europe/Vienna", "de_DE.UTF-8"),
     ("Europe/Zurich", "de_DE.UTF-8"),
+    ("Europe/Lisbon", "pt_BR.UTF-8"),
 ];
 
 /// Console keymap (`KEYMAP=` in vconsole.conf, `br-abnt2`, `de-latin1`) -> xkb layout.
@@ -166,6 +182,9 @@ fn xkb_of_console(keymap: &str) -> Option<&'static str> {
         "de" => "de",
         "fr" => "fr",
         "es" => "es",
+        "it" => "it",
+        "ru" => "ru",
+        "jp106" | "jp" => "jp",
         _ => return None,
     })
 }
@@ -308,9 +327,9 @@ impl Appearance {
 
     pub fn title(self) -> &'static str {
         match self {
-            Appearance::Light => "Light",
-            Appearance::Dark => "Dark",
-            Appearance::Auto => "Auto",
+            Appearance::Light => tr("Light"),
+            Appearance::Dark => tr("Dark"),
+            Appearance::Auto => tr("Auto"),
         }
     }
 }
@@ -420,43 +439,46 @@ impl Draft {
     /// First thing to fix on the account card: the field and one sentence; None to continue.
     pub fn account_problem(&self) -> Option<(Field, &'static str)> {
         if self.full_name.trim().is_empty() {
-            return Some((Field::FullName, "Enter your full name."));
+            return Some((Field::FullName, tr("Enter your full name.")));
         }
         // A reserved or existing name says so; the core rules refuse reserved names as "name" too.
         if self.name_taken(&self.name) {
-            return Some((Field::Name, crate::copy::INSTALL_NAME_TAKEN));
+            return Some((
+                Field::Name,
+                crate::i18n::tr(crate::copy::INSTALL_NAME_TAKEN),
+            ));
         }
         let rules = wol_core::settings::users::validate_account(&self.account());
         if rules == Err("name") || self.name.is_empty() {
             return Some((
                 Field::Name,
-                "Use lowercase letters and digits, starting with a letter.",
+                tr("Use lowercase letters and digits, starting with a letter."),
             ));
         }
         if self.password.is_empty() {
-            return Some((Field::Password, "Choose a password."));
+            return Some((Field::Password, tr("Choose a password.")));
         }
         if !wol_core::settings::users::is_valid_password(&self.password) {
             return Some((
                 Field::Password,
                 if self.password.chars().count() < 8 {
-                    "Use at least 8 characters."
+                    tr("Use at least 8 characters.")
                 } else {
-                    "Use at most 128 characters, none of them control characters."
+                    tr("Use at most 128 characters, none of them control characters.")
                 },
             ));
         }
         if self.password != self.verify {
-            return Some((Field::Verify, NO_MATCH));
+            return Some((Field::Verify, no_match()));
         }
         if !self.hint.is_empty() && self.hint == self.password {
-            return Some((Field::Hint, HINT_IS_PASSWORD));
+            return Some((Field::Hint, hint_is_password()));
         }
         match rules {
             Ok(()) => None,
-            Err("hint") => Some((Field::Hint, "Keep the hint short, without colons.")),
-            Err("full name") => Some((Field::FullName, "Remove colons from the name.")),
-            Err(_) => Some((Field::Password, "Choose a different password.")),
+            Err("hint") => Some((Field::Hint, tr("Keep the hint short, without colons."))),
+            Err("full name") => Some((Field::FullName, tr("Remove colons from the name."))),
+            Err(_) => Some((Field::Password, tr("Choose a different password."))),
         }
     }
 
@@ -468,10 +490,10 @@ impl Draft {
             return Some(p);
         }
         if !self.verify.is_empty() && !self.password.starts_with(self.verify.as_str()) {
-            return Some((Field::Verify, NO_MATCH));
+            return Some((Field::Verify, no_match()));
         }
         if !self.hint.is_empty() && self.hint == self.password {
-            return Some((Field::Hint, HINT_IS_PASSWORD));
+            return Some((Field::Hint, hint_is_password()));
         }
         None
     }
@@ -594,7 +616,13 @@ impl Flow {
             Step::Wifi => match &self.wifi {
                 Some(w) if !w.connected => {
                     if w.secure && w.password.is_empty() {
-                        Next::Stay(None, format!("Enter the password for “{}”.", w.ssid))
+                        Next::Stay(
+                            None,
+                            tr_fill(
+                                "Enter the password for “{network}”.",
+                                &[("network", &w.ssid)],
+                            ),
+                        )
                     } else {
                         Next::Run(Job::JoinWifi {
                             ssid: w.ssid.clone(),
@@ -643,14 +671,20 @@ impl Flow {
             }
             (Job::JoinWifi { ssid, .. }, Verdict::Denied) => Next::Stay(
                 None,
-                format!("“{ssid}” didn’t accept that password. Check it and try again."),
+                tr_fill(
+                    "“{network}” didn’t accept that password. Check it and try again.",
+                    &[("network", ssid)],
+                ),
             ),
             (
                 Job::JoinWifi { ssid, .. },
                 Verdict::Error | Verdict::Unusable | Verdict::NoDisplay | Verdict::TextPassword,
             ) => Next::Stay(
                 None,
-                format!("“{ssid}” didn’t answer. Try again, or choose Not Now and join later."),
+                tr_fill(
+                    "“{network}” didn’t answer. Try again, or choose Not Now and join later.",
+                    &[("network", ssid)],
+                ),
             ),
             (Job::CreateAccount(_), Verdict::Ok) => {
                 self.created = true;
@@ -658,14 +692,15 @@ impl Flow {
             }
             (Job::CreateAccount(_), Verdict::Denied) => Next::Stay(
                 None,
-                "That account name can’t be used. Press Back and choose another one.".into(),
+                tr("That account name can’t be used. Press Back and choose another one.").into(),
             ),
             (
                 Job::CreateAccount(_),
                 Verdict::Error | Verdict::Unusable | Verdict::NoDisplay | Verdict::TextPassword,
             ) => Next::Stay(
                 None,
-                "Your account couldn’t be created just now. Press Continue to try again.".into(),
+                tr("Your account couldn’t be created just now. Press Continue to try again.")
+                    .into(),
             ),
         }
     }
@@ -773,6 +808,32 @@ mod tests {
         );
     }
 
+    /// QA-L10N-8: Setup, the installer and Settings > Language & Region offer the same languages in
+    /// the same order (the lead's priority: English, Português, 日本語, Français, Русский,
+    /// Italiano, Deutsch).
+    #[test]
+    fn languages_match_settings() {
+        let setup: Vec<&str> = LANGUAGES.iter().map(|l| l.locale).collect();
+        let settings: Vec<&str> = wol_core::region::LANGUAGES.iter().map(|l| l.0).collect();
+        assert_eq!(setup, settings);
+        assert_eq!(
+            usize::try_from(crate::ui::setup::LANGUAGE_ROWS),
+            Ok(LANGUAGES.len())
+        );
+        assert_eq!(
+            setup,
+            [
+                "en_US.UTF-8",
+                "pt_BR.UTF-8",
+                "ja_JP.UTF-8",
+                "fr_FR.UTF-8",
+                "ru_RU.UTF-8",
+                "it_IT.UTF-8",
+                "de_DE.UTF-8"
+            ]
+        );
+    }
+
     #[test]
     fn keyboard_applies_live() {
         assert_eq!(
@@ -809,13 +870,23 @@ mod tests {
             "LANG wins"
         );
         assert_eq!(
-            pick(&h(None, Some("Europe/London"), Some("us"))),
-            ("en_GB.UTF-8", "us"),
+            pick(&h(None, Some("Europe/Paris"), Some("us"))),
+            ("fr_FR.UTF-8", "us"),
             "the console keymap names the keyboard"
         );
         assert_eq!(
             pick(&h(None, Some("Asia/Tokyo"), Some("jp106"))),
-            ("en_US.UTF-8", "us")
+            ("ja_JP.UTF-8", "jp")
+        );
+        assert_eq!(
+            pick(&h(None, Some("Europe/Moscow"), None)),
+            ("ru_RU.UTF-8", "us"),
+            "Russian starts on a Latin keyboard"
+        );
+        assert_eq!(
+            pick(&h(None, Some("Europe/London"), None)),
+            ("en_US.UTF-8", "us"),
+            "no English (UK) row: English"
         );
         assert_eq!(
             pick(&h(None, None, Some("\"br-abnt2\""))),

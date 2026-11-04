@@ -1,0 +1,384 @@
+# WolOS text: shell, Français (fr). Write the translation in the third column; leave the hash alone.
+# Translators: docs/l10n/README.md and docs/l10n/RULES-fr.md. Columns:
+# key	source	text	hash
+copy.install_blank	This disk is empty, so there’s nothing to install alongside. Use Erase Disk.	Ce disque est vide, il n’y a donc rien à côté de quoi installer. Utilisez Effacer le disque.	9d62424a
+copy.install_recovery_note	Write this key down and keep it safe. It opens your disk if your password or security chip stops working.	Notez cette clé et gardez-la en lieu sûr. Elle ouvre votre disque si votre mot de passe ou la puce de sécurité ne fonctionne plus.	a810c173
+copy.install_point_of_no_return	Back up anything you need first. These changes can’t be undone.	Sauvegardez d’abord ce dont vous avez besoin. Ces modifications sont définitives.	f0e88da3
+copy.install_unencrypted	Your files won’t be encrypted. Anyone who takes the disk can read them.	Vos fichiers ne seront pas chiffrés. Toute personne qui prend le disque peut les lire.	7497258d
+copy.install_passphrase_ascii	Use letters, digits and common symbols only. Accented letters can’t be typed before WolOS starts.	Utilisez uniquement des lettres, des chiffres et des symboles courants. Les lettres accentuées ne peuvent pas être saisies avant le démarrage de WolOS.	c5d8d498
+copy.install_name_taken	That name is already used on this computer. Choose another.	Ce nom est déjà utilisé sur cet ordinateur. Choisissez-en un autre.	eaaf84a8
+copy.install_own_keys_media	The install media is not signed with those keys, so it will no longer start on this computer. Remove it when the screen goes dark.	Le support d’installation n’est pas signé avec ces clés : il ne démarrera plus sur cet ordinateur. Retirez-le quand l’écran devient noir.	6e3cc030
+copy.install_key_screen_title	One blue screen after restart	Un écran bleu après le redémarrage	11c1387e
+copy.install_key_screen_media	When the screen goes dark after you click Restart, remove the USB stick or detach the ISO.	Quand l’écran devient noir après avoir cliqué sur Redémarrer, retirez la clé USB ou détachez l’ISO.	6dc4c915
+copy.install_restart	Click Restart to start using WolOS. When the screen goes dark, remove the USB stick or detach the ISO.	Cliquez sur Redémarrer pour commencer à utiliser WolOS. Quand l’écran devient noir, retirez la clé USB ou détachez l’ISO.	65261e51
+copy.install_windows_start	To start Windows, open your computer’s startup menu while it starts, often with F12, F9 or Esc.	Pour démarrer Windows, ouvrez le menu de démarrage de l’ordinateur pendant qu’il démarre, souvent avec F12, F9 ou Échap.	420eedc4
+copy.install_tpm_fallback	If the chip can’t open the disk, your account password does. Use letters, digits and common symbols only.	Si la puce ne peut pas ouvrir le disque, le mot de passe de votre compte le fait. Utilisez uniquement des lettres, des chiffres et des symboles courants.	8cf2c18b
+copy.install_key_ack	I wrote the key down or saved it	J’ai noté la clé ou je l’ai enregistrée	38d126fc
+copy.install_no_usb	No USB stick was found. Plug one in and try again.	Aucune clé USB n’a été trouvée. Branchez-en une et réessayez.	276e7e2c
+copy.install_key_not_saved	The key couldn’t be saved there. Try another USB stick.	La clé n’a pas pu être enregistrée à cet endroit. Essayez une autre clé USB.	f89b0ad9
+copy.install_nothing_to_replace	No partition on this disk is big enough to take over. Use Erase Disk or Manual.	Aucune partition de ce disque n’est assez grande pour être reprise. Utilisez Effacer le disque ou Manuel.	870d79c9
+copy.install_autologin	Sign in automatically when the computer starts.	Ouvrir la session automatiquement au démarrage de l’ordinateur.	b1459cf7
+copy.no_answer	WolOS didn’t answer in time, so nothing changed. Try again.	WolOS n’a pas répondu à temps, rien n’a donc changé. Réessayez.	99a92bbb
+copy.change_password_menu	Change Password…	Changer le mot de passe…	ec830bde
+copy.change_password	Change Password	Changer le mot de passe	81c9aa8e
+copy.ask_again	Ask Again	Redemander	a015ae6e
+copy.hw_driver_off	Its driver is installed but not turned on. Fix turns it on.	Son pilote est installé mais pas activé. Réparer l’active.	162d734f
+copy.hw_needs_driver	Needs a driver. Fix installs it.	Il faut un pilote. Réparer l’installe.	33bec473
+copy.hw_needs_firmware	Needs firmware. Fix installs it.	Il faut un firmware. Réparer l’installe.	008e8dfd
+copy.hw_driver_didnt_start	Its driver didn’t start. Restarting may help.	Son pilote n’a pas démarré. Redémarrer peut aider.	3c89b1b4
+copy.shortcuts_not_paused	WolOS shortcuts are still on, so keys that already do something may do it while you record.	Les raccourcis de WolOS restent actifs : les touches qui font déjà quelque chose peuvent le faire pendant l’enregistrement.	54649297
+copy.modules_remove_not_done	The module was removed, but some of its settings are still here. Run “wol modules remove” in Terminal to finish.	Le module a été supprimé, mais certains de ses réglages sont encore là. Exécutez « wol modules remove » dans le Terminal pour terminer.	a4b0efb4
+copy.users_unreadable	WolOS couldn’t read the list of accounts on this computer.	WolOS n’a pas pu lire la liste des comptes de cet ordinateur.	93776beb
+copy.account_name_cut	Account names have up to 32 letters, so this one is cut.	Un nom de compte compte au plus 32 lettres : celui-ci est donc raccourci.	9f2a7538
+copy.account_name_type	Type an account name: lowercase letters and digits, like “mei”.	Saisissez un nom de compte : lettres minuscules et chiffres, comme « mei ».	8ceac574
+copy.password_disk_too	If this account unlocks the disk at startup, the disk’s password changes too.	Si ce compte déverrouille le disque au démarrage, le mot de passe du disque change aussi.	c63e7dea
+copy.hostname_rule	Use lowercase letters, digits and hyphens, up to 63 characters.	Utilisez des lettres minuscules, des chiffres et des tirets, 63 caractères au plus.	d6ecddf1
+copy.malware_trash_failed	It couldn’t be moved to the Trash. Try again.	Impossible de le placer dans la corbeille. Réessayez.	a3e06e33
+copy.malware_allow_failed	It’s still stopped: WolOS couldn’t allow it. Try again.	Il reste bloqué : WolOS n’a pas pu l’autoriser. Réessayez.	a0df0c16
+copy.privacy_grants_read_only	These permissions can’t be changed from Settings on this computer yet.	Ces autorisations ne peuvent pas encore être modifiées dans les Réglages de cet ordinateur.	360276cb
+copy.checking	Checking…	Vérification…	87f62cb7
+copy.update_check	Couldn’t check for updates. Check that you’re online, then try again.	Impossible de rechercher des mises à jour. Vérifiez que vous êtes en ligne, puis réessayez.	75e48833
+copy.update_restore_point	WolOS saves a restore point before updating.	WolOS crée un point de restauration avant chaque mise à jour.	aa4c4b65
+copy.config_not_applied	Changes Not Applied	Modifications non appliquées	ee02ca56
+copy.widget_missing	This widget isn’t installed. Reinstall it, or remove it.	Ce widget n’est pas installé. Réinstallez-le ou supprimez-le.	6563edef
+copy.lua_widget_failed	This widget’s script stopped. Fix the file and it reloads.	Le script de ce widget s’est arrêté. Corrigez le fichier et il se recharge.	b7999cc3
+copy.widget_newer	This widget needs a newer version of WolOS.	Ce widget nécessite une version plus récente de WolOS.	babdde61
+copy.city_search	Couldn’t search for cities. Check that you’re online, then try again.	Impossible de rechercher des villes. Vérifiez que vous êtes en ligne, puis réessayez.	89b5bbc6
+copy.weather_offline	No forecast right now. It updates when you’re back online.	Pas de prévisions pour le moment. Elles se mettent à jour quand vous êtes de nouveau en ligne.	b7378c8f
+copy.analyze_title	Check for Malware	Rechercher des logiciels malveillants	73e4844f
+copy.malware_full_note	Downloads about 115 MB once, then about 25 MB a day, and the system checks every download before use. A check can use about 1 GB of memory.	Télécharge environ 115 Mo une fois, puis environ 25 Mo par jour, et le système vérifie chaque téléchargement avant usage. Une analyse peut utiliser environ 1 Go de mémoire.	d015252f
+copy.malware_scope	Checks downloads, new programs and removable disks for known malware. New malware can get past it, so be careful with unexpected files.	Analyse les téléchargements, les nouveaux programmes et les disques amovibles à la recherche de logiciels malveillants connus. Les nouveaux peuvent passer : méfiez-vous des fichiers inattendus.	e4244102
+copy.dock_downloads_empty	Nothing downloaded yet.	Rien n’a encore été téléchargé.	b5edd701
+copy.dock_tile_hint	New windows fill the screen side by side instead of floating.	Les nouvelles fenêtres remplissent l’écran côte à côte au lieu de flotter.	c2c0ec64
+copy.dock_tiling_shortcuts_hint	Move, resize and focus tiled windows from the keyboard.	Déplacez, redimensionnez et activez les fenêtres en mosaïque au clavier.	74be7c76
+copy.dock_add_app_empty	Open the app first, then add it here.	Ouvrez d’abord l’app, puis ajoutez-la ici.	26fe2774
+copy.widget_no_room	No room. Remove a widget or pick a smaller size.	Plus de place. Supprimez un widget ou choisissez une taille plus petite.	a280e054
+copy.desktop_busy	The desktop is busy. Try again.	Le bureau est occupé. Réessayez.	f2723176
+copy.login_no_display	This account can’t use the screen yet. Ask an administrator to add it to the seat group.	Ce compte ne peut pas encore utiliser l’écran. Demandez à un administrateur de l’ajouter au groupe seat.	10cf4e9b
+copy.login_unusable	Your password can’t be checked: it is too long or has a character that isn’t allowed.	Votre mot de passe ne peut pas être vérifié : il est trop long ou contient un caractère non autorisé.	6719d5a4
+copy.login_text_password	Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks after this computer.	Vos fichiers ne s’ouvrent qu’avec un mot de passe fait de caractères saisis au clavier. Utilisez-en un que vous pouvez taper, ou demandez à la personne qui s’occupe de cet ordinateur.	2f6a063a
+copy.lock_restart_refused	This computer can’t restart right now. If someone else is signed in, they need to sign out first.	Cet ordinateur ne peut pas redémarrer pour le moment. Si quelqu’un d’autre a ouvert une session, il doit d’abord la fermer.	32504043
+copy.store_not_finished	That did not finish. Nothing was changed.	Cela ne s’est pas terminé. Rien n’a été modifié.	bdc6d173
+copy.store_kits_intro	Sets of extras added in one step. Nothing here is installed until you choose it.	Des ensembles d’extras ajoutés en une étape. Rien n’est installé tant que vous ne l’avez pas choisi.	ef1c98d1
+copy.store_plugins_intro	Plugins add to the menu bar, the desktop and search. They install for you only and update on their own, apart from WolOS updates.	Les plugins ajoutent des éléments à la barre des menus, au bureau et à la recherche. Ils s’installent pour vous seul et se mettent à jour d’eux-mêmes, indépendamment des mises à jour de WolOS.	b95036f0
+copy.store_plugins_signed	Every plugin here was checked and signed by the WolOS plugin index.	Chaque plugin ici a été vérifié et signé par l’index des plugins WolOS.	9048730f
+copy.store_plugins_loading	Loading the plugin list…	Chargement de la liste des plugins…	87239167
+copy.store_plugins_offline	The plugin list could not be loaded. Check that you are online, then try again.	La liste des plugins n’a pas pu être chargée. Vérifiez que vous êtes en ligne, puis réessayez.	96e3574c
+copy.store_plugins_not_published	The plugin list is not available from the WolOS plugin server yet. Try again later.	La liste des plugins n’est pas encore disponible sur le serveur de plugins WolOS. Réessayez plus tard.	647c5fad
+copy.store_plugins_untrusted	The plugin list could not be checked, so it is not shown. Try again later.	La liste des plugins n’a pas pu être vérifiée, elle n’est donc pas affichée. Réessayez plus tard.	653c6b0f
+copy.store_plugins_not_yet	The plugin list has not been downloaded yet.	La liste des plugins n’a pas encore été téléchargée.	751c8f61
+copy.store_plugins_empty	The plugin list is empty.	La liste des plugins est vide.	8e791130
+copy.store_plugins_title	Plugins	Plugins	847d7bcb
+copy.store_plugins_create	Create Plugin…	Créer un plugin…	335e2658
+copy.store_plugins_mine	Your Plugins	Vos plugins	2c78fb8e
+copy.store_plugins_available	Available	Disponibles	72402638
+copy.store_plugins_checked	Checked Plugins	Plugins vérifiés	2168bb3a
+copy.store_plugins_try_again	Try Again	Réessayer	f5b37c9a
+copy.store_plugin_get	Get	Obtenir	b6973ef7
+copy.store_plugin_update_to	Update to {v}	Mettre à jour vers {v}	25d15499
+copy.store_plugin_needs	Needs WolOS {v}	Nécessite WolOS {v}	7ff543f2
+copy.store_plugin_turn_on	Turn On	Activer	6552a6c7
+copy.store_plugin_turn_off	Turn Off	Désactiver	3208e0eb
+copy.store_plugin_allow	Allow	Autoriser	546d19d2
+copy.store_plugin_remove	Remove {n}	Supprimer {n}	5dc7ee29
+copy.store_plugin_asks_nothing	{s}. Asks for nothing.	{s}. Ne demande rien.	05cb9852
+copy.store_plugin_asks_to	{s}. Asks to: {p}.	{s}. Demande à : {p}.	0c95c3a9
+copy.store_plugin_by	By {a}. {s}	Par {a}. {s}	8f7b9192
+copy.store_plugin_asks_more	{s}. Asks for more now: {p}.	{s}. Demande maintenant davantage : {p}.	9d125c98
+copy.store_plugin_held	{s} Version {v} needs WolOS {m}.	{s} La version {v} nécessite WolOS {m}.	8870a70a
+copy.offer_copy_code	Copy Code	Copier le code	02998b89
+copy.offer_open_link	Open Link	Ouvrir le lien	ade08dcf
+copy.offer_copy_number	Copy Number	Copier le numéro	0005c83d
+copy.offer_copied	Copied	Copié	8dc21305
+copy.offer_not_copied	Not Copied	Non copié	fd43c922
+copy.offer_code_tip	Copies the code. Clipboard history skips it, and it is cleared after a minute.	Copie le code. L’historique du presse-papiers l’ignore, et il est effacé au bout d’une minute.	19ad234a
+copy.offer_number_tip	Copies the number so you can paste it into a call.	Copie le numéro pour que vous puissiez le coller dans un appel.	c3c1cf10
+copy.sessions_offer_body	Your terminals and coding agents open again on their desktops, in their folders.	Vos terminaux et vos agents de code se rouvrent sur leurs bureaux, dans leurs dossiers.	16a0139c
+copy.sessions_reopen	Reopen	Rouvrir	b41fb578
+copy.themes_title	Themes	Thèmes	bf419633
+copy.themes_from_plugins	From plugins	Des plugins	a32baec5
+copy.plugin_open_failed	No app here opens this.	Aucune app ici n’ouvre ceci.	167752fa
+copy.plugin_call_refused	Only your own programs can call plugin functions.	Seuls vos propres programmes peuvent appeler des fonctions de plugin.	7417ee03
+copy.plugin_call_usage	A call names a plugin, a function and, if the function takes one, a value.	Un appel indique un plugin, une fonction et, si la fonction en prend une, une valeur.	6c138ce2
+copy.plugin_read_failed	The plugins could not be read.	Les plugins n’ont pas pu être lus.	b5c31b17
+copy.part_stopped	Everything else keeps working. Sign out and in again to bring it back.	Tout le reste continue de fonctionner. Fermez la session puis rouvrez-la pour le retrouver.	c6cb5d2c
+copy.file_sheet_detail	Choose where this file goes.	Choisissez où va ce fichier.	cb8d6d81
+copy.open_with_detail	Choose the app that opens it.	Choisissez l’app qui l’ouvre.	732f0c75
+copy.open_with_none	No app on this computer opens this kind of file.	Aucune app de cet ordinateur n’ouvre ce type de fichier.	d9a2fc91
+copy.open_with_not_opened	That app could not open the file.	Cette app n’a pas pu ouvrir le fichier.	17ea6036
+copy.file_gone	That file is not there any more.	Ce fichier n’est plus là.	4455254e
+copy.trash_keeps	That folder cannot go to the Trash.	Ce dossier ne peut pas aller à la corbeille.	d80b72a5
+copy.trash_already	That is in the Trash already.	C’est déjà dans la corbeille.	0d907b5c
+copy.trash_not_moved	That could not be moved to the Trash.	Impossible de placer cet élément dans la corbeille.	d3a50130
+copy.share_only_files	Only a file can be shared.	Seul un fichier peut être partagé.	c274fdc8
+copy.clipboard_unchanged	The clipboard could not be changed.	Le presse-papiers n’a pas pu être modifié.	87b2db6b
+copy.copy_not_saved	That copy could not be saved.	Cette copie n’a pas pu être enregistrée.	7534faf1
+installer.secure_boot_title	Change One Startup Setting First	Modifiez d’abord un réglage de démarrage	4cbaebaa
+installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	Le démarrage sécurisé de cet ordinateur ne fait confiance qu’à Windows : WolOS ne peut donc pas encore démarrer.	d853a848
+installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	WolOS est installé, mais sa clé de récupération n’a pas pu être lue. Cliquez sur Réessayer : Redémarrer attend que la clé s’affiche.	87ec9bf0
+installer.key_screen_looks	It looks like an old computer screen: blue, white letters, a short menu. The mouse does not work there: use the arrow keys and Enter.	Il ressemble à un écran d’ancien ordinateur : bleu, lettres blanches, un menu court. La souris n’y fonctionne pas : utilisez les flèches et Entrée.	8d3ed7a5
+installer.secure_switch	Use Secure Boot	Utiliser le démarrage sécurisé	2882cb4b
+installer.secure_switch_screen	One blue screen after the restart	Un écran bleu après le redémarrage	03e1a6e9
+installer.secure_switch_own_keys	Nothing to click	Rien à cliquer	c505d6c3
+installer.summary_secure_screen	Secure Boot is on: after the restart, one blue screen asks you to accept this computer’s key.	Le démarrage sécurisé est activé : après le redémarrage, un écran bleu vous demande d’accepter la clé de cet ordinateur.	302e3a3d
+installer.summary_secure_own_keys	Secure Boot is on: WolOS puts its own keys into this computer’s startup settings.	Le démarrage sécurisé est activé : WolOS place ses propres clés dans les réglages de démarrage de cet ordinateur.	fc77de82
+installer.summary_secure_off	Secure Boot stays off. You can turn it on later in System Settings.	Le démarrage sécurisé reste désactivé. Vous pourrez l’activer plus tard dans les Réglages Système.	409f1c68
+installer.codecs_switch	Add Media Formats	Ajouter les formats multimédias	b468cc00
+installer.summary_codecs	Adds the media formats: MP3, AAC, H.264, HEVC, AC3 and common fonts.	Ajoute les formats multimédias : MP3, AAC, H.264, HEVC, AC3 et les polices courantes.	3feb4438
+installer.deferred_both	Media formats and modules are added at first start with a network.	Les formats multimédias et les modules sont ajoutés au premier démarrage avec un réseau.	20e8f907
+installer.deferred_codecs	Media formats are added at first start with a network.	Les formats multimédias sont ajoutés au premier démarrage avec un réseau.	d9218087
+installer.deferred_modules	Modules are added at first start with a network.	Les modules sont ajoutés au premier démarrage avec un réseau.	1db37b2c
+installer.choose_disk	Choose a disk to install on.	Choisissez un disque où installer.	fa54c9fb
+installer.choose_replace	Choose the partition WolOS takes over.	Choisissez la partition que WolOS reprend.	da0d4679
+installer.password_short	Use at least 8 characters.	Utilisez au moins 8 caractères.	5aa9fe2a
+installer.passwords_differ	Passwords don’t match.	Les mots de passe ne correspondent pas.	c84c2970
+installer.hostname_rule	Use letters, digits and hyphens for the computer’s name.	Utilisez des lettres, des chiffres et des tirets pour le nom de l’ordinateur.	127a6081
+installer.looking_at_disks	Looking at your disks…	Examen de vos disques…	abfceb38
+installer.bitlocker_recovery	Windows uses BitLocker, so it asks once for its recovery key after this Secure Boot change.	Windows utilise BitLocker : il demandera une fois sa clé de récupération après ce changement du démarrage sécurisé.	d966d135
+installer.bitlocker_key_where	Have the key ready: it is saved at account.microsoft.com/devices/recoverykey.	Gardez la clé à portée de main : elle est enregistrée sur account.microsoft.com/devices/recoverykey.	67d9e566
+installer.bitlocker_avoid_own_keys	To avoid it, restore the factory Secure Boot keys in your startup settings first. WolOS then uses a one-time key screen.	Pour l’éviter, restaurez d’abord les clés de démarrage sécurisé d’usine dans vos réglages de démarrage. WolOS utilise alors un écran de clé unique.	5142089f
+installer.bitlocker_avoid_setting	To avoid it, suspend BitLocker in Windows before you change the startup setting.	Pour l’éviter, suspendez BitLocker dans Windows avant de modifier le réglage de démarrage.	2ca6bc1b
+installer.clock_local	The clock keeps local time, as Windows does.	L’horloge garde l’heure locale, comme Windows.	01f89c88
+installer.failed_see_details	Click Details to see what the computer said.	Cliquez sur Détails pour voir ce que l’ordinateur a indiqué.	937420a6
+installer.refused_stopped	Nothing on the disk was changed. Fix what is said below, then click Try Again.	Rien n’a été modifié sur le disque. Corrigez ce qui est indiqué ci-dessous, puis cliquez sur Réessayer.	c157e3fb
+installer.everything_on_this_disk_will_be	Everything on this disk will be erased.	Tout le contenu de ce disque sera effacé.	ed966a51
+installer.this_disk_has_one_on_it	This disk has {one} on it. Erasing removes it.	Ce disque contient {one}. L’effacer le supprime.	8f70740d
+installer.this_disk_has_some_and_last	This disk has {some} and {last} on it. Erasing removes them.	Ce disque contient {some} et {last}. L’effacer les supprime.	d0948737
+installer.title_is_too_small_wolos_needs	“{title}” is too small. WolOS needs at least 16 GB.	« {title} » est trop petit. WolOS a besoin d’au moins 16 Go.	a118dc62
+installer.title_can_t_be_erased_it	“{title}” can’t be erased: it’s the disk WolOS started from, or it’s gone. Choose another disk.	« {title} » ne peut pas être effacé : c’est le disque à partir duquel WolOS a démarré, ou il a disparu. Choisissez un autre disque.	d4a22650
+installer.after_installing_open_your_computer_s	After installing, open your computer’s startup settings (often F2, F10, F12 or Delete) and allow third-party certificates.	Après l’installation, ouvrez les réglages de démarrage de l’ordinateur (souvent F2, F10, F12 ou Suppr) et autorisez les certificats tiers.	105fd317
+installer.they_are_sometimes_called_microsoft_uefi	They are sometimes called Microsoft UEFI CA or Other OS. Then a blue screen asks once to accept this computer’s WolOS key.	Ils s’appellent parfois Microsoft UEFI CA ou Other OS. Ensuite, un écran bleu demande une fois d’accepter la clé WolOS de cet ordinateur.	79eecbfe
+installer.install_it_on_this_computer_or	Install it on this computer, or try it first. Trying changes nothing.	Installez-le sur cet ordinateur, ou essayez-le d’abord. L’essai ne modifie rien.	96d433f3
+installer.choose_your_language_and_the_keyboard	Choose your language and the keyboard you type on.	Choisissez votre langue et le clavier que vous utilisez.	909faf26
+installer.your_clock_follows_this_place	Your clock follows this place.	Votre horloge suit ce lieu.	fefadd99
+installer.choose_where_wolos_goes	Choose where WolOS goes.	Choisissez où installer WolOS.	0fd4fa73
+installer.nothing_changes_until_the_last_step	Nothing changes until the last step.	Rien ne change avant la dernière étape.	b035305c
+installer.choose_the_partition_wolos_takes_over	Choose the partition WolOS takes over. It is erased; the rest of the disk stays.	Choisissez la partition que WolOS reprend. Elle est effacée ; le reste du disque est conservé.	ee367cb9
+installer.drag_to_choose_how_much_room	Drag to choose how much room each system gets.	Faites glisser pour choisir l’espace attribué à chaque système.	be9d859c
+installer.choose_a_partition_to_change_it	Choose a partition to change it, or free space to add one.	Choisissez une partition pour la modifier, ou de l’espace libre pour en ajouter une.	3f2ccefa
+installer.choose_what_this_partition_is_for	Choose what this partition is for.	Choisissez à quoi sert cette partition.	ca8096e3
+installer.encryption_keeps_your_files_private_if	Encryption keeps your files private if this computer is lost.	Le chiffrement protège vos fichiers si cet ordinateur est perdu.	443a3c57
+installer.secure_boot_checks_at_every_start	Secure Boot checks at every start that nobody changed WolOS while the computer was off.	Le démarrage sécurisé vérifie à chaque démarrage que personne n’a modifié WolOS pendant que l’ordinateur était éteint.	ac702ca2
+installer.you_use_this_to_sign_in	You use this to sign in.	Il vous sert à ouvrir une session.	d536c298
+installer.add_sets_of_apps_for_what	Add sets of apps for what you do, or none. You can change this later.	Ajoutez des ensembles d’apps selon ce que vous faites, ou aucun. Vous pourrez changer cela plus tard.	a974df61
+installer.play_the_music_and_video_files	Play the music and video files most people have, in one click.	Lisez en un clic les fichiers musicaux et vidéo que la plupart des gens possèdent.	530be885
+installer.nothing_has_changed_yet_this_is	Nothing has changed yet. This is exactly what will happen.	Rien n’a encore changé. Voici exactement ce qui va se passer.	1b9eaf5a
+installer.this_takes_a_few_minutes_keep	This takes a few minutes. Keep your computer plugged in.	Cela prend quelques minutes. Laissez votre ordinateur branché.	cd553105
+installer.the_installer_asks_a_few_questions	The installer asks a few questions first. Nothing on this computer changes until you click Install on the last page.	L’installateur pose d’abord quelques questions. Rien ne change sur cet ordinateur tant que vous n’avez pas cliqué sur Installer à la dernière page.	4edaca75
+installer.this_is_the_language_of_menus	This is the language of menus and apps, and what your keys type. Both can be changed later in System Settings.	C’est la langue des menus et des apps, et ce que vos touches saisissent. Les deux peuvent être modifiés plus tard dans les Réglages Système.	367e22a5
+installer.type_a_big_city_near_you	Type a big city near you: the clock and calendar follow its time.	Saisissez une grande ville près de chez vous : l’horloge et le calendrier suivent son heure.	e318ed02
+installer.a_disk_is_the_drive_inside	A disk is the drive inside your computer that holds Windows, macOS or Linux and your files. Choosing one changes nothing yet.	Un disque est le lecteur, dans votre ordinateur, qui contient Windows, macOS ou Linux et vos fichiers. En choisir un ne change encore rien.	294f5903
+installer.sharing_keeps_your_other_system_and	Sharing keeps your other system and its files, and you pick one when the computer starts.	Le partage conserve votre autre système et ses fichiers, et vous choisissez l’un ou l’autre au démarrage de l’ordinateur.	2a1cae41
+installer.erase_disk_removes_everything_on_the	Erase Disk removes everything on the disk. Manual is for people who already know partitions.	Effacer le disque supprime tout son contenu. Manuel s’adresse à ceux qui connaissent déjà les partitions.	db91320b
+installer.a_partition_is_one_section_of	A partition is one section of a disk, like a drive letter on Windows. Every other partition and its files stay.	Une partition est une section d’un disque, comme une lettre de lecteur sous Windows. Toutes les autres partitions et leurs fichiers sont conservés.	b567d7d6
+installer.your_other_system_and_its_files	Your other system and its files stay; it only gets smaller. As with any change to a disk, back up what matters first.	Votre autre système et ses fichiers sont conservés ; il devient seulement plus petit. Comme pour toute modification d’un disque, sauvegardez d’abord ce qui compte.	aa82df34
+installer.a_partition_is_one_section_of_2	A partition is one section of a disk. WolOS needs one for its system and a startup partition, the small part your computer starts from.	Une partition est une section d’un disque. WolOS en a besoin d’une pour son système et d’une partition de démarrage, la petite partie à partir de laquelle l’ordinateur démarre.	8a8e06c4
+installer.nothing_changes_until_you_click_install	Nothing changes until you click Install.	Rien ne change tant que vous n’avez pas cliqué sur Installer.	b3f81ed7
+installer.turn_on_erase_to_clear_this	Turn on Erase to clear this partition for its new job. Leave it off and the files on it stay.	Activez Effacer pour vider cette partition en vue de son nouvel usage. Laissez-le désactivé et ses fichiers sont conservés.	e31177a2
+installer.it_works_like_bitlocker_on_windows	It works like BitLocker on Windows or FileVault on a Mac: without your password or this computer, nobody can read the disk.	Cela fonctionne comme BitLocker sous Windows ou FileVault sur Mac : sans votre mot de passe ou cet ordinateur, personne ne peut lire le disque.	711912dd
+installer.it_is_like_your_windows_or	It is like your Windows or Mac user account: it signs in, installs apps and changes settings.	C’est comme votre compte utilisateur Windows ou Mac : il ouvre une session, installe des apps et modifie les réglages.	0973b658
+installer.none_are_chosen_for_you_they	None are chosen for you. They download while WolOS installs; without the internet, WolOS adds them at its first start.	Aucun n’est choisi pour vous. Ils se téléchargent pendant l’installation de WolOS ; sans Internet, WolOS les ajoute à son premier démarrage.	0916ae24
+installer.not_added_unless_you_turn_this	Not added unless you turn this on. They download while WolOS installs; without the internet, find Media Codecs in the App Store.	Rien n’est ajouté si vous ne l’activez pas. Ils se téléchargent pendant l’installation de WolOS ; sans Internet, cherchez Codecs multimédias dans l’App Store.	e29994d1
+installer.install_starts_the_changes_and_takes	Install starts the changes and takes a few minutes. Back lets you change anything first.	Installer lance les modifications, qui prennent quelques minutes. Retour vous permet d’abord de changer ce que vous voulez.	4fb02ab2
+installer.nothing_restarts_until_you_click_restart	Nothing restarts until you click Restart. The tips below show a few things worth knowing.	Rien ne redémarre tant que vous n’avez pas cliqué sur Redémarrer. Les astuces ci-dessous présentent quelques points bons à savoir.	27ff513c
+installer.next_your_language_and_keyboard	Next: your language and keyboard.	Ensuite : votre langue et votre clavier.	2f62f1d5
+installer.next_your_time_zone	Next: your time zone.	Ensuite : votre fuseau horaire.	434e2e06
+installer.next_the_disk_wolos_goes_on	Next: the disk WolOS goes on.	Ensuite : le disque où va WolOS.	44c1a14d
+installer.next_whether_wolos_shares_the_disk	Next: whether WolOS shares the disk or takes all of it.	Ensuite : WolOS partage le disque ou le prend en entier.	6b3391fd
+installer.next_how_your_files_are_protected	Next: how your files are protected.	Ensuite : la protection de vos fichiers.	ce5a8886
+installer.next_whether_wolos_uses_secure_boot	Next: whether WolOS uses Secure Boot.	Ensuite : WolOS utilise ou non le démarrage sécurisé.	90613fb4
+installer.next_your_account	Next: your account.	Ensuite : votre compte.	0a4875b4
+installer.next_optional_apps_for_what_you	Next: optional apps for what you do.	Ensuite : des apps facultatives selon ce que vous faites.	c00d2f83
+installer.next_music_and_video_formats	Next: music and video formats.	Ensuite : les formats audio et vidéo.	f9547087
+installer.next_a_summary_of_everything_before	Next: a summary of everything, before anything changes.	Ensuite : un résumé de tout, avant toute modification.	dddaf213
+installer.it_is_optional_and_off_unless	It is optional, and off unless you turn it on.	C’est facultatif, et désactivé sauf si vous l’activez.	cb1c4690
+installer.on_one_blue_screen_appears_after	On: one blue screen appears after the restart and asks you to accept this computer’s key, once. Off: WolOS starts straight away.	Activé : un écran bleu apparaît après le redémarrage et vous demande une fois d’accepter la clé de cet ordinateur. Désactivé : WolOS démarre directement.	6c798d34
+installer.you_can_turn_it_on_later	You can turn it on later in System Settings.	Vous pourrez l’activer plus tard dans les Réglages Système.	a768989c
+installer.on_wolos_puts_its_own_keys	On: WolOS puts its own keys into your computer’s startup settings, with nothing to click. Off: nothing there changes.	Activé : WolOS place ses propres clés dans les réglages de démarrage de votre ordinateur, sans rien à cliquer. Désactivé : rien n’y change.	d9556cdf
+installer.your_computer_already_has_secure_boot	Your computer already has Secure Boot turned on, so WolOS uses it too.	Le démarrage sécurisé est déjà activé sur votre ordinateur : WolOS l’utilise donc aussi.	29724c70
+installer.one_blue_screen_appears_after_the	One blue screen appears after the restart and asks you to accept this computer’s key, once.	Un écran bleu apparaît après le redémarrage et vous demande une fois d’accepter la clé de cet ordinateur.	8fa6b981
+installer.developer_tools	Developer Tools	Outils de développement	eaad6816
+installer.code_editor_git_containers_and_programming	Code editor, Git, containers and programming languages	Éditeur de code, Git, conteneurs et langages de programmation	9f61173c
+installer.ai_assistants	AI Assistants	Assistants IA	d7e1c7a4
+installer.claude_code_and_other_agents_inside	Claude Code and other agents, inside WolOS’s rules	Claude Code et d’autres agents, dans le cadre des règles de WolOS	2b4edcae
+installer.local_ai	Local AI	IA locale	34d9ec16
+installer.ai_models_that_run_on_this	AI models that run on this computer, also offline	Des modèles d’IA qui tournent sur cet ordinateur, même hors ligne	65696a97
+installer.creative_apps	Creative Apps	Apps créatives	17a1ddc0
+installer.blender_gimp_krita_inkscape_obs_kdenlive	Blender, GIMP, Krita, Inkscape, OBS, Kdenlive and more	Blender, GIMP, Krita, Inkscape, OBS, Kdenlive et plus	7b3e8a69
+installer.gaming	Gaming	Jeux	c17bd710
+installer.steam_controllers_and_game_tools	Steam, controllers and game tools	Steam, manettes et outils de jeu	5a43d8ba
+installer.nothing_extra_to_download	Nothing extra to download.	Rien de plus à télécharger.	1964932f
+installer.about_size_to_download	About {size} to download.	Environ {size} à télécharger.	e1688ef0
+installer.some_and_last	{some} and {last}	{some} et {last}	ee948018
+installer.adds_names_about_size_to_download	Adds {names}, about {size} to download.	Ajoute {names}, environ {size} à télécharger.	083830b2
+installer.no_matching_place	No matching place	Aucun lieu correspondant	84763fda
+installer.try_the_name_of_a_big	Try the name of a big city near you.	Essayez le nom d’une grande ville près de chez vous.	240941c2
+installer.no_disk_found	No disk found	Aucun disque trouvé	c091246b
+installer.connect_the_disk_you_want_to	Connect the disk you want to install on, then click Look Again.	Branchez le disque sur lequel vous voulez installer, puis cliquez sur Chercher à nouveau.	285b2b85
+installer.estimating_time_remaining	Estimating time remaining…	Estimation du temps restant…	6881130b
+installer.less_than_a_minute_remaining	Less than a minute remaining	Moins d’une minute restante	adbb21cc
+installer.about_a_minute_remaining	About a minute remaining	Environ une minute restante	55e4d1ef
+installer.about_n_minutes_remaining#one	About {n} minute remaining	Environ {n} minute restante	f8b31ada
+installer.about_n_minutes_remaining#many	About {n} minutes remaining	Environ {n} de minutes restantes	02138083
+installer.about_n_minutes_remaining#other	About {n} minutes remaining	Environ {n} minutes restantes	02138083
+installer.preparing_the_disk	Preparing the disk…	Préparation du disque…	01479957
+installer.copying_system_files	Copying system files…	Copie des fichiers système…	7bd52fb6
+installer.making_this_computer_s_keys	Making this computer’s keys…	Création des clés de cet ordinateur…	5b4137c7
+installer.encrypting_the_disk	Encrypting the disk…	Chiffrement du disque…	d8c90a82
+installer.preparing_the_first_start	Preparing the first start…	Préparation du premier démarrage…	530a7df6
+installer.installing_the_startup_files	Installing the startup files…	Installation des fichiers de démarrage…	3f89da43
+installer.saving_settings	Saving settings…	Enregistrement des réglages…	ee1a1230
+installer.locking_the_disk_key_to_this	Locking the disk key to this computer…	Liaison de la clé du disque à cet ordinateur…	b8c73071
+installer.installing_apps	Installing apps…	Installation des apps…	8d6fa0dc
+installer.finishing_up	Finishing up…	Finalisation…	95524331
+installer.done	Done	Terminé	8dd31791
+installer.the_disk_couldn_t_be_prepared	The disk couldn’t be prepared. Check that it’s connected, then try again or choose another disk.	Le disque n’a pas pu être préparé. Vérifiez qu’il est branché, puis réessayez ou choisissez un autre disque.	f0d919ee
+installer.the_system_files_couldn_t_be	The system files couldn’t be copied. Check the installer disk, then try again.	Les fichiers système n’ont pas pu être copiés. Vérifiez le disque d’installation, puis réessayez.	ed47f3af
+installer.the_disk_couldn_t_be_encrypted	The disk couldn’t be encrypted. Try again, or choose Don’t Encrypt.	Le disque n’a pas pu être chiffré. Réessayez, ou choisissez Ne pas chiffrer.	ccd0b7dc
+installer.the_startup_files_couldn_t_be	The startup files couldn’t be installed. Try again, or choose another disk.	Les fichiers de démarrage n’ont pas pu être installés. Réessayez, ou choisissez un autre disque.	01038166
+installer.your_settings_couldn_t_be_saved	Your settings couldn’t be saved. Try again, and check the language, keyboard and account.	Vos réglages n’ont pas pu être enregistrés. Réessayez, et vérifiez la langue, le clavier et le compte.	5b94d8ad
+installer.the_installation_stopped_before_it_finished	The installation stopped before it finished. Try again, or choose another disk.	L’installation s’est arrêtée avant la fin. Réessayez, ou choisissez un autre disque.	5c87a5c4
+installer.updates_install_into_a_second_copy	Updates install into a second copy of WolOS, so you can always start the previous one.	Les mises à jour s’installent dans une seconde copie de WolOS : vous pouvez donc toujours démarrer la précédente.	8914e193
+installer.press_command_space_to_search_apps	Press Command Space to search apps, files and settings from anywhere.	Appuyez sur Commande Espace pour rechercher des apps, des fichiers et des réglages depuis n’importe où.	582eb710
+installer.the_app_store_installs_apps_for	The App Store installs apps for everyone on this computer, with a restore point first.	L’App Store installe les apps pour tous les utilisateurs de cet ordinateur, avec d’abord un point de restauration.	3a18c26f
+installer.control_center_at_the_top_right	Control Center, at the top right, has Wi-Fi, sound, brightness and Do Not Disturb.	Le Centre de contrôle, en haut à droite, regroupe Wi-Fi, son, luminosité et Ne pas déranger.	fd4a1078
+installer.your_files_stay_private_with_encryption	Your files stay private: with encryption on, the disk opens only on this computer.	Vos fichiers restent privés : avec le chiffrement activé, le disque ne s’ouvre que sur cet ordinateur.	c4a7f6a4
+installer.system_settings_looks_like_the_one	System Settings looks like the one you know, and every change there can be undone.	Les Réglages Système ressemblent à ceux que vous connaissez, et chaque modification peut y être annulée.	8afeb015
+installer.to_start_name_open_your_computer	To start {name}, open your computer’s startup menu while it starts, often with F12, F9 or Esc.	Pour démarrer {name}, ouvrez le menu de démarrage de l’ordinateur pendant qu’il démarre, souvent avec F12, F9 ou Échap.	d5bc402c
+installer.after_the_restart_a_blue_screen	After the restart a blue screen appears. It comes from your computer’s firmware, not from WolOS, and it waits for you.	Après le redémarrage, un écran bleu apparaît. Il vient du firmware de votre ordinateur, pas de WolOS, et il vous attend.	1a723b20
+installer.press_a_key_choose_enroll_mok	Press a key, choose Enroll MOK, then Continue, then Yes.	Appuyez sur une touche, choisissez Enroll MOK, puis Continue, puis Yes.	6bde3970
+installer.when_it_asks_for_a_password	When it asks for a password, type {password}. Nothing shows while you type.	Quand il demande un mot de passe, tapez {password}. Rien ne s’affiche pendant la saisie.	ab0eaa85
+installer.choose_reboot_you_will_not_see	Choose Reboot. You will not see this screen again.	Choisissez Reboot. Vous ne reverrez plus cet écran.	23681952
+installer.missed_it_run_wol_boot_enroll	Missed it? Run wol boot enroll and restart.	Vous l’avez manqué ? Exécutez wol boot enroll et redémarrez.	4f965bc7
+installer.welcome_to_wolos	Welcome to WolOS	Bienvenue dans WolOS	2d1ffcb0
+installer.language_and_keyboard	Language and Keyboard	Langue et clavier	b4e5e9cb
+installer.time_zone	Time Zone	Fuseau horaire	64af27fa
+installer.choose_a_disk	Choose a Disk	Choisir un disque	5e7c55a0
+installer.how_to_install	How to Install	Mode d’installation	17f6f29d
+installer.replace_a_partition	Replace a Partition	Remplacer une partition	58223c2e
+installer.share_the_disk	Share the Disk	Partager le disque	e5ebd0b0
+installer.partitions	Partitions	Partitions	92fe9b2e
+installer.partition	Partition	Partition	b7682ca9
+installer.protect_your_files	Protect Your Files	Protéger vos fichiers	63189dc8
+installer.secure_boot	Secure Boot	Démarrage sécurisé	e5e1c8b8
+installer.create_your_account	Create Your Account	Créer votre compte	5399e473
+installer.apps_for_what_you_do	Apps for What You Do	Des apps pour ce que vous faites	be17d0c4
+installer.music_and_video_formats	Music and Video Formats	Formats audio et vidéo	6fbad28a
+installer.ready_to_install	Ready to Install	Prêt pour l’installation	04fb6736
+installer.installing_wolos	Installing WolOS	Installation de WolOS	c94dd680
+installer.wolos_is_installed	WolOS Is Installed	WolOS est installé	66f597f7
+installer.wolos_couldn_t_be_installed	WolOS Couldn't Be Installed	WolOS n’a pas pu être installé	3356efae
+installer.the_recovery_key_could_not_be	The Recovery Key Could Not Be Read	La clé de récupération n’a pas pu être lue	46890ebf
+installer.compressed_memory	Compressed memory	Mémoire compressée	7620479f
+installer.recommended_uses_no_disk_space	Recommended. Uses no disk space	Recommandé. N’utilise pas d’espace disque	a3526934
+installer.swap_file	Swap file	Fichier d’échange	46f920cc
+installer.a_file_on_the_system_partition	A file on the system partition	Un fichier sur la partition système	058adc1b
+installer.none	None	Aucun	304ff7fb
+installer.for_computers_with_plenty_of_memory	For computers with plenty of memory	Pour les ordinateurs qui ont beaucoup de mémoire	b9b5465a
+installer.don_t_use	Don't use	Ne pas utiliser	7a93d17e
+installer.wolos_system	WolOS system	Système WolOS	ccbe0ddc
+installer.startup_files	Startup files	Fichiers de démarrage	a4dcd131
+installer.your_files	Your files	Vos fichiers	8cb360b1
+installer.swap	Swap	Échange (swap)	e519d36e
+installer.a_folder	A folder	Un dossier	e84ceb50
+installer.btrfs_recommended	Btrfs (recommended)	Btrfs (recommandé)	89eeae4a
+installer.will_be_deleted	Will be deleted	Sera supprimée	8e880f53
+installer.new_use	New: {use}	Nouvelle : {use}	4ff3f572
+installer.rest_of_the_disk	Rest of the disk	Reste du disque	c4518510
+installer.free_space	Free space	Espace libre	d75aad01
+installer.install_alongside_name	Install Alongside {name}	Installer à côté de {name}	84b5f087
+installer.install_in_the_free_space	Install in the Free Space	Installer dans l’espace libre	70e77b00
+installer.new_partition	New Partition	Nouvelle partition	b5e687c7
+installer.sd_card_or_emmc	SD card or eMMC	Carte SD ou eMMC	df43ce19
+installer.virtual_disk	Virtual disk	Disque virtuel	cfedcee9
+installer.cancel	Cancel	Annuler	35afca3b
+installer.back	Back	Retour	c2954bc2
+installer.install_wolos	Install WolOS	Installer WolOS	43297728
+installer.try_wolos	Try WolOS	Essayer WolOS	671fb30e
+installer.search_for_a_city	Search for a city	Rechercher une ville	2a508cdc
+installer.security_chip	Security Chip	Puce de sécurité	0a598c6b
+installer.opens_on_this_computer	Opens on this computer	S’ouvre sur cet ordinateur	a8a65d36
+installer.password	Password	Mot de passe	2cc30838
+installer.asked_at_every_start	Asked at every start	Demandé à chaque démarrage	dcd7fae7
+installer.don_t_encrypt	Don’t Encrypt	Ne pas chiffrer	1a1ed998
+installer.anyone_with_the_disk_can_read	Anyone with the disk can read it	Quiconque a le disque peut le lire	73f22a74
+installer.at_least_8_characters	At least 8 characters	Au moins 8 caractères	10cdcf9b
+installer.type_it_again	Type it again	Saisissez-le à nouveau	a4c19926
+installer.verify	Verify	Confirmer	2d5c0c44
+installer.choose_a_password	Choose a password	Choisissez un mot de passe	d74f1a34
+installer.full_name	Full name	Nom complet	9010932f
+installer.account_name	Account name	Nom du compte	16970f4f
+installer.computer_name	Computer name	Nom de l’ordinateur	e9e790eb
+installer.log_in_automatically	Log in automatically	Ouverture de session automatique	2c3b0d89
+installer.install	Install	Installer	b50cbd40
+installer.install_anyway	Install Anyway	Installer quand même	437f9f01
+installer.restart	Restart	Redémarrer	2f44ed8c
+installer.save_to_usb	Save to USB	Enregistrer sur USB	b179acf3
+installer.restart_later	Restart Later	Redémarrer plus tard	329498ee
+installer.details	Details	Détails	0ec24245
+installer.look_again	Look Again	Chercher à nouveau	f285f082
+installer.keeps_what_s_there	Keeps what’s there	Conserve ce qui s’y trouve	ae48ab6d
+installer.erases_one_partition_keeps_the_rest	Erases one partition, keeps the rest	Efface une partition, conserve le reste	4b97fec9
+installer.erase_disk	Erase Disk	Effacer le disque	b75def9e
+installer.starts_clean	Starts clean	Repart de zéro	a94c2925
+installer.manual	Manual	Manuel	f819f303
+installer.for_experts	For experts	Pour les experts	8d4c62a9
+installer.use_for	Use for	Utiliser pour	0a8e6c13
+installer.folder_name	Folder name	Nom du dossier	11a1b2e4
+installer.folder	Folder	Dossier	06357afd
+installer.erase	Erase	Effacer	0e3c6075
+installer.file_system	File system	Système de fichiers	15c55918
+installer.size	Size	Taille	a6478e7c
+installer.delete	Delete	Supprimer	5797ea6a
+setup.the_hint_can_t_be_the	The hint can’t be the password.	L’indice ne peut pas être le mot de passe.	2e960def
+setup.welcome	Welcome	Bienvenue	588a5993
+setup.finish_secure_boot_setup	Finish Secure Boot Setup	Terminer la configuration du démarrage sécurisé	b2e6edcc
+setup.language_region	Language & Region	Langue et région	ac7c8337
+setup.appearance	Appearance	Apparence	31018b9f
+setup.you_re_all_set	You're All Set	Tout est prêt	e392aa73
+setup.let_s_get_you_set_up	Let’s get you set up.	Configurons votre ordinateur.	58847076
+setup.this_computer_hasn_t_accepted_its	This computer hasn’t accepted its WolOS key yet. At the next restart a blue screen asks once.	Cet ordinateur n’a pas encore accepté sa clé WolOS. Au prochain redémarrage, un écran bleu le demande une fois.	01a45b07
+setup.wolos_uses_this_language_and_keyboard	WolOS uses this language and keyboard. You can change them later.	WolOS utilise cette langue et ce clavier. Vous pourrez les changer plus tard.	39861878
+setup.choose_a_network_to_get_online	Choose a network to get online. You can skip this and join later.	Choisissez un réseau pour vous connecter. Vous pouvez passer cette étape et vous connecter plus tard.	4271d3d8
+setup.you_ll_use_this_name_and	You’ll use this name and password to sign in.	Vous utiliserez ce nom et ce mot de passe pour ouvrir une session.	2d211ae0
+setup.choose_a_look_you_can_change	Choose a look. You can change it any time in System Settings.	Choisissez une apparence. Vous pouvez la changer à tout moment dans les Réglages Système.	a0df5832
+setup.your_account_is_ready	Your account is ready.	Votre compte est prêt.	b1fb71ee
+setup.light	Light	Clair	8ad2f8cf
+setup.dark	Dark	Sombre	45570065
+setup.auto	Auto	Auto	126befb6
+setup.enter_your_full_name	Enter your full name.	Saisissez votre nom complet.	1dfbedb2
+setup.use_lowercase_letters_and_digits_starting	Use lowercase letters and digits, starting with a letter.	Utilisez des lettres minuscules et des chiffres, en commençant par une lettre.	0bbb58a6
+setup.choose_a_password	Choose a password.	Choisissez un mot de passe.	0b8616ee
+setup.use_at_most_128_characters_none	Use at most 128 characters, none of them control characters.	Utilisez au plus 128 caractères, sans caractère de contrôle.	231ca727
+setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	Gardez un indice court, sans deux-points.	1c337ecc
+setup.remove_colons_from_the_name	Remove colons from the name.	Retirez les deux-points du nom.	16c7211d
+setup.choose_a_different_password	Choose a different password.	Choisissez un autre mot de passe.	df3affd3
+setup.enter_the_password_for_network	Enter the password for “{network}”.	Saisissez le mot de passe de « {network} ».	9514013f
+setup.network_didn_t_accept_that_password	“{network}” didn’t accept that password. Check it and try again.	« {network} » n’a pas accepté ce mot de passe. Vérifiez-le et réessayez.	d5be1517
+setup.network_didn_t_answer_try_again	“{network}” didn’t answer. Try again, or choose Not Now and join later.	« {network} » n’a pas répondu. Réessayez, ou choisissez Plus tard et connectez-vous ensuite.	bfcfef63
+setup.that_account_name_can_t_be	That account name can’t be used. Press Back and choose another one.	Ce nom de compte ne peut pas être utilisé. Appuyez sur Retour et choisissez-en un autre.	9e84f8dc
+setup.your_account_couldn_t_be_created	Your account couldn’t be created just now. Press Continue to try again.	Votre compte n’a pas pu être créé pour le moment. Appuyez sur Continuer pour réessayer.	4405504c
+setup.hint	Hint	Indice	cbf455d8
+setup.keyboard	Keyboard	Clavier	27d1a714
+setup.type_here_to_try_the_keyboard	Type here to try the keyboard	Tapez ici pour essayer le clavier	dd676e75
+setup.try_it	Try it	Essai	adc589d7
+setup.joining_network	Joining “{network}”…	Connexion à « {network} »…	88bbac20
+setup.setting_up_your_account	Setting up your account…	Configuration de votre compte…	8ce5fe48
+setup.continue	Continue	Continuer	ab43d664
+setup.welcome_to_wolos	Welcome to\nWolOS	Bienvenue dans\nWolOS	25458542
+setup.network_password	Network password	Mot de passe du réseau	4bd89a36
+setup.not_now	Not Now	Plus tard	c9b2d82e
+setup.looking_for_networks	Looking for networks…	Recherche de réseaux…	73d55a28
+setup.no_networks_found	No networks found	Aucun réseau trouvé	fab41b49
+setup.move_closer_to_your_wi_fi	Move closer to your Wi-Fi and look again, or choose Not Now.	Rapprochez-vous de votre Wi-Fi et cherchez à nouveau, ou choisissez Plus tard.	04ab876b
+setup.this_account_is_the_administrator_it	This account is the administrator: it can install apps and change any setting.	Ce compte est l’administrateur : il peut installer des apps et modifier n’importe quel réglage.	3685873b
+setup.you_can_also_start_this_later	You can also start this later from System Settings > Privacy & Security.	Vous pourrez aussi le faire plus tard dans Réglages Système > Confidentialité et sécurité.	d9367445
+setup.get_started	Get Started	Commencer	d0e07f4e
+kit.n_of_total	{n} of {total}	{n} sur {total}	4a099ba8
+language.apps_use_the_new_language_the	Apps use the new language the next time you log in.	Les apps utilisent la nouvelle langue à votre prochaine ouverture de session.	31850050
+language.preferred_language	Preferred language	Langue préférée	cbb78ae8
+language.menus_and_messages	Menus and messages.	Menus et messages.	c333785c
+language.input_sources	Input Sources	Sources de saisie	84948e1d
+language.keyboard_layouts_you_type_with	Keyboard layouts you type with	Dispositions de clavier que vous utilisez	92c1c248
+kit.caps_lock_is_on	⇪ Caps Lock is on	⇪ Verr. Maj activé	51fded41
+login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords	Facultatif, affiché après trois mots de passe erronés	c5d6f057

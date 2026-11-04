@@ -333,13 +333,13 @@ pub fn password_field(placeholder: &str) -> gtk::PasswordEntry {
 
 /// Under every password field: shows while Caps Lock is on. GTK's own indicator is a small icon
 /// inside the entry, only while focused; this one says it in words.
-pub const CAPS_LOCK: &str = "⇪ Caps Lock is on";
+pub const CAPS_LOCK: &str = crate::i18n::n_("⇪ Caps Lock is on");
 
 /// Follows the seat's keyboard, also after one is plugged in or out (audit4 S3-12: it bound the
 /// first keyboard only); its handlers go with the label.
 pub fn caps_lock_note() -> gtk::Label {
     use gtk::gdk;
-    let l = label(CAPS_LOCK, "caps-lock");
+    let l = label(crate::i18n::tr(CAPS_LOCK), "caps-lock");
     l.set_visible(false);
     let Some(seat) = gdk::Display::default().and_then(|d| d.default_seat()) else {
         return l;

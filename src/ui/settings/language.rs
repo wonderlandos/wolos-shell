@@ -2,6 +2,7 @@
 //! General > Language & Region: the language of menus and formats (desktop prefs `language`, the
 //! session's `LANG` from the next login) and the keyboard's input sources live in Keyboard.
 use super::*;
+use crate::i18n::tr;
 use wol_core::region::LANGUAGES;
 
 /// Index in [`LANGUAGES`] for the language in use: the saved choice, else the computer's own
@@ -18,19 +19,19 @@ fn system_locale() -> String {
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
-    let p = general::subpage(e, "Language & Region");
+    let p = general::subpage(e, tr("Language & Region"));
     let status = status_label();
     let d = e.desk.get();
     let names: Vec<&str> = LANGUAGES.iter().map(|l| l.1).collect();
-    let note = w::footnote("Apps use the new language the next time you log in.");
+    let note = w::footnote(tr("Apps use the new language the next time you log in."));
     note.set_visible(false);
     // The menu, so a failed save can put it back to the saved language (Desk::set_or).
     let menu = Rc::new(glib::WeakRef::<gtk::DropDown>::new());
     let (dk, st, n, m) = (e.desk.clone(), status.clone(), note.clone(), menu.clone());
     let opened = d.language.clone();
     let picker = form::search_picker_row(
-        "Preferred language",
-        "Menus, dates and numbers.",
+        tr("Preferred language"),
+        tr("Menus and messages."),
         &names,
         language_index(d.language.as_deref(), &system_locale()),
         move |i| {
@@ -58,8 +59,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&note);
     let keyboard = form::nav_row(
         "input-keyboard-symbolic",
-        "Input Sources",
-        "Keyboard layouts you type with",
+        tr("Input Sources"),
+        tr("Keyboard layouts you type with"),
     );
     let open = e.opener("Keyboard");
     keyboard.connect_clicked(move |_| open());
@@ -75,19 +76,21 @@ mod tests {
     #[test]
     fn saved_language_selects_its_row() {
         assert_eq!(language_index(None, ""), 0);
-        assert_eq!(language_index(Some("pt_BR.UTF-8"), ""), 2);
+        assert_eq!(language_index(Some("pt_BR.UTF-8"), ""), 1);
         assert_eq!(language_index(Some("xx_XX.UTF-8"), ""), 0);
         // A saved choice beats the computer's.
         assert_eq!(language_index(Some("de_DE.UTF-8"), "pt_BR.UTF-8"), 6);
+        // A language no longer offered (es_ES from 0.12) shows the computer's, else English.
+        assert_eq!(language_index(Some("es_ES.UTF-8"), "fr_FR.UTF-8"), 3);
     }
 
     /// QA-SET-27: nothing saved yet on a Portuguese computer: the pane shows Português (Brasil).
     #[test]
     fn language_index_none_picks_system() {
-        assert_eq!(language_index(None, "pt_BR.UTF-8"), 2);
-        assert_eq!(language_index(None, "ja_JP.UTF-8"), 10);
+        assert_eq!(language_index(None, "pt_BR.UTF-8"), 1);
+        assert_eq!(language_index(None, "ja_JP.UTF-8"), 2);
         assert_eq!(language_index(None, "C.UTF-8"), 0);
         assert_eq!(language_index(None, ""), 0);
-        assert_eq!(language_index(Some("junk"), "fr_FR.UTF-8"), 5);
+        assert_eq!(language_index(Some("junk"), "fr_FR.UTF-8"), 3);
     }
 }

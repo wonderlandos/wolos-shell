@@ -213,7 +213,7 @@ pub fn hint_message(failures: u32, hint: Option<&str>) -> Option<String> {
 }
 
 /// Setup's hint field placeholder: what both screens do ([`wrong_password`]).
-pub const HINT_PLACEHOLDER: &str = "Optional, shown after three wrong passwords";
+pub const HINT_PLACEHOLDER: &str = crate::i18n::n_("Optional, shown after three wrong passwords");
 
 /// One failed attempt on the lock screen or login window: counts a wrong password (not a
 /// broken helper) and returns the hint line once there were [`HINT_AFTER`].

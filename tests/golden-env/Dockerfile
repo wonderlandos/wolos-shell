@@ -6,6 +6,8 @@
 # fallback the stylesheet names, DejaVu Sans for keycaps. tests/golden.rs asserts that Pango resolves
 # the UI family to Inter (golden_cases/font.rs): a golden made without it would lock the wrong type;
 # the build stops here already when fontconfig does not answer Inter for Inter.
+# noto-fonts-cjk: the ISO ships it (wolos-iso profile/packages.desktop), and the Japanese Setup and installer
+# goldens (L10N-2) need a face for their glyphs; Inter and the Latin fallbacks are asked first, so no Latin golden moves.
 # Icons come from the repo's design/ tree only (kit/style.rs lays it out as the WolOS theme;
 # golden.rs host_icons fails a case that draws one from an installed theme), so no app package is
 # installed for its icon: a third-party app in a golden shows the package fallback.
@@ -18,7 +20,7 @@ RUN printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$
  && pacman -S --noconfirm --needed --disable-sandbox \
     base-devel git rust clang libpipewire \
     gtk4 libadwaita adwaita-icon-theme xorg-server-xvfb \
-    adwaita-fonts inter-font cantarell-fonts ttf-dejavu noto-fonts noto-fonts-emoji otf-font-awesome ttf-jetbrains-mono \
+    adwaita-fonts inter-font cantarell-fonts ttf-dejavu noto-fonts noto-fonts-cjk noto-fonts-emoji otf-font-awesome ttf-jetbrains-mono \
  && pacman -Scc --noconfirm \
  && pacman -Q gtk4 libadwaita cairo pango harfbuzz fontconfig xorg-server-xvfb inter-font > /etc/golden-versions \
  && test "$(fc-match -f '%{family[0]}' Inter)" = Inter

@@ -96,6 +96,14 @@ fn from_the_live_desktop_there_is_no_begin_page() {
     assert_eq!(f.step, Step::Language);
 }
 
+/// The row of `locale` in the language list (tests name languages, not positions).
+fn lang_at(locale: &str) -> usize {
+    crate::setup::LANGUAGES
+        .iter()
+        .position(|l| l.locale == locale)
+        .unwrap()
+}
+
 #[test]
 fn the_zone_is_guessed_from_the_machine_then_the_language() {
     let h = |z: &str| Hints {
@@ -104,16 +112,19 @@ fn the_zone_is_guessed_from_the_machine_then_the_language() {
     };
     assert_eq!(guess_zone(&h("Europe/Paris"), 0), "Europe/Paris");
     assert_eq!(
-        guess_zone(&h("UTC"), 2),
+        guess_zone(&h("UTC"), lang_at("pt_BR.UTF-8")),
         "America/Sao_Paulo",
         "live images say UTC"
     );
-    assert_eq!(guess_zone(&Hints::default(), 6), "Europe/Berlin");
+    assert_eq!(
+        guess_zone(&Hints::default(), lang_at("de_DE.UTF-8")),
+        "Europe/Berlin"
+    );
     let mut f = Flow::new(&Hints::default(), false, false);
-    f.set_language(5);
+    f.set_language(lang_at("fr_FR.UTF-8"));
     assert_eq!(f.zone, "Europe/Paris", "follows the language");
     f.set_zone("Asia/Tokyo");
-    f.set_language(2);
+    f.set_language(lang_at("pt_BR.UTF-8"));
     assert_eq!(f.zone, "Asia/Tokyo", "until the person chooses");
 }
 
@@ -683,18 +694,18 @@ fn the_medium_comes_out_only_after_the_screen_goes_dark() {
 fn a_language_click_moves_the_keyboard_until_the_person_picks_one() {
     let at = |k: &str| KEYBOARDS.iter().position(|x| x.0 == k).unwrap();
     let mut f = Flow::new(&Hints::default(), true, false);
-    f.set_language(2);
+    f.set_language(lang_at("pt_BR.UTF-8"));
     assert_eq!(f.draft.keyboard, at("br"));
     // The list echoes the index the language set: not a pick.
     assert!(!f.keyboard_shown(f.draft.keyboard, false));
-    f.set_language(6);
+    f.set_language(lang_at("de_DE.UTF-8"));
     assert_eq!(
         f.draft.keyboard,
         at("de"),
         "the second language moves it too"
     );
     assert!(f.keyboard_shown(at("us"), true));
-    f.set_language(2);
+    f.set_language(lang_at("pt_BR.UTF-8"));
     assert_eq!(f.draft.keyboard, at("us"), "a picked keyboard stays");
 }
 
@@ -703,10 +714,10 @@ fn a_language_click_moves_the_keyboard_until_the_person_picks_one() {
 fn picking_the_suggested_keyboard_is_a_pick_too() {
     let at = |k: &str| KEYBOARDS.iter().position(|x| x.0 == k).unwrap();
     let mut f = Flow::new(&Hints::default(), true, false);
-    f.set_language(2);
+    f.set_language(lang_at("pt_BR.UTF-8"));
     assert_eq!(f.draft.keyboard, at("br"));
     assert!(f.keyboard_shown(at("br"), true));
-    f.set_language(6);
+    f.set_language(lang_at("de_DE.UTF-8"));
     assert_eq!(f.draft.keyboard, at("br"), "the picked keyboard stays");
 }
 
@@ -1039,9 +1050,9 @@ fn every_page_explains_itself_in_plain_words() {
     assert!(f.intro(Step::Extras).ends_with(next(Step::Summary)));
     assert_eq!(f.next_after(Step::Method), None, "the method decides");
     for c in [
-        &copy::installer::SECURE_CHOICE_SCREEN[..],
-        &copy::installer::SECURE_CHOICE_OWN_KEYS[..],
-        &copy::installer::SECURE_ALREADY_ON[..],
+        &copy::installer::secure_choice_screen()[..],
+        &copy::installer::secure_choice_own_keys()[..],
+        &copy::installer::secure_already_on()[..],
     ] {
         said.extend(c.iter().map(|s| s.to_string()));
     }

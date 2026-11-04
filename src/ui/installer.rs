@@ -5,6 +5,7 @@
 //! Try, in a session that holds nothing else.
 mod disks;
 use crate::copy;
+use crate::i18n::tr;
 use crate::install::flow::{self, Flow, Found, Next, Row, STEPS, SecureOffer, Step};
 use crate::install::{self, Check, Report, Stage};
 use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList, DiskBar, Seg, Tone};
@@ -56,6 +57,9 @@ type Editors = Vec<(Field, gtk::Widget)>;
 pub struct Installer {
     pub root: gtk::Widget,
     pager: gtk::Stack,
+    /// Called (after the click) when the person picks a language other than the one shown:
+    /// `run` builds the installer again in it (L10N-2). None: goldens and tests.
+    relang: RefCell<Option<Rc<dyn Fn()>>>,
     flow: RefCell<Flow>,
     cards: RefCell<Vec<(Step, Card)>>,
     zones: Vec<String>,
@@ -200,15 +204,13 @@ impl Installer {
         let (method_warn, method_warning) = a::warning("");
         let (summary_warning, summary_text) = a::warning("");
         let method_list = holder();
+        let note = |text: &'static str| a::wrapped(tr(text), "assistant-subtitle");
         let along_box = w::vbox(w::S4);
         let recovery = w::vbox(w::S2);
         let recovery_key = w::centered("", "assistant-key");
         recovery_key.set_selectable(true);
         recovery_key.set_focusable(false);
-        recovery.append(&a::wrapped(
-            copy::INSTALL_RECOVERY_NOTE,
-            "assistant-subtitle",
-        ));
+        recovery.append(&note(copy::INSTALL_RECOVERY_NOTE));
         recovery.append(&recovery_key);
         recovery.set_visible(false);
         let done_notes = w::vbox(w::S1);
@@ -302,10 +304,11 @@ impl Installer {
             } else {
                 flow::online_now
             }),
-            protect_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
-            account_tpm_note: a::wrapped(copy::INSTALL_TPM_FALLBACK, "assistant-subtitle"),
+            protect_tpm_note: note(copy::INSTALL_TPM_FALLBACK),
+            account_tpm_note: note(copy::INSTALL_TPM_FALLBACK),
             awake: RefCell::new(install::Awake::default()),
             keep_awake: RefCell::new(None),
+            relang: RefCell::new(None),
         });
         for st in STEPS {
             let card = match st {
@@ -427,7 +430,8 @@ impl Installer {
             Step::Language => {
                 let cancel = !self.flow.borrow().boot;
                 self.with_card(step, |c| {
-                    c.back.set_label(if cancel { "Cancel" } else { "Back" })
+                    c.back
+                        .set_label(if cancel { tr("Cancel") } else { tr("Back") })
                 });
             }
             Step::Zone => self.fill_zones(""),
@@ -524,7 +528,7 @@ impl Installer {
         self.failed_refusal.set_visible(refused.is_some());
         self.with_card(Step::Failed, |c| {
             c.subtitle.set_label(if refused.is_some() {
-                copy::installer::REFUSED_STOPPED
+                crate::i18n::tr(copy::installer::REFUSED_STOPPED)
             } else {
                 install::stopped_text(at)
             });
@@ -533,7 +537,7 @@ impl Installer {
                 if refused.is_some() || tool.is_empty() {
                     ""
                 } else {
-                    copy::installer::FAILED_SEE_DETAILS
+                    crate::i18n::tr(copy::installer::FAILED_SEE_DETAILS)
                 },
                 true,
             );
@@ -695,8 +699,8 @@ impl Installer {
             Step::Begin.subtitle(),
             &a::blank(),
         );
-        c.next.set_label("Install WolOS");
-        c.add_action(&w::button("Try WolOS", w::Kind::Default, try_wolos));
+        c.next.set_label(tr("Install WolOS"));
+        c.add_action(&w::button(tr("Try WolOS"), w::Kind::Default, try_wolos));
         c
     }
 
@@ -721,6 +725,16 @@ impl Installer {
                 let s = me.upgrade()?;
                 s.flow.borrow_mut().set_language(i);
                 let k = s.flow.borrow().draft.keyboard;
+                // The installer speaks the language picked (L10N-2), built again after this click.
+                let lang = crate::i18n::lang_of(
+                    crate::setup::LANGUAGES[i.min(crate::setup::LANGUAGES.len() - 1)].locale,
+                );
+                if lang != shared::i18n::lang() {
+                    crate::i18n::set_lang(lang);
+                    if let Some(h) = s.relang.borrow().clone() {
+                        glib::idle_add_local_once(move || h());
+                    }
+                }
                 Some(k)
             },
             move |i, by_person| {
@@ -734,7 +748,7 @@ impl Installer {
 
     fn zone(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S2);
-        let search = w::search_field("Search for a city");
+        let search = w::search_field(tr("Search for a city"));
         let me = Rc::downgrade(self);
         search.connect_search_changed(move |e| {
             if let Some(s) = me.upgrade() {
@@ -765,8 +779,8 @@ impl Installer {
                 &self.zone_list,
                 &w::empty_state(
                     "system-search-symbolic",
-                    copy::installer::NO_PLACE.0,
-                    copy::installer::NO_PLACE.1,
+                    copy::installer::no_place().0,
+                    copy::installer::no_place().1,
                     None,
                 ),
             );
@@ -807,12 +821,15 @@ impl Installer {
         let mut rows = Vec::new();
         let mut kinds = Vec::new();
         if tpm {
-            rows.push(row("Security Chip", "Opens on this computer"));
+            rows.push(row(tr("Security Chip"), tr("Opens on this computer")));
             kinds.push(Protect::Tpm);
         }
-        rows.push(row("Password", "Asked at every start"));
+        rows.push(row(tr("Password"), tr("Asked at every start")));
         kinds.push(Protect::Password);
-        rows.push(row("Don’t Encrypt", "Anyone with the disk can read it"));
+        rows.push(row(
+            tr("Don’t Encrypt"),
+            tr("Anyone with the disk can read it"),
+        ));
         kinds.push(Protect::Off);
         let selected = kinds.iter().position(|k| *k == chosen);
         *self.protect_rows.borrow_mut() = kinds;
@@ -830,8 +847,8 @@ impl Installer {
         self.protect_tpm_note.set_visible(chosen == Protect::Tpm);
         body.append(&self.protect_tpm_note);
         *self.protect_list.borrow_mut() = Some(list);
-        let pw = w::password_field("At least 8 characters");
-        let verify = w::password_field("Type it again");
+        let pw = w::password_field(tr("At least 8 characters"));
+        let verify = w::password_field(tr("Type it again"));
         let me = Rc::downgrade(self);
         pw.connect_changed(move |e| {
             if let Some(s) = me.upgrade() {
@@ -851,8 +868,10 @@ impl Installer {
         let caps = w::caps_lock_note();
         caps.set_halign(gtk::Align::Start);
         field.append(&caps);
-        self.disk_pw_rows.append(&a::form_row("Password", &field));
-        self.disk_pw_rows.append(&a::form_row("Verify", &verify));
+        self.disk_pw_rows
+            .append(&a::form_row(tr("Password"), &field));
+        self.disk_pw_rows
+            .append(&a::form_row(tr("Verify"), &verify));
         body.append(&self.disk_pw_rows);
         Card::new(
             Art::Icon("channel-secure-symbolic"),
@@ -878,8 +897,8 @@ impl Installer {
         let body = w::vbox(w::S2);
         let full = w::text_field("Alice Liddell");
         let name = w::text_field("alice");
-        let pw = w::password_field("Choose a password");
-        let verify = w::password_field("Type it again");
+        let pw = w::password_field(tr("Choose a password"));
+        let verify = w::password_field(tr("Type it again"));
         for e in [&full, &name] {
             e.add_css_class("assistant-field");
         }
@@ -911,16 +930,16 @@ impl Installer {
                 s.flow.borrow_mut().draft.verify = e.text().to_string();
             }
         });
-        body.append(&a::form_row("Full name", &full));
-        body.append(&a::form_row("Account name", &name));
+        body.append(&a::form_row(tr("Full name"), &full));
+        body.append(&a::form_row(tr("Account name"), &name));
         let field = w::vbox(w::S1);
         field.set_hexpand(true);
         field.append(&pw);
         let caps = w::caps_lock_note();
         caps.set_halign(gtk::Align::Start);
         field.append(&caps);
-        body.append(&a::form_row("Password", &field));
-        body.append(&a::form_row("Verify", &verify));
+        body.append(&a::form_row(tr("Password"), &field));
+        body.append(&a::form_row(tr("Verify"), &verify));
         self.account_tpm_note.set_xalign(0.0);
         body.append(&self.account_tpm_note);
         // The computer's name follows the account name until typed.
@@ -939,7 +958,7 @@ impl Installer {
                 s.flow.borrow_mut().set_hostname(&e.text());
             }
         });
-        body.append(&a::form_row("Computer name", &host));
+        body.append(&a::form_row(tr("Computer name"), &host));
         let me = Rc::downgrade(self);
         let auto = w::toggle(false, move |on| {
             if let Some(s) = me.upgrade() {
@@ -947,7 +966,7 @@ impl Installer {
             }
         });
         auto.set_halign(gtk::Align::Start);
-        body.append(&a::form_row("Log in automatically", &auto));
+        body.append(&a::form_row(tr("Log in automatically"), &auto));
         *self.editors.borrow_mut() = vec![
             (Field::FullName, full.upcast()),
             (Field::Name, name.upcast()),
@@ -968,7 +987,7 @@ impl Installer {
     fn secure_choice(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S3);
         body.append(&self.secure_row);
-        let mut lines = vec![copy::installer::KEY_SCREEN_LOOKS.to_string()];
+        let mut lines = vec![crate::i18n::tr(copy::installer::KEY_SCREEN_LOOKS).to_string()];
         lines.extend(
             key_screen_steps()
                 .iter()
@@ -976,7 +995,7 @@ impl Installer {
                 .map(|(i, st)| format!("{}. {st}", i + 1)),
         );
         self.secure_screen
-            .append(&a::caption(copy::INSTALL_KEY_SCREEN_TITLE));
+            .append(&a::caption(crate::i18n::tr(copy::INSTALL_KEY_SCREEN_TITLE)));
         self.secure_screen.append(&a::lines(&lines));
         body.append(&self.secure_screen);
         body.append(&self.secure_notes);
@@ -1002,13 +1021,13 @@ impl Installer {
             }
         });
         let detail = if own_keys {
-            copy::installer::SECURE_SWITCH_OWN_KEYS
+            crate::i18n::tr(copy::installer::SECURE_SWITCH_OWN_KEYS)
         } else {
-            copy::installer::SECURE_SWITCH_SCREEN
+            crate::i18n::tr(copy::installer::SECURE_SWITCH_SCREEN)
         };
         let row = w::list_row(
             "",
-            copy::installer::SECURE_SWITCH,
+            crate::i18n::tr(copy::installer::SECURE_SWITCH),
             detail,
             Some(sw.upcast_ref()),
         );
@@ -1033,7 +1052,7 @@ impl Installer {
         };
         let mut notes: Vec<&str> = Vec::new();
         if own_keys {
-            notes.push(copy::INSTALL_OWN_KEYS_MEDIA);
+            notes.push(crate::i18n::tr(copy::INSTALL_OWN_KEYS_MEDIA));
             if bitlocker {
                 notes.extend(copy::installer::bitlocker("own-keys", true));
             }
@@ -1094,7 +1113,7 @@ impl Installer {
         let kit = wol_core::store::kit(flow::CODECS_KIT);
         let row = w::list_row(
             "",
-            copy::installer::CODECS_SWITCH,
+            crate::i18n::tr(copy::installer::CODECS_SWITCH),
             kit.map_or("", |k| k.summary),
             Some(sw.upcast_ref()),
         );
@@ -1129,7 +1148,7 @@ impl Installer {
             Step::Summary.subtitle(),
             &body,
         );
-        c.next.set_label("Install");
+        c.next.set_label(tr("Install"));
         c
     }
 
@@ -1168,8 +1187,8 @@ impl Installer {
             Step::SecureBoot.subtitle(),
             &self.secure_boot_notes,
         );
-        c.next.set_label("Install Anyway");
-        c.add_action(&w::button("Restart", w::Kind::Default, || {
+        c.next.set_label(tr("Install Anyway"));
+        c.add_action(&w::button(tr("Restart"), w::Kind::Default, || {
             kit::spawn(&install::restart_command())
         }));
         c
@@ -1193,7 +1212,7 @@ impl Installer {
     fn done(self: &Rc<Self>, body: &gtk::Box) -> Card {
         // The key screen: numbered steps, the password in large type, the media first.
         self.key_screen
-            .append(&a::caption(copy::INSTALL_KEY_SCREEN_TITLE));
+            .append(&a::caption(crate::i18n::tr(copy::INSTALL_KEY_SCREEN_TITLE)));
         for (i, step) in key_screen_steps().iter().enumerate() {
             let l = a::wrapped(&format!("{}. {step}", i + 1), "assistant-subtitle");
             l.set_xalign(0.0);
@@ -1204,7 +1223,7 @@ impl Installer {
         self.key_screen
             .append(&w::centered(MOK_PASSWORD, "large-title"));
         self.key_screen.append(&a::wrapped(
-            copy::INSTALL_KEY_SCREEN_MEDIA,
+            crate::i18n::tr(copy::INSTALL_KEY_SCREEN_MEDIA),
             "assistant-subtitle",
         ));
         // The recovery key: acknowledged before Restart, or saved on a USB stick.
@@ -1216,10 +1235,10 @@ impl Installer {
         });
         ack.set_halign(gtk::Align::Start);
         self.recovery
-            .append(&a::form_row(copy::INSTALL_KEY_ACK, &ack));
+            .append(&a::form_row(crate::i18n::tr(copy::INSTALL_KEY_ACK), &ack));
         *self.ack.borrow_mut() = Some(ack);
         let me = Rc::downgrade(self);
-        let save = w::button("Save to USB", w::Kind::Default, move || {
+        let save = w::button(tr("Save to USB"), w::Kind::Default, move || {
             if let Some(s) = me.upgrade() {
                 s.save_key_to_usb();
             }
@@ -1227,10 +1246,10 @@ impl Installer {
         save.set_halign(gtk::Align::Center);
         self.recovery.append(&save);
         let c = Card::moment("keyhole", Step::Done.title(), Step::Done.subtitle(), body);
-        c.next.set_label("Restart");
+        c.next.set_label(tr("Restart"));
         if !self.flow.borrow().boot {
             // From the live desktop: the person may go on trying WolOS and restart later.
-            let later = w::button("Restart Later", w::Kind::Default, reveal::exit_faded);
+            let later = w::button(tr("Restart Later"), w::Kind::Default, reveal::exit_faded);
             c.add_action(&later);
             *self.later.borrow_mut() = Some(later);
         }
@@ -1242,7 +1261,7 @@ impl Installer {
         let roots: Vec<PathBuf> = install::MEDIA_ROOTS.iter().map(PathBuf::from).collect();
         let key = self.recovery_key.label().to_string();
         let said = match install::media_dirs(&roots).first() {
-            None => (copy::INSTALL_NO_USB.to_string(), true),
+            None => (crate::i18n::tr(copy::INSTALL_NO_USB).to_string(), true),
             Some(dir) => match install::save_key(dir, &key) {
                 Ok(_) => {
                     let name = dir
@@ -1256,7 +1275,10 @@ impl Installer {
                 }
                 Err(e) => {
                     eprintln!("wol-installer: recovery key not saved: {e}");
-                    (copy::INSTALL_KEY_NOT_SAVED.to_string(), true)
+                    (
+                        crate::i18n::tr(copy::INSTALL_KEY_NOT_SAVED).to_string(),
+                        true,
+                    )
                 }
             },
         };
@@ -1273,12 +1295,12 @@ impl Installer {
             install::stopped_text(Stage::Finish),
             &body,
         );
-        c.next.set_label("Try Again");
-        c.add_action(&w::button("Restart", w::Kind::Default, || {
+        c.next.set_label(tr("Try Again"));
+        c.add_action(&w::button(tr("Restart"), w::Kind::Default, || {
             kit::spawn(&install::restart_command())
         }));
         let me = Rc::downgrade(self);
-        c.add_action(&w::button("Details", w::Kind::Plain, move || {
+        c.add_action(&w::button(tr("Details"), w::Kind::Plain, move || {
             if let Some(s) = me.upgrade() {
                 s.toggle_details();
             }
@@ -1295,9 +1317,9 @@ impl Installer {
             Step::KeyUnread.subtitle(),
             &self.unread_details,
         );
-        c.next.set_label("Try Again");
+        c.next.set_label(tr("Try Again"));
         let me = Rc::downgrade(self);
-        c.add_action(&w::button("Details", w::Kind::Plain, move || {
+        c.add_action(&w::button(tr("Details"), w::Kind::Plain, move || {
             if let Some(s) = me.upgrade() {
                 s.toggle_details();
             }
@@ -1589,24 +1611,92 @@ pub fn run() -> glib::ExitCode {
     let boot = std::env::args().any(|a| a == "--boot");
     a::run("org.wolos.installer", "installer", move |win| {
         let hints = Hints::read(std::path::Path::new("/"));
+        // The language the Language page starts on (the live session's `LANG`, else the time
+        // zone's), until the person picks one; `WOL_LANG` (tests, `xx`) wins.
+        let start = crate::setup::Draft::detected(&hints).language;
+        crate::i18n::set_lang(crate::i18n::lang_of(crate::setup::LANGUAGES[start].locale));
+        if gtk::glib::getenv("WOL_LANG").is_some() {
+            crate::i18n::init();
+        }
         // The same check install-run makes: a chip that exists but can't be used is no chip.
         let tpm = install::tpm_from_decide(&output(&install::tpm_command()));
-        let s = Installer::new(&hints, boot, tpm, system_zones(), None);
+        let zones = system_zones();
         // The optional modules this image offers (a few small records, read once at start).
         let records = install::modules_on_image();
-        s.with_flow(|f| f.set_modules(&records));
-        if let Some(mem) = std::fs::read_to_string("/proc/meminfo")
+        let mem = std::fs::read_to_string("/proc/meminfo")
             .ok()
-            .and_then(|t| flow::meminfo_bytes(&t))
-        {
-            s.with_flow(|f| f.set_memory(mem));
-        }
-        // Over the live desktop: shown at once, no fade from black.
-        let shown = reveal::Reveal::new(&s.root, false);
-        win.set_child(Some(&shown.root));
+            .and_then(|t| flow::meminfo_bytes(&t));
+        let build = move || {
+            let s = Installer::new(&hints, boot, tpm, zones.clone(), None);
+            s.with_flow(|f| f.set_modules(&records));
+            if let Some(mem) = mem {
+                s.with_flow(|f| f.set_memory(mem));
+            }
+            s
+        };
+        // The installer on screen: the one built in the language in use (a language pick builds
+        // it again, on its Language page, with the draft so far).
+        let cur: Rc<RefCell<Rc<Installer>>> = Rc::new(RefCell::new(build()));
+        let mount: Rc<dyn Fn()> = {
+            let (cur, w) = (cur.clone(), win.clone());
+            Rc::new(move || {
+                let s = cur.borrow().clone();
+                // Over the live desktop: shown at once, no fade from black.
+                let shown = reveal::Reveal::new(&s.root, false);
+                w.set_child(Some(&shown.root));
+                // Installing: no idle screen-off, lock or sleep. The compositor's idle inhibitor
+                // for the window, and the session's ScreenSaver inhibit, which hypridle honours
+                // whichever workspace is showing. install-run holds the lid. Released on done or
+                // stopped.
+                let (app, w2) = (w.application(), w.clone());
+                let held: RefCell<Option<(u32, std::sync::mpsc::Sender<()>)>> = RefCell::new(None);
+                s.set_keep_awake(move |on| {
+                    if on {
+                        // IDLE only: on Wayland GTK maps it to the compositor's idle inhibitor (no
+                        // D-Bus round trip on the UI thread); sleep from idle is hypridle's.
+                        let flags = gtk::ApplicationInhibitFlags::IDLE;
+                        let cookie = app.as_ref().map_or(0, |a| {
+                            a.inhibit(Some(&w2), flags, Some(install::AWAKE_REASON))
+                        });
+                        *held.borrow_mut() = Some((cookie, screensaver_inhibit()));
+                    } else if let Some((cookie, release)) = held.borrow_mut().take() {
+                        if let (Some(a), true) = (&app, cookie != 0) {
+                            a.uninhibit(cookie);
+                        }
+                        let _ = release.send(());
+                    }
+                });
+            })
+        };
+        let relang: Rc<dyn Fn()> = {
+            let (cur, mount) = (cur.clone(), mount.clone());
+            Rc::new(move || {
+                let old = cur.borrow().clone();
+                if old.flow.borrow().step != Step::Language {
+                    return;
+                }
+                let n = build();
+                {
+                    let o = old.flow.borrow();
+                    let (draft, zone) = (o.draft.clone(), o.zone.clone());
+                    n.with_flow(|f| {
+                        f.draft = draft;
+                        f.zone = zone;
+                    });
+                }
+                // Begin, then Language: the way the person came, so Back still works.
+                n.next();
+                *n.relang.borrow_mut() = old.relang.borrow_mut().take();
+                *cur.borrow_mut() = n;
+                mount();
+            })
+        };
+        *cur.borrow().relang.borrow_mut() = Some(relang);
+        mount();
         // Closing mid-install would cut the installer's output and stop it: not while installing.
-        let s2 = s.clone();
+        let c2 = cur.clone();
         win.connect_close_request(move |_| {
+            let s2 = c2.borrow().clone();
             if s2.is_installing() {
                 glib::Propagation::Stop
             } else {
@@ -1617,29 +1707,18 @@ pub fn run() -> glib::ExitCode {
                 glib::Propagation::Proceed
             }
         });
-        // Installing: no idle screen-off, lock or sleep. The compositor's idle inhibitor for the
-        // window, and the session's ScreenSaver inhibit, which hypridle honours whichever
-        // workspace is showing. install-run holds the lid. Released on done or stopped.
-        let (app, w) = (win.application(), win.clone());
-        let held: RefCell<Option<(u32, std::sync::mpsc::Sender<()>)>> = RefCell::new(None);
-        s.set_keep_awake(move |on| {
-            if on {
-                // IDLE only: on Wayland GTK maps it to the compositor's idle inhibitor (no D-Bus
-                // round trip on the UI thread); sleep from idle is hypridle's, held below.
-                let flags = gtk::ApplicationInhibitFlags::IDLE;
-                let cookie = app.as_ref().map_or(0, |a| {
-                    a.inhibit(Some(&w), flags, Some(install::AWAKE_REASON))
-                });
-                *held.borrow_mut() = Some((cookie, screensaver_inhibit()));
-            } else if let Some((cookie, release)) = held.borrow_mut().take() {
-                if let (Some(a), true) = (&app, cookie != 0) {
-                    a.uninhibit(cookie);
-                }
-                let _ = release.send(());
-            }
-        });
-        let s3 = s.clone();
-        a::keys(win, move || s.next(), move || s3.back());
+        let (c3, c4) = (cur.clone(), cur.clone());
+        a::keys(
+            win,
+            move || {
+                let s = c3.borrow().clone();
+                s.next()
+            },
+            move || {
+                let s = c4.borrow().clone();
+                s.back()
+            },
+        );
     })
 }
 

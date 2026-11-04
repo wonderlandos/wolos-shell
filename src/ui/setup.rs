@@ -3,7 +3,8 @@
 //! over the blurred wallpaper, the same glass as the login window and the lock screen. Runs as
 //! `_wollogin` on first boot; Wi-Fi and the account go to wol-login over its socket. Return
 //! continues, Escape goes back; Get Started fades to black into the desktop.
-use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList};
+use crate::i18n::{tr, tr_fill};
+use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList, ROWS};
 use crate::kit::{self, reveal, widgets as w};
 use crate::login::{self, Verdict};
 use crate::setup::{
@@ -15,13 +16,16 @@ use gtk::{glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-const FIELDS: [(Field, &str, bool); 5] = [
-    (Field::FullName, "Full name", false),
-    (Field::Name, "Account name", false),
-    (Field::Password, "Password", true),
-    (Field::Verify, "Verify", true),
-    (Field::Hint, "Hint", false),
-];
+/// The account form's fields: (field, label, secret).
+fn fields() -> [(Field, &'static str, bool); 5] {
+    [
+        (Field::FullName, tr("Full name"), false),
+        (Field::Name, tr("Account name"), false),
+        (Field::Password, tr("Password"), true),
+        (Field::Verify, tr("Verify"), true),
+        (Field::Hint, tr("Hint"), false),
+    ]
+}
 
 /// The Wi-Fi page's parts that change with each scan.
 #[derive(Clone)]
@@ -56,6 +60,12 @@ pub(crate) struct LanguagePage {
     pub list: ChoiceList,
 }
 
+/// Rows Setup's language list shows before it scrolls: every official language (`LANGUAGES`; a test
+/// keeps the two equal), so no one has to scroll to find theirs. The installer's list keeps
+/// [`crate::kit::assistant::ROWS`]: its cards share the height of the tallest one, and two more rows
+/// would lengthen every installer page past a 1024x600 screen.
+pub const LANGUAGE_ROWS: i32 = 7;
+
 pub(crate) fn language_page(
     (title, subtitle): (&str, &str),
     language: usize,
@@ -78,7 +88,8 @@ pub(crate) fn language_page(
         })
         .collect();
     let (dd, guard) = (kb.downgrade(), filling.clone());
-    let list = ChoiceList::new(rows, Some(language), move |i| {
+    let shown = if try_it { ROWS } else { LANGUAGE_ROWS };
+    let list = ChoiceList::with_rows(rows, Some(language), shown, move |i| {
         if let (Some(k), Some(dd)) = (pick_language(i), dd.upgrade()) {
             // The page moves the list: not the person's pick.
             guard.set(true);
@@ -94,12 +105,12 @@ pub(crate) fn language_page(
             kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
         }
     });
-    body.append(&a::form_row("Keyboard", &kb));
+    body.append(&a::form_row(tr("Keyboard"), &kb));
     if try_it {
         // Somewhere to see that the keys type what they say, before any password does.
-        let test = w::text_field("Type here to try the keyboard");
+        let test = w::text_field(tr("Type here to try the keyboard"));
         test.add_css_class("assistant-field");
-        body.append(&a::form_row("Try it", &test));
+        body.append(&a::form_row(tr("Try it"), &test));
     }
     let card = Card::new(
         Art::Icon("preferences-desktop-locale-symbolic"),
@@ -128,6 +139,8 @@ pub struct Setup {
     avatar: RefCell<Option<gtk::Label>>,
     languages: RefCell<Option<ChoiceList>>,
     wifi_ui: RefCell<Option<WifiUi>>,
+    /// The networks the Wi-Fi page shows last (a page built again in a new language keeps them).
+    nets: RefCell<Vec<WifiNetwork>>,
     scanning: Cell<bool>,
     busy: Cell<bool>,
 }
@@ -163,6 +176,7 @@ impl Setup {
             avatar: Default::default(),
             languages: Default::default(),
             wifi_ui: Default::default(),
+            nets: Default::default(),
             scanning: Cell::new(false),
             busy: Cell::new(false),
         });
@@ -179,22 +193,80 @@ impl Setup {
                 }
             });
         }
-        s.pager.add_named(&s.welcome(), Some(Step::Welcome.id()));
+        // Setup speaks the language it starts on (the one the installer chose, or the machine's).
+        let start = s.flow.borrow().draft.language;
+        crate::i18n::set_lang(crate::i18n::lang_of(LANGUAGES[start].locale));
+        if gtk::glib::getenv("WOL_LANG").is_some() {
+            // Layout tests (`WOL_LANG=xx wol-setup`).
+            crate::i18n::init();
+        }
+        *s.nets.borrow_mut() = sys.wifi_networks();
         s.root.add_css_class("on-art");
+        s.build_cards();
+        s
+    }
+
+    /// The welcome and every card after it, in the language in use; replaces the ones there.
+    fn build_cards(self: &Rc<Self>) {
+        let old: Vec<(Step, Card)> = self.cards.borrow_mut().drain(..).collect();
+        for (_, c) in &old {
+            self.pager.remove(&c.root);
+        }
+        self.editors.borrow_mut().clear();
+        if let Some(old) = self.pager.child_by_name(Step::Welcome.id()) {
+            self.pager.remove(&old);
+        }
+        self.pager
+            .add_named(&self.welcome(), Some(Step::Welcome.id()));
         for st in &STEPS[1..] {
             let card = match st {
-                Step::KeyScreen => s.key_screen(),
-                Step::Language => s.language(),
-                Step::Wifi => s.wifi(sys),
-                Step::Account => s.account(),
-                Step::Appearance => s.appearance(),
-                _ => s.done(),
+                Step::KeyScreen => self.key_screen(),
+                Step::Language => self.language(),
+                Step::Wifi => self.wifi(),
+                Step::Account => self.account(),
+                Step::Appearance => self.appearance(),
+                _ => self.done(),
             };
-            s.wire(*st, &card);
-            s.pager.add_named(&card.root, Some(st.id()));
-            s.cards.borrow_mut().push((*st, card));
+            self.wire(*st, &card);
+            self.pager.add_named(&card.root, Some(st.id()));
+            self.cards.borrow_mut().push((*st, card));
         }
-        s
+    }
+
+    /// The person picked language row `i`: Setup speaks it from the next moment (QA-L10N-2,
+    /// L10N-2). The cards are built again in it, after the click that picked it, with what was
+    /// typed already; the language page stays in front.
+    fn speak(self: &Rc<Self>, i: usize) {
+        let lang = crate::i18n::lang_of(LANGUAGES[i.min(LANGUAGES.len() - 1)].locale);
+        if lang == shared::i18n::lang() {
+            return;
+        }
+        crate::i18n::set_lang(lang);
+        let me = Rc::downgrade(self);
+        glib::idle_add_local_once(move || {
+            if let Some(s) = me.upgrade() {
+                s.relabel();
+            }
+        });
+    }
+
+    /// [`Setup::speak`]'s second half (goldens call it at once).
+    pub fn relabel(self: &Rc<Self>) {
+        let step = self.flow.borrow().step;
+        self.build_cards();
+        let d = self.flow.borrow().draft.clone();
+        for (f, text) in [
+            (Field::FullName, &d.full_name),
+            (Field::Name, &d.name),
+            (Field::Password, &d.password),
+            (Field::Verify, &d.verify),
+            (Field::Hint, &d.hint),
+        ] {
+            if !text.is_empty() {
+                self.type_into(f, text);
+            }
+        }
+        self.show(step);
     }
 
     /// Shows `step` at once (golden renders, tests).
@@ -339,9 +411,9 @@ impl Setup {
         let (req, doing) = match &job {
             Job::JoinWifi { ssid, password } => (
                 shared::login::encode_wifi(ssid, password),
-                format!("Joining “{ssid}”…"),
+                tr_fill("Joining “{network}”…", &[("network", ssid)]),
             ),
-            Job::CreateAccount(acc) => (acc.encode(), "Setting up your account…".to_string()),
+            Job::CreateAccount(acc) => (acc.encode(), tr("Setting up your account…").to_string()),
         };
         self.busy.set(true);
         self.with_card(step, |c| {
@@ -365,14 +437,14 @@ impl Setup {
 
     fn welcome(self: &Rc<Self>) -> gtk::Widget {
         let me = Rc::downgrade(self);
-        let go = w::button("Continue", w::Kind::Primary, move || {
+        let go = w::button(tr("Continue"), w::Kind::Primary, move || {
             if let Some(s) = me.upgrade() {
                 s.next()
             }
         });
         a::welcome(
             "setup-welcome",
-            "Welcome to\nWolOS",
+            tr("Welcome to\nWolOS"),
             Step::Welcome.subtitle(),
             &go,
         )
@@ -390,6 +462,7 @@ impl Setup {
                 let s = me.upgrade()?;
                 s.flow.borrow_mut().draft.set_language(i);
                 let k = s.flow.borrow().draft.keyboard;
+                s.speak(i);
                 Some(k)
             },
             move |i, by_person| {
@@ -419,12 +492,12 @@ impl Setup {
         (f.draft.language, f.draft.keyboard)
     }
 
-    fn wifi(self: &Rc<Self>, sys: &dyn System) -> Card {
+    fn wifi(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S4);
         let holder = w::vbox(0);
         holder.set_vexpand(true);
         body.append(&holder);
-        let pw = w::password_field("Network password");
+        let pw = w::password_field(tr("Network password"));
         // The Caps Lock note under the field, inside its row (hidden with it).
         let field = w::vbox(w::S1);
         field.set_hexpand(true);
@@ -432,7 +505,7 @@ impl Setup {
         let caps = w::caps_lock_note();
         caps.set_halign(gtk::Align::Start);
         field.append(&caps);
-        let pw_row = a::form_row("Password", &field);
+        let pw_row = a::form_row(tr("Password"), &field);
         pw_row.set_visible(false);
         body.append(&pw_row);
         let me = Rc::downgrade(self);
@@ -449,7 +522,8 @@ impl Setup {
             pw_row,
         });
         // What the system already knows; entering the page scans again (wol-login).
-        self.show_networks(sys.wifi_networks());
+        let nets = self.nets.borrow().clone();
+        self.show_networks(nets);
         let card = Card::new(
             Art::Icon("network-wireless-symbolic"),
             Step::Wifi.title(),
@@ -457,7 +531,7 @@ impl Setup {
             &body,
         );
         let me = Rc::downgrade(self);
-        card.add_action(&w::button("Not Now", w::Kind::Plain, move || {
+        card.add_action(&w::button(tr("Not Now"), w::Kind::Plain, move || {
             if let Some(s) = me.upgrade()
                 && !s.busy.get()
             {
@@ -474,7 +548,7 @@ impl Setup {
             return;
         }
         if let Some(ui) = &*self.wifi_ui.borrow() {
-            replace_child(&ui.holder, &a::waiting("Looking for networks…"));
+            replace_child(&ui.holder, &a::waiting(tr("Looking for networks…")));
             ui.pw_row.set_visible(false);
         }
         let me = Rc::downgrade(self);
@@ -504,6 +578,7 @@ impl Setup {
 
     /// The network list (or how to find one); the joined network is the pick.
     fn show_networks(self: &Rc<Self>, nets: Vec<WifiNetwork>) {
+        self.nets.borrow_mut().clone_from(&nets);
         let Some(ui) = self.wifi_ui.borrow().as_ref().map(WifiUi::clone) else {
             return;
         };
@@ -516,7 +591,7 @@ impl Setup {
         ui.pw_row.set_visible(false);
         if nets.is_empty() {
             let me = Rc::downgrade(self);
-            let again = w::button("Look Again", w::Kind::Default, move || {
+            let again = w::button(tr("Look Again"), w::Kind::Default, move || {
                 if let Some(s) = me.upgrade() {
                     s.scan()
                 }
@@ -525,8 +600,8 @@ impl Setup {
                 &ui.holder,
                 &w::empty_state(
                     "network-wireless-offline-symbolic",
-                    "No networks found",
-                    "Move closer to your Wi-Fi and look again, or choose Not Now.",
+                    tr("No networks found"),
+                    tr("Move closer to your Wi-Fi and look again, or choose Not Now."),
                     Some(again),
                 ),
             );
@@ -588,14 +663,14 @@ impl Setup {
         picker.avatar.set_label(&initials_or_placeholder(""));
         *self.avatar.borrow_mut() = Some(picker.avatar.clone());
         let form = w::vbox(w::S2);
-        for (f, title, secret) in FIELDS {
+        for (f, title, secret) in fields() {
             let e: gtk::Widget = if secret {
                 w::password_field("").upcast()
             } else {
                 w::text_field("").upcast()
             };
             if f == Field::Hint {
-                e.set_property("placeholder-text", crate::login::HINT_PLACEHOLDER);
+                e.set_property("placeholder-text", tr(crate::login::HINT_PLACEHOLDER));
             }
             e.add_css_class("assistant-field");
             form.append(&a::form_row(title, &e));
@@ -616,9 +691,9 @@ impl Setup {
                 .and_downcast_ref::<gtk::Widget>(),
         );
         *self.caps.borrow_mut() = Some(caps);
-        let note = a::caption(
+        let note = a::caption(tr(
             "This account is the administrator: it can install apps and change any setting.",
-        );
+        ));
         note.set_wrap(true);
         form.append(&note);
         for (f, e) in self.editors.borrow().iter() {
@@ -770,7 +845,10 @@ impl Setup {
     /// the password in large type. The same words the installer's Done page showed.
     fn key_screen(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S2);
-        for (i, step) in wol_core::boot::key_screen_steps().iter().enumerate() {
+        for (i, step) in crate::copy::installer::key_screen_steps()
+            .iter()
+            .enumerate()
+        {
             let l = a::wrapped(&format!("{}. {step}", i + 1), "assistant-subtitle");
             l.set_xalign(0.0);
             l.set_justify(gtk::Justification::Left);
@@ -778,9 +856,9 @@ impl Setup {
             body.append(&l);
         }
         body.append(&w::centered(wol_core::boot::MOK_PASSWORD, "large-title"));
-        body.append(&a::caption(
+        body.append(&a::caption(tr(
             "You can also start this later from System Settings > Privacy & Security.",
-        ));
+        )));
         Card::moment(
             "keyhole",
             Step::KeyScreen.title(),
@@ -797,7 +875,7 @@ impl Setup {
             Step::Done.subtitle(),
             &a::blank(),
         );
-        c.next.set_label("Get Started");
+        c.next.set_label(tr("Get Started"));
         c
     }
 }

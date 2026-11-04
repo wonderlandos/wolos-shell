@@ -67,7 +67,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, facts: (Option<Status>, bool), status: &
     if let Some(a) = admin("boot-enroll", &[]).filter(|_| needs_finish(&s, pending)) {
         let steps = w::vbox(w::S1);
         steps.set_visible(false);
-        for line in wol_core::boot::key_screen_steps() {
+        for line in crate::copy::installer::key_screen_steps() {
             steps.append(&w::footnote(&line));
         }
         let (ctx, st, shown, m) = (e.ctx.clone(), status.clone(), steps.clone(), e.machine());

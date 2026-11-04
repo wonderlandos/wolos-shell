@@ -3,6 +3,7 @@
 //! laying the disk out by hand.
 use super::{EditUi, Installer, bytes_at, keep_at, manual_segments, percent_of, replace_child};
 use crate::copy;
+use crate::i18n::tr;
 use crate::install;
 use crate::install::flow::{self, DiskTitle, FILE_SYSTEMS, Method, Row, SWAPS, Step, USES, Use};
 use crate::kit::assistant::{self as a, Art, Card, Choice, ChoiceList, Seg, Tone};
@@ -19,7 +20,7 @@ impl Installer {
         }
         replace_child(
             &self.disk_list,
-            &a::waiting(copy::installer::LOOKING_AT_DISKS),
+            &a::waiting(crate::i18n::tr(copy::installer::LOOKING_AT_DISKS)),
         );
         let me = Rc::downgrade(self);
         let probe = self.probe.get();
@@ -50,7 +51,7 @@ impl Installer {
         };
         if rows.is_empty() {
             let me = Rc::downgrade(self);
-            let again = w::button("Look Again", w::Kind::Default, move || {
+            let again = w::button(tr("Look Again"), w::Kind::Default, move || {
                 if let Some(s) = me.upgrade() {
                     s.probed.set(false);
                     s.enter_disks();
@@ -60,8 +61,8 @@ impl Installer {
                 &self.disk_list,
                 &w::empty_state(
                     "drive-harddisk-symbolic",
-                    copy::installer::NO_DISK.0,
-                    copy::installer::NO_DISK.1,
+                    copy::installer::no_disk().0,
+                    copy::installer::no_disk().1,
                     Some(again),
                 ),
             );
@@ -79,7 +80,7 @@ impl Installer {
     pub(super) fn method(self: &Rc<Self>) -> Card {
         let body = w::vbox(w::S4);
         body.append(&self.method_list);
-        let names: Vec<&str> = SWAPS.iter().map(|s| s.1).collect();
+        let names: Vec<&str> = SWAPS.iter().map(|s| tr(s.1)).collect();
         let swap = w::dropdown(&names, 0);
         let me = Rc::downgrade(self);
         swap.connect_selected_notify(move |dd| {
@@ -88,7 +89,7 @@ impl Installer {
                 s.flow.borrow_mut().swap = SWAPS[i].0;
             }
         });
-        self.swap_row.append(&a::form_row("Swap", &swap));
+        self.swap_row.append(&a::form_row(tr("Swap"), &swap));
         *self.swap.borrow_mut() = Some(swap);
         body.append(&self.swap_row);
         body.append(&self.method_warn);
@@ -119,13 +120,13 @@ impl Installer {
             };
             (
                 vec![
-                    row(f.alongside_title(), "Keeps what’s there"),
+                    row(f.alongside_title(), tr("Keeps what’s there")),
                     row(
                         Step::Replace.title().into(),
-                        "Erases one partition, keeps the rest",
+                        tr("Erases one partition, keeps the rest"),
                     ),
-                    row("Erase Disk".into(), "Starts clean"),
-                    row("Manual".into(), "For experts"),
+                    row(tr("Erase Disk").into(), tr("Starts clean")),
+                    row(tr("Manual").into(), tr("For experts")),
                 ],
                 Self::METHODS.iter().position(|m| *m == f.method),
                 SWAPS
@@ -311,7 +312,7 @@ impl Installer {
                 }
             }
         };
-        let names: Vec<&str> = USES.iter().map(|u| u.1).collect();
+        let names: Vec<&str> = USES.iter().map(|u| tr(u.1)).collect();
         let usage = w::dropdown(&names, 0);
         let go = on_flow(Rc::downgrade(self), |e, s| {
             if let Some(ui) = &*s.edit.borrow() {
@@ -319,15 +320,15 @@ impl Installer {
             }
         });
         usage.connect_selected_notify(move |_| go());
-        body.append(&a::form_row("Use for", &usage));
-        let folder = w::text_field("Folder name");
+        body.append(&a::form_row(tr("Use for"), &usage));
+        let folder = w::text_field(tr("Folder name"));
         let go = on_flow(Rc::downgrade(self), |e, s| {
             if let Some(ui) = &*s.edit.borrow() {
                 e.folder = ui.folder.text().to_string();
             }
         });
         folder.connect_changed(move |_| go());
-        let folder_row = a::form_row("Folder", &folder);
+        let folder_row = a::form_row(tr("Folder"), &folder);
         body.append(&folder_row);
         let go = on_flow(Rc::downgrade(self), |e, s| {
             if let Some(ui) = &*s.edit.borrow() {
@@ -336,9 +337,9 @@ impl Installer {
         });
         let erase = w::toggle(false, move |_| go());
         erase.set_halign(gtk::Align::Start);
-        let erase_row = a::form_row("Erase", &erase);
+        let erase_row = a::form_row(tr("Erase"), &erase);
         body.append(&erase_row);
-        let fs_names: Vec<&str> = FILE_SYSTEMS.iter().map(|f| f.1).collect();
+        let fs_names: Vec<&str> = FILE_SYSTEMS.iter().map(|f| tr(f.1)).collect();
         let fs = w::dropdown(&fs_names, 0);
         let go = on_flow(Rc::downgrade(self), |e, s| {
             if let Some(ui) = &*s.edit.borrow() {
@@ -346,7 +347,7 @@ impl Installer {
             }
         });
         fs.connect_selected_notify(move |_| go());
-        let fs_row = a::form_row("File system", &fs);
+        let fs_row = a::form_row(tr("File system"), &fs);
         body.append(&fs_row);
         let me = Rc::downgrade(self);
         let size = w::row_slider(100.0, move |v| {
@@ -358,7 +359,7 @@ impl Installer {
         let row = w::hbox(w::S2);
         row.append(&size);
         row.append(&size_text);
-        let size_row = a::form_row("Size", &row);
+        let size_row = a::form_row(tr("Size"), &row);
         body.append(&size_row);
         let c = Card::new(
             Art::Icon("drive-harddisk-symbolic"),
@@ -367,7 +368,7 @@ impl Installer {
             &body,
         );
         let me = Rc::downgrade(self);
-        let delete = w::button("Delete", w::Kind::Default, move || {
+        let delete = w::button(tr("Delete"), w::Kind::Default, move || {
             if let Some(s) = me.upgrade() {
                 s.flow.borrow_mut().delete_edited();
                 let st = s.flow.borrow().step;
@@ -375,7 +376,7 @@ impl Installer {
             }
         });
         c.add_action(&delete);
-        c.next.set_label("Done");
+        c.next.set_label(tr("Done"));
         *self.edit.borrow_mut() = Some(EditUi {
             usage,
             folder_row,
