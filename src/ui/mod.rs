@@ -18,6 +18,7 @@ pub mod lock;
 pub mod lua_widgets;
 pub mod maker;
 pub mod menubar;
+pub mod monitor;
 pub mod notify;
 pub mod overview;
 pub mod panels;

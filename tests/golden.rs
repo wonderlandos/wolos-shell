@@ -27,6 +27,8 @@ mod installer_cases;
 mod maker_cases;
 #[path = "golden_cases/menubar.rs"]
 mod menubar_cases;
+#[path = "golden_cases/monitor.rs"]
+mod monitor_cases;
 #[path = "golden_cases/motion.rs"]
 mod motion_cases;
 #[path = "golden_cases/offers.rs"]
@@ -1263,6 +1265,7 @@ fn cases() -> Vec<Case> {
     v.extend(tray_cases::cases());
     v.extend(menubar_cases::cases());
     v.extend(motion_cases::cases());
+    v.extend(monitor_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-malware-{tag}"),

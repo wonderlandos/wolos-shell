@@ -601,3 +601,14 @@ button.device-button:focus:focus-visible, button.row-button:focus:focus-visible,
 .note-widget { padding: 4px; }
 .note-text, .note-text > text { background: transparent; color: inherit; }
 .note-text { font-size: 1.05em; }
+
+/* ---- System Monitor (kit/graph.rs, ui/monitor): graph cards and the process list ---- */
+.graph-grid { color: var(--line); }
+.graph-series { min-height: 0; }
+.graph-tile { padding: 12px; }
+.process-frame { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); box-shadow: var(--elev-1); padding: 4px 0; }
+.process-frame > box.process-row { min-height: 32px; border-bottom: 1px solid var(--line); }
+listview.process-list, listview.process-list > row { background: none; }
+listview.process-list > row:selected { background: alpha(var(--accent), 0.18); border-radius: 8px; }
+.process-row { min-height: 28px; padding: 0 12px; }
+button.process-twist { min-width: 16px; min-height: 16px; padding: 0; }

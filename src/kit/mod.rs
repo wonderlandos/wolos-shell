@@ -8,6 +8,7 @@ pub mod controls;
 pub mod data;
 pub mod fence;
 pub mod form;
+pub mod graph;
 pub mod lifetime;
 pub mod motion;
 pub mod pickers;
@@ -222,7 +223,8 @@ pub fn config_home() -> String {
         .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()))
 }
 
-/// Dev aid (no grim needed): `WOL_SNAPSHOT=<dir>` renders `win` to `<dir>/<name>.png` 700 ms after it maps.
+/// Dev aid (no grim needed): `WOL_SNAPSHOT=<dir>` renders `win` to `<dir>/<name>.png` 700 ms after it maps
+/// (`WOL_SNAPSHOT_DELAY_MS` waits longer: a live graph after a minute of samples).
 pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static str) {
     use gtk::prelude::*;
     let Some(dir) = std::env::var_os("WOL_SNAPSHOT") else {
@@ -231,27 +233,41 @@ pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static
     let win = win.as_ref().clone();
     win.connect_map(move |w| {
         let (w, dir) = (w.clone(), dir.clone());
-        glib::timeout_add_local_once(std::time::Duration::from_millis(700), move || {
-            let p = gtk::WidgetPaintable::new(Some(&w));
-            let (wd, ht) = (w.width().max(1), w.height().max(1));
-            let snap = gtk::Snapshot::new();
-            p.snapshot(&snap, wd as f64, ht as f64);
-            let Some(node) = snap.to_node() else {
-                eprintln!("snapshot {name}: empty");
-                return;
-            };
-            let Some(r) = w.native().and_then(|n| n.renderer()) else {
-                eprintln!("snapshot {name}: no renderer");
-                return;
-            };
-            let tex = r.render_texture(
-                node,
-                Some(&gtk::graphene::Rect::new(0.0, 0.0, wd as f32, ht as f32)),
-            );
-            let out = std::path::Path::new(&dir).join(format!("{name}.png"));
-            if let Err(e) = tex.save_to_png(&out) {
-                eprintln!("snapshot {name}: {e}");
-            }
+        let delay = std::env::var("WOL_SNAPSHOT_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(700);
+        glib::timeout_add_local_once(std::time::Duration::from_millis(delay), move || {
+            // A window nobody has drawn yet (headless) gives no node: ask for a frame, try again.
+            let tries = std::cell::Cell::new(0);
+            glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+                let p = gtk::WidgetPaintable::new(Some(&w));
+                let (wd, ht) = (w.width().max(1), w.height().max(1));
+                let snap = gtk::Snapshot::new();
+                p.snapshot(&snap, wd as f64, ht as f64);
+                let Some(node) = snap.to_node() else {
+                    tries.set(tries.get() + 1);
+                    if tries.get() < 20 {
+                        w.queue_draw();
+                        return glib::ControlFlow::Continue;
+                    }
+                    eprintln!("snapshot {name}: empty");
+                    return glib::ControlFlow::Break;
+                };
+                let Some(r) = w.native().and_then(|n| n.renderer()) else {
+                    eprintln!("snapshot {name}: no renderer");
+                    return glib::ControlFlow::Break;
+                };
+                let tex = r.render_texture(
+                    node,
+                    Some(&gtk::graphene::Rect::new(0.0, 0.0, wd as f32, ht as f32)),
+                );
+                let out = std::path::Path::new(&dir).join(format!("{name}.png"));
+                if let Err(e) = tex.save_to_png(&out) {
+                    eprintln!("snapshot {name}: {e}");
+                }
+                glib::ControlFlow::Break
+            });
         });
     });
 }

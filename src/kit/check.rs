@@ -155,8 +155,10 @@ pub fn tree(w: &gtk::Widget, root: &gtk::Widget, parent: &str) -> Node {
         .downcast_ref::<gtk::Box>()
         .is_some_and(|b| b.orientation() == gtk::Orientation::Horizontal)
         && !w.has_css_class("no-row-check");
+    // A list view is scrolled content too: rows past its bottom are the ones scrolled away.
     let clips = w.is::<gtk::ScrolledWindow>()
         || w.is::<gtk::Viewport>()
+        || w.is::<gtk::ListView>()
         || w.is::<gtk::Revealer>()
         || w.is::<gtk::Stack>()
         || w.is::<gtk::Popover>();
