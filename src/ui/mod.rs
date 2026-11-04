@@ -25,6 +25,7 @@ pub mod plugins;
 pub mod searchbar;
 pub mod settings;
 pub mod setup;
+pub mod share_sheet;
 pub mod shortcut_sheet;
 pub mod store;
 pub mod switcher;

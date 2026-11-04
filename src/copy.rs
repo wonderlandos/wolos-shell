@@ -1139,6 +1139,16 @@ pub const TRASH_NOT_MOVED: &str = "That could not be moved to the Trash.";
 pub const SHARE_ONLY_FILES: &str = "Only a file can be shared.";
 pub const CLIPBOARD_UNCHANGED: &str = "The clipboard could not be changed.";
 pub const COPY_NOT_SAVED: &str = "That copy could not be saved.";
+/// Under the name on the share sheet when a text or a link is shared.
+pub const SHARE_TEXT_DETAIL: &str = "Choose where this goes.";
+/// Under the name on the share sheet when no app takes the thing: Copy and Save stay.
+pub const SHARE_NO_APPS: &str = "No app here takes this. You can still copy it or save it.";
+/// `wol-share -` was given more text than a share can carry (the libwol limit, 24 KiB).
+pub const SHARE_TEXT_LONG: &str = "That text is longer than 24 KiB. Share a shorter part.";
+/// The text has bytes that are not text, or control characters.
+pub const SHARE_TEXT_ODD: &str = "That text has characters that cannot be shared.";
+/// The app the person chose in the share sheet did not start.
+pub const SHARE_APP_NOT_STARTED: &str = "That app could not start. Try another one.";
 
 #[cfg(test)]
 mod tests {

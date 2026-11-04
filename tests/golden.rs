@@ -104,6 +104,35 @@ fn analyze_case(tag: &str, view: ui::analyze::View) -> Case {
     }
 }
 
+/// The share sheet in one state (E2E-SHARE).
+fn share_case(tag: &str, view: ui::share_sheet::View) -> Case {
+    Case {
+        name: format!("share-{tag}"),
+        size: (460, 1),
+        class: "preview",
+        wallpaper: true,
+        build: Box::new(move || ui::share_sheet::content(&view, Rc::new(|_| {})).0),
+    }
+}
+
+fn share_tiles(n: usize) -> Vec<ui::share_sheet::Tile> {
+    [
+        ("Mail", "wolos-mail"),
+        ("Notes", "wolos-notes"),
+        ("Atlas", "wolos-browser"),
+        ("Photos", "wolos-photos"),
+        ("Calendar", "wolos-calendar"),
+        ("Music", "wolos-music"),
+    ]
+    .iter()
+    .take(n)
+    .map(|(name, icon)| ui::share_sheet::Tile {
+        name: (*name).into(),
+        icon: (*icon).into(),
+    })
+    .collect()
+}
+
 fn cases() -> Vec<Case> {
     let mut v: Vec<Case> = vec![
         Case {
@@ -268,6 +297,34 @@ fn cases() -> Vec<Case> {
                 shown: "“setup.exe”".into(),
                 full: analyze_full(),
             },
+        ),
+        share_case(
+            "file-4",
+            ui::share_sheet::View::file("Quarterly report.pdf", share_tiles(4)),
+        ),
+        share_case(
+            "file-6",
+            ui::share_sheet::View::file("Quarterly report.pdf", share_tiles(6)),
+        ),
+        share_case(
+            "open-6",
+            ui::share_sheet::View::open("Quarterly report.pdf", share_tiles(6)),
+        ),
+        share_case(
+            "open-2",
+            ui::share_sheet::View::open("Quarterly report.pdf", share_tiles(2)),
+        ),
+        share_case(
+            "file-none",
+            ui::share_sheet::View::file("Quarterly report.pdf", share_tiles(0)),
+        ),
+        share_case(
+            "text-2",
+            ui::share_sheet::View::text(
+                "Meeting notes",
+                "Agenda for Tuesday: budget, hiring, the roadmap review and the offsite.",
+                share_tiles(2),
+            ),
         ),
         Case {
             // An administrator change from a helper: the password, every time.
