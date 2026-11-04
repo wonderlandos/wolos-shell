@@ -314,3 +314,96 @@ pub(super) fn an_app_tile_keeps_one_source_badge() {
     t.set_source("");
     assert_eq!(t.source(), "", "an empty source hides it");
 }
+
+/// E2E-OPEN: a file dropped on a Dock tile opens with that tile's app (`ui::dock::dropped`, what the
+/// tile's drop target calls): all files of a `%F` line in one start, one start per file for
+/// `%f`, nothing for an app whose line takes no file or whose entry is not read; the icon bounces
+/// like a click's; right-click is wired for the app's actions.
+pub(super) fn a_file_dropped_on_a_dock_tile_opens_with_its_app() {
+    use shell::open_with::Handler;
+    use std::cell::RefCell;
+    let entry = |exec: &str| {
+        let text = format!("[Desktop Entry]\nType=Application\nName=Viewer\nExec={exec}\n");
+        ui::dock::entry_of(Handler::parse("v.desktop", "/p/v.desktop", &text))
+    };
+    let started: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
+    let launch: ui::dock::Launch = {
+        let log = started.clone();
+        Rc::new(move |argv| log.borrow_mut().push(argv.to_vec()))
+    };
+    let drop_on = |t: &w::DockTile, e: &ui::dock::Entry, paths: &[&str]| -> bool {
+        let files: Vec<gtk::gio::File> = paths.iter().map(gtk::gio::File::for_path).collect();
+        ui::dock::dropped(e, t, &launch, &files)
+    };
+    let tile = |exec: &str| {
+        let t = w::DockTile::new("folder", "Viewer", || {});
+        let e = entry(exec);
+        ui::dock::wire_tile(&t, &e, &launch);
+        (t, e)
+    };
+    let words = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    let (t, e) = tile("viewer --new %F");
+    assert!(drop_on(&t, &e, &["/h/a b.png", "/h/c.png"]));
+    assert_eq!(
+        *started.borrow(),
+        [words(&["viewer", "--new", "/h/a b.png", "/h/c.png"])],
+        "one start with every file"
+    );
+    assert!(t.is_launching(), "the icon bounces like a click's");
+
+    started.borrow_mut().clear();
+    let (t2, e2) = tile("viewer %f");
+    assert!(drop_on(&t2, &e2, &["/h/a.png", "/h/b.png"]));
+    assert_eq!(
+        *started.borrow(),
+        [
+            words(&["viewer", "/h/a.png"]),
+            words(&["viewer", "/h/b.png"])
+        ],
+        "%f: one start per file"
+    );
+
+    started.borrow_mut().clear();
+    let (t3, e3) = tile("viewer");
+    assert!(!drop_on(&t3, &e3, &["/h/a.png"]), "no file code: refused");
+    // A file with no path on this computer, or no file at all: `%F` has nothing to pass, no bounce.
+    let (t4, e4) = tile("viewer %F");
+    let remote = gtk::gio::File::for_uri("smb://nas/pic.png");
+    assert!(
+        !ui::dock::dropped(&e4, &t4, &launch, &[remote]),
+        "no local path for %F: refused"
+    );
+    assert!(
+        !ui::dock::dropped(&e4, &t4, &launch, &[]),
+        "an empty drop: refused"
+    );
+    assert!(!t4.is_launching(), "a refused drop does not bounce");
+    let unread = w::DockTile::new("folder", "Apps", || {});
+    let none = ui::dock::entry_of(None);
+    ui::dock::wire_tile(&unread, &none, &launch);
+    assert!(!drop_on(&unread, &none, &["/h/a.png"]), "no entry: refused");
+    assert!(started.borrow().is_empty(), "nothing started");
+
+    let takes_files = t
+        .button
+        .observe_controllers()
+        .into_iter()
+        .flatten()
+        .filter_map(|c| c.downcast::<gtk::DropTarget>().ok())
+        .any(|d| {
+            d.formats()
+                .is_some_and(|f| f.contains_type(gdk::FileList::static_type()))
+        });
+    assert!(takes_files, "the tile takes dropped files");
+    let menu = t
+        .button
+        .observe_controllers()
+        .into_iter()
+        .flatten()
+        .any(|c| {
+            c.downcast::<gtk::GestureClick>()
+                .is_ok_and(|g| g.button() == 3)
+        });
+    assert!(menu, "right-click opens the tile menu");
+}

@@ -25,6 +25,7 @@ pub mod layout;
 pub mod login;
 pub mod notify_store;
 pub mod offers;
+pub mod open_with;
 pub mod overview;
 pub mod packages;
 pub mod perf;

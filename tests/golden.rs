@@ -1775,6 +1775,7 @@ fn main() {
     regressions::a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     regressions::return_belongs_to_the_button_with_the_keyboard_ring();
     regressions::the_dock_takes_a_new_layout();
+    regressions::a_file_dropped_on_a_dock_tile_opens_with_its_app();
     motion_cases::reduce_motion_snaps();
     regressions::an_app_tile_keeps_one_source_badge();
     focus_cases::sidebar_arrows_go_from_group_to_group();

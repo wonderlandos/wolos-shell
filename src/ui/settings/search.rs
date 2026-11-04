@@ -8,10 +8,11 @@
 use super::datetime::rows as dt;
 use super::desktop_dock::rows as dd;
 use super::trackpad::rows as tp;
+use crate::copy::settings as copy;
 
 /// Row titles per page (sidebar panes and subpages), as the page shows them; panes that name
 /// their titles (`rows` modules) are read from there, so the two cannot drift.
-pub(super) const ROWS: [(&str, &[&str]); 34] = [
+pub(super) const ROWS: [(&str, &[&str]); 35] = [
     (
         "Wi-Fi",
         &[
@@ -73,6 +74,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Software Update",
             "Storage",
             "Login Items",
+            "Default Apps",
             "Sharing",
             "Shell in the terminal",
         ],
@@ -316,6 +318,20 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
     ),
     ("Login Items", &["Open at Login"]),
     (
+        "Default Apps",
+        &[
+            copy::DEFAULT_APPS_WEB,
+            copy::DEFAULT_APPS_MAIL,
+            copy::DEFAULT_APPS_FILES,
+            copy::DEFAULT_APPS_IMAGES,
+            copy::DEFAULT_APPS_MUSIC,
+            copy::DEFAULT_APPS_VIDEO,
+            copy::DEFAULT_APPS_PDF,
+            copy::DEFAULT_APPS_TEXT,
+            copy::DEFAULT_APPS_CALENDAR,
+        ],
+    ),
+    (
         "Sharing",
         &[
             "Computer name",
@@ -346,7 +362,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
 pub(super) fn parent(page: &str) -> &str {
     match page {
         "About" | "Software Update" | "Storage" | "Date & Time" | "Language & Region"
-        | "Login Items" | "Sharing" => "General",
+        | "Login Items" | "Default Apps" | "Sharing" => "General",
         "Keyboard Shortcuts" => "Keyboard",
         "Startup Security" => "Privacy & Security",
         p => p,

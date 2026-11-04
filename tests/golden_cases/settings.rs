@@ -179,6 +179,7 @@ pub fn checks() {
     language_menu_shows_the_saved_language_after_a_failed_save();
     login_items_show_the_saved_list_after_a_failed_save();
     terminal_shell_choice_is_saved_or_put_back();
+    default_apps_write_the_choice_and_keep_the_file();
 }
 
 /// [`shell::system::Fake`], except that every action succeeds (Settings saves through actions).
@@ -651,4 +652,80 @@ fn terminal_shell_choice_is_saved_or_put_back() {
         "a choice that could not be saved shows the saved shell again"
     );
     assert!(noted, "and says so");
+}
+
+/// E2E-OPEN: Default Apps lists the installed apps of a kind, selects the one the person's
+/// `mimeapps.list` names, and a pick writes that one choice (one journal entry) without losing a
+/// comment, a blank line or another group of the file; a kind no app serves is greyed.
+fn default_apps_write_the_choice_and_keep_the_file() {
+    let root = std::env::temp_dir().join(format!("wol-default-apps-{}", std::process::id()));
+    let apps = root.join("applications");
+    std::fs::create_dir_all(&apps).expect("applications dir");
+    let entry = |name: &str, mimes: &str| {
+        format!("[Desktop Entry]\nType=Application\nName={name}\nExec=v %F\nMimeType={mimes}\n")
+    };
+    std::fs::write(
+        apps.join("a.desktop"),
+        entry("Alpha", "image/png;image/jpeg;"),
+    )
+    .unwrap();
+    std::fs::write(apps.join("b.desktop"), entry("Bravo", "image/png;")).unwrap();
+    let mimeapps = config_file("mimeapps.list");
+    std::fs::create_dir_all(mimeapps.parent().expect("dir")).expect("config dir");
+    let had = std::fs::read_to_string(&mimeapps).ok();
+    std::fs::write(
+        &mimeapps,
+        "# mine\n[Default Applications]\nimage/png=a.desktop;\n\n[Other]\nk=v\n",
+    )
+    .unwrap();
+    let old = (
+        std::env::var_os("XDG_DATA_HOME"),
+        std::env::var_os("XDG_DATA_DIRS"),
+    );
+    unsafe {
+        std::env::set_var("XDG_DATA_HOME", &root);
+        std::env::set_var("XDG_DATA_DIRS", &root);
+    }
+    let (_a, p) = page(
+        Rc::new(shell::system::Fake),
+        &ui::settings::Host::demo(),
+        "Default Apps",
+    );
+    pump(400);
+    let images: gtk::DropDown = on_row(&p, "Images");
+    let web: gtk::DropDown = on_row(&p, "Web browser");
+    let (selected, greyed) = (images.selected(), !web.is_sensitive());
+    images.set_selected(1);
+    pump(600);
+    let saved = std::fs::read_to_string(&mimeapps).unwrap_or_default();
+    let journal = wol_core::journal::Journal::for_config(&config_file("")).entries();
+    unsafe {
+        match old.0 {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        match old.1 {
+            Some(v) => std::env::set_var("XDG_DATA_DIRS", v),
+            None => std::env::remove_var("XDG_DATA_DIRS"),
+        }
+    }
+    match had {
+        Some(t) => std::fs::write(&mimeapps, t).expect("put the file back"),
+        None => {
+            let _ = std::fs::remove_file(&mimeapps);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(selected, 0, "Alpha is the current Images app");
+    assert!(greyed, "no installed app serves a web browser row here");
+    assert_eq!(
+        saved,
+        "# mine\n[Default Applications]\nimage/png=b.desktop;a.desktop;\n\n[Other]\nk=v\n\
+         \n[Added Associations]\nimage/png=b.desktop;\n",
+        "one line changed; the comment, blank line and [Other] stay; Bravo opens png only"
+    );
+    assert!(
+        journal.iter().any(|e| e.what == "default apps"),
+        "the change is one journal entry (Restore can undo it)"
+    );
 }

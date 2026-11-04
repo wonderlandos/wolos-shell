@@ -27,6 +27,7 @@ mod battery;
 mod bluetooth;
 mod control_center;
 mod datetime;
+mod default_apps;
 mod desktop_dock;
 mod displays;
 mod effects;
@@ -116,7 +117,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
             "emblem-system-symbolic",
             concat!(
                 "about version software update storage disk date time zone clock language region locale ",
-                "login items startup sharing computer name remote ssh terminal shell bash fish nu pwsh ",
+                "login items default apps browser email mail startup sharing computer name remote ssh terminal shell bash fish nu pwsh ",
                 "hotspot tethering internet sharing airplay"
             ),
         ),
@@ -254,7 +255,7 @@ pub const PAGES: [&str; 25] = [
 ];
 
 /// Pages without a sidebar row, reached from a pane (`wol-settings "Storage"` works too).
-pub const SUBPAGES: [&str; 9] = [
+pub const SUBPAGES: [&str; 10] = [
     shortcuts::TITLE,
     startup_security::TITLE,
     "About",
@@ -263,6 +264,7 @@ pub const SUBPAGES: [&str; 9] = [
     "Date & Time",
     "Language & Region",
     "Login Items",
+    default_apps::TITLE,
     "Sharing",
 ];
 
@@ -1062,6 +1064,7 @@ fn build_page(env: &Rc<Env>, name: &str) -> Option<Build> {
         "Date & Time" => Box::new(move || datetime::page(&e).upcast()),
         "Language & Region" => Box::new(move || language::page(&e).upcast()),
         "Login Items" => Box::new(move || login_items::page(&e).upcast()),
+        default_apps::TITLE => Box::new(move || default_apps::page(&e).upcast()),
         "Sharing" => Box::new(move || sharing::page(&e).upcast()),
         _ => return None,
     };
