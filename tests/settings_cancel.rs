@@ -10,8 +10,8 @@
 use gtk::prelude::*;
 use shell::system::{Action, ActionError, BtDevice, Done, System};
 use shell::ui;
-use std::path::Path;
-use std::rc::Rc;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 
 /// Kills the private broadwayd on every exit path.
@@ -52,8 +52,17 @@ fn broadway() -> Option<Kill> {
     unsafe {
         std::env::set_var("GDK_BACKEND", "broadway");
         std::env::set_var("BROADWAY_DISPLAY", &display);
+        // The settings this test saves go to a folder of its own (the wallpaper stage breaks it).
+        std::env::set_var("XDG_CONFIG_HOME", config_dir());
     }
     Some(kill)
+}
+
+/// The config home of this test run.
+fn config_dir() -> PathBuf {
+    let d = std::env::temp_dir().join(format!("wol-settings-cancel-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&d);
+    d
 }
 
 /// wol-admind as an administrator meets it: the radios want the password (NeedsAuth until one
@@ -335,6 +344,91 @@ fn dead_worker_puts_the_switch_back(a: &shell::kit::widgets::AppWindow, sys: &As
     assert!(power.is_sensitive(), "and takes input again");
 }
 
+/// QA-SET-22: a wallpaper whose save failed stayed the checked tile (the old one lost its tick
+/// for a picture that was never saved). The save fails here because the config home is not a
+/// folder.
+fn wallpaper_failed_save_checks_the_old_tile(a: &shell::kit::widgets::AppWindow) {
+    let shown = open(a, "Wallpaper");
+    let tiles = of::<gtk::ToggleButton>(&shown);
+    assert!(tiles.len() >= 2, "the shipped wallpapers show as tiles");
+    let was = tiles
+        .iter()
+        .find(|t| t.is_active())
+        .expect("one tile is checked")
+        .clone();
+    let other = tiles
+        .iter()
+        .find(|t| !t.is_active())
+        .expect("another tile")
+        .clone();
+    // The config home becomes a file: no save can be made under it.
+    let home = config_dir();
+    let kept = home.with_extension("kept");
+    std::fs::rename(&home, &kept).unwrap();
+    std::fs::write(&home, "").unwrap();
+    other.set_active(true);
+    pump(300);
+    std::fs::remove_file(&home).unwrap();
+    std::fs::rename(&kept, &home).unwrap();
+    assert!(
+        was.is_active(),
+        "the saved wallpaper is the checked tile again"
+    );
+    assert!(!other.is_active(), "the one that could not be saved is not");
+}
+
+/// QA-SET-64: Down in the search field walked the sidebar (Wi-Fi, Bluetooth, ...) and Return
+/// opened the wrong pane; the hits were reachable by mouse only. Down now puts the focus on the
+/// first hit, and the hit is a button Return activates.
+fn search_down_walks_the_hits(a: &shell::kit::widgets::AppWindow) {
+    use gtk::gdk::{Key, ModifierType};
+    let field = a
+        .sidebar
+        .row_at_index(0)
+        .and_then(|r| r.child())
+        .and_downcast::<gtk::SearchEntry>()
+        .expect("the search field");
+    field.set_text("password");
+    pump(300);
+    let results = a
+        .content
+        .child_by_name("Search Results")
+        .expect("the hits page");
+    let body = of::<gtk::Box>(&results)
+        .into_iter()
+        .next()
+        .expect("the hits box");
+    assert!(body.is_mapped(), "the hits are on screen");
+    // Other keys, and Down with a modifier, stay the field's.
+    assert_eq!(
+        ui::settings::search_key(&field, &body, Key::a, ModifierType::empty()),
+        gtk::glib::Propagation::Proceed
+    );
+    assert_eq!(
+        ui::settings::search_key(&field, &body, Key::Down, ModifierType::CONTROL_MASK),
+        gtk::glib::Propagation::Proceed
+    );
+    assert_eq!(
+        ui::settings::search_key(&field, &body, Key::Down, ModifierType::empty()),
+        gtk::glib::Propagation::Stop,
+        "Down is taken"
+    );
+    pump(100);
+    let win = a.root.root().and_downcast::<gtk::Window>().expect("window");
+    let focus = gtk::prelude::GtkWindowExt::focus(&win).expect("something has focus");
+    assert!(
+        focus.is::<gtk::Button>() && focus.is_ancestor(&results),
+        "the first hit has the focus, not a sidebar row: {focus:?}"
+    );
+    // Nothing typed: nothing to walk.
+    field.set_text("");
+    pump(300);
+    assert_eq!(
+        ui::settings::search_key(&field, &body, Key::Down, ModifierType::empty()),
+        gtk::glib::Propagation::Proceed
+    );
+}
+
 /// QA-LIVE-10: a 5000-character paste stayed in the field and Esc did not clear it.
 fn search_paste_capped_esc_clears(a: &shell::kit::widgets::AppWindow) {
     let field = a
@@ -358,7 +452,7 @@ fn cancel_has_no_incorrect_password() {
         eprintln!("skipped: no display for the toolkit");
         return;
     }
-    let sys = Rc::new(Asking::default());
+    let sys = Arc::new(Asking::default());
     let a = ui::settings::content(sys.clone(), &ui::settings::Host::demo());
     let win = gtk::Window::builder()
         .default_width(shell::kit::widgets::APP_SIZE.0)
@@ -374,6 +468,8 @@ fn cancel_has_no_incorrect_password() {
     sheet_is_modal_esc_cancels(&a, &root, &sheet);
     act_without_status_shows_checking(&a, &root, &sys);
     search_paste_capped_esc_clears(&a);
+    search_down_walks_the_hits(&a);
+    wallpaper_failed_save_checks_the_old_tile(&a);
     dead_worker_puts_the_switch_back(&a, &sys);
     wifi_watcher_goes_with_its_page(&a, &sys);
     win.close();

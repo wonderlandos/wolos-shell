@@ -198,7 +198,7 @@ pub fn run_shell() -> glib::ExitCode {
 /// and the banner dismisser for the socket's handlers.
 fn build_panels(
     app: &gtk::Application,
-    sys: &Rc<dyn crate::system::System>,
+    sys: &std::sync::Arc<dyn crate::system::System>,
     osd: &Rc<panels::Osd>,
     panels: &Panels,
 ) -> (capture::Handler, Rc<dyn Fn()>) {
@@ -331,7 +331,7 @@ pub fn run_panel_app(
     id: &str,
     class: &'static str,
     spec: surface::Spec,
-    build: fn(&gtk::ApplicationWindow, Rc<dyn crate::system::System>) -> gtk::Widget,
+    build: fn(&gtk::ApplicationWindow, std::sync::Arc<dyn crate::system::System>) -> gtk::Widget,
 ) -> glib::ExitCode {
     let t0 = std::time::Instant::now();
     let app = gtk::Application::builder().application_id(id).build();

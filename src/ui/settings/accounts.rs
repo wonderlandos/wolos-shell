@@ -75,7 +75,12 @@ fn person_row(
         &sub,
         button.as_ref().map(|b| b.upcast_ref()),
     );
-    r.prepend(&w::avatar(login, w::ICON_M));
+    // The colour picked in Setup, as on the lock screen; else the one the name gives.
+    let avatar = w::avatar(login, w::ICON_M);
+    if let Some(tone) = crate::login::read_avatar(login) {
+        kit::assistant::set_tone(&avatar, tone);
+    }
+    r.prepend(&avatar);
     r.upcast()
 }
 

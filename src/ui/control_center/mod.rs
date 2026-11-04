@@ -29,6 +29,7 @@ use crate::{copy, theme};
 use gtk::{glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 use wol_core::prefs::ControlCenterPrefs;
 
 /// Every argv the Control Center spawns (tests/cc_spawns.rs checks each resolves).
@@ -132,7 +133,7 @@ fn spec() -> Spec {
 /// Resident panel in wol-shell (`wol shell toggle control-center`): opening is one frame, no
 /// process start. Built once (live perf: rebuilding per open leaked ~0.5 MB each); the snapshot
 /// watcher (1 s refresh) only lives while visible, and every open starts on the main page.
-pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
+pub fn panel(app: &gtk::Application, sys: Arc<dyn System>) -> gtk::Window {
     let win = super::window(app, "controlcenter", spec());
     win.set_hide_on_close(true);
     let cc = build(sys.clone(), ControlCenterPrefs::default());
@@ -328,19 +329,19 @@ fn fit(cc: &ControlCenter, win: &impl IsA<gtk::Widget>) {
 }
 
 /// Control Center content on its own (golden renders): follows the snapshot while the widget lives.
-pub fn content(sys: Rc<dyn System>) -> gtk::Widget {
+pub fn content(sys: Arc<dyn System>) -> gtk::Widget {
     content_with(sys, super::ipc::shell_prefs().control_center, "main")
 }
 
 /// Content with explicit module prefs, showing `page` (one of [`PAGES`], or `wifi:other` for the
 /// Wi-Fi page with the Other Network sheet open; golden renders).
-pub fn content_with(sys: Rc<dyn System>, prefs: ControlCenterPrefs, page: &str) -> gtk::Widget {
+pub fn content_with(sys: Arc<dyn System>, prefs: ControlCenterPrefs, page: &str) -> gtk::Widget {
     content_sized(sys, prefs, page, w::CONTROL_CENTER_WIDTH)
 }
 
 /// [`content_with`] at a panel `width` (the narrow layout under [`tiles::NARROW_BELOW`]).
 pub fn content_sized(
-    sys: Rc<dyn System>,
+    sys: Arc<dyn System>,
     prefs: ControlCenterPrefs,
     page: &str,
     width: i32,
@@ -351,7 +352,7 @@ pub fn content_sized(
 /// [`content_sized`] with the sound service's state (`SoundState::demo()` in the others); None
 /// draws `System`'s devices only, as when the service is not running.
 pub fn content_sound(
-    sys: Rc<dyn System>,
+    sys: Arc<dyn System>,
     prefs: ControlCenterPrefs,
     page: &str,
     width: i32,
@@ -379,7 +380,7 @@ pub fn content_sound(
 }
 
 /// Follows the snapshot until the returned handle is aborted (dropping the watcher).
-fn follow(sys: &Rc<dyn System>, cc: Rc<ControlCenter>) -> Option<glib::JoinHandle<()>> {
+fn follow(sys: &Arc<dyn System>, cc: Rc<ControlCenter>) -> Option<glib::JoinHandle<()>> {
     let rx = sys.watch()?;
     Some(glib::spawn_future_local(async move {
         while rx.recv().await.is_ok() {
@@ -389,7 +390,7 @@ fn follow(sys: &Rc<dyn System>, cc: Rc<ControlCenter>) -> Option<glib::JoinHandl
 }
 
 pub(crate) struct Ui {
-    pub sys: Rc<dyn System>,
+    pub sys: Arc<dyn System>,
     pub pages: gtk::Stack,
     scroll: gtk::ScrolledWindow,
     pub prefs: Cell<ControlCenterPrefs>,
@@ -783,7 +784,7 @@ fn focus_label(f: Focus) -> String {
     focus::label(f, focus::unix_now(), t.hour, t.minute)
 }
 
-fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
+fn build(sys: Arc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let panel = w::glass_panel(w::S2);
     panel.set_width_request(w::CONTROL_CENTER_WIDTH);
     panel.set_valign(gtk::Align::Start);

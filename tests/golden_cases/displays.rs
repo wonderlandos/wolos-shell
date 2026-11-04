@@ -8,7 +8,6 @@ use shell::kit::widgets as w;
 use shell::status::{Audio, Battery, Network};
 use shell::system::{Action, ActionError, Monitor, System};
 use shell::ui;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 /// [`shell::system::Fake`] with the displays and Night Shift this test chooses; every action is
@@ -59,7 +58,7 @@ fn laptop() -> Vec<Monitor> {
 }
 
 fn open(sys: Rigged) -> (w::AppWindow, gtk::Widget) {
-    let a = ui::settings::content(Rc::new(sys), &ui::settings::Host::demo());
+    let a = ui::settings::content(Arc::new(sys), &ui::settings::Host::demo());
     a.open("Displays");
     pump(300);
     let p = a.content.visible_child().expect("a page shows");

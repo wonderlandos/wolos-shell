@@ -43,6 +43,9 @@ pub const SOUND_NO_INPUT: &str = "No microphone is connected.";
 pub const PRINTER_TEST_SENT: &str = "The test page is on its way.";
 /// Printers: CUPS refused the test page or the cancel.
 pub const PRINTER_JOB_FAILED: &str = "The printer did not take it. Try again.";
+/// Printers: the device list is refused to this account (CUPS lists devices to administrators only).
+pub const PRINTER_LIST_REFUSED: &str =
+    "Looking for printers needs an administrator. Ask one to add the printer, or sign in as one.";
 /// No speakers or headphones: no sound card, or only WirePlumber's Dummy Output (QA-DEV-6).
 pub const SOUND_NO_OUTPUT: &str = "No speakers or headphones are connected.";
 /// Accessibility > Larger text: what the switch does (QA-ACC-5).
@@ -247,7 +250,7 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 67] = [
+pub const ALL: [&str; 68] = [
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -281,6 +284,7 @@ pub const ALL: [&str; 67] = [
     SOUND_NO_INPUT,
     SOUND_NO_OUTPUT,
     PRINTER_TEST_SENT,
+    PRINTER_LIST_REFUSED,
     LARGER_TEXT_ABOUT,
     TIMEOUTS_ABOUT,
     INPUT_METHODS_ABOUT,

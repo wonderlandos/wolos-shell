@@ -955,7 +955,7 @@ thread_local! {
     static LAST_APP: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
     static FOCUSED: RefCell<Option<String>> = const { RefCell::new(None) };
     /// The session's system (set by [`poll_status`]) for [`refresh_now`].
-    static SYS: RefCell<Option<Rc<dyn crate::system::System>>> = const { RefCell::new(None) };
+    static SYS: RefCell<Option<std::sync::Arc<dyn crate::system::System>>> = const { RefCell::new(None) };
 }
 
 /// Every live menu bar.
@@ -1009,7 +1009,7 @@ pub fn refresh_now() {
 }
 
 /// 5 s timer on whole seconds (GLib coalesces wakeups).
-pub fn poll_status(sys: Rc<dyn crate::system::System>) {
+pub fn poll_status(sys: std::sync::Arc<dyn crate::system::System>) {
     SYS.set(Some(sys.clone()));
     glib::timeout_add_seconds_local(5, move || {
         for bar in bars() {

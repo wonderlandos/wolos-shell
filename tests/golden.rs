@@ -8,6 +8,7 @@ use shell::theme::{self, Variant};
 use shell::ui;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[path = "golden_cases/app_view.rs"]
 mod app_view_cases;
@@ -172,7 +173,7 @@ fn cases() -> Vec<Case> {
             wallpaper: true,
             build: Box::new(|| {
                 ui::approval::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     shared::shell::Approval {
                         helper: "Claude Desktop".into(),
                         tool: "appearance set".into(),
@@ -193,7 +194,7 @@ fn cases() -> Vec<Case> {
             wallpaper: true,
             build: Box::new(|| {
                 ui::approval::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     shared::shell::Approval {
                         helper: shared::portal::HELPER_GATE.into(),
                         tool: "wol: packages-install".into(),
@@ -277,7 +278,7 @@ fn cases() -> Vec<Case> {
             wallpaper: true,
             build: Box::new(|| {
                 ui::approval::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     shared::shell::Approval {
                         helper: "Claude Desktop".into(),
                         tool: "wifi join".into(),
@@ -297,7 +298,7 @@ fn cases() -> Vec<Case> {
             wallpaper: true,
             build: Box::new(|| {
                 let root = ui::approval::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     shared::shell::Approval {
                         helper: "Claude Desktop".into(),
                         tool: "wifi join".into(),
@@ -330,7 +331,7 @@ fn cases() -> Vec<Case> {
             size: (368, 1),
             class: "preview",
             wallpaper: true,
-            build: Box::new(|| ui::control_center::content(Rc::new(shell::system::Fake))),
+            build: Box::new(|| ui::control_center::content(Arc::new(shell::system::Fake))),
         },
         Case {
             name: "searchbar".into(),
@@ -825,7 +826,7 @@ fn cases() -> Vec<Case> {
                 wallpaper: false,
                 build: Box::new(move || {
                     let s = ui::store::content(
-                        Rc::new(shell::system::Fake),
+                        Arc::new(shell::system::Fake),
                         ui::store::Env {
                             data_dirs: vec![],
                             pkg_search: false,
@@ -855,7 +856,7 @@ fn cases() -> Vec<Case> {
                     .pacman
                     .extend(codecs.packages().iter().map(|p| p.to_string()));
                 let s = ui::store::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     ui::store::Env {
                         data_dirs: vec![],
                         pkg_search: false,
@@ -875,7 +876,7 @@ fn cases() -> Vec<Case> {
             wallpaper: false,
             build: Box::new(move || {
                 let s = ui::store::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     ui::store::Env {
                         data_dirs: vec![],
                         pkg_search: false,
@@ -919,7 +920,7 @@ fn cases() -> Vec<Case> {
                 wallpaper: false,
                 build: Box::new(move || {
                     let s = ui::store::content(
-                        Rc::new(shell::system::Fake),
+                        Arc::new(shell::system::Fake),
                         ui::store::Env {
                             data_dirs: vec![],
                             pkg_search: false,
@@ -987,7 +988,7 @@ fn cases() -> Vec<Case> {
             wallpaper: false,
             build: Box::new(move || {
                 let s = ui::store::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     ui::store::Env {
                         data_dirs: vec![],
                         pkg_search: false,
@@ -1012,7 +1013,7 @@ fn cases() -> Vec<Case> {
             build: Box::new(move || {
                 use shell::packages::AppSource;
                 let s = ui::store::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     ui::store::Env {
                         data_dirs: vec![],
                         pkg_search: false,
@@ -1055,7 +1056,7 @@ fn cases() -> Vec<Case> {
             wallpaper: false,
             build: Box::new(move || {
                 let s = ui::store::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     ui::store::Env {
                         data_dirs: vec![],
                         pkg_search: false,
@@ -1075,7 +1076,7 @@ fn cases() -> Vec<Case> {
             wallpaper: false,
             build: Box::new(move || {
                 let s = ui::store::content(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     ui::store::Env {
                         data_dirs: vec![],
                         pkg_search: false,
@@ -1127,7 +1128,7 @@ fn cases() -> Vec<Case> {
                 wallpaper: false,
                 build: Box::new(move || {
                     let a = ui::settings::content(
-                        Rc::new(shell::system::Fake),
+                        Arc::new(shell::system::Fake),
                         &ui::settings::Host::demo(),
                     );
                     a.open(p);
@@ -1144,7 +1145,7 @@ fn cases() -> Vec<Case> {
         wallpaper: false,
         build: Box::new(|| {
             let a =
-                ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+                ui::settings::content(Arc::new(shell::system::Fake), &ui::settings::Host::demo());
             a.open("General");
             // After the narrow layout is applied on realize.
             let t = a.sidebar_toggle.clone();
@@ -1316,7 +1317,7 @@ fn cases() -> Vec<Case> {
                 p.add_css_class("page");
                 p.add_css_class("app-window");
                 p.append(&ui::settings::windows_section(
-                    Rc::new(shell::system::Fake),
+                    Arc::new(shell::system::Fake),
                     wol_core::hyprprefs::DesktopPrefs {
                         tiling: true,
                         layout: wol_core::hyprprefs::Layout::Master,

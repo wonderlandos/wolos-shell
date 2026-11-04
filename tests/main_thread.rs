@@ -69,7 +69,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 40] = [
+const BASELINE: [(&str, usize); 38] = [
     // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
     // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
     // cannot follow a call into another file); each row only shrinks.
@@ -119,13 +119,9 @@ const BASELINE: [(&str, usize); 40] = [
     // SandboxGuard drops when no window or main loop is left), so nothing waits on it.
     ("ui/maker/preview.rs", 1),
     ("ui/mod.rs", 2),
-    // QA-SET-2 (counted 2026-11-04): `System::undo` and the Restore lists stay sync (frozen API,
-    // `Rc<dyn System>` cannot cross to a worker); each undo site is listed so none is added.
     ("ui/settings/login_items.rs", 2),
     ("ui/settings/machine.rs", 1),
-    ("ui/settings/mod.rs", 1),
     ("ui/settings/privacy.rs", 1),
-    ("ui/settings/restore.rs", 3),
     ("ui/shortcut_sheet.rs", 1),
     // The analysis graph Picture (audit4 S3-3 count).
     ("ui/store.rs", 1),

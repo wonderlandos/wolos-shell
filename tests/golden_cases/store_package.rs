@@ -5,7 +5,7 @@ use super::Case;
 use super::wol_file;
 use gtk::prelude::*;
 use shell::ui::store::{self, PackageFile};
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[path = "store_plugins.rs"]
 mod plugins_cases;
@@ -35,7 +35,7 @@ pub fn cases() -> Vec<Case> {
                         )),
                     };
                     let s = store::content(
-                        Rc::new(shell::system::Fake),
+                        Arc::new(shell::system::Fake),
                         store::Env {
                             data_dirs: vec![],
                             pkg_search: false,

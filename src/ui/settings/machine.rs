@@ -86,7 +86,7 @@ pub trait Machine: Send + Sync {
     fn bluetooth(&self) -> BtState;
     fn printers(&self) -> Option<Vec<Printer>>;
     /// Device URIs CUPS can see (slow: probes the network).
-    fn discover_printers(&self) -> Vec<String>;
+    fn discover_printers(&self) -> Option<Vec<String>>;
     /// Runs a printing command as the person (`lp` test page, `cancel -a`; no admin); true when
     /// CUPS took it (slow: call off the UI thread).
     fn printer_job(&self, _argv: &[String]) -> bool {
@@ -273,7 +273,7 @@ impl Machine for Live {
         let a: Vec<&str> = argv.iter().map(String::as_str).collect();
         self.os().run(&a).is_some()
     }
-    fn discover_printers(&self) -> Vec<String> {
+    fn discover_printers(&self) -> Option<Vec<String>> {
         wol_core::printers::discover(self.os())
     }
     fn hardware(&self) -> HardwareSnapshot {
@@ -567,11 +567,11 @@ impl Machine for Demo {
             },
         ])
     }
-    fn discover_printers(&self) -> Vec<String> {
-        vec![
+    fn discover_printers(&self) -> Option<Vec<String>> {
+        Some(vec![
             "dnssd://HP%20Color%20LaserJet%20MFP._ipp._tcp.local/".into(),
             "ipp://192.168.1.40/ipp/print".into(),
-        ]
+        ])
     }
     fn hardware(&self) -> HardwareSnapshot {
         let dev = |kind, name: &str, driver: Option<&str>, state, hint: &str| Device {
@@ -855,7 +855,7 @@ impl Machine for DemoEdge {
     fn printers(&self) -> Option<Vec<Printer>> {
         Demo.printers()
     }
-    fn discover_printers(&self) -> Vec<String> {
+    fn discover_printers(&self) -> Option<Vec<String>> {
         Demo.discover_printers()
     }
     fn hardware(&self) -> HardwareSnapshot {
@@ -957,7 +957,7 @@ macro_rules! demo_but_hardware {
             known_networks -> Vec<String>,
             bluetooth -> wol_core::bluetooth::BtState,
             printers -> Option<Vec<wol_core::printers::Printer>>,
-            discover_printers -> Vec<String>,
+            discover_printers -> Option<Vec<String>>,
             sharing -> $crate::ui::settings::Sharing,
             consent -> Vec<(String, String)>,
             flatpak_apps -> Vec<wol_core::flatpak::App>,

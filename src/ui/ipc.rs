@@ -108,7 +108,7 @@ pub fn shell_socket(
     handlers: Handlers,
     approver: Approver,
     osd: Rc<Osd>,
-    sys: Rc<dyn crate::system::System>,
+    sys: std::sync::Arc<dyn crate::system::System>,
 ) {
     // Saved config files apply on their own (the verb `reload` stays the explicit way).
     watch_prefs();
@@ -732,7 +732,7 @@ fn run(
     cmd: &protocol::Command,
     panels: &Panels,
     osd: &Rc<Osd>,
-    sys: &Rc<dyn crate::system::System>,
+    sys: &std::sync::Arc<dyn crate::system::System>,
 ) {
     if cmd.verb == protocol::Verb::Reload {
         // Theme reloads through its file monitor; shell prefs here.

@@ -12,6 +12,7 @@ use shell::ui::control_center::{
     tiles::{Tile, TileSource},
 };
 use std::rc::Rc;
+use std::sync::Arc;
 use wol_core::prefs::ControlCenterPrefs;
 
 /// Every module on.
@@ -66,7 +67,7 @@ impl TileSource for Plugins {
 
 pub fn cases() -> Vec<Case> {
     let full = shell::kit::widgets::CONTROL_CENTER_WIDTH;
-    let laptop = || -> Rc<dyn System> { Rc::new(Fake) };
+    let laptop = || -> Arc<dyn System> { Arc::new(Fake) };
     vec![
         case("controlcenter-display", full, move || {
             cc::content_with(laptop(), all(), "display")
@@ -74,7 +75,7 @@ pub fn cases() -> Vec<Case> {
         case("controlcenter-desktop-sound", full, move || {
             // No sound service: System's devices only, the input half off.
             cc::content_sound(
-                Rc::new(FakeDesktop),
+                Arc::new(FakeDesktop),
                 ControlCenterPrefs::default(),
                 "sound",
                 full,
@@ -100,7 +101,7 @@ pub fn control_center_cases() -> Vec<Case> {
     use shell::kit::controls as k;
     use shell::system::{Fake, FakeDesktop, System};
     use wol_core::prefs::ControlCenterPrefs;
-    let cc = |name: &str, sys: fn() -> Rc<dyn System>, all: bool, page: &'static str| Case {
+    let cc = |name: &str, sys: fn() -> Arc<dyn System>, all: bool, page: &'static str| Case {
         name: name.into(),
         size: (368, 1),
         class: "preview",
@@ -115,8 +116,8 @@ pub fn control_center_cases() -> Vec<Case> {
             ui::control_center::content_with(sys(), p, page)
         }),
     };
-    let laptop: fn() -> Rc<dyn System> = || Rc::new(Fake);
-    let desktop: fn() -> Rc<dyn System> = || Rc::new(FakeDesktop);
+    let laptop: fn() -> Arc<dyn System> = || Arc::new(Fake);
+    let desktop: fn() -> Arc<dyn System> = || Arc::new(FakeDesktop);
     let kit_case = |name: &str, build: fn() -> gtk::Widget| Case {
         name: format!("kit-{name}"),
         size: (368, 1),

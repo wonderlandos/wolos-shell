@@ -676,7 +676,7 @@ pub(crate) type Next = crate::auth_queue::Next<Waiting>;
 
 /// Shared page state: the System, the Authenticate sheet and an inline status line per action.
 pub(crate) struct Ctx {
-    pub(crate) sys: Rc<dyn System>,
+    pub(crate) sys: Arc<dyn System>,
     auth: w::AuthSheet,
     queue: RefCell<AuthQueue>,
     /// "Checking…" under the toolbar for a change with no status line of its own ([`Self::act`]
@@ -689,7 +689,7 @@ pub(crate) struct Ctx {
 
 impl Ctx {
     /// Wires the Authenticate sheet; place it on `aw` after any other sheets.
-    pub(crate) fn new(sys: Rc<dyn System>, who: &str) -> Rc<Self> {
+    pub(crate) fn new(sys: Arc<dyn System>, who: &str) -> Rc<Self> {
         let ctx = Rc::new(Ctx {
             sys,
             auth: w::authenticate_sheet(who),
@@ -1129,7 +1129,7 @@ pub(crate) struct Env {
 }
 
 impl Env {
-    pub(crate) fn sys(&self) -> &Rc<dyn System> {
+    pub(crate) fn sys(&self) -> &Arc<dyn System> {
         &self.ctx.sys
     }
     pub(crate) fn machine(&self) -> Arc<dyn Machine> {
@@ -1210,12 +1210,12 @@ fn build_page(env: &Rc<Env>, name: &str) -> Option<Build> {
     Some(b)
 }
 
-pub fn content(sys: Rc<dyn System>, host: &Host) -> w::AppWindow {
+pub fn content(sys: Arc<dyn System>, host: &Host) -> w::AppWindow {
     build(sys, host).0
 }
 
 /// [`content`] with `query` typed into the search field: the hits page (golden renders).
-pub fn content_searching(sys: Rc<dyn System>, host: &Host, query: &str) -> w::AppWindow {
+pub fn content_searching(sys: Arc<dyn System>, host: &Host, query: &str) -> w::AppWindow {
     let (aw, field, on_query) = build(sys, host);
     field.set_text(query);
     on_query(query);
@@ -1225,7 +1225,7 @@ pub fn content_searching(sys: Rc<dyn System>, host: &Host, query: &str) -> w::Ap
 /// What a typed query does: filter the sidebar, show the hits (or go back when cleared).
 type OnQuery = Rc<dyn Fn(&str)>;
 
-fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, OnQuery) {
+fn build(sys: Arc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, OnQuery) {
     let aw = w::AppWindow::new(true, false);
     aw.set_column(crate::kit::column::PANE_COLUMN);
     let ctx = Ctx::new(sys.clone(), "System Settings");
@@ -1416,6 +1416,17 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
         field.connect_stop_search(|s| s.set_text(""));
     }
     {
+        // Down from the field walks the hits, not the sidebar around it (QA-SET-64: the hits were
+        // reachable by mouse only); Return then opens the one in focus, like any button.
+        let (body, field2) = (results_body.downgrade(), field.downgrade());
+        w::on_key_captured(&field, move |k, m| {
+            let (Some(body), Some(field)) = (body.upgrade(), field2.upgrade()) else {
+                return glib::Propagation::Proceed;
+            };
+            search_key(&field, &body, k, m)
+        });
+    }
+    {
         let env = env.clone();
         field.connect_activate(move |s| {
             if let Some(page) = search::enter_target(&s.text()) {
@@ -1428,6 +1439,45 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
 
 /// The hidden page that lists search hits.
 const RESULTS: &str = "Search Results";
+
+/// A key in the search field while `body` lists the hits: Down (no modifier) moves focus to the
+/// first hit and is consumed; every other key is the field's.
+pub fn search_key(
+    field: &gtk::SearchEntry,
+    body: &gtk::Box,
+    key: gtk::gdk::Key,
+    mods: gtk::gdk::ModifierType,
+) -> glib::Propagation {
+    let down = matches!(key, gtk::gdk::Key::Down | gtk::gdk::Key::KP_Down);
+    if !down || !mods.is_empty() || field.text().trim().is_empty() || !body.is_mapped() {
+        return glib::Propagation::Proceed;
+    }
+    match first_focusable(body.upcast_ref()) {
+        Some(hit) => {
+            hit.grab_focus();
+            glib::Propagation::Stop
+        }
+        None => glib::Propagation::Proceed,
+    }
+}
+
+/// The first widget under `root` (depth first, in reading order) that takes keyboard focus: the
+/// first search hit.
+pub(crate) fn first_focusable(root: &gtk::Widget) -> Option<gtk::Widget> {
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        if c.is_visible() && c.is_sensitive() {
+            if c.is::<gtk::Button>() && c.is_focusable() {
+                return Some(c);
+            }
+            if let Some(found) = first_focusable(&c) {
+                return Some(found);
+            }
+        }
+        child = c.next_sibling();
+    }
+    None
+}
 
 /// Where the content goes after the search text changed.
 #[derive(Debug, PartialEq, Eq)]
@@ -1533,13 +1583,20 @@ fn undo_toast(aw: &w::AppWindow, env: &Rc<Env>) {
             );
             t.show(&line, "Undo", move || {
                 let ids: Vec<u64> = burst.borrow_mut().drain(..).rev().map(|b| b.0).collect();
-                let said = undo_all(&ids, |id| sys.undo(Some(id)).map(drop));
-                if let Some(env) = rebuild.upgrade() {
-                    env.refresh();
-                }
-                if let Some(t) = toast.upgrade() {
-                    t.show(&said, "", || {});
-                }
+                // The journal, systemctl, hyprctl and bootctl behind an undo run off the GTK
+                // thread (QA-SET-2: Settings froze 2-4 s on a slow WirePlumber).
+                let (sys, rebuild, toast) = (sys.clone(), rebuild.clone(), toast.clone());
+                off_thread(
+                    move || undo_all(&ids, |id| sys.undo(Some(id)).map(drop)),
+                    move |said| {
+                        if let Some(env) = rebuild.upgrade() {
+                            env.refresh();
+                        }
+                        if let Some(t) = toast.upgrade() {
+                            t.show(&said, "", || {});
+                        }
+                    },
+                );
             });
         })
     };
@@ -1614,7 +1671,7 @@ fn retitle(aw: &w::AppWindow, title: &str, label: &str, icon: &str) {
 
 /// Desktop & Dock > Windows on its own with `prefs` (golden renders of the tiling section).
 pub fn windows_section(
-    sys: Rc<dyn System>,
+    sys: Arc<dyn System>,
     prefs: wol_core::hyprprefs::DesktopPrefs,
 ) -> gtk::Widget {
     let aw = w::AppWindow::new(false, false);

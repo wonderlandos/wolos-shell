@@ -26,15 +26,20 @@ fn shipped() -> Vec<(String, PathBuf, String)> {
         .collect()
 }
 
-/// Saves `choice` (a path or `dynamic`) as one journaled change and tells the desktop.
-fn choose(choice: &str, status: &gtk::Label) {
+/// Saves `choice` (a path or `dynamic`) as one journaled change and tells the desktop. False when
+/// the save failed: the desktop is not told (nothing changed), and the caller puts the old tile
+/// back (QA-SET-22: the new tile stayed checked and the shell reloaded for nothing).
+fn choose(choice: &str, status: &gtk::Label) -> bool {
     let r = save_journaled(
         "wallpaper",
         shared::theme::WALLPAPER_FILE,
         Some(&format!("{choice}\n")),
     );
     say(status, if r.is_ok() { "" } else { SAVE_FAILED });
-    reload_shell();
+    if r.is_ok() {
+        reload_shell();
+    }
+    r.is_ok()
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -44,16 +49,30 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let pics = shipped();
     let tiles = w::wrap_row(w::S3, 4);
     let mut first: Option<gtk::ToggleButton> = None;
+    // The tile whose picture is saved: a failed save checks it again (`going_back` keeps that
+    // from saving it a second time).
+    let current: Rc<RefCell<Option<gtk::ToggleButton>>> = Rc::default();
+    let going_back = Rc::new(std::cell::Cell::new(false));
     let mut add = |t: &gtk::ToggleButton, choice: String| {
         if let Some(f) = &first {
             t.set_group(Some(f));
         } else {
             first = Some(t.clone());
         }
-        let st = status.clone();
+        if t.is_active() {
+            *current.borrow_mut() = Some(t.clone());
+        }
+        let (st, current, going_back) = (status.clone(), current.clone(), going_back.clone());
         t.connect_toggled(move |t| {
-            if t.is_active() {
-                choose(&choice, &st);
+            if !t.is_active() || going_back.get() {
+                return;
+            }
+            if choose(&choice, &st) {
+                *current.borrow_mut() = Some(t.clone());
+            } else if let Some(old) = current.borrow().clone() {
+                going_back.set(true);
+                old.set_active(true);
+                going_back.set(false);
             }
         });
         tiles.append(t);

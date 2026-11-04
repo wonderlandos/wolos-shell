@@ -10,6 +10,7 @@ use gtk::{glib, prelude::*};
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 use wol_core::package;
 use wol_core::store::{self, App, Category};
 
@@ -1485,7 +1486,7 @@ fn fill_package(sh: &Rc<Shared>, page: &gtk::Box, f: Option<PackageFile>) {
     });
 }
 
-pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
+pub fn content(sys: Arc<dyn System>, env: Env) -> Store {
     let aw = w::AppWindow::new(true, false);
     // One ruler of content (576) in a window of 900, 840 when the pane is wide enough for a third tile.
     aw.set_column_wide(
