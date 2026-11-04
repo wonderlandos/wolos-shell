@@ -192,6 +192,43 @@ fn root_package_sheets_go_through_wol_admind() {
         assert_eq!(names, ["revoke ", line.as_str(), "revoke "], "{req:?}");
         assert_eq!(s[1].1, "good");
     }
+    // ADR 0048: a Doctor fix is its steps in order, with the typed password, revoked around.
+    sent.lock().unwrap().clear();
+    let fix = R::DoctorFix {
+        id: "sound.rtkit".into(),
+        title: "Install it".into(),
+        steps: vec![
+            vec!["pkg-install".into(), "rtkit".into()],
+            vec!["firewall".into(), "on".into()],
+        ],
+    };
+    assert_eq!(approve(&c, &fix, "good"), Ok(()));
+    {
+        let s = sent.lock().unwrap();
+        let names: Vec<&str> = s.iter().map(|(l, _)| l.as_str()).collect();
+        assert_eq!(
+            names,
+            ["revoke ", "pkg-install rtkit", "firewall on", "revoke "]
+        );
+        assert!(s[1..3].iter().all(|(_, pw)| pw == "good"));
+    }
+    // An action that is not Doctor's never reaches wol-admind.
+    sent.lock().unwrap().clear();
+    let other = R::DoctorFix {
+        id: "x.y".into(),
+        title: "t".into(),
+        steps: vec![vec!["user-add".into(), "eve".into()]],
+    };
+    assert!(approve(&c, &other, "good").is_err());
+    assert!(
+        !sent
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(l, _)| l.starts_with("user-add")),
+        "{:?}",
+        sent.lock().unwrap()
+    );
     // A path that is not wold's staged copy never reaches wol-admind.
     sent.lock().unwrap().clear();
     let bad = R::PackageFile {

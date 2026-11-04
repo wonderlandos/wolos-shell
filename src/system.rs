@@ -1451,6 +1451,12 @@ pub fn approve(
         R::SystemChannel { channel } => {
             admin_one(c, AdminAction::SystemChannel, &[channel], password)
         }
+        // ADR 0048: a Doctor fix, the check's wol-admind requests in order, as `wol doctor fix`
+        // sends them; only Doctor's actions (wold relayed nothing else; checked again here).
+        R::DoctorFix { .. } => match req.doctor_steps() {
+            Some(steps) => steps.iter().try_for_each(|r| c.admin_request(r, password)),
+            None => Err(wol_core::controls::ControlError::Unavailable),
+        },
         // Refused above; answer Unavailable rather than panic.
         R::Change { .. } => Err(wol_core::controls::ControlError::Unavailable),
     };
