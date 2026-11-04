@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Control Center detail pages: Wi-Fi networks (join with password), Bluetooth devices, Focus
 //! modes (Sound and Display have their own files). Rows rebuild only when their data changed.
-use super::{Ui, WIFI_SETTINGS, launch};
+use super::{BLUETOOTH, Ui, WIFI, WIFI_SETTINGS, launch};
 use crate::copy;
 use crate::focus::{self, Focus};
 use crate::kit::{
@@ -18,7 +18,8 @@ const MAX_NETWORKS: usize = 8;
 
 pub(super) struct Pages {
     wifi: DetailPage,
-    nets: RefCell<Option<Vec<WifiNetwork>>>,
+    /// [`wifi_shape`] of the rows on the page.
+    nets: RefCell<Option<WifiShape>>,
     join: Join,
     bluetooth: DetailPage,
     devices: RefCell<Option<Vec<BtDevice>>>,
@@ -193,7 +194,9 @@ impl Pages {
         link(&wifi, WIFI_SETTINGS);
         if let Some(t) = &wifi.toggle {
             let u = ui.clone();
-            t.connect_active_notify(move |t| u.act(Action::Wifi(t.is_active())));
+            t.connect_active_notify(move |t| {
+                u.act_held(WIFI, t.is_active(), Action::Wifi(t.is_active()))
+            });
         }
         let join = join_sheet(ui, &wifi);
         ui.pages.add_named(&wifi.root, Some("wifi"));
@@ -202,7 +205,9 @@ impl Pages {
         back(ui, &bluetooth);
         if let Some(t) = &bluetooth.toggle {
             let u = ui.clone();
-            t.connect_active_notify(move |t| u.act(Action::Bluetooth(t.is_active())));
+            t.connect_active_notify(move |t| {
+                u.act_held(BLUETOOTH, t.is_active(), Action::Bluetooth(t.is_active()))
+            });
         }
         ui.pages.add_named(&bluetooth.root, Some("bluetooth"));
 
@@ -232,10 +237,7 @@ impl Pages {
         let set = |row: &DeviceRow, pick: fn() -> Focus| {
             let u = ui.clone();
             row.button.connect_clicked(move |_| {
-                let _ = focus::write(pick());
-                if let Some(f) = u.resync.borrow().clone() {
-                    f()
-                }
+                u.save_focus(pick());
             });
         };
         set(&dnd, || {
@@ -278,9 +280,11 @@ impl Pages {
     /// Called from `ControlCenter::sync` (handlers muted).
     pub fn sync(&self, ui: &Rc<Ui>, f: Focus, focus_label: &str) {
         let s = &*ui.sys;
-        self.wifi.set_toggle(s.wifi_enabled().unwrap_or(false));
+        self.wifi
+            .set_toggle(ui.holds.shown(WIFI, s.wifi_enabled().unwrap_or(false)));
         let nets = s.wifi_networks();
-        if self.nets.borrow().as_ref() != Some(&nets) {
+        let shape = wifi_shape(&nets, s.wifi_enabled() == Some(true));
+        if self.nets.borrow().as_ref() != Some(&shape) {
             let mut rows: Vec<gtk::Widget> = nets
                 .iter()
                 .take(MAX_NETWORKS)
@@ -293,11 +297,12 @@ impl Pages {
                 rows.push(other.button.upcast());
             }
             self.wifi.set_rows(&rows, "No networks found");
-            *self.nets.borrow_mut() = Some(nets);
+            *self.nets.borrow_mut() = Some(shape);
         }
 
         let bt = s.bluetooth();
-        self.bluetooth.set_toggle(bt.unwrap_or(false));
+        self.bluetooth
+            .set_toggle(bt.is_some_and(|b| ui.holds.shown(BLUETOOTH, b)));
         if let Some(t) = &self.bluetooth.toggle {
             t.set_sensitive(bt.is_some());
         }
@@ -306,17 +311,34 @@ impl Pages {
             let rows: Vec<gtk::Widget> = devices
                 .iter()
                 .map(|d| {
-                    let r = DeviceRow::new(
+                    let r = Rc::new(DeviceRow::new(
                         "bluetooth-active-symbolic",
                         &d.name,
                         if d.connected { "Connected" } else { "" },
                         d.connected,
                         None,
-                    );
-                    let (u, addr, on) = (ui.clone(), d.addr.clone(), d.connected);
-                    r.button
-                        .connect_clicked(move |_| u.act(Action::BtConnect(addr.clone(), !on)));
-                    r.button.upcast()
+                    ));
+                    let (u, addr, on, r2) = (ui.clone(), d.addr.clone(), d.connected, r.clone());
+                    // "Connecting…" at once (a headset that is off took up to 120 s to answer), and
+                    // BlueZ's reason when it fails (QA-DEV-13).
+                    r.button.connect_clicked(move |_| {
+                        r2.set_subtitle(if on {
+                            "Disconnecting…"
+                        } else {
+                            "Connecting…"
+                        });
+                        let (r3, u2) = (r2.clone(), u.clone());
+                        u.act_then(Action::BtConnect(addr.clone(), !on), move |ok| {
+                            let before = if on { "Connected" } else { "" };
+                            let sub = match (ok, on) {
+                                (true, true) => "",
+                                (true, false) => "Connected",
+                                (false, _) => u2.sys.bt_connect_reason().unwrap_or(before),
+                            };
+                            r3.set_subtitle(sub);
+                        });
+                    });
+                    r.button.clone().upcast()
                 })
                 .collect();
             let empty = if bt.is_none() {
@@ -352,9 +374,55 @@ impl Pages {
     }
 }
 
+/// What decides a Wi-Fi row's look: name, signal bucket (the icon), lock, connected, and whether
+/// the Other Network row follows. A signal that wobbles inside its bucket keeps the rows, and
+/// with them the keyboard focus (QA-SET-50).
+pub(super) type WifiShape = (Vec<(String, &'static str, bool, bool)>, bool);
+
+pub(super) fn wifi_shape(nets: &[WifiNetwork], other: bool) -> WifiShape {
+    (
+        nets.iter()
+            .take(MAX_NETWORKS)
+            .map(|n| {
+                (
+                    n.ssid.clone(),
+                    crate::system::signal_icon(n.signal),
+                    n.secure,
+                    n.connected,
+                )
+            })
+            .collect(),
+        other,
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::join_ready;
+    use super::{join_ready, wifi_shape};
+    use crate::system::WifiNetwork;
+
+    /// QA-SET-50: the rows were rebuilt whenever any signal changed by one point; the person
+    /// tabbing through them lost the focus every few seconds. A shape that ignores the wobble
+    /// keeps the widgets; a real change (connected, a new network) still rebuilds.
+    #[test]
+    fn row_identity_stable() {
+        let n = |signal, connected| WifiNetwork {
+            ssid: "Home".into(),
+            signal,
+            secure: true,
+            connected,
+        };
+        let a = wifi_shape(&[n(61, false)], true);
+        assert_eq!(a, wifi_shape(&[n(63, false)], true), "same bucket");
+        assert_ne!(a, wifi_shape(&[n(61, true)], true), "connected");
+        assert_ne!(
+            a,
+            wifi_shape(&[n(61, false), n(40, false)], true),
+            "new network"
+        );
+        assert_ne!(a, wifi_shape(&[n(61, false)], false), "Other Network row");
+        assert_ne!(a, wifi_shape(&[n(5, false)], true), "the icon changes");
+    }
 
     #[test]
     fn join_waits_for_what_can_be_sent() {

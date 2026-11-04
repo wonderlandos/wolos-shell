@@ -81,20 +81,32 @@ pub fn read() -> Focus {
     parse(std::fs::read_to_string(path()).ok().as_deref(), unix_now())
 }
 
+/// Saves Focus through the settings journal as Settings (so Undo and `wol history` see it, and a
+/// failure is the caller's to show) instead of writing the file behind its back (QA-SET-52).
 pub fn write(f: Focus) -> std::io::Result<()> {
-    let p = path();
-    match content(f) {
-        Some(c) => {
-            if let Some(d) = p.parent() {
-                std::fs::create_dir_all(d)?;
-            }
-            std::fs::write(p, c)
-        }
-        None => match std::fs::remove_file(p) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
-            _ => Ok(()),
-        },
-    }
+    write_as("settings", f)
+}
+
+/// [`write`] for another actor (`control-center`).
+pub fn write_as(by: &str, f: Focus) -> std::io::Result<()> {
+    write_in(
+        std::path::Path::new(&crate::kit::config_home()),
+        by,
+        f,
+        unix_now(),
+    )
+}
+
+/// [`write`] under `config_home` at `now`.
+pub fn write_in(
+    config_home: &std::path::Path,
+    by: &str,
+    f: Focus,
+    now: u64,
+) -> std::io::Result<()> {
+    wol_core::journal::Journal::for_config(config_home)
+        .save("focus", by, &[(FILE, content(f).as_deref())], now)
+        .map(drop)
 }
 
 #[cfg(test)]
@@ -115,6 +127,36 @@ mod tests {
             menubar_icon(Focus::Until(5)),
             Some("weather-clear-night-symbolic")
         );
+    }
+
+    /// QA-SET-52: the Control Center wrote wol/dnd directly: no Undo entry. Every change is one.
+    #[test]
+    fn focus_writes_journaled() {
+        let d = std::env::temp_dir().join(format!("wol-focus-journal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        write_in(&d, "control-center", Focus::On, 100).unwrap();
+        assert_eq!(
+            parse(std::fs::read_to_string(d.join(FILE)).ok().as_deref(), 100),
+            Focus::On
+        );
+        write_in(&d, "control-center", Focus::Until(100 + HOUR), 101).unwrap();
+        write_in(&d, "control-center", Focus::Off, 102).unwrap();
+        assert!(!d.join(FILE).exists());
+        let j = wol_core::journal::Journal::for_config(&d);
+        let e = j.entries();
+        assert_eq!(e.len(), 3, "one entry per change: {e:?}");
+        assert!(
+            e.iter()
+                .all(|e| e.what == "focus" && e.by == "control-center")
+        );
+        j.undo(None, "settings", 103).unwrap();
+        assert_eq!(
+            parse(std::fs::read_to_string(d.join(FILE)).ok().as_deref(), 103),
+            Focus::Until(100 + HOUR),
+            "Undo brings the timer back"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

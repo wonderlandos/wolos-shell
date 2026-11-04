@@ -6,8 +6,10 @@
 //! left to right in a fixed order, so a hidden module leaves no hole and every tile keeps the
 //! same size.
 use crate::kit::{controls::ToggleTile, widgets as w};
+use crate::ui::settings::Touch;
 use gtk::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::time::Instant;
 use wol_core::toggles::Toggle;
 
 /// One tile another part of the shell adds (a plugin `[[tile]]`, a WolOS toggle, a module).
@@ -143,6 +145,63 @@ impl Extra {
     }
 }
 
+/// Tiles the person just flipped (QA hunt 1 G2): the 1 s poll pushed the snapshot taken before
+/// the change landed, so a tile flipped back, then forward once nmcli or bluetoothctl answered.
+/// While a change is out, and [`Touch::hold`] after it succeeds (the service's echo), every view
+/// of that state (tile, detail page switch) shows what was asked; a failure lets go at once, so
+/// the next refresh shows the host's state again.
+#[derive(Default)]
+pub(crate) struct Holds(RefCell<std::collections::HashMap<&'static str, Hold>>);
+
+struct Hold {
+    want: bool,
+    /// Changes sent and not answered yet.
+    flying: u32,
+    /// When the last one succeeded (the echo window starts).
+    settled: Option<Instant>,
+}
+
+impl Holds {
+    /// The person asked for `want` on `key`; a change is on its way.
+    pub(crate) fn touch(&self, key: &'static str, want: bool) {
+        let mut h = self.0.borrow_mut();
+        let e = h.entry(key).or_insert(Hold {
+            want,
+            flying: 0,
+            settled: None,
+        });
+        e.want = want;
+        e.flying += 1;
+    }
+    /// A change on `key` answered: on success the tile waits for the echo, else it lets go.
+    pub(crate) fn answered(&self, key: &'static str, ok: bool, now: Instant) {
+        let mut h = self.0.borrow_mut();
+        let Some(e) = h.get_mut(key) else { return };
+        e.flying = e.flying.saturating_sub(1);
+        e.settled = ok.then_some(now);
+        if !ok && e.flying == 0 {
+            h.remove(key);
+        }
+    }
+    /// What a view of `key` shows: the asked state while held, else `actual`.
+    pub(crate) fn shown(&self, key: &'static str, actual: bool) -> bool {
+        self.shown_at(key, actual, Instant::now())
+    }
+    pub(crate) fn shown_at(&self, key: &'static str, actual: bool, now: Instant) -> bool {
+        let mut h = self.0.borrow_mut();
+        let Some(e) = h.get(key) else { return actual };
+        let held = e.flying > 0
+            || e.settled
+                .is_some_and(|t| now.saturating_duration_since(t) < Touch::hold(0));
+        if held {
+            e.want
+        } else {
+            h.remove(key);
+            actual
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +238,44 @@ mod tests {
         assert_eq!(four, [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1)]);
         assert_eq!(cell(4, 3), (1, 1));
         assert_eq!(cell(2, 0), (0, 2), "no columns lays one per row");
+    }
+
+    /// QA hunt 1 G2: a tapped tile keeps what was asked through every poll while its change is
+    /// out and for the echo after it succeeds; a failure shows the host's state on the next one.
+    #[test]
+    fn tile_hold_survives_poll() {
+        let h = Holds::default();
+        let t0 = Instant::now();
+        assert!(!h.shown_at("wifi", false, t0), "untouched: the snapshot");
+        h.touch("wifi", true);
+        for s in 1..=5 {
+            let poll = t0 + std::time::Duration::from_secs(s);
+            assert!(h.shown_at("wifi", false, poll), "poll {s} rewrote the tile");
+        }
+        assert!(
+            !h.shown_at("bluetooth", false, t0),
+            "other tiles follow the poll"
+        );
+        let answer = t0 + std::time::Duration::from_secs(5);
+        h.answered("wifi", true, answer);
+        assert!(
+            h.shown_at("wifi", false, answer + Touch::hold(0) / 2),
+            "echo"
+        );
+        assert!(
+            !h.shown_at("wifi", false, answer + Touch::hold(0)),
+            "let go"
+        );
+        assert!(h.shown_at("wifi", true, answer + Touch::hold(0)));
+        // Two taps on, then off: the last ask shows until both answered; a failure lets go.
+        h.touch("night", true);
+        h.touch("night", false);
+        h.answered("night", false, t0);
+        assert!(
+            !h.shown_at("night", true, t0),
+            "one still out: the last ask"
+        );
+        h.answered("night", false, t0);
+        assert!(h.shown_at("night", true, t0), "failed: the host's state");
     }
 }

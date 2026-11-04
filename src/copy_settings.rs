@@ -105,11 +105,37 @@ pub const AUTO_APPS_FAILED: &str =
 /// Under "N updates available" on a computer installed with one copy of WolOS (ADR 0023):
 /// Update Now changes the running system, with no restore point to go back to.
 pub const UPDATE_ONE_COPY: &str = "This computer has one copy of WolOS, so there is no restore point; the update changes the running system.";
+/// Restore: the only list there can be on a computer with one copy of WolOS (QA-STORE-5).
+pub const RESTORE_ONE_COPY: &str =
+    "This computer has one copy of WolOS, so there is no earlier system to go back to.";
+/// Check Now could not write what it found: the disk is full (QA-FDAY F10).
+pub const UPDATE_NO_ROOM: &str = "There is no room left on the system disk to check for updates. Free some space in Storage, then try again.";
+/// Software Update before any check ever finished (QA-FDAY-4).
+pub const UPDATE_NEVER_CHECKED: &str = "Check for new WolOS packages. It has not checked yet.";
+/// Under an answer Check Now just got (QA-FDAY-4).
+pub const UPDATE_CHECKED_NOW: &str = "Last checked just now.";
 
 // ---- Displays ----
 
-/// No display was reported (the desktop session is not running).
-pub const DISPLAYS_NONE: &str = "Displays appear here once the desktop is running.";
+/// Empty state's title: the list of displays could not be read (the page is open, so the desktop
+/// is running: the old "appear once the desktop is running" blamed the wrong thing, QA-DESIGN-28).
+pub const DISPLAYS_NONE_TITLE: &str = "Displays couldn’t be read";
+/// Empty state's hint.
+pub const DISPLAYS_NONE: &str = "WolOS couldn’t read the list of displays. Try again; if it keeps happening, restart the computer.";
+/// Empty state's button.
+pub const DISPLAYS_NONE_RETRY: &str = "Try Again";
+/// The countdown sheet's title after a changed resolution, refresh rate or scale (QA-LIVE-13).
+pub const DISPLAYS_KEEP_TITLE: &str = "Keep these display settings?";
+/// The countdown sheet's line.
+pub fn displays_keep_line(secs: u32) -> String {
+    let unit = if secs == 1 { "second" } else { "seconds" };
+    format!("If you don’t answer, the display goes back in {secs} {unit}.")
+}
+/// After the display went back.
+pub const DISPLAYS_REVERTED: &str = "The display went back to its previous settings.";
+/// The display could not be put back.
+pub const DISPLAYS_REVERT_FAILED: &str =
+    "The display couldn’t be put back. Choose its earlier resolution again.";
 
 // ---- Search ----
 
@@ -118,7 +144,7 @@ pub const SEARCH_NONE_TITLE: &str = "No Results";
 pub const SEARCH_NONE: &str = "No settings match. Try another word.";
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 37] = [
+pub const ALL: [&str; 43] = [
     SOUND_RECONNECTING,
     SOUND_LOUDER,
     SOUND_AUTO_LEVEL,
@@ -152,8 +178,14 @@ pub const ALL: [&str; 37] = [
     THEME_PICTURE_UNREADABLE,
     AUTO_APPS_FAILED,
     DISPLAYS_NONE,
+    DISPLAYS_REVERTED,
+    DISPLAYS_REVERT_FAILED,
     SEARCH_NONE,
     UPDATE_ONE_COPY,
+    RESTORE_ONE_COPY,
+    UPDATE_NO_ROOM,
+    UPDATE_NEVER_CHECKED,
+    UPDATE_CHECKED_NOW,
     GENERAL_TERMINAL_SHELL,
     GENERAL_TERMINAL_SHELL_NOT_SAVED,
 ];
@@ -171,7 +203,13 @@ pub const GENERAL_TERMINAL_SHELL_NOT_SAVED: &str =
 mod tests {
     #[test]
     fn every_settings_sentence_passes_the_lint() {
-        for s in super::ALL {
+        for s in super::ALL
+            .iter()
+            .copied()
+            .map(String::from)
+            .chain([super::displays_keep_line(1), super::displays_keep_line(15)])
+        {
+            let s = s.as_str();
             let p = crate::copy::lint(s);
             assert!(p.is_empty(), "“{s}”: {p:?}");
         }

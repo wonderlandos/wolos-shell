@@ -57,7 +57,7 @@ pub fn install(extra: &'static str) {
             let glass = t
                 .tokens
                 .get("glass")
-                .and_then(|g| wol_core::looks::glass_css(g, looks_glass()))
+                .and_then(|g| glass_override(g, looks_glass(), blur_on()))
                 .unwrap_or_default();
             if last.borrow_mut().set(format!(
                 "{}{}{glass}",
@@ -78,6 +78,33 @@ pub fn install(extra: &'static str) {
         }
     };
     load();
+    // Is the compositor really blurring? Asked once, off the GTK thread; glass turns solid when
+    // it is not (QA-DESIGN-21), and the style reloads when the answer lands.
+    let probe: Rc<dyn Fn()> = {
+        let load = load.clone();
+        Rc::new(move || {
+            let load = load.clone();
+            glib::spawn_future_local(async move {
+                let out = gio::spawn_blocking(|| {
+                    std::process::Command::new("hyprctl")
+                        .args(["-j", "getoption", "decoration:blur:enabled"])
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                })
+                .await
+                .ok()
+                .flatten();
+                if let Some(on) = out.as_deref().and_then(blur_enabled) {
+                    COMPOSITOR_BLUR
+                        .store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+                    load();
+                }
+            });
+        })
+    };
+    probe();
     // An id unknown at the first draw (a theme pack) is read off-thread; draw again when it lands
     // (audit6 S6-2).
     theme::on_refreshed(Rc::new(load.clone()));
@@ -101,9 +128,17 @@ pub fn install(extra: &'static str) {
         };
         if let Ok(m) = m {
             let load = load.clone();
+            let (probe, looks) = (probe.clone(), p == looks_path());
             m.connect_changed(move |_, _, _, _| {
                 if installed {
                     theme::forget_missed();
+                }
+                if looks {
+                    // Blur may have been switched: forget what the compositor said, draw from
+                    // the prefs now and ask again once it has applied them.
+                    COMPOSITOR_BLUR.store(0, std::sync::atomic::Ordering::Relaxed);
+                    let probe = probe.clone();
+                    glib::timeout_add_seconds_local_once(1, move || probe());
                 }
                 load();
             });
@@ -216,6 +251,50 @@ pub fn set_active(id: &str) -> std::io::Result<()> {
 pub const CONTRAST_FILE: &str = "wol/contrast";
 /// Token overrides appended to the kit stylesheet while the flag exists.
 pub const CONTRAST_CSS: &str = include_str!("contrast.css");
+
+/// What the compositor said about blur: 0 not asked yet / no answer, 1 on, 2 off.
+static COMPOSITOR_BLUR: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// `hyprctl -j getoption decoration:blur:enabled` -> whether blur is on (`"int": 1`).
+fn blur_enabled(json: &str) -> Option<bool> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    Some(v.get("int")?.as_i64()? != 0)
+}
+
+/// Is there blur behind the glass? The compositor's word first, else the person's looks: blur off
+/// or Reduce Transparency on means none.
+fn blur_on() -> bool {
+    match COMPOSITOR_BLUR.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => {
+            let d = wol_core::hyprprefs::load_desktop(std::path::Path::new(&super::config_home()));
+            d.looks.blur && !d.reduce_transparency
+        }
+    }
+}
+
+/// Glass is see-through only because the compositor blurs what is behind it. Without blur the
+/// panel, menu bar and Dock would show the windows' text through (Settings chevrons through the
+/// Notification Center, the Settings window's icons through the Control Center): the alpha is
+/// raised to this at least.
+pub const SOLID_GLASS_ALPHA: f32 = 0.92;
+
+/// The `--glass` override for the theme's glass `token` with the looks' `scale`: the scaled
+/// alpha, raised to [`SOLID_GLASS_ALPHA`] when there is no `blur`. None when nothing changes or
+/// the token is not `rgba(...)`.
+pub fn glass_override(token: &str, scale: f32, blur: bool) -> Option<String> {
+    if blur {
+        return wol_core::looks::glass_css(token, scale);
+    }
+    let inner = token.trim().strip_prefix("rgba(")?.strip_suffix(')')?;
+    let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
+    let [r, g, b, a] = parts[..] else { return None };
+    let a: f32 = a.parse().ok()?;
+    let a = ((a * scale).clamp(0.3, 1.0)).max(SOLID_GLASS_ALPHA);
+    let a = (a * 100.0).round() / 100.0;
+    Some(format!("* {{ --glass: rgba({r},{g},{b},{a}); }}\n"))
+}
 
 /// Settings > Effects & Looks prefs (`glass` multiplies the theme's glass alpha).
 fn looks_path() -> std::path::PathBuf {
@@ -357,6 +436,37 @@ pub fn apply(t: &theme::Theme, extra: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-DESIGN-21 / LIVE-16: without compositor blur the translucent glass showed the windows
+    /// behind it. The theme's 0.84 or 0.70 rises to 0.92; with blur it stays the theme's.
+    #[test]
+    fn glass_is_solid_without_blur() {
+        let dark = "rgba(36,36,42,0.70)";
+        assert_eq!(
+            glass_override(dark, 1.0, true),
+            None,
+            "blur on: the theme's own"
+        );
+        assert_eq!(
+            glass_override(dark, 1.0, false).as_deref(),
+            Some("* { --glass: rgba(36,36,42,0.92); }\n")
+        );
+        assert_eq!(
+            glass_override("rgba(36,36,42,0.98)", 1.0, false).as_deref(),
+            Some("* { --glass: rgba(36,36,42,0.98); }\n"),
+            "already solid enough: kept"
+        );
+        assert_eq!(glass_override("#242428", 1.0, false), None, "not rgba");
+        assert_eq!(
+            blur_enabled(r#"{"option":"decoration:blur:enabled","int":0}"#),
+            Some(false)
+        );
+        assert_eq!(
+            blur_enabled(r#"{"option":"decoration:blur:enabled","int":1}"#),
+            Some(true)
+        );
+        assert_eq!(blur_enabled("Invalid"), None);
+    }
 
     #[test]
     fn a_parser_message_names_its_property() {

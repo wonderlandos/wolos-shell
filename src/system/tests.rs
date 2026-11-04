@@ -11,29 +11,9 @@ fn control_center_labels() {
         secure: true,
         connected: true,
     }];
-    assert_eq!(
-        wifi_subtitle(
-            Network {
-                online: true,
-                wifi: true,
-                signal: None
-            },
-            &nets
-        ),
-        "Home"
-    );
-    assert_eq!(
-        wifi_subtitle(
-            Network {
-                online: true,
-                wifi: false,
-                signal: None
-            },
-            &[]
-        ),
-        "Ethernet"
-    );
-    assert_eq!(wifi_subtitle(Network::default(), &[]), "Not Connected");
+    assert_eq!(wifi_subtitle(&nets), "Home");
+    assert_eq!(wifi_subtitle(&[]), "Not Connected");
+    assert_eq!(wifi_subtitle(&[]), "Not Connected");
     assert_eq!(
         battery_label(Some(Battery {
             percent: 82,
@@ -394,7 +374,7 @@ fn core_system_reads_snapshot_and_acts_off_thread() {
     w.recv_blocking().unwrap();
     assert_eq!(sys.audio().volume, Some(64));
     assert_eq!(sys.wifi_enabled(), Some(true));
-    assert_eq!(wifi_subtitle(sys.network(), &sys.wifi_networks()), "Home");
+    assert_eq!(wifi_subtitle(&sys.wifi_networks()), "Home");
     assert_eq!(sys.network().signal, Some(70));
     h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.30\n");
     let done = sys.spawn(Action::Volume(30));
@@ -448,16 +428,6 @@ fn an_action_reads_only_its_topics_and_keeps_the_password_for_admin() {
     );
     assert_eq!(sys.audio().volume, Some(30));
 
-    sys.authorize("pw").unwrap();
-    let _ = sys.perform(&Action::Volume(40));
-    let _ = sys.perform(&Action::MediaNext);
-    assert_eq!(
-        sys.inner.password.lock().unwrap().as_str(),
-        "pw",
-        "kept for the admin retry"
-    );
-    let _ = sys.perform(&Action::Wifi(true));
-    assert!(sys.inner.password.lock().unwrap().is_empty(), "used once");
     for a in [Action::Volume(1), Action::Zoom(true), Action::MediaToggle] {
         assert!(!may_need_password(&a), "{a:?}");
     }
@@ -706,8 +676,7 @@ fn two_queued_changes_both_carry_the_password() {
             ("remote-login".to_string(), "right".to_string()),
         ]
     );
-    // A retry's own password is never left behind for an unrelated action.
-    assert!(sys.inner.password.lock().unwrap().is_empty());
+    // A retry's own password is never left behind for an unrelated action: nothing is stored.
     assert_eq!(
         sys.spawn_with(admin_action(A::Hostname, "alice-pc"), Some("wrong"))
             .recv_blocking(),
@@ -778,4 +747,150 @@ fn a_desktop_undo_sets_the_restored_keywords_live() {
         ..undo
     };
     assert!(desktop_undo_cmds(&other, || unreachable!()).is_empty());
+}
+
+/// Hunt 1 C1: a helper's approval sheet waited on a refresh of every topic (bluetoothctl,
+/// hyprctl…) before its answer, so a wrong password's sentence came seconds late and a right one
+/// kept the sheet frozen. The answer comes first; only a change's own topics are read after.
+#[test]
+fn approve_replies_before_refresh_under_100ms() {
+    use shared::admin::AdminReply;
+    use shared::shell::ApprovalRequest as R;
+    let h = Arc::new(SlowHost {
+        fake: wol_core::system::fake::FakeHost::new(false),
+        delay: std::time::Duration::from_millis(500),
+    });
+    let mut c = Controls::new(h);
+    c.admin = Arc::new(|_, pw| {
+        Some(match pw {
+            "" | "good" => AdminReply::Ok,
+            _ => AdminReply::Denied,
+        })
+    });
+    let (_tick, ticks) = std::sync::mpsc::channel();
+    let sys = CoreSystem::with_ticks(c, Sysfs::default(), None, ticks);
+    let be = R::BootEnvironment {
+        name: wol_core::update::SLOTS[1].into(),
+    };
+    for (pw, want) in [("bad", Err(ActionError::Denied)), ("good", Ok(()))] {
+        let t = std::time::Instant::now();
+        let r = sys.approve(be.clone(), pw.into()).recv_blocking();
+        let took = t.elapsed();
+        assert_eq!(r, Ok(want), "{pw}");
+        assert!(
+            took < std::time::Duration::from_millis(100),
+            "{pw}: answered after {took:?}"
+        );
+    }
+    assert_eq!(
+        approval_topics(&be),
+        [false; TOPICS],
+        "a restore point reads nothing"
+    );
+    assert_eq!(
+        approval_topics(&R::Wifi { on: true }),
+        topics_of(&Action::Wifi(true))
+    );
+    assert_eq!(
+        approval_topics(&R::Packages {
+            verb: "install".into(),
+            names: vec!["vim".into()]
+        }),
+        [false; TOPICS]
+    );
+}
+
+/// Hunt 1 D2 (QA-HUNT-6): the Control Center's approve and Settings shared one password slot in
+/// `CoreSystem`, so a tap between Allow and the admin retry ate it and the retry asked again.
+/// Every retry carries its own copy (`spawn_with`); no slot exists to be raced for.
+#[test]
+fn no_global_password_slot() {
+    let src = include_str!("../system.rs");
+    for gone in [
+        "fn authorize",
+        "fn take_password",
+        "password: Mutex<String>",
+    ] {
+        assert!(!src.contains(gone), "{gone} is back in system.rs");
+    }
+    let src = include_str!("../ui/control_center/mod.rs");
+    assert!(
+        !src.contains(".authorize("),
+        "the panel must retry with spawn_with"
+    );
+}
+
+/// QA NET2-5 / NET2-7: with nobody watching the snapshot is up to a minute old; the tray glyph
+/// read it, so a pulled cable showed 44 s late, and an up Wi-Fi link beat the Ethernet route.
+/// The operstate and the default route are read now, on every call.
+#[test]
+fn network_follows_the_link_not_the_snapshot() {
+    use wol_core::system::fake::FakeHost;
+    let route = |iface: &str| {
+        format!(
+            "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n\
+             {iface}\t00000000\t0102A8C0\t0003\t0\t0\t100\t00000000\n"
+        )
+    };
+    let root = std::env::temp_dir().join(format!("wol-net-live-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    for (i, wireless) in [("enp0s2", false), ("wlan0", true)] {
+        fs::create_dir_all(root.join("net").join(i)).unwrap();
+        fs::write(root.join("net").join(i).join("operstate"), "up\n").unwrap();
+        if wireless {
+            fs::create_dir_all(root.join("net").join(i).join("wireless")).unwrap();
+        }
+    }
+    let h = Arc::new(FakeHost::linux());
+    h.file("/proc/net/route", &route("enp0s2"));
+    let (_tick, ticks) = std::sync::mpsc::channel();
+    let sys = CoreSystem::with_ticks(
+        Controls::new(h.clone()),
+        Sysfs { root: root.clone() },
+        None,
+        ticks,
+    );
+    // A snapshot that says "Wi-Fi, connected" (taken a minute ago).
+    sys.inner.lock().nets = vec![wol_core::controls::WifiNet {
+        ssid: "Home".into(),
+        signal: 70,
+        secure: true,
+        connected: true,
+    }];
+    // NET2-7: Wi-Fi is up, but Ethernet carries the default route.
+    let n = sys.network();
+    assert!(n.online && !n.wifi, "{n:?}");
+    // NET2-5: the cable is pulled and Wi-Fi is down too: the next read says offline, no refresh.
+    h.file("/proc/net/route", "Iface\tDestination\tGateway\tFlags\n");
+    fs::write(root.join("net/enp0s2/operstate"), "down\n").unwrap();
+    fs::write(root.join("net/wlan0/operstate"), "down\n").unwrap();
+    assert_eq!(
+        sys.network(),
+        Network::default(),
+        "stale snapshot must not keep it online"
+    );
+    // Wi-Fi alone, as the default route: the snapshot's signal rides along.
+    h.file("/proc/net/route", &route("wlan0"));
+    fs::write(root.join("net/wlan0/operstate"), "up\n").unwrap();
+    let n = sys.network();
+    assert!(n.online && n.wifi && n.signal == Some(70), "{n:?}");
+    let _ = fs::remove_dir_all(&root);
+}
+
+/// QA NET2-7: the Wi-Fi tile never names the Ethernet connection, whatever the machine's route.
+#[test]
+fn the_wifi_tile_does_not_say_ethernet() {
+    assert_eq!(wifi_subtitle(&[]), "Not Connected");
+}
+
+/// A VPN's tunnel holds the default route: it names no medium, so the links decide (and a Wi-Fi
+/// laptop does not turn wired the moment the VPN connects).
+#[test]
+fn a_tunnel_route_names_no_medium() {
+    for t in ["tun0", "wg0", "ppp0", "tailscale0"] {
+        assert!(is_tunnel(t), "{t}");
+    }
+    for p in ["wlan0", "enp0s2", "eth0", "wlp3s0"] {
+        assert!(!is_tunnel(p), "{p}");
+    }
 }

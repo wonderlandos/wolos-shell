@@ -12,6 +12,7 @@ mod pages;
 mod sound;
 pub mod tiles;
 
+use crate::auth_queue::{AuthQueue, Next};
 use crate::focus::{self, Focus};
 use crate::kit::{
     self,
@@ -205,15 +206,20 @@ pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
             moves.replace(open_stagger(&root, &kit::anim::Clock::of(win)));
         });
     }
-    win.connect_hide(move |_| {
-        if let Some(h) = running.borrow_mut().take() {
-            h.abort();
-        }
-        if let Some(id) = polling.borrow_mut().take() {
-            id.remove();
-        }
-        forget_page();
-    });
+    {
+        let cc = cc.clone();
+        win.connect_hide(move |_| {
+            if let Some(h) = running.borrow_mut().take() {
+                h.abort();
+            }
+            if let Some(id) = polling.borrow_mut().take() {
+                id.remove();
+            }
+            // Closed: the sound service's client leaves PipeWire with it (QA-SET-48).
+            cc.sound_page.clear_source();
+            forget_page();
+        });
+    }
     let w2 = win.clone();
     kit::surface::on_escape(&win, move || w2.set_visible(false));
     win.upcast()
@@ -391,14 +397,46 @@ pub(crate) struct Ui {
     width: Cell<i32>,
     message: gtk::Label,
     auth: w::AuthSheet,
-    /// Admin action waiting for the password.
-    pending: RefCell<Option<Action>>,
+    /// Admin actions waiting for the password, in order (QA hunt 1 D1: one slot dropped the first).
+    queue: RefCell<AuthQueue<Pend>>,
+    /// Tiles the person just flipped: the poll leaves them alone (QA hunt 1 G2).
+    pub holds: tiles::Holds,
     /// Slider actions: one in flight per kind, newest value wins (no fork storm while dragging).
     busy: RefCell<std::collections::HashMap<&'static str, Option<Action>>>,
     /// True while a snapshot pushes values into widgets (their handlers must not act).
     pub syncing: Cell<bool>,
     /// Re-reads every widget after an action settles (failed toggles snap back).
     resync: RefCell<Option<Rc<dyn Fn()>>>,
+    /// The Sound page's level mover, for the main page's Sound slider.
+    volume_out: RefCell<Option<Rc<dyn Fn(u16)>>>,
+}
+
+/// One Control Center change on its way: the action and the tile it holds, if any.
+pub(crate) struct Pend {
+    a: Action,
+    hold: Option<&'static str>,
+    /// Runs once the change ended, with whether it worked (not when Cancel dropped it).
+    then: Option<Box<dyn FnOnce(bool)>>,
+}
+
+/// What the Control Center does with the answer `r` to `p` (sent with the password of Allow
+/// `retry`, if any). Wi-Fi and Bluetooth never open the sheet: wol-admind's `NeedsAuth` or
+/// `Denied` for them means this account may not, and says so, never a password sentence no
+/// sheet asked for (QA hunt 1 E2). The others wait in `q` for the password.
+fn answer(
+    q: &mut AuthQueue<Pend>,
+    p: Pend,
+    r: Result<(), ActionError>,
+    retry: Option<u32>,
+) -> Next<Pend> {
+    if asks_password(&p.a) {
+        return q.answered(p, r, retry);
+    }
+    let r = r.map_err(|e| match e {
+        ActionError::NeedsAuth | ActionError::Denied => ActionError::NotAdmin,
+        e => e,
+    });
+    Next::Finish(p, r)
 }
 
 impl Ui {
@@ -407,31 +445,125 @@ impl Ui {
         if self.syncing.get() {
             return;
         }
-        let rx = self.sys.spawn(a.clone());
+        self.run(
+            Pend {
+                a,
+                hold: None,
+                then: None,
+            },
+            None,
+        );
+    }
+    /// [`Ui::act`] that tells `then` how it ended (a state the page keeps itself changes only
+    /// when the host took the change).
+    pub fn act_then(self: &Rc<Self>, a: Action, then: impl FnOnce(bool) + 'static) {
+        if self.syncing.get() {
+            return;
+        }
+        self.run(
+            Pend {
+                a,
+                hold: None,
+                then: Some(Box::new(then)),
+            },
+            None,
+        );
+    }
+    /// [`Ui::act`] for an on/off control: every view of `key` shows `want` until the change
+    /// answers (and its echo), whatever the poll says meanwhile.
+    pub fn act_held(self: &Rc<Self>, key: &'static str, want: bool, a: Action) {
+        if self.syncing.get() {
+            return;
+        }
+        self.holds.touch(key, want);
+        self.resync();
+        self.run(
+            Pend {
+                a,
+                hold: Some(key),
+                then: None,
+            },
+            None,
+        );
+    }
+    /// Sends `p` (with the password of Allow number `pw.1`, if any) and handles its answer.
+    fn run(self: &Rc<Self>, p: Pend, pw: Option<(Rc<str>, u32)>) {
+        let rx = self
+            .sys
+            .spawn_with(p.a.clone(), pw.as_ref().map(|(s, _)| &**s));
+        let retry = pw.map(|(_, n)| n);
+        self.queue.borrow_mut().sent(retry);
         let u = self.clone();
         glib::spawn_future_local(async move {
-            let Ok(r) = rx.recv().await else { return };
-            u.done(a, r);
+            let r = rx.recv().await.unwrap_or(Err(ActionError::Failed));
+            u.answer(p, r, retry);
         });
     }
-    fn done(self: &Rc<Self>, a: Action, r: Result<(), ActionError>) {
+    fn answer(self: &Rc<Self>, p: Pend, r: Result<(), ActionError>, retry: Option<u32>) {
+        let next = answer(&mut self.queue.borrow_mut(), p, r, retry);
+        match next {
+            Next::Finish(p, r) => self.done(p, r),
+            Next::Ask(message) => self.ask(message),
+            Next::GiveUp(all) => {
+                self.auth.revealer.set_reveal_child(false);
+                for p in all {
+                    self.done(p, Err(ActionError::Denied));
+                }
+            }
+        }
+        self.settle();
+        self.resync();
+    }
+    /// One change ended: its tile lets go (or waits for the echo) and its sentence shows.
+    fn done(&self, p: Pend, r: Result<(), ActionError>) {
+        if let Some(k) = p.hold {
+            self.holds.answered(k, r.is_ok(), std::time::Instant::now());
+        }
+        if let Some(then) = p.then {
+            then(r.is_ok());
+        }
         match r {
             Ok(()) => self.message.set_visible(false),
-            Err(e @ (ActionError::NeedsAuth | ActionError::Denied)) if asks_password(&a) => {
-                self.auth.message.set_label(if e == ActionError::Denied {
-                    e.message()
-                } else {
-                    ""
-                });
-                *self.pending.borrow_mut() = Some(a);
-                self.auth.revealer.set_reveal_child(true);
-                self.auth.field.grab_focus();
-            }
             Err(e) => {
                 self.message.set_label(copy::action(e));
                 self.message.set_visible(true);
             }
         }
+    }
+    /// Shows the sheet for the waiting changes.
+    fn ask(&self, message: &str) {
+        let n = self.queue.borrow().len();
+        let text = if message.is_empty() && n > 1 {
+            copy::auth_waiting(n)
+        } else {
+            message.to_string()
+        };
+        self.auth.message.set_label(&text);
+        if !self.auth.revealer.reveals_child() {
+            self.auth.revealer.set_reveal_child(true);
+        }
+        if self.queue.borrow().checking() == 0 {
+            self.auth.field.grab_focus();
+        }
+    }
+    /// Once no retry is out: the sheet takes input again, or goes when nothing waits.
+    fn settle(&self) {
+        let q = self.queue.borrow();
+        if q.checking() > 0 {
+            return;
+        }
+        self.auth.set_busy(false);
+        self.auth.allow.set_sensitive(true);
+        self.auth.cancel.set_sensitive(true);
+        self.auth.field.set_sensitive(true);
+        if q.len() == 0 {
+            self.auth.revealer.set_reveal_child(false);
+        } else {
+            self.auth.field.grab_focus();
+        }
+    }
+    /// Re-reads every widget (failed toggles snap back).
+    fn resync(&self) {
         let f = self.resync.borrow().clone();
         if let Some(f) = f {
             f();
@@ -471,25 +603,56 @@ impl Ui {
             let r = rx.recv().await.unwrap_or(Ok(()));
             let next = u.busy.borrow_mut().remove(kind).flatten();
             if r.is_err() {
-                u.done(a, r);
+                u.answer(
+                    Pend {
+                        a,
+                        hold: None,
+                        then: None,
+                    },
+                    r,
+                    None,
+                );
             }
             if let Some(n) = next {
                 u.act_latest(kind, n);
             }
         });
     }
+    /// Allow: every waiting change runs again with its own copy of the password (no shared
+    /// one-shot slot in `System`, QA hunt 1 D2).
     fn allow(self: &Rc<Self>) {
-        let pw = self.auth.field.text();
-        self.auth.field.set_text("");
-        match self.sys.authorize(&pw) {
-            Ok(()) => {
-                self.auth.revealer.set_reveal_child(false);
-                if let Some(a) = self.pending.borrow_mut().take() {
-                    self.act(a);
-                }
-            }
-            Err(e) => self.auth.message.set_label(e.message()),
+        if self.queue.borrow().checking() > 0 {
+            return;
         }
+        let pw: Rc<str> = self.auth.field.text().as_str().into();
+        self.auth.field.set_text("");
+        let (all, n) = self.queue.borrow_mut().allow();
+        if all.is_empty() {
+            return self.auth.revealer.set_reveal_child(false);
+        }
+        self.auth.message.set_label("");
+        self.auth.set_busy(true);
+        self.auth.allow.set_sensitive(false);
+        self.auth.cancel.set_sensitive(false);
+        self.auth.field.set_sensitive(false);
+        for p in all {
+            self.run(p, Some((pw.clone(), n)));
+        }
+    }
+    /// Cancel: nothing changed, so no sentence; every waiting tile shows the host's state again.
+    fn cancel(&self) {
+        // Retries are out: their late answers would re-queue and reopen the sheet.
+        if !can_cancel(&self.queue.borrow()) {
+            return;
+        }
+        let all = self.queue.borrow_mut().cancel();
+        self.auth.revealer.set_reveal_child(false);
+        for p in all {
+            if let Some(k) = p.hold {
+                self.holds.answered(k, false, std::time::Instant::now());
+            }
+        }
+        self.resync();
     }
     pub fn show(&self, page: &str) {
         self.pages.set_visible_child_name(page);
@@ -506,6 +669,55 @@ fn asks_password(a: &Action) -> bool {
         a,
         Action::Wifi(_) | Action::Bluetooth(_) | Action::WifiJoin(..) | Action::BtConnect(..)
     )
+}
+
+/// [`tiles::Holds`] keys: one per on/off state, shared by its tile and its detail page.
+pub(crate) const WIFI: &str = "wifi";
+pub(crate) const BLUETOOTH: &str = "bluetooth";
+pub(crate) const NIGHT: &str = "night";
+const APPEARANCE: &str = "appearance";
+
+/// The hold key of an accessibility tile (by the action it sends).
+fn a11y_key(make: fn(bool) -> Action) -> &'static str {
+    match make(true) {
+        Action::ReduceMotion(_) => "reduce-motion",
+        Action::IncreaseContrast(_) => "contrast",
+        _ => "zoom",
+    }
+}
+
+impl Ui {
+    /// Shows `e`'s sentence on the panel's message line.
+    fn say(&self, e: ActionError) {
+        self.message.set_label(copy::action(e));
+        self.message.set_visible(true);
+    }
+    /// Saves Focus through the journal (Undo sees it); a failure says so instead of vanishing.
+    pub(crate) fn save_focus(&self, f: Focus) {
+        match focus::write_as("control-center", f) {
+            Ok(()) => self.message.set_visible(false),
+            Err(_) => {
+                self.message.set_label(copy::action(ActionError::Failed));
+                self.message.set_visible(true);
+            }
+        }
+        self.resync();
+    }
+    /// The main page's Sound slider: the same path as the Sound page's own slider.
+    fn set_main_volume(self: &Rc<Self>, pct: u16) {
+        let f = self.volume_out.borrow().clone();
+        match f {
+            Some(f) => f(pct),
+            None => self.act_latest("volume", Action::Volume(pct.min(100) as u8)),
+        }
+    }
+    /// Night Shift tile and Display page row: flips what they show, not the last snapshot.
+    pub(crate) fn toggle_night(self: &Rc<Self>) {
+        let on = !self
+            .holds
+            .shown(NIGHT, self.sys.night_light().unwrap_or(false));
+        self.act_held(NIGHT, on, Action::NightLight(on));
+    }
 }
 
 /// Closes the Control Center window holding `wd`, then runs `argv` (capture toolbar, Settings).
@@ -587,17 +799,16 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         width: Cell::new(w::CONTROL_CENTER_WIDTH),
         message: w::label("", "secondary"),
         auth: w::authenticate_sheet("Control Center"),
-        pending: Default::default(),
+        queue: Default::default(),
+        holds: Default::default(),
         busy: Default::default(),
         syncing: Cell::new(false),
         resync: Default::default(),
+        volume_out: Default::default(),
     });
     {
         let u = ui.clone();
-        ui.auth.cancel.connect_clicked(move |_| {
-            u.pending.borrow_mut().take();
-            u.auth.revealer.set_reveal_child(false);
-        });
+        ui.auth.cancel.connect_clicked(move |_| u.cancel());
     }
     {
         let u = ui.clone();
@@ -611,6 +822,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     pages.add_named(&scroll, Some("main"));
     let detail = pages::Pages::build(&ui);
     let sound_page = sound::SoundPage::build(&ui);
+    *ui.volume_out.borrow_mut() = Some(sound_page.set_out.clone());
     let display_page = display::DisplayPage::build(&ui);
     panel.append(&pages);
 
@@ -622,8 +834,10 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let wifi = w::ControlTile::new("network-wireless-symbolic", "Wi-Fi", "Off", Some(false));
     {
         let (u, t) = (ui.clone(), wifi.circle.clone());
-        wifi.circle
-            .connect_clicked(move |_| u.act(Action::Wifi(!t.has_css_class("on"))));
+        wifi.circle.connect_clicked(move |_| {
+            let on = !t.has_css_class("on");
+            u.act_held(WIFI, on, Action::Wifi(on))
+        });
         let u = ui.clone();
         wifi.detail.connect_clicked(move |_| u.show("wifi"));
     }
@@ -632,9 +846,10 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         w::ControlTile::new("bluetooth-active-symbolic", "Bluetooth", "Off", Some(false));
     {
         let (u, t) = (ui.clone(), bluetooth.circle.clone());
-        bluetooth
-            .circle
-            .connect_clicked(move |_| u.act(Action::Bluetooth(!t.has_css_class("on"))));
+        bluetooth.circle.connect_clicked(move |_| {
+            let on = !t.has_css_class("on");
+            u.act_held(BLUETOOTH, on, Action::Bluetooth(on))
+        });
         let u = ui.clone();
         bluetooth
             .detail
@@ -649,10 +864,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         let (u, c) = (ui.clone(), focus_tile.circle.clone());
         focus_tile.circle.connect_clicked(move |_| {
             let on = !c.has_css_class("on");
-            let _ = focus::write(if on { Focus::On } else { Focus::Off });
-            if let Some(f) = u.resync.borrow().clone() {
-                f()
-            }
+            u.save_focus(if on { Focus::On } else { Focus::Off });
         });
         let u = ui.clone();
         focus_tile.detail.connect_clicked(move |_| u.show("focus"));
@@ -661,17 +873,18 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let appearance =
         w::ControlTile::new("wolos-dark-mode-symbolic", "Dark Mode", "Off", Some(false));
     {
-        let c = appearance.circle.clone();
+        let (u, c) = (ui.clone(), appearance.circle.clone());
         appearance.circle.connect_clicked(move |_| {
             let on = !c.has_css_class("on");
-            if let Some(id) = dark_mode_id(kit::style::active_id().as_deref(), on) {
-                let _ = kit::style::set_active(&id);
+            let ok = dark_mode_id(kit::style::active_id().as_deref(), on)
+                .is_some_and(|id| kit::style::set_active(&id).is_ok());
+            // The theme lands a moment later: the tile holds what was asked meanwhile.
+            u.holds.touch(APPEARANCE, on);
+            u.holds.answered(APPEARANCE, ok, std::time::Instant::now());
+            if !ok {
+                u.say(ActionError::Failed);
             }
-            if on {
-                c.add_css_class("on")
-            } else {
-                c.remove_css_class("on")
-            }
+            u.resync();
         });
     }
     right.append(&appearance.root);
@@ -699,7 +912,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
             "Sound",
             "audio-volume-high-symbolic",
             0.0,
-            move |v| u.act_latest("volume", Action::Volume(v as u8)),
+            move |v| u.set_main_volume(v.round().clamp(0.0, 100.0) as u16),
             Some("Output"),
         )
     };
@@ -725,7 +938,11 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     {
         let u = ui.clone();
         battery.button.connect_clicked(move |_| {
-            let Some(pm) = u.sys.power_mode() else { return };
+            let Some(pm) = u.sys.power_mode() else {
+                // No Low Power Mode here: say so, a click that does nothing reads as broken.
+                u.say(ActionError::Unavailable);
+                return;
+            };
             let low = pm == PowerMode::LowPower;
             u.act(Action::Power(if low {
                 PowerMode::Automatic
@@ -748,9 +965,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     let night = ToggleTile::new("night-light-symbolic", "Night Shift");
     {
         let u = ui.clone();
-        night.button.connect_clicked(move |_| {
-            u.act(Action::NightLight(!u.sys.night_light().unwrap_or(false)))
-        });
+        night.button.connect_clicked(move |_| u.toggle_night());
     }
     let screenshot = ToggleTile::new("camera-photo-symbolic", "Screenshot").button;
     screenshot.connect_clicked(|b| launch(b, SCREENSHOT));
@@ -775,10 +990,12 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
             ),
             (&zoom, read(|a| a.zoom), Action::Zoom),
         ] {
-            let u = ui.clone();
+            let (u, key) = (ui.clone(), a11y_key(make));
             t.button.connect_clicked(move |_| {
-                let on = get(u.sys.accessibility()).unwrap_or(false);
-                u.act(make(!on));
+                let on = !u
+                    .holds
+                    .shown(key, get(u.sys.accessibility()).unwrap_or(false));
+                u.act_held(key, on, make(on));
             });
         }
         Accessibility {
@@ -807,6 +1024,13 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         .collect();
     let grid = tiles::Grid::new();
     main.append(&grid.root);
+    // A long sentence (the 118-character Refused one) wraps inside the panel instead of
+    // widening the glass (QA-SET-51).
+    ui.message.set_wrap(true);
+    ui.message.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    ui.message.set_xalign(0.0);
+    ui.message.set_max_width_chars(1);
+    ui.message.set_hexpand(true);
     ui.message.set_visible(false);
     main.append(&ui.message);
 
@@ -846,6 +1070,26 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     cc
 }
 
+/// Cancel is for a sheet nobody is checking a password on: a retry still out would answer
+/// `Denied` after the person left and open the sheet again with "Incorrect password".
+fn can_cancel(q: &AuthQueue<Pend>) -> bool {
+    q.checking() == 0
+}
+
+/// The Wi-Fi circle works only where the host has Wi-Fi to switch.
+fn wifi_tile_usable(radio: Option<bool>) -> bool {
+    radio.is_some()
+}
+
+/// Wi-Fi tile subtitle: the connection, or that this machine has no Wi-Fi.
+fn wifi_label<'a>(radio: Option<bool>, connection: &'a str) -> &'a str {
+    if radio.is_none() {
+        "Unavailable"
+    } else {
+        connection
+    }
+}
+
 /// `bt` -> Bluetooth tile subtitle.
 fn bluetooth_label(bt: Option<bool>) -> &'static str {
     match bt {
@@ -866,10 +1110,14 @@ impl ControlCenter {
             .set_homogeneous(u.width.get() >= w::CONTROL_CENTER_WIDTH);
 
         let nets = s.wifi_networks();
+        let radio = s.wifi_enabled();
         self.wifi
-            .set_subtitle(&crate::system::wifi_subtitle(s.network(), &nets));
-        self.wifi.set_on(s.wifi_enabled().unwrap_or(false));
-        let bt = s.bluetooth();
+            .set_subtitle(wifi_label(radio, &crate::system::wifi_subtitle(&nets)));
+        self.wifi
+            .set_on(u.holds.shown(WIFI, radio.unwrap_or(false)));
+        // No adapter: a click could only fail with a sentence about something else (QA-SHADOW-61).
+        self.wifi.circle.set_sensitive(wifi_tile_usable(radio));
+        let bt = s.bluetooth().map(|b| u.holds.shown(BLUETOOTH, b));
         self.bluetooth.set_subtitle(bluetooth_label(bt));
         self.bluetooth.set_on(bt.unwrap_or(false));
         self.bluetooth.circle.set_sensitive(bt.is_some());
@@ -880,7 +1128,7 @@ impl ControlCenter {
             Focus::On => "Do Not Disturb".to_string(),
             Focus::Until(_) => focus_label(f),
         });
-        let dark = dark_now();
+        let dark = u.holds.shown(APPEARANCE, dark_now());
         self.appearance.set_on(dark);
         self.appearance
             .set_subtitle(if dark { "On" } else { "Off" });
@@ -894,10 +1142,12 @@ impl ControlCenter {
         }
         let a = s.audio();
         self.sound.set_icon(crate::status::volume(a));
-        if let Some(v) = a.volume
+        // The service's level when it runs (100 = 0 dB, as the Sound page), else wpctl's percent.
+        let level = self.sound_page.service_level(s).or(a.volume.map(u16::from));
+        if let Some(v) = level
             && !u.sliding("volume")
         {
-            self.sound.set_value(v as f64);
+            self.sound.set_value(f64::from(v));
         }
 
         let np = s.now_playing().filter(|_| p.now_playing);
@@ -940,7 +1190,10 @@ impl ControlCenter {
                 .set_tooltip_text(Some(&kit::controls::percent(f64::from(k))));
             shown.push(self.keyboard.button.clone().upcast());
         }
-        let night = s.night_light().filter(|_| p.night_shift);
+        let night = s
+            .night_light()
+            .filter(|_| p.night_shift)
+            .map(|n| u.holds.shown(NIGHT, n));
         self.night.set_on(night.unwrap_or(false));
         if night.is_some() {
             shown.push(self.night.button.clone().upcast());
@@ -952,11 +1205,17 @@ impl ControlCenter {
             shown.push(self.record.clone().upcast());
         }
         let acc = s.accessibility();
+        let held = |make: fn(bool) -> Action, on: bool| u.holds.shown(a11y_key(make), on);
+        self.a11y.reduce_motion.set_on(held(
+            Action::ReduceMotion,
+            acc.reduce_motion.unwrap_or(false),
+        ));
         self.a11y
-            .reduce_motion
-            .set_on(acc.reduce_motion.unwrap_or(false));
-        self.a11y.contrast.set_on(acc.increase_contrast);
-        self.a11y.zoom.set_on(acc.zoom.unwrap_or(false));
+            .contrast
+            .set_on(held(Action::IncreaseContrast, acc.increase_contrast));
+        self.a11y
+            .zoom
+            .set_on(held(Action::Zoom, acc.zoom.unwrap_or(false)));
         if p.accessibility {
             if acc.reduce_motion.is_some() {
                 shown.push(self.a11y.reduce_motion.button.clone().upcast());
@@ -1074,5 +1333,162 @@ mod tests {
         ] {
             assert_eq!(dark_mode_id(saved, on).as_deref(), want, "{saved:?} {on}");
         }
+    }
+
+    /// Cancel while a typed password is being checked does nothing (the late Denied would reopen
+    /// the sheet); once the answers are in, it works.
+    #[test]
+    fn cancel_waits_for_the_check() {
+        let mut q: AuthQueue<Pend> = AuthQueue::default();
+        let p = |a| Pend {
+            a,
+            hold: None,
+            then: None,
+        };
+        let _ = answer(
+            &mut q,
+            p(Action::Power(PowerMode::LowPower)),
+            Err(ActionError::NeedsAuth),
+            None,
+        );
+        let (all, n) = q.allow();
+        for w in all {
+            q.sent(Some(n));
+            assert!(!can_cancel(&q), "a retry is out");
+            let _ = answer(&mut q, w, Err(ActionError::Denied), Some(n));
+        }
+        assert!(can_cancel(&q), "answered: Cancel works again");
+        assert_eq!(q.cancel().len(), 1);
+    }
+
+    /// QA-SHADOW-61: no Wi-Fi adapter = the circle does nothing and says so.
+    #[test]
+    fn no_wifi_circle_insensitive() {
+        assert!(!wifi_tile_usable(None));
+        assert!(wifi_tile_usable(Some(false)) && wifi_tile_usable(Some(true)));
+        assert_eq!(wifi_label(None, "Not Connected"), "Unavailable");
+        assert_eq!(wifi_label(Some(true), "Home"), "Home");
+    }
+
+    /// wol-admind as the Control Center meets it: NeedsAuth without a password, Ok with
+    /// "right", Denied with any other.
+    #[derive(Default)]
+    struct Asking {
+        sent: std::sync::Mutex<Vec<(Action, Option<String>)>>,
+    }
+
+    impl System for Asking {
+        fn battery(&self) -> Option<crate::status::Battery> {
+            None
+        }
+        fn audio(&self) -> crate::status::Audio {
+            Default::default()
+        }
+        fn network(&self) -> crate::status::Network {
+            Default::default()
+        }
+        fn brightness(&self) -> Option<u8> {
+            None
+        }
+        fn spawn_with(&self, a: Action, pw: Option<&str>) -> crate::system::Done {
+            self.sent
+                .lock()
+                .unwrap()
+                .push((a.clone(), pw.map(String::from)));
+            let r = match pw {
+                None => Err(ActionError::NeedsAuth),
+                Some("right") => Ok(()),
+                Some(_) => Err(ActionError::Denied),
+            };
+            let (tx, rx) = async_channel::bounded(1);
+            let _ = tx.try_send(r);
+            rx
+        }
+    }
+
+    /// One send and its answer, as `Ui::run` does (blocking here).
+    fn send(q: &mut AuthQueue<Pend>, sys: &Asking, p: Pend, pw: Option<(&str, u32)>) -> Next<Pend> {
+        let retry = pw.map(|(_, n)| n);
+        q.sent(retry);
+        let r = sys
+            .spawn_with(p.a.clone(), pw.map(|(s, _)| s))
+            .recv_blocking()
+            .unwrap();
+        answer(q, p, r, retry)
+    }
+
+    /// QA hunt 1 D1/D2: Energy mode and Night Shift both asked before Allow; the one slot kept
+    /// the second, and the shared password went to whichever ran first. Both wait now, and one
+    /// Allow re-runs both, each with the password it carries.
+    #[test]
+    fn two_needs_auth_both_run() {
+        let (sys, mut q) = (Asking::default(), AuthQueue::default());
+        let power = Action::Power(PowerMode::LowPower);
+        let night = Action::NightLight(true);
+        for (a, hold) in [(power.clone(), None), (night.clone(), Some(NIGHT))] {
+            assert!(matches!(
+                send(
+                    &mut q,
+                    &sys,
+                    Pend {
+                        a,
+                        hold,
+                        then: None
+                    },
+                    None
+                ),
+                Next::Ask("")
+            ));
+        }
+        assert_eq!(q.len(), 2, "both wait");
+        let (all, n) = q.allow();
+        let mut ended = vec![];
+        for p in all {
+            match send(&mut q, &sys, p, Some(("right", n))) {
+                Next::Finish(p, Ok(())) => ended.push((p.a, p.hold)),
+                _ => panic!("not finished"),
+            }
+        }
+        assert_eq!(ended, [(power.clone(), None), (night.clone(), Some(NIGHT))]);
+        assert_eq!((q.len(), q.checking()), (0, 0));
+        assert_eq!(
+            sys.sent.lock().unwrap()[2..],
+            [(power, Some("right".into())), (night, Some("right".into()))]
+        );
+    }
+
+    /// QA hunt 1 E2: Wi-Fi and Bluetooth never open the sheet, so wol-admind's NeedsAuth or
+    /// Denied for them says only an administrator may, never a password sentence.
+    #[test]
+    fn wifi_tile_never_asks_password() {
+        let mut q = AuthQueue::default();
+        for a in [
+            Action::Wifi(false),
+            Action::Bluetooth(true),
+            Action::WifiJoin("Home".into(), None),
+        ] {
+            for e in [ActionError::NeedsAuth, ActionError::Denied] {
+                let p = Pend {
+                    a: a.clone(),
+                    hold: Some(WIFI),
+                    then: None,
+                };
+                match answer(&mut q, p, Err(e), None) {
+                    Next::Finish(_, Err(ActionError::NotAdmin)) => {}
+                    _ => panic!("{a:?} {e:?}"),
+                }
+            }
+            let p = Pend {
+                a: a.clone(),
+                hold: None,
+                then: None,
+            };
+            assert!(matches!(
+                answer(&mut q, p, Err(ActionError::Failed), None),
+                Next::Finish(_, Err(ActionError::Failed))
+            ));
+        }
+        assert_eq!(q.len(), 0, "nothing waits for a sheet that never opens");
+        assert!(!copy::action(ActionError::NotAdmin).contains("password"));
     }
 }

@@ -34,10 +34,7 @@ pub(super) fn mirror_rule(display: &str, source: Option<&str>) -> Option<String>
 
 /// The display others mirror: the built-in panel (`eDP`, `LVDS`, `DSI`), else the first one.
 pub(super) fn main_display(monitors: &[Monitor]) -> Option<&Monitor> {
-    monitors
-        .iter()
-        .find(|m| ["eDP", "LVDS", "DSI"].iter().any(|p| m.name.starts_with(p)))
-        .or(monitors.first())
+    crate::displays::main_of(monitors)
 }
 
 /// Displays that can mirror the main one.
@@ -123,9 +120,7 @@ impl DisplayPage {
         let night = DeviceRow::new("night-light-symbolic", "Night Shift", "", false, None);
         {
             let u = ui.clone();
-            night.button.connect_clicked(move |_| {
-                u.act(Action::NightLight(!u.sys.night_light().unwrap_or(false)))
-            });
+            night.button.connect_clicked(move |_| u.toggle_night());
         }
         let (brightness_heading, keyboard_heading) =
             (heading("Brightness"), heading("Keyboard Brightness"));
@@ -174,7 +169,7 @@ impl DisplayPage {
         {
             set_value(&self.keyboard.1, k);
         }
-        let night = s.night_light();
+        let night = s.night_light().map(|n| ui.holds.shown(super::NIGHT, n));
         self.night.button.set_visible(night.is_some());
         self.night.set_active(night.unwrap_or(false));
         self.night
@@ -230,8 +225,24 @@ fn toggle_mirror(
     let Some(rule) = mirror_rule(name, if on { None } else { source }) else {
         return;
     };
-    *mirrored.borrow_mut() = (!on).then(|| name.to_string());
-    ui.act(Action::Monitor(rule));
+    // The page says "Mirroring" only once the compositor took the rule (QA-SET-47).
+    let (m, n) = (mirrored.clone(), name.to_string());
+    ui.act_then(Action::Monitor(rule), move |ok| {
+        mirror_answered(&m, &n, !on, ok);
+    });
+}
+
+/// The compositor answered the mirror rule for `name` (`turn_on` = what was asked): only a
+/// success changes what the page shows; a refusal leaves it as it was.
+pub(super) fn mirror_answered(
+    mirrored: &RefCell<Option<String>>,
+    name: &str,
+    turn_on: bool,
+    ok: bool,
+) {
+    if ok {
+        *mirrored.borrow_mut() = turn_on.then(|| name.to_string());
+    }
 }
 
 fn set_value(s: &gtk::Scale, v: u8) {
@@ -271,6 +282,25 @@ mod tests {
         ] {
             assert_eq!(mirror_rule(d, s), None, "{d:?} {s:?}");
         }
+    }
+
+    /// QA-SET-47 / QA-SHADOW-60: toggle_mirror set the name before hyprctl answered, so a refused
+    /// rule left "Mirroring" lit. Only a success moves the state.
+    #[test]
+    fn mirrored_only_on_ok() {
+        let st = RefCell::new(None);
+        mirror_answered(&st, "HDMI-A-1", true, false);
+        assert_eq!(*st.borrow(), None, "refused: nothing lit");
+        mirror_answered(&st, "HDMI-A-1", true, true);
+        assert_eq!(st.borrow().as_deref(), Some("HDMI-A-1"));
+        mirror_answered(&st, "HDMI-A-1", false, false);
+        assert_eq!(
+            st.borrow().as_deref(),
+            Some("HDMI-A-1"),
+            "stop refused: still on"
+        );
+        mirror_answered(&st, "HDMI-A-1", false, true);
+        assert_eq!(*st.borrow(), None);
     }
 
     #[test]

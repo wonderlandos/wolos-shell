@@ -64,7 +64,20 @@ pub(super) struct Snapshot {
     pub boost: bool,
 }
 
+/// What decides a device row's look: everything but the level. A volume step changes `Device`
+/// but not its row, and rebuilding the rows dropped the keyboard focus (QA-SET-50).
+pub(super) type Shape = Vec<(u32, String, bool, Option<String>, DeviceKind)>;
+
 impl Snapshot {
+    /// The row-deciding part of the snapshot ([`Shape`]) and the keys the rows send.
+    pub fn shape(&self) -> (Shape, Shape, &[String]) {
+        let of = |l: &[Device]| -> Shape {
+            l.iter()
+                .map(|d| (d.id, d.name.clone(), d.default, d.codec.clone(), d.kind))
+                .collect()
+        };
+        (of(&self.outputs), of(&self.inputs), &self.keys)
+    }
     /// The default device of a kind (the first one when none is marked).
     pub fn default_of(&self, kind: DeviceKind) -> Option<&Device> {
         let list = match kind {
@@ -254,6 +267,9 @@ pub(super) struct SoundPage {
     /// The page is drawn from the running service (not a fixed preview, not `System`): the
     /// output slider then goes to it.
     from_service: Rc<Cell<bool>>,
+    /// Moves the output slider's level (100 = 0 dB): the service when it runs, else `System`.
+    /// The main page's Sound slider uses it too, so both knobs mean the same level (QA-SET-49).
+    pub set_out: Rc<dyn Fn(u16)>,
 }
 
 /// Sends `a` to the sound service, unless a refresh is moving the controls.
@@ -284,15 +300,21 @@ impl SoundPage {
         let src: Src = Default::default();
         let shown: Rc<RefCell<Option<Snapshot>>> = Default::default();
         let from_service: Rc<Cell<bool>> = Default::default();
-        let output = {
+        let set_out: Rc<dyn Fn(u16)> = {
             let (u, src, live) = (ui.clone(), src.clone(), from_service.clone());
-            Level::new(ui, "audio-volume-high-symbolic", "Mute", move |pct| {
+            Rc::new(move |pct| {
                 if live.get() {
                     // 100 = 0 dB, converted by the service (A6-2).
                     send(&u, &src, AudioAction::OutputVolume(pct));
                 } else {
                     u.act_latest("volume", Action::Volume(system_percent(pct)));
                 }
+            })
+        };
+        let output = {
+            let set = set_out.clone();
+            Level::new(ui, "audio-volume-high-symbolic", "Mute", move |pct| {
+                set(pct)
             })
         };
         {
@@ -342,7 +364,37 @@ impl SoundPage {
             state: Default::default(),
             shown,
             from_service,
+            set_out,
         }
+    }
+
+    /// Lets go of the sound service (the panel closed): its client leaves PipeWire, and the
+    /// next show connects again (QA-SET-48).
+    pub fn clear_source(&self) {
+        *self.src.borrow_mut() = None;
+        *self.state.borrow_mut() = None;
+        self.from_service.set(false);
+    }
+
+    /// The default output's slider position (100 = 0 dB) while the service answers, else None.
+    pub fn service_level(&self, sys: &dyn System) -> Option<u16> {
+        self.poll();
+        if !self.service_live() {
+            return None;
+        }
+        self.current(sys)
+            .default_of(DeviceKind::Output)
+            .map(|d| percent(d).min(100))
+    }
+
+    /// The page is drawn from the running service with devices (not a preview, not `System`).
+    fn service_live(&self) -> bool {
+        self.src.borrow().as_ref().is_some_and(|s| s.live())
+            && self
+                .state
+                .borrow()
+                .as_ref()
+                .is_some_and(|s| !s.devices.is_empty())
     }
 
     /// Where the page reads and sends sound from now on.
@@ -380,14 +432,7 @@ impl SoundPage {
         let live = self.has_source() && self.state.borrow().is_some();
         self.input.scale.set_sensitive(live);
         self.input.mute.set_sensitive(live);
-        self.from_service.set(
-            self.src.borrow().as_ref().is_some_and(|s| s.live())
-                && self
-                    .state
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|s| !s.devices.is_empty()),
-        );
+        self.from_service.set(self.service_live());
         let hold = Touch::hold(0);
         self.output.set(
             snap.default_of(DeviceKind::Output),
@@ -400,7 +445,14 @@ impl SoundPage {
             self.input.touch.busy(hold),
         );
         self.input_heading.set_visible(!snap.inputs.is_empty());
-        if self.shown.borrow().as_ref() == Some(&snap) {
+        // Same rows (only a level moved): keep the widgets, and with them the focus.
+        let same_rows = self
+            .shown
+            .borrow()
+            .as_ref()
+            .is_some_and(|s| s.shape() == snap.shape());
+        if same_rows {
+            *self.shown.borrow_mut() = Some(snap);
             return;
         }
         fill(&self.outputs, &snap.outputs, "No output devices", |i| {
@@ -458,6 +510,28 @@ fn fill<F: Fn() + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SET-50: a volume step changes the snapshot, not the rows.
+    #[test]
+    fn a_level_change_keeps_the_rows() {
+        let d = |volume| Device {
+            id: 3,
+            name: "Speakers".into(),
+            default: true,
+            volume,
+            ..Default::default()
+        };
+        let snap = |volume| Snapshot {
+            outputs: vec![d(volume)],
+            keys: vec!["3".into()],
+            ..Default::default()
+        };
+        assert_ne!(snap(0.2), snap(0.4));
+        assert_eq!(snap(0.2).shape(), snap(0.4).shape());
+        let mut other = snap(0.2);
+        other.outputs[0].default = false;
+        assert_ne!(snap(0.2).shape(), other.shape());
+    }
 
     #[test]
     fn codecs_read_as_people_know_them() {

@@ -13,6 +13,8 @@ use std::rc::Rc;
 mod app_view_cases;
 #[path = "golden_cases/controlcenter.rs"]
 mod controlcenter_cases;
+#[path = "golden_cases/displays.rs"]
+mod displays_cases;
 #[path = "golden_cases/focus.rs"]
 mod focus_cases;
 #[path = "golden_cases/font.rs"]
@@ -35,8 +37,12 @@ mod plugin_host_cases;
 mod regressions;
 #[path = "golden_cases/settings.rs"]
 mod settings_cases;
+#[path = "golden_cases/setup.rs"]
+mod setup_cases;
 #[path = "golden_cases/theme_picker.rs"]
 mod theme_picker_cases;
+#[path = "golden_cases/menubar.rs"]
+mod menubar_cases;
 #[path = "golden_cases/tray.rs"]
 mod tray_cases;
 #[path = "golden_cases/widgets.rs"]
@@ -1244,7 +1250,9 @@ fn cases() -> Vec<Case> {
     v.extend(audit4_shell_cases());
     v.extend(widget_cases::cases());
     v.extend(settings_cases::cases());
+    v.extend(displays_cases::cases());
     v.extend(focus_cases::cases());
+    v.extend(setup_cases::cases());
     v.extend(plugin_host_cases::cases());
     v.extend(package_cases::cases());
     v.extend(app_view_cases::cases());
@@ -1253,6 +1261,7 @@ fn cases() -> Vec<Case> {
     v.extend(theme_picker_cases::cases());
     v.extend(maker_cases::cases());
     v.extend(tray_cases::cases());
+    v.extend(menubar_cases::cases());
     v.extend(motion_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
@@ -1751,8 +1760,14 @@ fn main() {
         env!("CARGO_MANIFEST_DIR"),
         "/../../design/icons/symbolic"
     ));
+    setup_cases::account_tab_draws_one_ring();
+    setup_cases::welcome_tab_rings_continue();
+    setup_cases::validation_survives_back_forward();
+    setup_cases::row_buttons_ring_inside_the_row();
+    setup_cases::empty_desktop_renders_a_node();
     regressions::effects_page_answers_after_it_is_built();
     settings_cases::checks();
+    displays_cases::checks();
     regressions::a_stalled_page_fade_settles();
     regressions::a_narrow_window_can_bring_the_sidebar_back();
     regressions::displays_coming_and_going_leave_nothing_behind();

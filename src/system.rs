@@ -79,7 +79,7 @@ pub trait System: Send + Sync {
     fn wifi_networks(&self) -> Vec<WifiNetwork> {
         Vec::new()
     }
-    /// Admin action: may answer `NeedsAuth`; the UI then shows the Authenticate sheet and calls `authorize`.
+    /// Admin action: may answer `NeedsAuth`; the UI then shows the Authenticate sheet and retries through `spawn_with`.
     fn wifi_join(&self, _ssid: &str, _password: Option<&str>) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
@@ -137,11 +137,6 @@ pub trait System: Send + Sync {
     fn set_power_mode(&self, _m: PowerMode) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
     }
-    /// Admin authorization (IaraOS ADR 0026): password for the pending admin action.
-    fn authorize(&self, _password: &str) -> Result<(), ActionError> {
-        Err(ActionError::Unavailable)
-    }
-
     /// Wi-Fi radio state (None = no Wi-Fi hardware/tooling).
     fn wifi_enabled(&self) -> Option<bool> {
         self.network().wifi.then_some(true)
@@ -167,6 +162,11 @@ pub trait System: Send + Sync {
     /// Paired Bluetooth devices.
     fn bt_devices(&self) -> Vec<BtDevice> {
         Vec::new()
+    }
+    /// Why the last Bluetooth connect failed, as BlueZ said it (page-timeout, profile
+    /// unavailable, not powered), as a sentence; None when it worked or there is no reason.
+    fn bt_connect_reason(&self) -> Option<&'static str> {
+        None
     }
     /// 0..=100, None without a keyboard backlight.
     fn keyboard_brightness(&self) -> Option<u8> {
@@ -236,12 +236,7 @@ pub trait System: Send + Sync {
     /// [`System::spawn`] with the password the Authenticate sheet took for this action (None =
     /// none typed yet). Each queued action carries its own copy, so two changes waiting on one
     /// sheet both get it (QA 0.12.0 bugs 4, 6); a one-shot slot went to whichever ran first.
-    fn spawn_with(&self, a: Action, password: Option<&str>) -> Done {
-        if let Some(Err(e)) = password.map(|p| self.authorize(p)) {
-            let (tx, rx) = async_channel::bounded(1);
-            let _ = tx.try_send(Err(e));
-            return rx;
-        }
+    fn spawn_with(&self, a: Action, _password: Option<&str>) -> Done {
         self.spawn(a)
     }
     /// Re-reads audio now (volume keys -> OSD); resolves once `audio()` has the new value.
@@ -306,6 +301,9 @@ pub enum ActionError {
     /// the consent grant is off or wold's own sheet said no). Never `Denied`: that reopens the
     /// Authenticate sheet, and no password can help here.
     Refused,
+    /// The person closed the Authenticate sheet with Cancel: nothing was sent, no password was
+    /// checked. Never `Denied`, whose sentence says the password was wrong (hunt 1 E1).
+    Cancelled,
 }
 
 impl From<wol_core::controls::ControlError> for ActionError {
@@ -331,10 +329,9 @@ impl ActionError {
 }
 
 /// Control Center subtitles.
-pub fn wifi_subtitle(n: crate::status::Network, nets: &[WifiNetwork]) -> String {
+pub fn wifi_subtitle(nets: &[WifiNetwork]) -> String {
     match nets.iter().find(|w| w.connected) {
         Some(w) => w.ssid.clone(),
-        None if n.online && !n.wifi => "Ethernet".into(),
         None => "Not Connected".into(),
     }
 }
@@ -366,6 +363,20 @@ impl Default for Sysfs {
         Sysfs {
             root: "/sys/class".into(),
         }
+    }
+}
+
+/// A virtual link that carries the default route over a physical one (VPN, tunnel).
+fn is_tunnel(iface: &str) -> bool {
+    ["tun", "tap", "wg", "ppp", "tailscale", "ipsec", "vpn", "zt"]
+        .iter()
+        .any(|p| iface.starts_with(p))
+}
+
+impl Sysfs {
+    /// Does `iface` have a wireless extension (a Wi-Fi link, whatever its name)?
+    fn is_wireless(&self, iface: &str) -> bool {
+        self.root.join("net").join(iface).join("wireless").exists()
     }
 }
 
@@ -677,6 +688,9 @@ impl System for FakeDesktop {
 // ---- Real backend ----
 
 use std::sync::{Arc, Mutex, Weak};
+
+/// [`System::bt_connect_reason`] for the real host: set by the last `Action::BtConnect`.
+static BT_REASON: Mutex<Option<&'static str>> = Mutex::new(None);
 use wol_core::controls::{A11y, BatteryState, Charge, Controls, Media, Volume, WifiNet};
 
 /// Everything the UI reads; refreshed by the worker, cached to `$XDG_RUNTIME_DIR/wol-controls.json`
@@ -732,8 +746,6 @@ struct Inner {
     c: Controls,
     files: Sysfs,
     snap: Mutex<Snapshot>,
-    /// Admin password for the next root action (cleared after use).
-    password: Mutex<String>,
     watchers: Mutex<Vec<async_channel::Sender<()>>>,
     cache: Option<std::path::PathBuf>,
     /// Last refresh per topic; None = never.
@@ -869,28 +881,19 @@ impl Inner {
         rx
     }
 
-    fn take_password(&self) -> Secret {
-        Secret(std::mem::take(
-            &mut *self.password.lock().unwrap_or_else(|e| e.into_inner()),
-        ))
-    }
-
     /// Blocking; runs on a worker thread.
     fn perform(&self, a: &Action) -> Result<(), ActionError> {
         self.perform_with(a, None)
     }
 
-    /// [`Self::perform`] with this action's own password (None = the one [`System::authorize`]
-    /// stored, if the action may need one).
+    /// [`Self::perform`] with this action's own password (None = none typed yet). Nothing is
+    /// stored between calls: a shared slot went to whichever action ran first (hunt 1 D2).
     fn perform_with(&self, a: &Action, own: Option<Secret>) -> Result<(), ActionError> {
         let c = &self.c;
-        // Only an action that can ask for it takes the stored password: a volume step between
-        // the Authenticate sheet and its retry used to eat it (audit4 S3-5).
+        // Only an action that can ask for it takes a password.
         let pw = match own {
             Some(p) if may_need_password(a) => p,
-            Some(_) => Secret(String::new()),
-            None if may_need_password(a) => self.take_password(),
-            None => Secret(String::new()),
+            _ => Secret(String::new()),
         };
         // wopkg runs as the person and asks wold, which checks the consent grant (ADR 0021). Only
         // with wopkg's grant: without it wold refuses before any sheet (a fresh install has none),
@@ -932,9 +935,13 @@ impl Inner {
             Action::MediaNext => c.media("next"),
             Action::MediaPrevious => c.media("previous"),
             Action::Power(m) => c.set_low_power(*m == PowerMode::LowPower, &pw),
-            Action::BtConnect(addr, on) => c.bt_connect(addr, *on),
+            Action::BtConnect(addr, on) => {
+                let r = c.bt_connect_reason(addr, *on);
+                *BT_REASON.lock().unwrap_or_else(|e| e.into_inner()) = r.err().map(|e| e.1);
+                r.map_err(|e| e.0)
+            }
             Action::KeyboardBrightness(p) => c.set_keyboard_brightness(*p),
-            Action::ReduceMotion(on) => c.set_reduce_motion(*on),
+            Action::ReduceMotion(on) => c.set_reduce_motion_saved(&config_home(), *on),
             Action::Zoom(on) => c.set_zoom(*on),
             Action::IncreaseContrast(on) => crate::kit::style::set_contrast(*on)
                 .map_err(|_| wol_core::controls::ControlError::Failed),
@@ -1064,7 +1071,7 @@ impl Drop for Secret {
 }
 
 /// Actions that go through wol-admind and may answer `NeedsAuth`: the only ones that take the
-/// password [`System::authorize`] stored.
+/// password the Authenticate sheet typed.
 fn may_need_password(a: &Action) -> bool {
     matches!(
         a,
@@ -1081,6 +1088,18 @@ fn may_need_password(a: &Action) -> bool {
             | Action::BootEnvironment(_)
             | Action::Admin(_)
     )
+}
+
+/// The snapshot topics a helper's approved request changed ([`topics_of`] for the same change;
+/// packages, boot environments and Doctor fixes change none).
+fn approval_topics(req: &shared::shell::ApprovalRequest) -> [bool; TOPICS] {
+    use shared::shell::ApprovalRequest as R;
+    match req {
+        R::Wifi { on } => topics_of(&Action::Wifi(*on)),
+        R::WifiJoin { ssid, .. } => topics_of(&Action::WifiJoin(ssid.clone(), None)),
+        R::Bluetooth { on } => topics_of(&Action::Bluetooth(*on)),
+        _ => [false; TOPICS],
+    }
 }
 
 /// The snapshot topics (audio, wifi, slow, media, panel) an action changes: only those are read
@@ -1166,7 +1185,8 @@ fn admin_topics(a: shared::admin::AdminAction) -> [bool; TOPICS] {
         | A::BootEnroll
         | A::PkgInstallFile
         | A::SystemRollback
-        | A::SystemChannel => (0, 0, 0, 0, 0),
+        | A::SystemChannel
+        | A::Reports => (0, 0, 0, 0, 0),
     };
     [audio, wifi, slow, media, panel].map(|t| t == 1)
 }
@@ -1221,7 +1241,6 @@ impl CoreSystem {
             c,
             files,
             snap: Mutex::new(snap),
-            password: Default::default(),
             watchers: Default::default(),
             cache,
             last: Default::default(),
@@ -1284,6 +1303,9 @@ impl System for CoreSystem {
     fn bt_devices(&self) -> Vec<BtDevice> {
         self.inner.lock().bt_devices.clone()
     }
+    fn bt_connect_reason(&self) -> Option<&'static str> {
+        *BT_REASON.lock().unwrap_or_else(|e| e.into_inner())
+    }
     fn keyboard_brightness(&self) -> Option<u8> {
         self.inner.lock().keyboard
     }
@@ -1327,13 +1349,26 @@ impl System for CoreSystem {
         }
     }
     fn network(&self) -> Network {
+        // What decides the glyph is read now, on every call (the menu bar asks every 5 s): the
+        // links' operstate and the default route cost no process. The snapshot's Wi-Fi list is
+        // up to a minute old while nobody watches; it only adds the signal strength of a
+        // network the live reads agree is in use (QA NET2-5: a pulled cable showed for 44 s).
         let mut n = self.inner.files.network();
-        let s = self.inner.lock();
-        if let Some(iface) = &s.route {
+        let linked = self.inner.files.root.join("net").is_dir();
+        if let Some(iface) = self.inner.c.default_iface() {
             n.online = true;
-            n.wifi |= iface.starts_with("wlan");
+            // The default route's medium names the glyph, not any wireless link that is up
+            // (QA NET2-7: Ethernet carried the traffic, the tray showed Wi-Fi).
+            // A tunnel (OpenVPN, WireGuard) carries the default route over some physical link
+            // it hides: keep what the links say then, never call that wired.
+            if !is_tunnel(&iface) {
+                n.wifi = iface.starts_with("wlan") || self.inner.files.is_wireless(&iface);
+            }
         }
-        if let Some(w) = s.nets.iter().find(|w| w.connected) {
+        let s = self.inner.lock();
+        if let Some(w) = s.nets.iter().find(|w| w.connected)
+            && (n.wifi || !linked)
+        {
             n.wifi = true;
             n.online = true;
             n.signal = Some(w.signal);
@@ -1374,18 +1409,6 @@ impl System for CoreSystem {
     /// Probed from hyprsunset: None (tile hidden) when it is not running.
     fn night_light(&self) -> Option<bool> {
         self.inner.lock().night
-    }
-    fn authorize(&self, password: &str) -> Result<(), ActionError> {
-        // The one it replaces is wiped.
-        drop(Secret(std::mem::replace(
-            &mut *self
-                .inner
-                .password
-                .lock()
-                .unwrap_or_else(|e| e.into_inner()),
-            password.into(),
-        )));
-        Ok(())
     }
     // Sync setters: same path as `spawn`, for callers that are already off the UI thread.
     fn set_volume(&self, p: u8) -> Result<(), ActionError> {
@@ -1443,8 +1466,14 @@ impl System for CoreSystem {
             .name("wol-approve".into())
             .spawn(move || {
                 let r = approve(&i.c, &req, &password);
-                i.refresh(true);
+                // Reply first: a wrong password's sentence and a right one's closing sheet waited
+                // on a refresh of every topic (hunt 1 C1). Then only what the request changed.
+                let ok = r.is_ok();
                 let _ = tx.try_send(r);
+                let due = approval_topics(&req);
+                if ok && due.contains(&true) {
+                    i.refresh_now(due);
+                }
             });
         rx
     }
