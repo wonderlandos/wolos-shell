@@ -425,6 +425,50 @@ pub fn kept_pins(
         .collect()
 }
 
+/// A running app the Dock shows although it is neither pinned nor kept (manual apps.md: "the
+/// Dock shows it with a dot while it runs"), after the kept apps.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Running {
+    pub pin: Pin,
+    /// It has an installed entry, so Keep in Dock can keep it by its desktop id.
+    pub keepable: bool,
+}
+
+/// The running apps of `classes` (window classes, lowercased: `hypr::running_classes`) that no
+/// tile in `shown` stands for, each once, in class order: by its installed entry (name, icon,
+/// launcher), else by its class in words with the class as icon name.
+pub fn running_unpinned(
+    classes: &std::collections::HashSet<String>,
+    shown: &[Pin],
+    installed: &[Entry],
+) -> Vec<Running> {
+    let mut sorted: Vec<&String> = classes.iter().filter(|c| !c.is_empty()).collect();
+    sorted.sort();
+    let mut out: Vec<Running> = Vec::new();
+    for class in sorted {
+        let one = std::collections::HashSet::from([class.clone()]);
+        if shown.iter().any(|p| is_running(p, &one)) {
+            continue;
+        }
+        let (pin, keepable) = match entry_for(class, installed) {
+            Some(e) => (entry_pin(e), true),
+            None => (
+                entry_pin(&Entry {
+                    id: class.clone(),
+                    name: humanised_class(class),
+                    icon: class.clone(),
+                    ..Default::default()
+                }),
+                false,
+            ),
+        };
+        if !out.iter().any(|r| r.pin.id == pin.id) {
+            out.push(Running { pin, keepable });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -695,5 +739,39 @@ mod tests {
             kept_pins(&[D::App { id: "foot".into() }], PINS, &[]).is_empty(),
             "a pin is no kept app"
         );
+    }
+    /// QA apps.md:60: an app that runs without a Dock icon gets one after the kept apps, with
+    /// its installed name and icon and Keep in Dock; one window class nothing names shows by its
+    /// class in words; a pinned or kept app is never shown twice.
+    #[test]
+    fn running_apps_without_a_tile_get_one() {
+        let calc = Entry {
+            id: "org.gnome.Calculator.desktop".into(),
+            name: "Calculator".into(),
+            exec: vec!["gnome-calculator".into()],
+            icon: "accessories-calculator".into(),
+            wm_class: String::new(),
+        };
+        let classes: std::collections::HashSet<String> = [
+            "foot".to_string(),
+            "org.gnome.calculator".into(),
+            "gcr-prompter".into(),
+            String::new(),
+        ]
+        .into();
+        let r = running_unpinned(&classes, PINS, std::slice::from_ref(&calc));
+        let names: Vec<(&str, bool)> = r.iter().map(|x| (x.pin.name, x.keepable)).collect();
+        assert_eq!(names, [("Gcr Prompter", false), ("Calculator", true)]);
+        assert_eq!(r[1].pin.id, "org.gnome.Calculator");
+        assert_eq!(r[1].pin.icon, "accessories-calculator");
+        assert!(
+            r.iter().all(|x| is_running(&x.pin, &classes)),
+            "each lights its dot"
+        );
+        let mut shown = PINS.to_vec();
+        shown.push(r[1].pin.clone());
+        let again = running_unpinned(&classes, &shown, std::slice::from_ref(&calc));
+        assert_eq!(again.len(), 1, "kept: not twice");
+        assert!(running_unpinned(&Default::default(), PINS, &[]).is_empty());
     }
 }

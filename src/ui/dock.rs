@@ -261,6 +261,9 @@ pub struct Dock {
     /// The kept apps that are not pinned apps (`DockItem::App` resolved from the installed
     /// entries off the GTK thread, [`read_layout`]).
     kept: RefCell<Vec<apps::Pin>>,
+    /// The installed entries (read off the GTK thread, [`read_layout`]): names and icons of the
+    /// running apps that have no tile of their own.
+    installed: RefCell<Vec<crate::desktop::Entry>>,
     /// Keyboard access ([`keyboard`]): a tile click gives the keyboard back.
     keys: RefCell<Option<Keys>>,
     /// Hover magnify (Settings > Dock > Magnification).
@@ -527,6 +530,18 @@ struct Shelf {
     pins: Vec<apps::Pin>,
     /// Per tile: bumped on every start and stop, so a stale 60 s timer cannot stop a newer bounce.
     epochs: Vec<Rc<std::cell::Cell<u32>>>,
+    /// The ids of the running apps shown after the kept ones (no tile of their own otherwise).
+    running: Vec<&'static str>,
+}
+
+/// A tile's right-click menu.
+#[derive(Clone, Copy, PartialEq)]
+enum Menu {
+    None,
+    /// A kept app: Remove from Dock.
+    Remove,
+    /// A running app with an installed entry: Keep in Dock.
+    Keep,
 }
 
 pub fn content(running: &HashSet<String>) -> Rc<Dock> {
@@ -564,6 +579,7 @@ pub fn content_with(running: &HashSet<String>, items: &[DockItem], edge: Edge) -
         layout: RefCell::new((edge, Vec::new())),
         running: RefCell::new(running.clone()),
         kept: RefCell::new(Vec::new()),
+        installed: RefCell::new(Vec::new()),
         keys: RefCell::new(None),
         magnify: Default::default(),
     });
@@ -673,8 +689,13 @@ pub fn dropped(v: &glib::Value) -> bool {
     true
 }
 
-/// Right-click on a kept app's tile: Remove from Dock.
-fn removable(button: &gtk::Button, id: &'static str) {
+/// Right-click on a kept app's tile: Remove from Dock; on a running app's: Keep in Dock.
+fn tile_menu(button: &gtk::Button, id: &'static str, menu: Menu) {
+    let (label, keep) = match menu {
+        Menu::None => return,
+        Menu::Remove => (REMOVE_FROM_DOCK, false),
+        Menu::Keep => (KEEP_IN_DOCK, true),
+    };
     let click = gtk::GestureClick::new();
     click.set_button(gtk::gdk::BUTTON_SECONDARY);
     let b = button.clone();
@@ -684,21 +705,13 @@ fn removable(button: &gtk::Button, id: &'static str) {
             x,
             y,
             vec![(
-                REMOVE_FROM_DOCK.to_string(),
+                label.to_string(),
                 None,
-                Box::new(move || keep_later(id.to_string(), false)),
+                Box::new(move || keep_later(id.to_string(), keep)),
             )],
         );
     });
     button.add_controller(click);
-}
-
-/// How many of `items` are kept apps that are not pinned apps (they need the installed entries).
-fn kept_count(items: &[DockItem]) -> usize {
-    items
-        .iter()
-        .filter(|i| matches!(i, DockItem::App { id } if !apps::here().iter().any(|p| p.id == id)))
-        .count()
 }
 
 /// The image of a Dock tile (its first child's first child).
@@ -822,21 +835,20 @@ fn read_layout(
 ) {
     let (d, layout) = (Rc::downgrade(d), layout.clone());
     glib::spawn_future_local(async move {
-        let (text, kept) = gio::spawn_blocking(|| {
+        let (text, kept, installed) = gio::spawn_blocking(|| {
             let text = std::fs::read_to_string(shell_file()).ok();
             let items = layout_of(text.as_deref()).0.dock_items;
-            let installed = if kept_count(&items) > 0 {
-                crate::desktop::load_all()
-            } else {
-                Vec::new()
-            };
-            (text, apps::kept_pins(&items, apps::here(), &installed))
+            // Kept apps and running apps without a tile are named from the installed entries.
+            let installed = crate::desktop::load_all();
+            let kept = apps::kept_pins(&items, apps::here(), &installed);
+            (text, kept, installed)
         })
         .await
         .unwrap_or_default();
         let (l, edge) = layout_of(text.as_deref());
         let Some(d) = d.upgrade() else { return };
         let kept_changed = d.set_kept(kept);
+        d.installed.replace(installed);
         if d.edge() != edge {
             if let Some(w) = win.upgrade() {
                 kit::surface::reanchor(&w, Spec::dock(edge));
@@ -846,7 +858,8 @@ fn read_layout(
             }
         }
         let moved = d.edge() != edge;
-        let rebuilt = d.set_layout(edge, &l.dock_items) || (kept_changed && d.refill());
+        let rebuilt = d.set_layout(edge, &l.dock_items)
+            || ((kept_changed || d.running_changed()) && d.refill());
         let reorder = rebuilt || *layout.borrow() != l;
         *layout.borrow_mut() = l;
         if reorder && let Some(h) = d.host.borrow().clone() {
@@ -986,7 +999,14 @@ impl Dock {
         let mut shelf = Shelf::default();
         let root = &self.root;
         let kept = self.kept.borrow();
-        let mut pin = |p: &apps::Pin, is_kept: bool| {
+        // Running apps without a tile go after the kept ones, where the layout lists the apps.
+        let running_apps = if items.contains(&DockItem::Apps) {
+            let shown: Vec<apps::Pin> = apps::here().iter().chain(kept.iter()).cloned().collect();
+            apps::running_unpinned(&self.running.borrow(), &shown, &self.installed.borrow())
+        } else {
+            Vec::new()
+        };
+        let mut pin = |p: &apps::Pin, menu: Menu, after_apps: bool| {
             if shelf.pins.iter().any(|q| q.id == p.id) {
                 return;
             }
@@ -997,24 +1017,30 @@ impl Dock {
                 // A web app's own icon file (wol_core::webapps::icon_path), not a theme name.
                 img.set_from_file(Some(p.icon));
             }
-            if is_kept {
-                removable(&t.button, p.id);
-            }
+            tile_menu(&t.button, p.id, menu);
             let (tile, pp) = (t.clone(), p.clone());
             t.button.connect_clicked(move |_| clicked(&tile, &pp));
-            root.append(&t.button);
+            if after_apps {
+                let last = shelf
+                    .tiles
+                    .last()
+                    .map(|t| t.button.clone().upcast::<gtk::Widget>());
+                root.insert_child_after(&t.button, last.as_ref());
+            } else {
+                root.append(&t.button);
+            }
             shelf.pins.push(p.clone());
             shelf.epochs.push(Default::default());
             shelf.tiles.push(t);
         };
         for (n, item) in items.iter().enumerate() {
             match item {
-                DockItem::Apps => apps::here().iter().for_each(|p| pin(p, false)),
+                DockItem::Apps => apps::here().iter().for_each(|p| pin(p, Menu::None, false)),
                 DockItem::App { id } => {
                     if let Some(p) = apps::here().iter().find(|p| p.id == id) {
-                        pin(p, false);
+                        pin(p, Menu::None, false);
                     } else if let Some(p) = kept.iter().find(|p| p.id == id) {
-                        pin(p, true);
+                        pin(p, Menu::Remove, false);
                     }
                 }
                 DockItem::Separator => root.append(&gtk::Separator::new(across(self.edge()))),
@@ -1037,6 +1063,11 @@ impl Dock {
                 DockItem::Plugin { .. } => {}
             }
         }
+        for r in &running_apps {
+            let menu = if r.keepable { Menu::Keep } else { Menu::None };
+            pin(&r.pin, menu, true);
+        }
+        shelf.running = running_apps.iter().map(|r| r.pin.id).collect();
         // No plugin item in the layout: the box sits after the apps (new entries go there).
         if self.plugin_box.parent().is_none() {
             let after = shelf
@@ -1134,10 +1165,45 @@ impl Dock {
 
     pub fn set_running(&self, classes: &HashSet<String>) {
         self.running.replace(classes.clone());
+        if self.running_changed() {
+            // An app without a tile started or stopped: its tile comes or goes.
+            self.refill();
+            return;
+        }
         let s = self.shelf.borrow();
         for (p, t) in s.pins.iter().zip(&s.tiles) {
             t.set_running(apps::is_running(p, classes));
         }
+    }
+
+    /// The installed entries the running apps without a tile are named from (tests and
+    /// previews; the Dock reads them itself in `read_layout`). Refills when that changes them.
+    pub fn set_installed(&self, installed: Vec<crate::desktop::Entry>) {
+        self.installed.replace(installed);
+        if self.running_changed() {
+            self.refill();
+        }
+    }
+
+    /// The running apps without a tile are not the ones the shelf shows.
+    fn running_changed(&self) -> bool {
+        let items = self.items();
+        if !items.contains(&DockItem::Apps) {
+            return false;
+        }
+        let s = self.shelf.borrow();
+        let shown: Vec<apps::Pin> = s
+            .pins
+            .iter()
+            .filter(|p| !s.running.contains(&p.id))
+            .cloned()
+            .collect();
+        let want: Vec<&str> =
+            apps::running_unpinned(&self.running.borrow(), &shown, &self.installed.borrow())
+                .iter()
+                .map(|r| r.pin.id)
+                .collect();
+        want != s.running
     }
 }
 

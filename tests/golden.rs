@@ -202,6 +202,33 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // manual apps.md:60: an app running without a Dock icon (Geany) shows after the
+            // pinned apps with its running dot while it runs.
+            name: "dock-running-unpinned".into(),
+            size: (1043, 120),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let calc = shell::desktop::Entry {
+                    id: "geany.desktop".into(),
+                    name: "Geany".into(),
+                    exec: vec!["geany".into()],
+                    icon: concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/../../design/icons/store/geany.svg"
+                    )
+                    .into(),
+                    wm_class: String::new(),
+                };
+                let running = ["foot".to_string(), "geany".into()].into_iter().collect();
+                let d = ui::dock::content(&Default::default());
+                d.set_installed(vec![calc]);
+                d.set_running(&running);
+                assert_eq!(d.pins().last().map(|p| p.name), Some("Geany"));
+                d.root.clone().upcast()
+            }),
+        },
+        Case {
             // A helper (wol mcp) asks before a change: Deny, Always Allow, Allow Once.
             name: "approval".into(),
             size: (400, 1),

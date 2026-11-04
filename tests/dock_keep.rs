@@ -178,5 +178,55 @@ fn a_dropped_web_app_is_kept_in_the_dock_and_removed_again() {
         !dock::unkeep(now(&config), "org.gnome.Nautilus").unwrap(),
         "a pinned app stays"
     );
+
+    // manual apps.md:60: an app that runs without a tile shows after the kept ones while it
+    // runs, with its dot and Keep in Dock, and goes when it stops.
+    let calc = shell::desktop::Entry {
+        id: "org.gnome.Calculator.desktop".into(),
+        name: "Calculator".into(),
+        exec: vec!["gnome-calculator".into()],
+        icon: "accessories-calculator".into(),
+        wm_class: String::new(),
+    };
+    let d = dock::content_with(&Default::default(), &items, Edge::Bottom);
+    d.set_kept(apps::kept_pins(
+        &items,
+        apps::here(),
+        std::slice::from_ref(&e),
+    ));
+    d.set_installed(vec![e.clone(), calc]);
+    d.refill();
+    let base = d.pins().len();
+    let on: std::collections::HashSet<String> = ["org.gnome.calculator".to_string()].into();
+    d.set_running(&on);
+    let pins = d.pins();
+    assert_eq!(pins.len(), base + 1, "{pins:?}");
+    assert_eq!(pins[base].name, "Calculator", "after the kept web app");
+    assert_eq!(pins[base - 1].name, "Fastmail");
+    let tile = tile_named(&d.root, "Calculator").expect("its tile");
+    assert_eq!(secondary_clicks(&tile), 1, "right-click: Keep in Dock");
+    d.set_running(&Default::default());
+    assert_eq!(d.pins().len(), base, "gone when it stops");
+    assert!(tile_named(&d.root, "Calculator").is_none());
     let _ = std::fs::remove_dir_all(&config);
+}
+
+fn tile_named(root: &gtk::Box, name: &str) -> Option<gtk::Widget> {
+    let mut c = root.first_child();
+    while let Some(w) = c {
+        if w.tooltip_text().as_deref() == Some(name) {
+            return Some(w);
+        }
+        c = w.next_sibling();
+    }
+    None
+}
+
+fn secondary_clicks(w: &gtk::Widget) -> usize {
+    w.observe_controllers()
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter_map(|c| c.downcast::<gtk::GestureClick>().ok())
+        .filter(|g| g.button() == gtk::gdk::BUTTON_SECONDARY)
+        .count()
 }
