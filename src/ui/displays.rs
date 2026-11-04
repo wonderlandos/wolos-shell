@@ -41,6 +41,37 @@ pub fn monitors() -> Vec<(Connector, gdk::Monitor)> {
         .collect()
 }
 
+/// Runs `f` when the display list changes and when a display's connector name arrives: the name
+/// comes with xdg-output, after GTK lists the monitor, so at `items-changed` a re-plugged display
+/// had none, [`monitors`] skipped it and it was never dressed again (QA-GFX-18).
+pub fn on_change(f: impl Fn() + 'static) {
+    let Some(d) = gdk::Display::default() else {
+        return;
+    };
+    let f: Rc<dyn Fn()> = Rc::new(f);
+    let follow = {
+        let f = f.clone();
+        move |m: &gdk::Monitor| {
+            let f = f.clone();
+            m.connect_connector_notify(move |_| f());
+        }
+    };
+    let list = d.monitors();
+    for i in 0..list.n_items() {
+        if let Some(m) = list.item(i).and_downcast::<gdk::Monitor>() {
+            follow(&m);
+        }
+    }
+    list.connect_items_changed(move |list, pos, _, added| {
+        for i in pos..pos + added {
+            if let Some(m) = list.item(i).and_downcast::<gdk::Monitor>() {
+                follow(&m);
+            }
+        }
+        f();
+    });
+}
+
 impl Displays {
     /// Starts following the display list. `primary_bar`/`main_only` were built already (first
     /// frame); they are pinned to the main display here.
@@ -62,14 +93,12 @@ impl Displays {
             on_wallpaper: Rc::from(on_wallpaper),
             dressed: Default::default(),
         });
-        if let Some(d) = gdk::Display::default() {
-            let weak = Rc::downgrade(&me);
-            d.monitors().connect_items_changed(move |_, _, _, _| {
-                if let Some(me) = weak.upgrade() {
-                    me.sync();
-                }
-            });
-        }
+        let weak = Rc::downgrade(&me);
+        on_change(move || {
+            if let Some(me) = weak.upgrade() {
+                me.sync();
+            }
+        });
         me.sync();
         me
     }

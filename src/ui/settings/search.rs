@@ -424,12 +424,19 @@ fn words(q: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every word of `q` is in `hay`, with or without its hyphens (`wifi` finds `Wi-Fi`).
+/// Every word of `q` starts a word of `hay`, with or without its hyphens (`wifi` finds `Wi-Fi`;
+/// `date` does not find `Update`: QA-LIVE-35).
 fn all_in(hay: &str, q: &[String]) -> bool {
     let hay = hay.to_lowercase();
     let plain = hay.replace('-', "");
+    // A word of `text` is a run of letters and hyphens; each part after a hyphen counts too.
+    let starts = |text: &str, w: &str| {
+        text.split(|c: char| !c.is_alphanumeric() && c != '-')
+            .flat_map(|t| std::iter::once(t).chain(t.split('-')))
+            .any(|t| t.starts_with(w))
+    };
     q.iter()
-        .all(|w| hay.contains(w.as_str()) || plain.contains(w.as_str()))
+        .all(|w| starts(&hay, w.as_str()) || starts(&plain, w.as_str()))
 }
 
 /// Pages whose title or search words match every word of `query`, then rows whose title (with
@@ -510,6 +517,18 @@ pub fn panes(query: &str) -> Vec<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    /// QA-LIVE-35: "Date" found "Update" (a substring); a query word starts a word now.
+    #[test]
+    fn a_query_word_starts_a_word() {
+        assert!(all_in("Software Update", &["upd".into()]));
+        assert!(!all_in("Software Update", &["date".into()]));
+        assert!(all_in("Wi-Fi", &["wifi".into()]));
+        assert!(all_in("Date & Time", &["date".into(), "tim".into()]));
+        let pages: Vec<&str> = hits("date").iter().map(|h| h.page).collect();
+        assert!(pages.contains(&"Date & Time"), "{pages:?}");
+        assert!(!pages.contains(&"Software Update"), "{pages:?}");
+    }
+
     use super::*;
 
     #[test]

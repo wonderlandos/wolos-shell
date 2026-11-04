@@ -540,8 +540,9 @@ fn an_item_that_cannot_be_read_does_not_stay() {
             .deserialize()
             .unwrap();
         let mut left = Vec::new();
-        // An app that does not answer is given `CALL_TIMEOUT` before its item goes.
-        for _ in 0..250 {
+        // An app that does not answer is given `CALL_TIMEOUT`, then (QA-SHADOW-45) one more read
+        // `RETRY_AFTER` later and `CALL_TIMEOUT` again, before its item goes.
+        for _ in 0..(1000 * 14 / 20) {
             // Uncached: the property is read from the watcher each time.
             let reply = app
                 .call_method(
@@ -609,5 +610,144 @@ fn a_watcher_started_while_the_last_one_stops_gets_the_name() {
         let ((), ((new, _rx), tries)) = futures_lite::future::zip(stopping, start).await;
         assert!(tries > 1, "the first try met the old watcher");
         new.stop().await;
+    });
+}
+
+/// An app that is busy at its start: the first answer to `GetAll` takes longer than
+/// [`tray::CALL_TIMEOUT`], the next ones are quick.
+struct SlowItem {
+    first: std::sync::atomic::AtomicBool,
+}
+
+#[zbus::interface(name = "org.kde.StatusNotifierItem")]
+impl SlowItem {
+    #[zbus(property)]
+    async fn id(&self) -> String {
+        if self.first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            async_io::Timer::after(tray::CALL_TIMEOUT + Duration::from_secs(1)).await;
+        }
+        "slow-app".into()
+    }
+    #[zbus(property)]
+    fn title(&self) -> String {
+        "Slow".into()
+    }
+    #[zbus(property)]
+    fn status(&self) -> String {
+        "Active".into()
+    }
+    #[zbus(property)]
+    fn icon_name(&self) -> String {
+        "slow-app-symbolic".into()
+    }
+}
+
+/// QA-SHADOW-45: an app whose first answer comes after the call timeout (Electron registers
+/// once, when it is busy) keeps its place and gets one more read; its icon appears.
+#[test]
+fn a_slow_first_answer_does_not_cost_the_item_its_place() {
+    let Some(d) = daemon() else {
+        eprintln!("skipped: no dbus-daemon");
+        return;
+    };
+    async_io::block_on(async {
+        let (tray, _rx) = Tray::serve(Some(&d.1), spawn()).await.expect("serve");
+        let app = zbus::connection::Builder::address(d.1.as_str())
+            .unwrap()
+            .serve_at(
+                tray::ITEM_PATH,
+                SlowItem {
+                    first: std::sync::atomic::AtomicBool::new(true),
+                },
+            )
+            .unwrap()
+            .build()
+            .await
+            .unwrap();
+        let me = app.unique_name().unwrap().to_string();
+        let () = app
+            .call_method(
+                Some(tray::WATCHER_NAME),
+                tray::WATCHER_PATH,
+                Some(tray::WATCHER_NAME),
+                "RegisterStatusNotifierItem",
+                &(tray::ITEM_PATH,),
+            )
+            .await
+            .unwrap()
+            .body()
+            .deserialize()
+            .unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..(20 * 1000 / 100) {
+            seen = tray.items();
+            if !seen.is_empty() {
+                break;
+            }
+            async_io::Timer::after(Duration::from_millis(100)).await;
+        }
+        assert_eq!(seen.len(), 1, "the item never appeared (owner {me})");
+        assert_eq!(seen[0].title, "Slow");
+        tray.stop().await;
+    });
+}
+
+/// QA-SHADOW-45: an app that leaves while its item waits for the retry takes the retry with it;
+/// the next app under the same name (well-known names come back) is read slowly again and still
+/// gets its own retry instead of being dropped at once.
+#[test]
+fn a_returning_name_gets_its_own_retry() {
+    let Some(d) = daemon() else {
+        eprintln!("skipped: no dbus-daemon");
+        return;
+    };
+    const NAME: &str = "org.wolos.TestSlowTray";
+    async_io::block_on(async {
+        let (tray, _rx) = Tray::serve(Some(&d.1), spawn()).await.expect("serve");
+        let start = || async {
+            let app = zbus::connection::Builder::address(d.1.as_str())
+                .unwrap()
+                .name(NAME)
+                .unwrap()
+                .serve_at(
+                    tray::ITEM_PATH,
+                    SlowItem {
+                        first: std::sync::atomic::AtomicBool::new(true),
+                    },
+                )
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            let () = app
+                .call_method(
+                    Some(tray::WATCHER_NAME),
+                    tray::WATCHER_PATH,
+                    Some(tray::WATCHER_NAME),
+                    "RegisterStatusNotifierItem",
+                    &(NAME,),
+                )
+                .await
+                .unwrap()
+                .body()
+                .deserialize()
+                .unwrap();
+            app
+        };
+        let first = start().await;
+        // Past the first timeout: the retry is pending. Then the app leaves.
+        async_io::Timer::after(tray::CALL_TIMEOUT + Duration::from_millis(500)).await;
+        first.graceful_shutdown().await;
+        let _second = start().await;
+        let mut seen = Vec::new();
+        for _ in 0..(20 * 1000 / 100) {
+            seen = tray.items();
+            if !seen.is_empty() {
+                break;
+            }
+            async_io::Timer::after(Duration::from_millis(100)).await;
+        }
+        assert_eq!(seen.len(), 1, "the returning app's item never appeared");
+        tray.stop().await;
     });
 }

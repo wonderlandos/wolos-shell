@@ -881,10 +881,16 @@ impl Flow {
     fn after_layout(&mut self) -> Next {
         match self.compiled() {
             Ok(_) => self.go(Step::Protect),
-            Err(r) => {
-                let d = self.disk().cloned().unwrap_or_default();
-                stay(copy::install_refusal(&r, &d))
-            }
+            Err(r) => self.refused(&r),
+        }
+    }
+
+    /// Stay on the page with the refusal's sentence. With no disk chosen the fault is the missing
+    /// disk, not a plan for an empty default one (QA-SHADOW-7).
+    fn refused(&self, r: &Refusal) -> Next {
+        match self.disk() {
+            Some(d) => stay(copy::install_refusal(r, d)),
+            None => stay(copy::installer::CHOOSE_DISK),
         }
     }
 
@@ -984,10 +990,7 @@ impl Flow {
             Step::Modules => self.go(Step::Extras),
             Step::Extras => self.go(Step::Summary),
             Step::Summary => match self.compiled() {
-                Err(r) => {
-                    let d = self.disk().cloned().unwrap_or_default();
-                    stay(copy::install_refusal(&r, &d))
-                }
+                Err(r) => self.refused(&r),
                 Ok(_) if self.secure_boot() => self.go(Step::SecureBoot),
                 Ok(_) => Next::Install,
             },
@@ -1347,6 +1350,7 @@ impl Flow {
                 name: a.name,
                 full_name: a.full_name,
                 tone: a.avatar,
+                hint: a.hint,
             }),
             secure_boot: Some(self.secure_wanted()),
             modules: self.ticked().iter().map(|m| m.id.clone()).collect(),

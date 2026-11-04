@@ -484,6 +484,8 @@ struct Model {
     /// Ids being fetched, and ids that changed again while being fetched.
     busy: HashSet<String>,
     dirty: HashSet<String>,
+    /// Ids whose first read timed out and that get one more try (QA-SHADOW-45).
+    retried: HashSet<String>,
 }
 
 struct Shared {
@@ -531,7 +533,14 @@ impl Watcher {
             .ok_or_else(|| zbus::fdo::Error::InvalidArgs("no item named".into()))?;
         let new = self
             .shared
-            .with(|m| m.reg.register(&id))
+            .with(|m| {
+                let r = m.reg.register(&id);
+                if matches!(r, Ok(true)) {
+                    // A new registration gets its own retry.
+                    m.retried.remove(&id);
+                }
+                r
+            })
             .map_err(|Full| zbus::fdo::Error::LimitsExceeded(format!("{MAX_ITEMS} items")))?;
         if new {
             Self::status_notifier_item_registered(&e, &id).await?;
@@ -588,16 +597,28 @@ fn refresh(shared: &Arc<Shared>, conn: &zbus::Connection, id: String) {
     let (s, conn) = (shared.clone(), conn.clone());
     (shared.spawn)(Box::pin(async move {
         let mut dropped = false;
+        let mut retry = false;
         loop {
             let got = fetch(&conn, &id).await;
             let again = s.with(|m| {
                 match got {
                     Ok((item, owner)) if m.reg.contains(&id) => {
+                        m.retried.remove(&id);
                         m.items.insert(id.clone(), item);
                         m.owners.insert(id.clone(), owner);
                     }
                     Ok(_) => {}
+                    // An app too busy to answer in time (Electron at its start) registers once
+                    // and never again: it keeps its place for one more read, later (QA-SHADOW-45).
+                    Err(e)
+                        if is_slow(&e)
+                            && !m.items.contains_key(&id)
+                            && m.retried.insert(id.clone()) =>
+                    {
+                        retry = m.reg.contains(&id);
+                    }
                     Err(_) if !m.items.contains_key(&id) => {
+                        m.retried.remove(&id);
                         dropped = m.reg.remove(&id);
                     }
                     Err(_) => {}
@@ -616,8 +637,29 @@ fn refresh(shared: &Arc<Shared>, conn: &zbus::Connection, id: String) {
         s.publish();
         if dropped {
             unregistered(&conn, &[id]).await;
+        } else if retry {
+            let (shared, conn) = (s.clone(), conn.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(RETRY_AFTER);
+                refresh(&shared, &conn, id);
+            });
         }
     }));
+}
+
+/// How long an item whose first read timed out waits for its one more read.
+pub const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The error of a call the app did not answer in time (as opposed to one it refused).
+fn is_slow(e: &zbus::Error) -> bool {
+    match e {
+        zbus::Error::InputOutput(io) => io.kind() == std::io::ErrorKind::TimedOut,
+        zbus::Error::MethodError(name, ..) => matches!(
+            name.as_str(),
+            "org.freedesktop.DBus.Error.NoReply" | "org.freedesktop.DBus.Error.Timeout"
+        ),
+        _ => false,
+    }
 }
 
 /// Tells the bus items `gone` left the watcher's list.
@@ -791,6 +833,7 @@ impl Tray {
             for id in &gone {
                 m.items.remove(id);
                 m.owners.remove(id);
+                m.retried.remove(id);
             }
             gone
         });

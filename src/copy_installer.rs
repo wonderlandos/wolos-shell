@@ -404,6 +404,11 @@ pub const CLOCK_LOCAL: &str = "The clock keeps local time, as Windows does.";
 /// Failed page foot when a step stopped: the computer's own words are behind the Details button.
 pub const FAILED_SEE_DETAILS: &str = "Click Details to see what the computer said.";
 
+/// Failed page subtitle when the disk filled up during the install (`No space left on device` in
+/// the tool's words or the log, QA-SHADOW-24).
+pub const DISK_FULL_STOPPED: &str =
+    "The disk ran out of space. Choose a bigger disk or partition, then try again.";
+
 /// Failed page subtitle when `wol install check` refused the plan: nothing was written, and the
 /// refusal's own sentence follows it.
 pub const REFUSED_STOPPED: &str =

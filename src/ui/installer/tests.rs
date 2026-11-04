@@ -36,6 +36,81 @@ fn a_failed_prepare_leaves_no_password_files() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// QA-SHADOW-1: the three ways the recovery key meets a USB stick. Only the last one lets the
+/// person go on; the two others say so in the foot.
+#[test]
+fn the_key_to_a_usb_stick_has_three_outcomes() {
+    let root = std::env::temp_dir().join(format!("wolos-keyusb-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let media = root.join("media");
+    std::fs::create_dir_all(&media).unwrap();
+    let roots = [media.clone()];
+    let none = key_to_usb(&roots, "AAAA-BBBB");
+    assert_eq!(
+        none,
+        KeySaved {
+            text: copy::INSTALL_NO_USB.into(),
+            problem: true,
+            saved: false
+        }
+    );
+    // A "stick" whose recovery file cannot be created: a directory sits where it goes.
+    let stick = media.join("STICK");
+    std::fs::create_dir_all(stick.join(install::RECOVERY_FILE)).unwrap();
+    let unwritable = key_to_usb(&roots, "AAAA-BBBB");
+    assert_eq!(
+        unwritable,
+        KeySaved {
+            text: copy::INSTALL_KEY_NOT_SAVED.into(),
+            problem: true,
+            saved: false
+        }
+    );
+    std::fs::remove_dir_all(stick.join(install::RECOVERY_FILE)).unwrap();
+    let ok = key_to_usb(&roots, "AAAA-BBBB");
+    assert_eq!(
+        ok,
+        KeySaved {
+            text: copy::install_key_saved("STICK"),
+            problem: false,
+            saved: true
+        }
+    );
+    assert!(
+        std::fs::read_to_string(stick.join(install::RECOVERY_FILE))
+            .unwrap()
+            .contains("AAAA-BBBB")
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// QA-SHADOW-3, QA-SHADOW-4: a probe that cannot run or gives no JSON leaves that disk out
+/// (and the others in); an empty allowed list is an empty list.
+#[test]
+fn a_disk_whose_probe_fails_is_left_out() {
+    let disk_json = |name: &str| {
+        serde_json::to_string(&wol_core::install::disk::Disk {
+            path: format!("/dev/{name}"),
+            bytes: 64_000_000_000,
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    let probe = |name: &str| {
+        if name == "vdb" {
+            "not json".into()
+        } else if name == "vdc" {
+            String::new()
+        } else {
+            disk_json(name)
+        }
+    };
+    let found = disks_from("vda\nvdb\nvdc\n", probe, |_| String::new());
+    assert_eq!(found.len(), 1, "only vda has a probe");
+    assert_eq!(found[0].disk.path, "/dev/vda");
+    assert!(disks_from("", |_| unreachable!(), |_| unreachable!()).is_empty());
+}
+
 #[test]
 fn the_sliders_land_on_whole_mib_inside_their_range() {
     let (lo, hi) = (10u64 << 30, 100u64 << 30);
