@@ -35,6 +35,8 @@ mod offer_cases;
 mod package_cases;
 #[path = "golden_cases/plugin_host.rs"]
 mod plugin_host_cases;
+#[path = "golden_cases/quicklook.rs"]
+mod quicklook_cases;
 #[path = "golden_cases/regressions.rs"]
 mod regressions;
 #[path = "golden_cases/settings.rs"]
@@ -1262,6 +1264,7 @@ fn cases() -> Vec<Case> {
     v.extend(maker_cases::cases());
     v.extend(tray_cases::cases());
     v.extend(menubar_cases::cases());
+    v.extend(quicklook_cases::cases());
     v.extend(motion_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {

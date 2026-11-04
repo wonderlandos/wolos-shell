@@ -30,6 +30,7 @@ pub mod packages;
 pub mod perf;
 pub mod phones;
 pub mod protocol;
+pub mod quicklook;
 pub mod search;
 pub mod sessions;
 pub mod setup;
