@@ -140,6 +140,7 @@ installer.bitlocker_avoid_own_keys	To avoid it, restore the factory Secure Boot 
 installer.bitlocker_avoid_setting	To avoid it, suspend BitLocker in Windows before you change the startup setting.	Para evitar isso, suspenda o BitLocker no Windows antes de mudar o ajuste de inicialização.	2ca6bc1b
 installer.clock_local	The clock keeps local time, as Windows does.	O relógio usa a hora local, como o Windows.	01f89c88
 installer.failed_see_details	Click Details to see what the computer said.	Clique em Detalhes para ver o que o computador disse.	937420a6
+installer.disk_full_stopped	The disk ran out of space. Choose a bigger disk or partition, then try again.	O disco ficou sem espaço. Escolha um disco ou uma partição maior e tente de novo.	a8f3ac0b
 installer.refused_stopped	Nothing on the disk was changed. Fix what is said below, then click Try Again.	Nada no disco foi alterado. Corrija o que está indicado abaixo e clique em Tentar de novo.	c157e3fb
 installer.everything_on_this_disk_will_be	Everything on this disk will be erased.	Tudo neste disco será apagado.	ed966a51
 installer.this_disk_has_one_on_it	This disk has {one} on it. Erasing removes it.	Este disco tem {one}. Apagar remove o sistema.	8f70740d
@@ -382,3 +383,18 @@ language.input_sources	Input Sources	Fontes de entrada	84948e1d
 language.keyboard_layouts_you_type_with	Keyboard layouts you type with	Layouts de teclado que você usa	92c1c248
 kit.caps_lock_is_on	⇪ Caps Lock is on	⇪ Caps Lock ativado	51fded41
 login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords	Opcional, aparece depois de três senhas erradas	c5d6f057
+firstlogin.reports_hint	When something breaks, send a short report without your files.	Quando algo der errado, envie um relatório curto, sem os seus arquivos.	904acf64
+firstlogin.reports_not_yours	An administrator of this computer chooses this.	Quem administra este computador decide isto.	4d5eb4a1
+firstlogin.location_hint	Apps that ask may learn roughly where you are. Off keeps it to yourself.	Apps que perguntarem podem saber mais ou menos onde você está. Desativado, isso fica só com você.	7241b086
+firstlogin.reports_password	Enter your password to change reports.	Digite a sua senha para alterar os relatórios.	eee2cc01
+firstlogin.reports_wrong	That password isn’t right. Try again.	Essa senha não está certa. Tente de novo.	0f0066f1
+firstlogin.not_saved	That choice couldn’t be saved just now. Press Continue to try again.	Não foi possível salvar essa escolha agora. Pressione Continuar para tentar de novo.	4210432b
+firstlogin.look_more	More looks, colours and pictures are in System Settings.	Mais aparências, cores e imagens estão nos Ajustes do Sistema.	e8a25254
+firstlogin.accounts_none	No online account is on this computer yet.	Este computador ainda não tem nenhuma conta online.	df4305de
+firstlogin.accounts_mail	Mail adds your account, then Calendar uses it too.	O Mail adiciona a sua conta e o Calendar passa a usá-la também.	290cb678
+firstlogin.accounts_unread	The accounts on this computer couldn’t be read. You can add them later in Mail.	Não foi possível ler as contas deste computador. Você pode adicioná-las depois no Mail.	14695a7b
+firstlogin.ime_ready	Input methods are installed. Press ⌃Space to switch.	Os métodos de entrada estão instalados. Pressione ⌃Espaço para alternar.	dc9bdac0
+firstlogin.ime_missing	To type Chinese, Japanese or Korean, add input methods.	Para digitar em chinês, japonês ou coreano, adicione métodos de entrada.	85dc716e
+firstlogin.helper_hint	They ask before every change. Off, nothing reaches the system.	Eles perguntam antes de cada mudança. Desativados, nada chega ao sistema.	bec4b393
+firstlogin.helper_manual	The manual’s helper on the WolOS website asks before it downloads.	O assistente do manual no site do WolOS pergunta antes de baixar.	82df9984
+firstlogin.settings_row	Privacy, look, accounts, keyboard and helpers, a page each.	Privacidade, aparência, contas, teclado e assistentes, uma página para cada.	fcdc47f6

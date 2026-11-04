@@ -140,6 +140,7 @@ installer.bitlocker_avoid_own_keys	To avoid it, restore the factory Secure Boot 
 installer.bitlocker_avoid_setting	To avoid it, suspend BitLocker in Windows before you change the startup setting.	Firmware tier: the setting itself changes the keys; Windows can hold BitLocker for it.	
 installer.clock_local	The clock keeps local time, as Windows does.	Windows stays: WolOS keeps the clock in local time as Windows does (R2B-12).	
 installer.failed_see_details	Click Details to see what the computer said.	Failed page foot when a step stopped: the computer's own words are behind the Details button.	
+installer.disk_full_stopped	The disk ran out of space. Choose a bigger disk or partition, then try again.	Failed page subtitle when the disk filled up during the install (`No space left on device` in the tool's words or the log, QA-SHADOW-24).	
 installer.refused_stopped	Nothing on the disk was changed. Fix what is said below, then click Try Again.	Failed page subtitle when `wol install check` refused the plan: nothing was written, and the refusal's own sentence follows it.	
 installer.everything_on_this_disk_will_be	Everything on this disk will be erased.		60
 installer.this_disk_has_one_on_it	This disk has {one} on it. Erasing removes it.		
@@ -381,3 +382,18 @@ language.input_sources	Input Sources		20
 language.keyboard_layouts_you_type_with	Keyboard layouts you type with		52
 kit.caps_lock_is_on	⇪ Caps Lock is on		30
 login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords		
+firstlogin.reports_hint	When something breaks, send a short report without your files.	Privacy: the error reports row.	
+firstlogin.reports_not_yours	An administrator of this computer chooses this.	Privacy: error reports belong to the whole computer; this account can't change them.	
+firstlogin.location_hint	Apps that ask may learn roughly where you are. Off keeps it to yourself.	Privacy: the location row.	
+firstlogin.reports_password	Enter your password to change reports.	Privacy: error reports need the account's password once.	
+firstlogin.reports_wrong	That password isn’t right. Try again.	Privacy: the password typed for error reports was not right.	
+firstlogin.not_saved	That choice couldn’t be saved just now. Press Continue to try again.	A page's choice could not be saved.	
+firstlogin.look_more	More looks, colours and pictures are in System Settings.	Look: under the wallpaper row.	
+firstlogin.accounts_none	No online account is on this computer yet.	Accounts: no account on this computer yet.	
+firstlogin.accounts_mail	Mail adds your account, then Calendar uses it too.	Accounts: how mail and calendar accounts are added.	
+firstlogin.accounts_unread	The accounts on this computer couldn’t be read. You can add them later in Mail.	Accounts: the list could not be read.	
+firstlogin.ime_ready	Input methods are installed. Press ⌃Space to switch.	Keyboard: the input method module is installed.	
+firstlogin.ime_missing	To type Chinese, Japanese or Korean, add input methods.	Keyboard: the input method module is not installed.	
+firstlogin.helper_hint	They ask before every change. Off, nothing reaches the system.	Helper: what the switch allows.	
+firstlogin.helper_manual	The manual’s helper on the WolOS website asks before it downloads.	Helper: the manual's own helper on the website.	
+firstlogin.settings_row	Privacy, look, accounts, keyboard and helpers, a page each.	Settings > General row: Setup was put off and can be finished there.	

@@ -140,6 +140,7 @@ installer.bitlocker_avoid_own_keys	To avoid it, restore the factory Secure Boot 
 installer.bitlocker_avoid_setting	To avoid it, suspend BitLocker in Windows before you change the startup setting.	Per evitarlo, sospendi BitLocker in Windows prima di cambiare l’impostazione di avvio.	2ca6bc1b
 installer.clock_local	The clock keeps local time, as Windows does.	L’orologio usa l’ora locale, come Windows.	01f89c88
 installer.failed_see_details	Click Details to see what the computer said.	Fai clic su Dettagli per vedere cosa ha detto il computer.	937420a6
+installer.disk_full_stopped	The disk ran out of space. Choose a bigger disk or partition, then try again.	Il disco ha finito lo spazio. Scegli un disco o una partizione più grande, poi riprova.	a8f3ac0b
 installer.refused_stopped	Nothing on the disk was changed. Fix what is said below, then click Try Again.	Sul disco non è cambiato nulla. Correggi quanto indicato sotto, poi fai clic su Riprova.	c157e3fb
 installer.everything_on_this_disk_will_be	Everything on this disk will be erased.	Tutto il contenuto di questo disco verrà cancellato.	ed966a51
 installer.this_disk_has_one_on_it	This disk has {one} on it. Erasing removes it.	Su questo disco c’è {one}. Inizializzarlo lo rimuove.	8f70740d
@@ -382,3 +383,18 @@ language.input_sources	Input Sources	Sorgenti di input	84948e1d
 language.keyboard_layouts_you_type_with	Keyboard layouts you type with	Layout di tastiera che usi	92c1c248
 kit.caps_lock_is_on	⇪ Caps Lock is on	⇪ Bloc Maiusc attivo	51fded41
 login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords	Facoltativo, compare dopo tre password sbagliate	c5d6f057
+firstlogin.reports_hint	When something breaks, send a short report without your files.	Quando qualcosa si rompe, invia un breve rapporto senza i tuoi file.	904acf64
+firstlogin.reports_not_yours	An administrator of this computer chooses this.	Lo decide un amministratore di questo computer.	4d5eb4a1
+firstlogin.location_hint	Apps that ask may learn roughly where you are. Off keeps it to yourself.	Le app che lo chiedono possono sapere più o meno dove ti trovi. Se disattivato, resta solo tuo.	7241b086
+firstlogin.reports_password	Enter your password to change reports.	Inserisci la tua password per modificare i rapporti.	eee2cc01
+firstlogin.reports_wrong	That password isn’t right. Try again.	Quella password non è corretta. Riprova.	0f0066f1
+firstlogin.not_saved	That choice couldn’t be saved just now. Press Continue to try again.	Non è stato possibile salvare questa scelta ora. Premi Continua per riprovare.	4210432b
+firstlogin.look_more	More looks, colours and pictures are in System Settings.	Altri aspetti, colori e immagini sono in Impostazioni di Sistema.	e8a25254
+firstlogin.accounts_none	No online account is on this computer yet.	Su questo computer non c’è ancora nessun account online.	df4305de
+firstlogin.accounts_mail	Mail adds your account, then Calendar uses it too.	Mail aggiunge il tuo account, poi lo usa anche Calendar.	290cb678
+firstlogin.accounts_unread	The accounts on this computer couldn’t be read. You can add them later in Mail.	Non è stato possibile leggere gli account di questo computer. Puoi aggiungerli più tardi in Mail.	14695a7b
+firstlogin.ime_ready	Input methods are installed. Press ⌃Space to switch.	I metodi di input sono installati. Premi ⌃Spazio per passare dall’uno all’altro.	dc9bdac0
+firstlogin.ime_missing	To type Chinese, Japanese or Korean, add input methods.	Per scrivere in cinese, giapponese o coreano, aggiungi i metodi di input.	85dc716e
+firstlogin.helper_hint	They ask before every change. Off, nothing reaches the system.	Chiedono prima di ogni modifica. Se disattivati, nulla arriva al sistema.	bec4b393
+firstlogin.helper_manual	The manual’s helper on the WolOS website asks before it downloads.	L’assistente del manuale sul sito di WolOS chiede prima di scaricare.	82df9984
+firstlogin.settings_row	Privacy, look, accounts, keyboard and helpers, a page each.	Privacy, aspetto, account, tastiera e assistenti, una pagina ciascuno.	fcdc47f6

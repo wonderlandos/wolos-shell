@@ -198,8 +198,7 @@ fn render(
                 f
             };
             if let Some(argv) = wol_core::printers::test_page_argv(&p.name) {
-                let (env, st, holder, sh) =
-                    (e.clone(), status.clone(), into.clone(), seen.clone());
+                let (env, st, holder, sh) = (e.clone(), status.clone(), into.clone(), seen.clone());
                 items.push((
                     "Print Test Page",
                     Box::new(move || {
@@ -217,8 +216,7 @@ fn render(
             if p.jobs > 0
                 && let Some(argv) = wol_core::printers::cancel_argv(&p.name)
             {
-                let (env, st, holder, sh) =
-                    (e.clone(), status.clone(), into.clone(), seen.clone());
+                let (env, st, holder, sh) = (e.clone(), status.clone(), into.clone(), seen.clone());
                 items.push((
                     "Cancel All Jobs",
                     Box::new(move || user_job(&env, &holder, &st, &sh, argv.clone(), "")),

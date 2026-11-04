@@ -533,12 +533,13 @@ impl Installer {
             .set_label(refused.as_deref().unwrap_or_default());
         self.failed_refusal.set_visible(refused.is_some());
         self.with_card(Step::Failed, |c| {
-            c.subtitle.set_label(crate::i18n::tr(install::failed_subtitle(
-                at,
-                refused.is_some(),
-                message,
-                log,
-            )));
+            c.subtitle
+                .set_label(crate::i18n::tr(install::failed_subtitle(
+                    at,
+                    refused.is_some(),
+                    message,
+                    log,
+                )));
             // The tool's words are behind Details; the foot keeps one plain sentence.
             c.say(
                 if refused.is_some() || tool.is_empty() {
@@ -1767,7 +1768,11 @@ struct KeySaved {
 /// (the foot says so and Restart stays blocked: QA-SHADOW-1), or saved.
 fn key_to_usb(roots: &[PathBuf], key: &str) -> KeySaved {
     let (text, problem, saved) = match install::media_dirs(roots).first() {
-        None => (crate::i18n::tr(copy::INSTALL_NO_USB).to_string(), true, false),
+        None => (
+            crate::i18n::tr(copy::INSTALL_NO_USB).to_string(),
+            true,
+            false,
+        ),
         Some(dir) => match install::save_key(dir, key) {
             Ok(_) => {
                 let name = dir

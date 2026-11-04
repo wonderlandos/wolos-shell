@@ -10,3 +10,4 @@
 ../../src/ui/settings/language.rs	language
 ../../src/kit/widgets.rs	kit
 ../../src/login.rs	login
+../../src/copy_first_login.rs	firstlogin

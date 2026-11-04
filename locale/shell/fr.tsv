@@ -140,6 +140,7 @@ installer.bitlocker_avoid_own_keys	To avoid it, restore the factory Secure Boot 
 installer.bitlocker_avoid_setting	To avoid it, suspend BitLocker in Windows before you change the startup setting.	Pour l’éviter, suspendez BitLocker dans Windows avant de modifier le réglage de démarrage.	2ca6bc1b
 installer.clock_local	The clock keeps local time, as Windows does.	L’horloge garde l’heure locale, comme Windows.	01f89c88
 installer.failed_see_details	Click Details to see what the computer said.	Cliquez sur Détails pour voir ce que l’ordinateur a indiqué.	937420a6
+installer.disk_full_stopped	The disk ran out of space. Choose a bigger disk or partition, then try again.	Le disque n’a plus d’espace. Choisissez un disque plus grand ou une partition plus grande, puis réessayez.	a8f3ac0b
 installer.refused_stopped	Nothing on the disk was changed. Fix what is said below, then click Try Again.	Rien n’a été modifié sur le disque. Corrigez ce qui est indiqué ci-dessous, puis cliquez sur Réessayer.	c157e3fb
 installer.everything_on_this_disk_will_be	Everything on this disk will be erased.	Tout le contenu de ce disque sera effacé.	ed966a51
 installer.this_disk_has_one_on_it	This disk has {one} on it. Erasing removes it.	Ce disque contient {one}. L’effacer le supprime.	8f70740d
@@ -382,3 +383,18 @@ language.input_sources	Input Sources	Sources de saisie	84948e1d
 language.keyboard_layouts_you_type_with	Keyboard layouts you type with	Dispositions de clavier que vous utilisez	92c1c248
 kit.caps_lock_is_on	⇪ Caps Lock is on	⇪ Verr. Maj activé	51fded41
 login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords	Facultatif, affiché après trois mots de passe erronés	c5d6f057
+firstlogin.reports_hint	When something breaks, send a short report without your files.	En cas de problème, envoyez un court rapport, sans vos fichiers.	904acf64
+firstlogin.reports_not_yours	An administrator of this computer chooses this.	L’administrateur de cet ordinateur en décide.	4d5eb4a1
+firstlogin.location_hint	Apps that ask may learn roughly where you are. Off keeps it to yourself.	Les apps qui le demandent peuvent savoir à peu près où vous êtes. Désactivé, cela reste pour vous seul.	7241b086
+firstlogin.reports_password	Enter your password to change reports.	Saisissez votre mot de passe pour modifier les rapports.	eee2cc01
+firstlogin.reports_wrong	That password isn’t right. Try again.	Ce mot de passe n’est pas le bon. Réessayez.	0f0066f1
+firstlogin.not_saved	That choice couldn’t be saved just now. Press Continue to try again.	Ce choix n’a pas pu être enregistré pour le moment. Appuyez sur Continuer pour réessayer.	4210432b
+firstlogin.look_more	More looks, colours and pictures are in System Settings.	D’autres apparences, couleurs et images se trouvent dans Réglages Système.	e8a25254
+firstlogin.accounts_none	No online account is on this computer yet.	Aucun compte en ligne n’est encore ajouté sur cet ordinateur.	df4305de
+firstlogin.accounts_mail	Mail adds your account, then Calendar uses it too.	Mail ajoute votre compte, puis Calendar l’utilise aussi.	290cb678
+firstlogin.accounts_unread	The accounts on this computer couldn’t be read. You can add them later in Mail.	Les comptes de cet ordinateur n’ont pas pu être lus. Vous pourrez les ajouter plus tard dans Mail.	14695a7b
+firstlogin.ime_ready	Input methods are installed. Press ⌃Space to switch.	Les méthodes de saisie sont installées. Appuyez sur ⌃Espace pour changer.	dc9bdac0
+firstlogin.ime_missing	To type Chinese, Japanese or Korean, add input methods.	Pour saisir du chinois, du japonais ou du coréen, ajoutez des méthodes de saisie.	85dc716e
+firstlogin.helper_hint	They ask before every change. Off, nothing reaches the system.	Ils demandent avant chaque changement. Désactivés, rien n’atteint le système.	bec4b393
+firstlogin.helper_manual	The manual’s helper on the WolOS website asks before it downloads.	L’assistant du manuel, sur le site de WolOS, demande avant de télécharger.	82df9984
+firstlogin.settings_row	Privacy, look, accounts, keyboard and helpers, a page each.	Confidentialité, apparence, comptes, clavier et assistants, une page pour chacun.	fcdc47f6
