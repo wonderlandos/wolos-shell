@@ -520,12 +520,21 @@ pub fn run_wopkg(argv: &[String]) -> Option<i32> {
 }
 
 /// Install through wopkg; None when wopkg is not on this system (the caller keeps the old path).
+/// Whether wopkg can take `target` as one package name: a kit id (QA-STORE-28) or a catalog
+/// app made of several packages stands for more than wopkg knows, so it goes to wol-admind,
+/// which plans every package of it.
+fn wopkg_takes(target: &str) -> bool {
+    store::kit(target).is_none() && store::get(target).is_none_or(|a| a.packages.len() <= 1)
+}
+
 pub fn install(target: &str, present: bool, run: Run) -> Option<Result<(), ActionError>> {
-    present.then(|| install_argv(target).map_or(Err(ActionError::Invalid), |a| outcome(run(&a))))
+    (present && wopkg_takes(target))
+        .then(|| install_argv(target).map_or(Err(ActionError::Invalid), |a| outcome(run(&a))))
 }
 
 pub fn remove(target: &str, present: bool, run: Run) -> Option<Result<(), ActionError>> {
-    present.then(|| remove_argv(target).map_or(Err(ActionError::Invalid), |a| outcome(run(&a))))
+    (present && wopkg_takes(target))
+        .then(|| remove_argv(target).map_or(Err(ActionError::Invalid), |a| outcome(run(&a))))
 }
 
 pub fn upgrade(present: bool, run: Run) -> Option<Result<(), ActionError>> {
@@ -539,6 +548,27 @@ pub fn present() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-STORE-28: with wopkg's grant held, a kit id never reaches wopkg (which knows package
+    /// names only and failed every kit 'Get'); nor does an app of several packages. A plain
+    /// package still goes to wopkg.
+    #[test]
+    fn kit_id_never_reaches_wopkg() {
+        let ran = std::cell::RefCell::new(Vec::<Vec<String>>::new());
+        let run = |a: &[String]| {
+            ran.borrow_mut().push(a.to_vec());
+            Some(0)
+        };
+        let k = store::KITS.first().expect("a kit").id;
+        assert!(install(k, true, &run).is_none());
+        assert!(remove(k, true, &run).is_none());
+        if let Some(a) = store::CATALOG.iter().find(|a| a.packages.len() > 1) {
+            assert!(install(a.id, true, &run).is_none(), "{}", a.id);
+        }
+        assert!(ran.borrow().is_empty(), "{:?}", ran.borrow());
+        assert_eq!(install("htop", true, &run), Some(Ok(())));
+        assert_eq!(ran.borrow().len(), 1);
+    }
 
     /// Settings reads wol-admind's sentence from wopkg's stderr: the last prefixed line, and the
     /// exit code as before.

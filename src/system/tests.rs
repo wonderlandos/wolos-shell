@@ -955,3 +955,41 @@ fn brightness_zero_reads_the_minimum() {
     assert_eq!(sys.perform(&Action::Brightness(0)), Ok(()));
     assert_eq!(sys.brightness(), Some(1));
 }
+
+/// QA-STORE-29: an Update All through wopkg updates the Flathub apps the Updates page listed
+/// too (wopkg's update is system and pacman only); a failed wopkg update does not start it, and
+/// no other change does.
+#[test]
+fn update_all_through_wopkg_updates_flatpaks() {
+    use std::cell::Cell;
+    let ran = Cell::new(0);
+    let flat = || {
+        ran.set(ran.get() + 1);
+        Ok(())
+    };
+    assert_eq!(after_wopkg(&Action::PkgUpgrade, Ok(()), flat), Ok(()));
+    assert_eq!(ran.get(), 1);
+    let flat = || {
+        ran.set(ran.get() + 1);
+        Ok(())
+    };
+    assert_eq!(
+        after_wopkg(&Action::PkgUpgrade, Err(ActionError::Failed), flat),
+        Err(ActionError::Failed)
+    );
+    let flat = || {
+        ran.set(ran.get() + 1);
+        Ok(())
+    };
+    assert_eq!(
+        after_wopkg(&Action::PkgInstall("htop".into()), Ok(()), flat),
+        Ok(())
+    );
+    assert_eq!(ran.get(), 1);
+    assert_eq!(
+        after_wopkg(&Action::PkgUpgrade, Ok(()), || Err(
+            wol_core::controls::ControlError::Failed
+        )),
+        Err(ActionError::Failed)
+    );
+}
