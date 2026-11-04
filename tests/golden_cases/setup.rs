@@ -323,7 +323,7 @@ pub fn cases() -> Vec<Case> {
             }),
         },
         Case {
-            name: "setup-welcome-focus".into(),
+            name: "setup-welcome-focus-1280".into(),
             size: (1280, 800),
             class: "lock-window",
             wallpaper: false,
@@ -334,7 +334,7 @@ pub fn cases() -> Vec<Case> {
             }),
         },
         Case {
-            name: "setup-account-tab-one-ring".into(),
+            name: "setup-account-tab-one-ring-1280".into(),
             size: (1280, 800),
             class: "lock-window",
             wallpaper: false,

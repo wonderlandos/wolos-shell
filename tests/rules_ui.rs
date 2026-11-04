@@ -228,7 +228,8 @@ const BASELINE: &[(&str, usize)] = &[
     ("RU-050", 1),
     ("RU-060", 2),
     ("RU-062", 15),
-    ("RU-073", 6),
+    // +2 (INT-1): setup-welcome-focus-1280 light/dark draw the welcome art of setup-welcome-1280.
+    ("RU-073", 8),
     ("RU-074", 8),
     ("RU-075", 5),
     ("RU-081", 3),
