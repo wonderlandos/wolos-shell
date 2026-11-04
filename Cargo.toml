@@ -41,6 +41,11 @@ bitflags = "2"
 name = "golden"
 harness = false
 
+# QA-PERF-1: the real desktop layer under a running Wayland compositor (needs --features layer-shell).
+[[test]]
+name = "desktop_idle"
+harness = false
+
 [dev-dependencies]
 async-io = "2"
 blocking = "1"

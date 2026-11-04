@@ -399,6 +399,8 @@ pub fn close_outside(app: &gtk::Application, win: &gtk::ApplicationWindow, close
     // Dev toplevels: a full-screen window would cover the desktop.
     if crate::kit::surface::layered() {
         let catcher = super::window(app, "catcher", crate::kit::surface::Spec::catcher());
+        // Nothing to show, yet one painted pixel: an empty layer is never mapped (QA-PERF-1).
+        catcher.set_child(Some(&crate::kit::data::presence()));
         let click = gtk::GestureClick::new();
         click.set_button(0);
         let c = close.clone();
@@ -482,6 +484,7 @@ fn kept(app: &gtk::Application) -> Vec<gtk::Window> {
 pub fn manage(app: &gtk::Application, panels: &super::Panels) {
     let catcher = super::window(app, "catcher", crate::kit::surface::Spec::catcher());
     crate::kit::surface::survive_output_loss(&catcher, crate::kit::surface::Spec::catcher());
+    catcher.set_child(Some(&crate::kit::data::presence()));
     let click = gtk::GestureClick::new();
     click.set_button(0);
     {

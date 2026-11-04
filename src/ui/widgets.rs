@@ -10,6 +10,9 @@ use super::widgets_builtin::{self as builtin, Data, SystemView, WeatherView};
 use super::widgets_gallery::{Actions, Entry, Gallery};
 use super::widgets_layout as lay;
 use crate::kit::data as d;
+// The empty board paints it from its size probe: the bare desktop stays mapped (its right-click
+// menu, dropped files) and its layer surface gets a buffer (QA-PERF-1).
+use crate::kit::data::mark_presence;
 use crate::kit::surface;
 use crate::kit::widgets as w;
 use crate::widgets::{
@@ -118,19 +121,6 @@ pub struct Board {
     saver: RefCell<Option<Saver>>,
     /// The display new widgets go on (its `shared::widgets::displays::Display::key`).
     stamp: RefCell<Option<String>>,
-}
-
-/// What the empty desktop paints: one pixel at 1/255 black, to everyone's eye nothing. A board
-/// with no widget has nothing else to draw, and GTK never attaches a buffer to a window that
-/// renders nothing: its frame clock then commits an empty layer surface every 16 ms, and Hyprland
-/// answers each commit with a new `configure` and damage on the whole output (QA-100 H17-01: four
-/// cores of compositor with one window open; one widget on the desktop stopped it). One drawn
-/// pixel makes the first frame a real one, after which the surface is idle like any other. The
-/// window stays mapped, so the bare desktop keeps its right-click menu and takes dropped files.
-fn mark_presence(cr: &gtk::cairo::Context) {
-    cr.rectangle(0.0, 0.0, 1.0, 1.0);
-    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0 / 255.0);
-    let _ = cr.fill();
 }
 
 fn entries(packages: &[Rc<Package>]) -> Vec<Entry> {
