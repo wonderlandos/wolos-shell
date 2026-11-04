@@ -485,14 +485,35 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
-            // ⇧⌘/: every shortcut shipped by default, in columns.
+            // ⇧⌘/: every shortcut shipped by default, in columns, on a 1080-high screen: the sheet
+            // is as tall as its rows (it used to scroll at 640 and cut "Actual Size" in half).
             name: "shortcut-sheet".into(),
             size: (ui::shortcut_sheet::WIDTH + 2 * kit::widgets::S6, 1),
             class: "preview",
             wallpaper: true,
             build: Box::new(|| {
                 let list = wol_core::shortcuts::load_defaults(|_| None);
-                let c = ui::shortcut_sheet::content(&shell::shortcut_sheet::sections(&list, false));
+                let c = ui::shortcut_sheet::content(
+                    &shell::shortcut_sheet::sections(&list, false),
+                    ui::shortcut_sheet::max_height(1080),
+                );
+                c.set_halign(gtk::Align::Center);
+                c.set_valign(gtk::Align::Center);
+                c.upcast()
+            }),
+        },
+        Case {
+            // The same sheet on a 768-high screen: whole sections on pages, the pager by the footnote.
+            name: "shortcut-sheet-small-screen".into(),
+            size: (ui::shortcut_sheet::WIDTH + 2 * kit::widgets::S6, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let list = wol_core::shortcuts::load_defaults(|_| None);
+                let c = ui::shortcut_sheet::content(
+                    &shell::shortcut_sheet::sections(&list, false),
+                    ui::shortcut_sheet::max_height(ui::shortcut_sheet::SMALL_SCREEN),
+                );
                 c.set_halign(gtk::Align::Center);
                 c.set_valign(gtk::Align::Center);
                 c.upcast()
@@ -1405,6 +1426,10 @@ fn contrast_classes(case: &str) -> &'static [&'static str] {
         || case.starts_with("approval")
     {
         &["secondary", "title"]
+    } else if case.starts_with("wolos-menu") {
+        // A menu drawn out of its popover still sits on the popover's glass: its rows read in
+        // dark as in light (the dark ones were light text on the light wallpaper).
+        &["menu-item"]
     } else {
         &[]
     }
@@ -1777,6 +1802,7 @@ fn main() {
     regressions::the_dock_takes_a_new_layout();
     motion_cases::reduce_motion_snaps();
     regressions::an_app_tile_keeps_one_source_badge();
+    regressions::installed_is_a_state_and_open_the_action();
     focus_cases::sidebar_arrows_go_from_group_to_group();
     focus_cases::only_the_focused_control_has_the_ring();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
@@ -1811,6 +1837,7 @@ fn main() {
             pin_icon_search_path();
             // Once, with the kit stylesheet on: a golden in the fallback type locks the wrong glyphs.
             font_cases::ui_family_is_inter();
+            regressions::shortcut_sheet_rows_are_whole();
         }
         for c in cases() {
             let name = format!(

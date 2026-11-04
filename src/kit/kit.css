@@ -77,13 +77,14 @@ button.menubar-item:hover, .menubar-strip menubutton > button:hover, .menubar-st
 button.menubar-item:focus-visible, .menubar-strip menubutton > button:focus-visible { background: var(--bar-hover); }
 
 /* ---- Menus ---- */
-popover.menu > contents { background: var(--glass); border-radius: var(--glass-radius-s); padding: 4px; box-shadow: var(--glass-shadow); border: 1px solid var(--line); }
+/* box.menu: a menu drawn in place of its popover (ui::menubar::logo_menu_view, goldens) wears the same surface. */
+popover.menu > contents, box.menu { background: var(--glass); border-radius: var(--glass-radius-s); padding: 4px; box-shadow: var(--glass-shadow); border: 1px solid var(--line); }
 button.menu-item { background: none; border: none; box-shadow: none; border-radius: 8px; padding: 4px 12px; min-height: 0; }
 button.menu-item label { color: var(--text); }
 button.menu-item label.menu-key { color: var(--dim); }
 button.menu-item:hover { background: var(--accent); }
 button.menu-item:hover label { color: var(--accent-text); }
-popover.menu separator { margin: 4px 8px; background: var(--line); }
+popover.menu separator, box.menu separator { margin: 4px 8px; background: var(--line); }
 tooltip { background: var(--glass); color: var(--text); border-radius: 8px; border: 1px solid var(--line); }
 tooltip label { font-size: 11px; color: var(--text); }
 
