@@ -1113,6 +1113,48 @@ fn bluetooth_label(bt: Option<bool>) -> &'static str {
 
 impl ControlCenter {
     /// Pushes the current snapshot into every widget; modules hide when their hardware or pref is off.
+    /// The grid's visible tiles in the five-phase order (brand-ui): light (Night Shift, Keyboard
+    /// Brightness), ground (Battery, the toggles), tools (Screenshot, Record, Zoom, Increase Contrast,
+    /// Reduce Motion), then Screen Mirroring, which ends the page where it began (the display).
+    /// `[night, keyboard, battery]`: whether those three have a state to show.
+    fn push_tiles(
+        &self,
+        shown: &mut Vec<gtk::Widget>,
+        [night, keyboard, battery]: [bool; 3],
+        p: &ControlCenterPrefs,
+        acc: &crate::system::Accessibility,
+    ) {
+        if night {
+            shown.push(self.night.button.clone().upcast());
+        }
+        if keyboard {
+            shown.push(self.keyboard.button.clone().upcast());
+        }
+        if battery {
+            shown.push(self.battery.button.clone().upcast());
+        }
+        for (t, tile) in &self.toggles {
+            tile.set_on(tiles::toggle_on(*t));
+            shown.push(tile.button.clone().upcast());
+        }
+        if p.screenshot {
+            shown.push(self.screenshot.clone().upcast());
+        }
+        if p.record {
+            shown.push(self.record.clone().upcast());
+        }
+        if p.accessibility {
+            if acc.zoom.is_some() {
+                shown.push(self.a11y.zoom.button.clone().upcast());
+            }
+            shown.push(self.a11y.contrast.button.clone().upcast());
+            if acc.reduce_motion.is_some() {
+                shown.push(self.a11y.reduce_motion.button.clone().upcast());
+            }
+        }
+        shown.push(self.mirroring.button.clone().upcast());
+    }
+
     fn sync(&self) {
         let u = &self.ui;
         let s = &*u.sys;
@@ -1217,39 +1259,12 @@ impl ControlCenter {
         self.a11y
             .zoom
             .set_on(held(Action::Zoom, acc.zoom.unwrap_or(false)));
-        // Light: Night Shift, Keyboard Brightness.
-        if night.is_some() {
-            shown.push(self.night.button.clone().upcast());
-        }
-        if k.is_some() {
-            shown.push(self.keyboard.button.clone().upcast());
-        }
-        // Ground: Battery, Stay Awake.
-        if bat.is_some() {
-            shown.push(self.battery.button.clone().upcast());
-        }
-        for (t, tile) in &self.toggles {
-            tile.set_on(tiles::toggle_on(*t));
-            shown.push(tile.button.clone().upcast());
-        }
-        // Tools: Screenshot, Record, Zoom, Increase Contrast, Reduce Motion.
-        if p.screenshot {
-            shown.push(self.screenshot.clone().upcast());
-        }
-        if p.record {
-            shown.push(self.record.clone().upcast());
-        }
-        if p.accessibility {
-            if acc.zoom.is_some() {
-                shown.push(self.a11y.zoom.button.clone().upcast());
-            }
-            shown.push(self.a11y.contrast.button.clone().upcast());
-            if acc.reduce_motion.is_some() {
-                shown.push(self.a11y.reduce_motion.button.clone().upcast());
-            }
-        }
-        // Loop: Screen Mirroring ends the page where it began (the display).
-        shown.push(self.mirroring.button.clone().upcast());
+        self.push_tiles(
+            &mut shown,
+            [night.is_some(), k.is_some(), bat.is_some()],
+            &p,
+            &acc,
+        );
         if let Some(src) = tile_source() {
             let weak = Rc::downgrade(u);
             let toggle_src = src.clone();

@@ -121,7 +121,6 @@ const BASELINE: [(&str, usize); 41] = [
     ("ui/mod.rs", 2),
     // QA-SET-2 (counted 2026-11-04): `System::undo` and the Restore lists stay sync (frozen API,
     // `Rc<dyn System>` cannot cross to a worker); each undo site is listed so none is added.
-    ("ui/settings/displays.rs", 2),
     ("ui/settings/login_items.rs", 2),
     ("ui/settings/machine.rs", 1),
     ("ui/settings/mod.rs", 1),
