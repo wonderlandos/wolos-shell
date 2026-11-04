@@ -385,7 +385,7 @@ pub(super) fn parent(page: &str) -> &str {
 /// Rows panes build from their own tables (one title, written once): Control Center's tiles and
 /// modules, the kinds of app permission in Privacy & Security (QA-SET-43: "screenshot" found
 /// the pane but not its row, a Privacy kind found nothing).
-fn data_rows() -> [(&'static str, Vec<&'static str>); 2] {
+pub(super) fn data_rows() -> [(&'static str, Vec<&'static str>); 2] {
     [
         (
             "Control Center",
@@ -444,9 +444,55 @@ fn all_in(hay: &str, q: &[String]) -> bool {
         .all(|w| starts(&hay, w.as_str()) || starts(&plain, w.as_str()))
 }
 
+/// Hits by meaning that are shown after word hits: at most this many, and each needs this cosine
+/// (a word hit already answered the query; a weaker neighbour would only crowd it).
+const EXTRA_AFTER_WORDS: usize = 3;
+const EXTRA_COS_AFTER_WORDS: f32 = 0.5;
+
 /// Pages whose title or search words match every word of `query`, then rows whose title (with
-/// its page's title) does; each page's own hit first, at most one hit per row.
+/// its page's title) does; each page's own hit first, at most one hit per row. What the query
+/// means follows (or, when no word matches, is all there is): "make the cursor bigger" finds
+/// Pointer size, "deixar o texto maior" finds Larger text, once the shipped table is loaded.
 pub fn hits(query: &str) -> Vec<Hit> {
+    match super::search_rows::global() {
+        Some((sem, table)) => hits_with(
+            query,
+            Some(&super::search_rows::Ctx {
+                sem,
+                table,
+                map: None,
+            }),
+        ),
+        None => hits_with(query, None),
+    }
+}
+
+/// [`hits`] with the meaning index given (tests use their own table).
+pub(super) fn hits_with(query: &str, cx: Option<&super::search_rows::Ctx>) -> Vec<Hit> {
+    let mut out = word_hits(query);
+    let Some(cx) = cx else { return out };
+    let capped = capped(query);
+    if capped.trim().is_empty() {
+        return out;
+    }
+    let by_words = out.len();
+    let mut extra = 0;
+    for (h, cos) in cx.sem.find(cx, capped) {
+        if out.contains(&h) {
+            continue;
+        }
+        if by_words > 0 && (cos < EXTRA_COS_AFTER_WORDS || extra >= EXTRA_AFTER_WORDS) {
+            continue;
+        }
+        out.push(h);
+        extra += 1;
+    }
+    out
+}
+
+/// The word-prefix hits alone (pages whose title or search words match every word of `query`,
+/// then rows).
+fn word_hits(query: &str) -> Vec<Hit> {
     let q = words(query);
     if q.is_empty() {
         return Vec::new();
@@ -851,6 +897,112 @@ mod tests {
         assert_eq!(enter_target("balance"), Some("Sound"));
         assert_eq!(enter_target(""), None);
         assert_eq!(enter_target("no such thing anywhere"), None);
+    }
+
+    /// The table the tests search with: the wolsem fixture (a potion-multilingual cut to the words
+    /// of the manual, these rows and the seven-language copy tables).
+    fn fixture() -> wolsem::Table {
+        let p = concat!(env!("CARGO_MANIFEST_DIR"), "/../wolsem/tests/data/mini.wst");
+        wolsem::Table::open(std::path::Path::new(p)).unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    /// Natural-language questions, in four languages, land on the row (or its page) in the top
+    /// three: the meaning index after the word hits. No row is translated.
+    #[test]
+    fn natural_questions_find_their_row() {
+        let table = fixture();
+        let sem = super::super::search_rows::Sem::new(&table);
+        let cx = super::super::search_rows::Ctx {
+            sem: &sem,
+            table: &table,
+            map: None,
+        };
+        let golden: [(&str, &str, Option<&str>); 14] = [
+            ("turn off the firewall", "Network", Some("Firewall")),
+            (
+                "make the cursor bigger",
+                "Accessibility",
+                Some("Pointer size"),
+            ),
+            ("reduce animations", "Accessibility", Some("Reduce motion")),
+            (
+                "make the display warmer at night",
+                "Displays",
+                Some("Night Shift"),
+            ),
+            (
+                "remove noise from my microphone",
+                "Sound",
+                Some("Reduce background noise"),
+            ),
+            ("change my password", "Users & Groups", Some("Password")),
+            ("hide the dock", "Desktop & Dock", None),
+            (
+                "stop a click when sound starts",
+                "Sound",
+                Some("Keep device awake"),
+            ),
+            ("the mouse is too slow", "Trackpad & Mouse", None),
+            ("join a wireless network", "Wi-Fi", None),
+            ("desligar o firewall", "Network", Some("Firewall")),
+            ("tela mais quente à noite", "Displays", Some("Night Shift")),
+            ("deixar o cursor maior", "Accessibility", None),
+            ("Passwort ändern", "Users & Groups", None),
+        ];
+        let mut missed = Vec::new();
+        for (q, page, row) in golden {
+            let found = hits_with(q, Some(&cx));
+            let top: Vec<_> = found.iter().take(3).collect();
+            let ok = top
+                .iter()
+                .any(|h| h.page == page && (row.is_none() || h.row == row));
+            if !ok {
+                missed.push(format!("{q:?} wants {page}/{row:?}, got {top:?}"));
+            }
+        }
+        assert!(missed.is_empty(), "{}", missed.join("\n"));
+        // Words first: a query that names a row keeps the word hit on top and adds little after it.
+        let found = hits_with("balance", Some(&cx));
+        assert_eq!(
+            found.first(),
+            Some(&Hit {
+                page: "Sound",
+                row: None
+            })
+        );
+        assert!(found.contains(&Hit {
+            page: "Sound",
+            row: Some("Balance")
+        }));
+        assert_eq!(
+            found[..2],
+            word_hits("balance")[..2],
+            "the word hits stay first, in order"
+        );
+        assert!(
+            found.len() <= word_hits("balance").len() + EXTRA_AFTER_WORDS,
+            "{found:?}"
+        );
+        // Nonsense finds nothing, with or without the meaning index.
+        assert!(hits_with("no such thing anywhere", Some(&cx)).is_empty());
+        assert!(hits_with("qwertyuiop asdfgh", Some(&cx)).is_empty());
+        assert!(hits_with("", Some(&cx)).is_empty());
+        // Without a table nothing changes.
+        assert!(hits_with("make the cursor bigger", None).is_empty());
+    }
+
+    /// Every row a sentence is bound to is a row of its page (the copy is read from `copy_settings`).
+    #[test]
+    fn described_rows_exist() {
+        for (page, row, text) in super::super::search_rows::DESCRIBED {
+            let rows = ROWS
+                .iter()
+                .find(|r| r.0 == page)
+                .map(|r| r.1)
+                .unwrap_or_default();
+            assert!(rows.contains(&row), "{page}/{row} is not a row");
+            assert!(!text.is_empty());
+        }
     }
 
     #[test]
