@@ -158,10 +158,11 @@ pub(crate) fn backdrop() -> gtk::Picture {
                 );
                 let run = run.clone();
                 glib::spawn_future_local(async move {
-                    let m = gtk::gio::spawn_blocking(move || super::panels::morph_between(&f, &to))
-                        .await
-                        .ok()
-                        .flatten();
+                    let m = kit::render::on(kit::render::Lane::Desktop, move || {
+                        super::panels::morph_between(&f, &to)
+                    })
+                    .await
+                    .flatten();
                     match m {
                         Some(m) => {
                             run.replace(Some(super::panels::morph_picture(

@@ -56,19 +56,26 @@ pub fn dress_wallpaper(win: &gtk::Window) {
         let fade = fade.clone();
         glib::spawn_future_local(async move {
             let p2 = p.clone();
-            let Ok(Some(t)) = gio::spawn_blocking(move || wallpaper_texture(&p2, width)).await
+            let Some(Some(t)) = kit::render::on(kit::render::Lane::Desktop, move || {
+                wallpaper_texture(&p2, width)
+            })
+            .await
             else {
                 return;
             };
             // The other side (day or night) rendered now, so a light/dark change does not wait.
             if let Some(other) = kit::pickers::other_side(&p) {
-                drop(gio::spawn_blocking(move || {
+                glib::spawn_future_local(kit::render::on(kit::render::Lane::Desktop, move || {
                     wallpaper_texture(&other, width)
                 }));
             }
             if let Some(old) = old.filter(|_| !fade.is_reduced()) {
                 let (from, to) = (old.clone(), t.clone());
-                if let Ok(Some(m)) = gio::spawn_blocking(move || morph_between(&from, &to)).await {
+                if let Some(Some(m)) = kit::render::on(kit::render::Lane::Desktop, move || {
+                    morph_between(&from, &to)
+                })
+                .await
+                {
                     return fade.show_morph(m, &old, &t);
                 }
             }

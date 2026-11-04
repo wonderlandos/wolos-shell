@@ -12,6 +12,7 @@ pub mod gate;
 pub mod lifetime;
 pub mod motion;
 pub mod pickers;
+pub mod render;
 pub mod reveal;
 pub mod style;
 pub mod surface;

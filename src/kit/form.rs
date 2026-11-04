@@ -604,11 +604,11 @@ pub fn wallpaper_strips_tile(
         strips.append(&pic);
         let f = f.to_path_buf();
         glib::spawn_future_local(async move {
-            let r = gtk::gio::spawn_blocking(move || {
+            let r = super::render::on(super::render::Lane::Previews, move || {
                 wallpaper_thumb_in(&crate::widgets::cache_home(), &f, tw * 2)
             })
             .await;
-            if let Ok(Some(t)) = r {
+            if let Some(Some(t)) = r {
                 pic.set_paintable(Some(&t));
             }
         });
