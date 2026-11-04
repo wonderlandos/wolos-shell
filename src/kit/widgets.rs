@@ -195,6 +195,42 @@ pub fn pending_toggle(
     on: bool,
     run: impl Fn(bool, Box<dyn FnOnce(bool)>) + 'static,
 ) -> gtk::Switch {
+    pending_switch(on, run, None)
+}
+
+/// [`pending_toggle`] with a small spinner that shows while the change runs (from the flip until
+/// `done`), so a wait reads as work and not as a greyed-out switch. Put both in the row's trailing
+/// box, spinner first ([`super::form::pending_toggle_row`] does).
+pub fn pending_toggle_spinner(
+    on: bool,
+    run: impl Fn(bool, Box<dyn FnOnce(bool)>) + 'static,
+) -> (gtk::Switch, gtk::Spinner) {
+    let spin = busy_spinner();
+    (pending_switch(on, run, Some(spin.clone())), spin)
+}
+
+/// A hidden 16 px spinner for "working on it" beside a control (shown only while busy).
+pub fn busy_spinner() -> gtk::Spinner {
+    let s = gtk::Spinner::builder()
+        .spinning(false)
+        .visible(false)
+        .valign(gtk::Align::Center)
+        .build();
+    s.set_size_request(ICON, ICON);
+    s
+}
+
+/// Shows and spins `s` while `on`, hides it otherwise.
+fn spin_while(s: &gtk::Spinner, on: bool) {
+    s.set_spinning(on);
+    s.set_visible(on);
+}
+
+fn pending_switch(
+    on: bool,
+    run: impl Fn(bool, Box<dyn FnOnce(bool)>) + 'static,
+    spin: Option<gtk::Spinner>,
+) -> gtk::Switch {
     let s = gtk::Switch::builder()
         .active(on)
         .state(on)
@@ -206,7 +242,10 @@ pub fn pending_toggle(
             return glib::Propagation::Proceed;
         }
         s.set_sensitive(false);
-        let s2 = s.clone();
+        if let Some(sp) = &spin {
+            spin_while(sp, true);
+        }
+        let (s2, sp2) = (s.clone(), spin.clone());
         run(
             want,
             Box::new(move |ok| {
@@ -214,6 +253,9 @@ pub fn pending_toggle(
                 s2.set_state(now);
                 s2.set_active(now);
                 s2.set_sensitive(true);
+                if let Some(sp) = &sp2 {
+                    spin_while(sp, false);
+                }
             }),
         );
         glib::Propagation::Stop
@@ -534,6 +576,16 @@ pub struct AuthSheet {
     pub always: gtk::Button,
     pub allow: gtk::Button,
     pub message: gtk::Label,
+    /// Beside the title, hidden: shown by [`AuthSheet::set_busy`] while the change is checked.
+    pub busy: gtk::Spinner,
+}
+
+impl AuthSheet {
+    /// `true` while the request is being checked (no answer yet): the spinner beside the title
+    /// shows and spins; `false` hides it. Buttons and field are the caller's.
+    pub fn set_busy(&self, on: bool) {
+        spin_while(&self.busy, on);
+    }
 }
 
 pub fn authenticate_sheet(who: &str) -> AuthSheet {
@@ -553,6 +605,9 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
     why.set_wrap(true);
     t.append(&why);
     head.append(&t);
+    let busy = busy_spinner();
+    busy.set_valign(gtk::Align::Start);
+    head.append(&busy);
     b.append(&head);
     let field = password_field("Password");
     b.append(&field);
@@ -581,6 +636,7 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
         always,
         allow,
         message,
+        busy,
     }
 }
 
@@ -1721,15 +1777,47 @@ impl AppWindow {
 }
 
 impl AppWindow {
-    /// Space between sidebar groups (System Settings-style, no header).
+    /// Class of the last sidebar row of a group ([`source_gap`](Self::source_gap)).
+    const GROUP_END: &'static str = "group-end";
+
+    /// The sidebar search field ([`sidebar_search`](Self::sidebar_search)) has text.
+    fn sidebar_searching(list: &gtk::ListBox) -> bool {
+        list.row_at_index(0)
+            .filter(|r| r.has_css_class("sidebar-search"))
+            .and_then(|r| r.child())
+            .and_downcast::<gtk::SearchEntry>()
+            .is_some_and(|s| !s.text().trim().is_empty())
+    }
+
+    /// Space between sidebar groups (System Settings-style, no header): the next source row
+    /// starts a group. The space is a list header, not a row, so the arrow keys go straight from
+    /// the last row of one group to the first of the next. No space while the sidebar search has
+    /// text (the hits read as one list).
     pub fn source_gap(&self) {
-        let r = gtk::ListBoxRow::builder()
-            .child(&vbox(0))
-            .selectable(false)
-            .activatable(false)
-            .build();
-        r.add_css_class("source-gap");
-        self.sidebar.append(&r);
+        let mut last = None;
+        let mut i = 0;
+        while let Some(r) = self.sidebar.row_at_index(i) {
+            last = Some(r);
+            i += 1;
+        }
+        let Some(last) = last else { return };
+        last.add_css_class(Self::GROUP_END);
+        self.sidebar.set_header_func(|row, before| {
+            let gap = before.is_some_and(|b| b.has_css_class(Self::GROUP_END))
+                && !row
+                    .parent()
+                    .and_downcast::<gtk::ListBox>()
+                    .is_some_and(|l| Self::sidebar_searching(&l));
+            if !gap {
+                if row.header().is_some() {
+                    row.set_header(None::<&gtk::Widget>);
+                }
+            } else if row.header().is_none() {
+                let space = vbox(0);
+                space.add_css_class("source-gap");
+                row.set_header(Some(&space));
+            }
+        });
     }
 
     /// Shows the page `name`: its sidebar row when it has one, else a [`hidden_page`](Self::hidden_page)

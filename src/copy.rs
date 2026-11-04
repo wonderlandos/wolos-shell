@@ -383,7 +383,7 @@ pub fn install_low_space(bytes: u64) -> String {
 
 /// Every [`ActionError`], for the lint. [`action`] matches exhaustively, so a new variant needs a
 /// sentence before it compiles; list it here too.
-pub const ACTION_ERRORS: [ActionError; 7] = [
+pub const ACTION_ERRORS: [ActionError; 8] = [
     ActionError::Unavailable,
     ActionError::NeedsAuth,
     ActionError::Denied,
@@ -391,6 +391,7 @@ pub const ACTION_ERRORS: [ActionError; 7] = [
     ActionError::Invalid,
     ActionError::Failed,
     ActionError::WrongPassword,
+    ActionError::Refused,
 ];
 
 /// Any change that did not happen.
@@ -404,7 +405,20 @@ pub fn action(e: ActionError) -> &'static str {
         ActionError::WrongPassword => {
             "The network didn’t accept that password. Check it and try again."
         }
+        // No password was checked, so the sentence never blames it (QA 0.12.0 bug 4).
+        ActionError::Refused => {
+            "WolOS didn’t allow this change, so no password was asked for. Allow it in Privacy & Security, then try again."
+        }
     }
+}
+
+/// A change with no answer yet (its status line, after a moment): the Authenticate sheet may be
+/// next, or the change is still being made.
+pub const CHECKING: &str = "Checking…";
+
+/// The Authenticate sheet when `n` (more than one) changes wait for the same password.
+pub fn auth_waiting(n: usize) -> String {
+    format!("This password is for {n} changes.")
 }
 
 /// The detail line of the administrator sheet for a package built on this computer (ADR 0034):
@@ -433,6 +447,7 @@ pub fn wifi_join(e: ActionError, name: &str) -> String {
             format!("Not joined. Joining “{name}” needs an administrator’s password.")
         }
         ActionError::NotAdmin => format!("Only an administrator can join “{name}”."),
+        ActionError::Refused => action(e).into(),
         ActionError::Unavailable => "Wi-Fi isn’t available on this computer.".into(),
         ActionError::Failed => format!("Couldn’t join “{name}”. Move closer to it and try again."),
     }
@@ -451,6 +466,9 @@ pub fn remove(e: ActionError, name: &str) -> String {
             format!("{name} wasn’t removed. Removing apps needs an administrator’s password.")
         }
         ActionError::NotAdmin => format!("Only an administrator can remove {name}."),
+        ActionError::Refused => format!(
+            "{name} wasn’t removed because Remove Apps is off. Turn it on in Privacy & Security, then try again."
+        ),
         ActionError::Unavailable => {
             format!("{name} can’t be removed right now. Restart the computer and try again.")
         }
@@ -468,6 +486,9 @@ pub fn install(e: ActionError, name: &str) -> String {
         ActionError::NotAdmin => {
             format!("Only an administrator can install {name}. Ask one to sign in.")
         }
+        ActionError::Refused => format!(
+            "{name} wasn’t installed because Install Apps is off. Turn it on in Privacy & Security, then try again."
+        ),
         ActionError::Unavailable => {
             format!("{name} can’t be installed right now. Restart the computer and try again.")
         }
@@ -1013,6 +1034,21 @@ mod tests {
     }
 
     use super::*;
+
+    /// QA 0.12.0 bug 4: wold's refusal has its own sentences, and none blames the password.
+    #[test]
+    fn a_refusal_never_blames_the_password() {
+        for s in [
+            action(ActionError::Refused).to_string(),
+            install(ActionError::Refused, "Firefox"),
+            remove(ActionError::Refused, "Firefox"),
+            auth_waiting(2),
+        ] {
+            assert!(lint(&s).is_empty(), "{s}: {:?}", lint(&s));
+            assert!(!s.to_lowercase().contains("incorrect"), "{s}");
+        }
+        assert_ne!(action(ActionError::Refused), action(ActionError::Denied));
+    }
 
     /// R2A-19: the Dock, Desktop & Dock and widget sentences pass the lint.
     #[test]

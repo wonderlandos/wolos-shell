@@ -98,8 +98,19 @@ fn history(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label) {
         .map(|x| {
             let (env, h, st, id) = (e.clone(), into.clone(), status.clone(), x.id);
             let undo = w::button("Undo", w::Kind::Default, move || {
+                // `undo` also reloads what the change touched (`system::after_undo`, per topic).
                 match env.sys().undo(Some(id)) {
-                    Ok(_) => say(&st, ""),
+                    Ok(_) => {
+                        say(&st, "");
+                        // The other open pages show the restored files too, as after the toast's
+                        // Undo; once this click is over, since this page is built again with them.
+                        let env = Rc::downgrade(&env);
+                        glib::idle_add_local_once(move || {
+                            if let Some(env) = env.upgrade() {
+                                env.refresh()
+                            }
+                        });
+                    }
                     Err(m) => say(&st, &m),
                 }
                 history(&env, &h, &st);

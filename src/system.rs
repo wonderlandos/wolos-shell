@@ -233,6 +233,17 @@ pub trait System: Send + Sync {
         let _ = tx.try_send(self.perform(&a));
         rx
     }
+    /// [`System::spawn`] with the password the Authenticate sheet took for this action (None =
+    /// none typed yet). Each queued action carries its own copy, so two changes waiting on one
+    /// sheet both get it (QA 0.12.0 bugs 4, 6); a one-shot slot went to whichever ran first.
+    fn spawn_with(&self, a: Action, password: Option<&str>) -> Done {
+        if let Some(Err(e)) = password.map(|p| self.authorize(p)) {
+            let (tx, rx) = async_channel::bounded(1);
+            let _ = tx.try_send(Err(e));
+            return rx;
+        }
+        self.spawn(a)
+    }
     /// Re-reads audio now (volume keys -> OSD); resolves once `audio()` has the new value.
     fn refresh_audio(&self) -> Done {
         let (tx, rx) = async_channel::bounded(1);
@@ -291,6 +302,10 @@ pub enum ActionError {
     Failed,
     /// Wi-Fi join: the network refused the password.
     WrongPassword,
+    /// The system service turned the change down before any password was checked (wopkg's exit 77:
+    /// the consent grant is off or wold's own sheet said no). Never `Denied`: that reopens the
+    /// Authenticate sheet, and no password can help here.
+    Refused,
 }
 
 impl From<wol_core::controls::ControlError> for ActionError {
@@ -832,6 +847,28 @@ impl Inner {
         }
     }
 
+    /// `a` on a worker thread; the receiver yields its result once.
+    fn spawn(self: &Arc<Self>, a: Action, own: Option<Secret>) -> Done {
+        let (tx, rx) = async_channel::bounded(1);
+        let i = self.clone();
+        let _ = std::thread::Builder::new()
+            .name("wol-action".into())
+            .spawn(move || {
+                let r = i.perform_with(&a, own);
+                // An answer like `NeedsAuth` changed nothing: reply now, nothing to read again.
+                // The Authenticate sheet waited on a refresh of every topic, behind a 1 s poll
+                // (QA 0.12.0 bug 3).
+                let due = topics_of(&a);
+                if r.is_ok() && due.contains(&true) {
+                    // Done: reply with the host's state already read, so callers never see it
+                    // go stale after; only the topics this action changed (audit4 S3-5).
+                    i.refresh_now(due);
+                }
+                let _ = tx.try_send(r);
+            });
+        rx
+    }
+
     fn take_password(&self) -> Secret {
         Secret(std::mem::take(
             &mut *self.password.lock().unwrap_or_else(|e| e.into_inner()),
@@ -840,14 +877,27 @@ impl Inner {
 
     /// Blocking; runs on a worker thread.
     fn perform(&self, a: &Action) -> Result<(), ActionError> {
+        self.perform_with(a, None)
+    }
+
+    /// [`Self::perform`] with this action's own password (None = the one [`System::authorize`]
+    /// stored, if the action may need one).
+    fn perform_with(&self, a: &Action, own: Option<Secret>) -> Result<(), ActionError> {
         let c = &self.c;
         // Only an action that can ask for it takes the stored password: a volume step between
         // the Authenticate sheet and its retry used to eat it (audit4 S3-5).
-        let pw = if may_need_password(a) {
-            self.take_password()
-        } else {
-            Secret(String::new())
+        let pw = match own {
+            Some(p) if may_need_password(a) => p,
+            Some(_) => Secret(String::new()),
+            None if may_need_password(a) => self.take_password(),
+            None => Secret(String::new()),
         };
+        // wopkg runs as the person and asks wold, which checks the consent grant (ADR 0021). Only
+        // with wopkg's grant: without it wold refuses before any sheet (a fresh install has none),
+        // so the Authenticate-sheet path through wol-admind stays (0.12.1, QA 0.12.0 bug 4).
+        if let Some(r) = via_wopkg(a, &crate::packages::run_wopkg) {
+            return r;
+        }
         let r = match a {
             Action::Wifi(on) => c.set_wifi(*on, &pw),
             Action::WifiJoin(ssid, p) => c.wifi_join(ssid, p.as_deref(), &pw),
@@ -864,20 +914,10 @@ impl Inner {
                 admin,
                 password,
             } => c.add_user(name, full_name, *admin, password, &pw),
-            // wopkg runs as the person and asks wold, which checks the consent grant (ADR 0021);
-            // without wopkg the Authenticate-sheet path through wol-admind stays.
-            Action::PkgUpgrade => {
-                crate::packages::upgrade(crate::packages::present(), &crate::packages::run_wopkg)
-                    .unwrap_or_else(|| c.pkg_upgrade(&pw))
-            }
-            Action::PkgInstall(t) => {
-                crate::packages::install(t, crate::packages::present(), &crate::packages::run_wopkg)
-                    .unwrap_or_else(|| c.pkg_install(t, &pw))
-            }
-            Action::PkgRemove(t) => {
-                crate::packages::remove(t, crate::packages::present(), &crate::packages::run_wopkg)
-                    .unwrap_or_else(|| c.pkg_remove(t, &pw))
-            }
+            // Not through wopkg ([`via_wopkg`]): wol-admind with the Authenticate sheet's password.
+            Action::PkgUpgrade => c.pkg_upgrade(&pw),
+            Action::PkgInstall(t) => c.pkg_install(t, &pw),
+            Action::PkgRemove(t) => c.pkg_remove(t, &pw),
             Action::FlatpakInstall(id) => {
                 flatpak_install_tracked(id).unwrap_or_else(|| c.flatpak_install(id))
             }
@@ -914,7 +954,8 @@ impl Inner {
                 }
             }
             Action::BootEnvironment(name) => c.boot_environment(name, &pw),
-            Action::Admin(req) => admin(req, &pw),
+            // Validated first, then wol-admind (`Controls::admin`: the socket, a fake in tests).
+            Action::Admin(req) => c.admin_request(req, &pw),
         };
         // Optimistic snapshot so the next read (and other surfaces) agree right away.
         if r.is_ok() {
@@ -965,7 +1006,18 @@ impl Inner {
     }
 }
 
-/// One wol-admind request (validated here first: a malformed one never leaves the process).
+/// A package change through wopkg when wopkg holds its consent grant
+/// ([`crate::packages::usable`]); None = not this way (wol-admind and the Authenticate sheet).
+fn via_wopkg(a: &Action, run: crate::packages::Run) -> Option<Result<(), ActionError>> {
+    use crate::packages::{install, remove, upgrade, usable};
+    match a {
+        Action::PkgUpgrade => upgrade(usable("packages-update"), run),
+        Action::PkgInstall(t) => install(t, usable("packages-install"), run),
+        Action::PkgRemove(t) => remove(t, usable("packages-remove"), run),
+        _ => None,
+    }
+}
+
 /// This account's Flatpak install with its percentage published for the App Store; None when
 /// there is no runtime dir to publish in (then it runs untracked).
 fn flatpak_install_tracked(id: &str) -> Option<Result<(), wol_core::controls::ControlError>> {
@@ -1049,8 +1101,9 @@ fn topics_of(a: &Action) -> [bool; TOPICS] {
         | Action::KeyboardBrightness(_)
         | Action::ReduceMotion(_)
         | Action::Zoom(_) => (0, 0, 0, 0, 1),
-        // Allow-listed requests of every kind: read everything again.
-        Action::Admin(_) => (1, 1, 1, 1, 1),
+        // Only what the request changes: a Sharing or computer-name change used to read every
+        // topic (nmcli, bluetoothctl, hyprctl, playerctl) before its reply (QA 0.12.0 bug 3).
+        Action::Admin(req) => return admin_topics(req.action),
         Action::UserAdd { .. }
         | Action::PkgUpgrade
         | Action::PkgInstall(_)
@@ -1067,16 +1120,55 @@ fn topics_of(a: &Action) -> [bool; TOPICS] {
     [audio, wifi, slow, media, panel].map(|t| t == 1)
 }
 
-fn admin(
-    req: &shared::admin::AdminRequest,
-    pw: &str,
-) -> Result<(), wol_core::controls::ControlError> {
-    use wol_core::controls::{ControlError, admin_request, from_reply};
-    if wol_core::admin::validate(req).is_some() {
-        return Err(ControlError::Invalid);
-    }
-    admin_request(std::path::Path::new(shared::admin::SOCKET), req, pw)
-        .map_or(Err(ControlError::Unavailable), from_reply)
+/// The snapshot topics one allow-listed wol-admind request changes (see [`topics_of`]).
+fn admin_topics(a: shared::admin::AdminAction) -> [bool; TOPICS] {
+    use shared::admin::AdminAction as A;
+    let (audio, wifi, slow, media, panel) = match a {
+        A::WifiPower | A::WifiForget => (0, 1, 0, 0, 0),
+        A::WifiJoin => (0, 1, 1, 0, 0),
+        A::Bluetooth => (0, 0, 1, 0, 1),
+        A::BtPair | A::BtForget | A::PowerMode => (0, 0, 0, 0, 1),
+        A::AudioDefault => (1, 0, 1, 0, 0),
+        // A kernel module can bring any device: read everything again.
+        A::HwLoad => (1, 1, 1, 1, 1),
+        A::Appearance
+        | A::Keybinds
+        | A::Idle
+        | A::UserAdd
+        | A::UserRemove
+        | A::UserPassword
+        | A::TimeZone
+        | A::PkgUpgrade
+        | A::PkgRefresh
+        | A::Revoke
+        | A::PkgInstall
+        | A::PkgRemove
+        | A::AurOpen
+        | A::BootEnvironment
+        | A::WolInstall
+        | A::WolRemove
+        | A::Ntp
+        | A::Hostname
+        | A::RemoteLogin
+        | A::AirPlayReceiver
+        | A::Firewall
+        | A::MalwareSignatures
+        | A::Lid
+        | A::PrinterAdd
+        | A::PrinterRemove
+        | A::PrinterDefault
+        | A::Consent
+        | A::SessionPower
+        | A::FlatpakOverride
+        | A::FlatpakInstall
+        | A::FlatpakRemove
+        | A::AutoUpdate
+        | A::BootEnroll
+        | A::PkgInstallFile
+        | A::SystemRollback
+        | A::SystemChannel => (0, 0, 0, 0, 0),
+    };
+    [audio, wifi, slow, media, panel].map(|t| t == 1)
 }
 
 /// Real system: `wol_core::controls` on a background thread; the UI only reads the snapshot.
@@ -1306,21 +1398,10 @@ impl System for CoreSystem {
         self.inner.perform(a)
     }
     fn spawn(&self, a: Action) -> Done {
-        let (tx, rx) = async_channel::bounded(1);
-        let i = self.inner.clone();
-        let _ = std::thread::Builder::new()
-            .name("wol-action".into())
-            .spawn(move || {
-                let r = i.perform(&a);
-                // Reply with the host's state already read, so callers never see it go stale
-                // after: the topics this action changed, not all of them (audit4 S3-5).
-                let due = topics_of(&a);
-                if due.contains(&true) {
-                    i.refresh_now(due);
-                }
-                let _ = tx.try_send(r);
-            });
-        rx
+        self.inner.spawn(a, None)
+    }
+    fn spawn_with(&self, a: Action, password: Option<&str>) -> Done {
+        self.inner.spawn(a, password.map(|p| Secret(p.into())))
     }
     fn helpers(&self) -> wol_core::automation::Status {
         wol_core::automation::user_status()
@@ -1349,7 +1430,7 @@ impl System for CoreSystem {
         let e = journal()
             .undo(id, BY, wol_core::journal::now())
             .map_err(|e| crate::copy::undo(&e).to_string())?;
-        after_undo(&self.inner.c, &wol_core::journal::reload_for(&e));
+        after_undo(&self.inner.c, &e);
         Ok(e)
     }
     fn boot_environments(&self) -> Vec<wol_core::update::be::BootEnv> {
@@ -1504,8 +1585,62 @@ fn packages(
     }
 }
 
-/// What an undo touched follows it: other apps restyle, shell prefs and compositor reload.
-fn after_undo(c: &Controls, r: &wol_core::journal::Reload) {
+/// `systemctl --user restart wireplumber`: it reads the user fragments again (Settings > Sound).
+const RESTART_WIREPLUMBER: [&str; 4] = ["systemctl", "--user", "restart", "wireplumber"];
+
+/// What an undo touched follows it: other apps restyle, shell prefs and compositor reload, and
+/// per topic what a reload does not reach (QA 0.12.0 bug 9): Sound's fragments are read by
+/// WirePlumber at its start; desktop keywords set live and open windows re-tiled.
+fn after_undo(c: &Controls, e: &wol_core::journal::Entry) {
+    reload_after_undo(c, &wol_core::journal::reload_for(e));
+    match e.what.as_str() {
+        "sound" => {
+            let _ = c.host.run(&RESTART_WIREPLUMBER);
+        }
+        "desktop" => {
+            let cmds = desktop_undo_cmds(e, || {
+                c.host
+                    .run(&["hyprctl", "-j", "clients"])
+                    .unwrap_or_default()
+            });
+            if !cmds.is_empty() {
+                let _ = c.host.run(&["hyprctl", "--batch", &cmds.join(" ; ")]);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The compositor commands that move the session from the desktop prefs an undo replaced to the
+/// ones it brought back: the changed keywords, and on a tiling switch the open windows (`clients`,
+/// read only then).
+fn desktop_undo_cmds(
+    e: &wol_core::journal::Entry,
+    clients: impl FnOnce() -> String,
+) -> Vec<String> {
+    use wol_core::hyprprefs::{DesktopPrefs, PREFS_FILE, retile};
+    let Some((before, after)) = e.changes.iter().find_map(|c| match c {
+        wol_core::journal::Change::File {
+            path,
+            before,
+            after,
+        } if path == PREFS_FILE => Some((before.as_deref(), after.as_deref())),
+        _ => None,
+    }) else {
+        return Vec::new();
+    };
+    let (old, new) = (
+        DesktopPrefs::from_files(before, None),
+        DesktopPrefs::from_files(after, None),
+    );
+    let mut cmds = new.live(&old);
+    if new.tiling != old.tiling {
+        cmds.extend(retile(&clients(), new.tiling, &new.float_apps));
+    }
+    cmds
+}
+
+fn reload_after_undo(c: &Controls, r: &wol_core::journal::Reload) {
     use wol_core::theme::{accent, active};
     if let Some(saved) = &r.theme {
         let dark = accent::auto_is_dark(crate::kit::now().hour);

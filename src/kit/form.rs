@@ -46,14 +46,19 @@ pub fn toggle_row(
     row(title, subtitle, &w::toggle(on, changed))
 }
 
-/// [`toggle_row`] for a change that takes time or can fail ([`w::pending_toggle`]).
+/// [`toggle_row`] for a change that takes time or can fail ([`w::pending_toggle_spinner`]): while
+/// it runs the switch waits and a small spinner turns beside it.
 pub fn pending_toggle_row(
     title: &str,
     subtitle: &str,
     on: bool,
     run: impl Fn(bool, Box<dyn FnOnce(bool)>) + 'static,
 ) -> gtk::Widget {
-    row(title, subtitle, &w::pending_toggle(on, run))
+    let (switch, spin) = w::pending_toggle_spinner(on, run);
+    let control = w::hbox(S2);
+    control.append(&spin);
+    control.append(&switch);
+    row(title, subtitle, &control)
 }
 
 /// Pop-up menu of `options`; `changed(index)` after a pick.

@@ -107,6 +107,11 @@ pub struct Board {
     st: RefCell<St>,
     listener: RefCell<Option<Listener>>,
     win: RefCell<Option<gtk::Window>>,
+    /// The gallery's own Top-layer surface (`Spec::widgets_gallery`); None: it stays an overlay
+    /// of `root` (goldens, dev). A desktop moved to Top at runtime stayed under windows (QA bug 5).
+    gallery_win: RefCell<Option<gtk::Window>>,
+    /// Gallery margins (start, end) from [`gallery_margins`], kept for a window attached later.
+    gallery_side: Cell<(i32, i32)>,
     /// Edit Widgets turned on: the other transient panels close (`transient`).
     opened: RefCell<Option<Rc<dyn Fn()>>>,
     /// Saves through the per-display store (`Desks`) instead of writing `file` itself.
@@ -197,6 +202,8 @@ impl Board {
                 }),
                 listener: RefCell::new(None),
                 win: RefCell::new(None),
+                gallery_win: RefCell::new(None),
+                gallery_side: Cell::new((0, 0)),
                 saver: RefCell::new(None),
                 stamp: RefCell::new(None),
             }
@@ -275,6 +282,60 @@ impl Board {
 
     pub fn set_window(&self, win: &gtk::Window) {
         *self.win.borrow_mut() = Some(win.clone());
+    }
+
+    /// Moves the gallery out of the desktop overlay into `win`, its own surface above windows:
+    /// Edit Widgets presents it, Done hides it, the desktop stays on the Bottom layer.
+    pub fn set_gallery_window(&self, win: &gtk::Window) {
+        self.root.remove_overlay(&self.gallery.root);
+        self.gallery.root.set_visible(true);
+        win.set_child(Some(&self.gallery.root));
+        *self.gallery_win.borrow_mut() = Some(win.clone());
+        let (start, end) = self.gallery_side.get();
+        self.side_gallery(start, end);
+        input_only_on(win, &self.gallery.root);
+    }
+
+    /// Puts the gallery `start`/`end` px in from the desktop's sides: the layer margins of its
+    /// own surface, else the overlay child's margins.
+    fn side_gallery(&self, start: i32, end: i32) {
+        self.gallery_side.set((start, end));
+        match self.gallery_win.borrow().as_ref() {
+            Some(win) => gallery_layer_margins(win, start, end),
+            None => {
+                self.gallery.root.set_margin_start(start);
+                self.gallery.root.set_margin_end(end);
+            }
+        }
+    }
+
+    /// Shows or hides the gallery; its own surface is presented (mapped and raised, on the
+    /// desktop's display) so it comes up above an app window such as Settings.
+    fn show_gallery(&self, on: bool) {
+        let Some(gw) = self.gallery_win.borrow().clone() else {
+            self.gallery.root.set_visible(on);
+            return;
+        };
+        if !on {
+            gw.set_visible(false);
+            return;
+        }
+        let mon = self
+            .win
+            .borrow()
+            .as_ref()
+            .and_then(surface::connector_of)
+            .and_then(|c| {
+                super::displays::monitors()
+                    .into_iter()
+                    .find(|(k, _)| *k == c)
+                    .map(|(_, m)| m)
+            });
+        if mon.is_some() {
+            surface::set_monitor(&gw, mon.as_ref());
+        }
+        gw.set_visible(true);
+        gw.present();
     }
 
     fn notify(&self, c: Change) {
@@ -386,8 +447,7 @@ impl Board {
             (x, x + g.m.size(p.size).0)
         });
         let (start, end) = gallery_margins(spans, total, g.m.margin);
-        self.gallery.root.set_margin_start(start);
-        self.gallery.root.set_margin_end(end);
+        self.side_gallery(start, end);
     }
 
     fn origin(&self, p: &Placed) -> (f64, f64) {
@@ -724,14 +784,8 @@ impl Board {
         for id in ids {
             self.refresh_card(&id);
         }
-        self.gallery.root.set_visible(on);
-        if let Some(win) = self.win.borrow().as_ref() {
-            if on {
-                surface::set_layer(win, surface::Layer::Top, surface::Keyboard::OnDemand);
-            } else {
-                surface::set_layer(win, surface::Layer::Bottom, surface::Keyboard::None);
-            }
-        }
+        // The desktop stays on the Bottom layer; the gallery's own surface comes and goes.
+        self.show_gallery(on);
         self.notify(Change::Edit(on));
     }
 
@@ -747,12 +801,13 @@ impl Board {
 
     /// Socket: `show|hide|toggle widgets` (Edit Widgets).
     pub fn command(self: &Rc<Self>, c: &crate::protocol::Command) -> bool {
-        if c.target != "widgets" {
-            return false;
+        match edit_after(c, self.is_editing()) {
+            Some(on) => {
+                self.set_edit(on);
+                true
+            }
+            None => false,
         }
-        let on = crate::protocol::apply(c.verb, self.is_editing());
-        self.set_edit(on);
-        true
     }
 
     /// widgets.json or the package folders changed (`wol shell reload`).
@@ -1006,6 +1061,26 @@ fn local_units() -> Units {
 }
 
 /// Geocoding off the main loop; `done` runs on it.
+/// Edit Widgets after the socket command `c`, None when `c` is not for `widgets`: `hide widgets`
+/// is Done, like the gallery's button and Esc.
+fn edit_after(c: &crate::protocol::Command, editing: bool) -> Option<bool> {
+    (c.target == "widgets").then(|| crate::protocol::apply(c.verb, editing))
+}
+
+/// The gallery surface's left/right layer margins (it spans the bottom edge, `Spec::widgets_gallery`).
+#[cfg(feature = "layer-shell")]
+fn gallery_layer_margins(win: &gtk::Window, start: i32, end: i32) {
+    use gtk4_layer_shell::{Edge, LayerShell};
+    if surface::layered() {
+        LayerShell::set_margin(win, Edge::Left, start);
+        LayerShell::set_margin(win, Edge::Right, end);
+    }
+}
+
+/// Dev toplevels: the window is the gallery's size, no margins.
+#[cfg(not(feature = "layer-shell"))]
+fn gallery_layer_margins(_win: &gtk::Window, _start: i32, _end: i32) {}
+
 /// Gallery margins (start, end): the gallery sits on the wider side clear of every card span.
 fn gallery_margins(spans: impl Iterator<Item = (i32, i32)>, total: i32, pad: i32) -> (i32, i32) {
     let (lo, hi) = spans.fold((i32::MAX, i32::MIN), |(lo, hi), (a, b)| {
@@ -1612,6 +1687,10 @@ fn surface_for(
         _ => glib::Propagation::Proceed,
     });
     win.add_controller(keys);
+    let gallery = gallery_window(app, &board);
+    board.set_gallery_window(gallery.upcast_ref());
+    // A display's board goes with its display (`Desks::split`); its gallery with it.
+    win.connect_destroy(move |_| gallery.destroy());
     let live = Rc::new(Live {
         board: board.clone(),
         sys,
@@ -1651,6 +1730,66 @@ fn surface_for(
         }
     });
     (win, board)
+}
+
+/// The Edit Widgets gallery's own surface for `board` (one per display, like the board): Top
+/// layer, keyboard on demand, hidden until Edit Widgets. Esc and a compositor close are Done.
+fn gallery_window(app: &gtk::Application, board: &Rc<Board>) -> gtk::ApplicationWindow {
+    // `panel`: a transparent window around the glass gallery (kit.css).
+    let gw = super::window(app, "panel", surface::Spec::widgets_gallery());
+    gw.add_css_class("widgets-gallery");
+    let b = Rc::downgrade(board);
+    surface::on_escape(&gw, move || {
+        if let Some(b) = b.upgrade() {
+            b.set_edit(false);
+        }
+    });
+    // Its display went away, or the compositor closed it: Done, and the window stays for the next
+    // Edit Widgets (not destroyed).
+    let b = Rc::downgrade(board);
+    gw.connect_close_request(move |w| {
+        match b.upgrade() {
+            Some(b) if b.is_editing() => b.set_edit(false),
+            _ => w.set_visible(false),
+        }
+        glib::Propagation::Stop
+    });
+    gw
+}
+
+/// The gallery surface spans the free width; clicks beside the glass go through to the desktop:
+/// the input region follows `part`'s bounds after each frame the window draws (none while idle),
+/// set only on a change.
+fn input_only_on(win: &gtk::Window, part: &gtk::Box) {
+    if !surface::layered() {
+        return;
+    }
+    let part = part.downgrade();
+    win.connect_realize(move |win| {
+        let (Some(clock), Some(s)) = (win.frame_clock(), win.surface()) else {
+            return;
+        };
+        let (w, part, last) = (win.downgrade(), part.clone(), Cell::new(None));
+        clock.connect_after_paint(move |_| {
+            let (Some(win), Some(part)) = (w.upgrade(), part.upgrade()) else {
+                return;
+            };
+            let Some(b) = part.compute_bounds(&win) else {
+                return;
+            };
+            let (x, y) = (b.x().floor() as i32, b.y().floor() as i32);
+            let r = (
+                x,
+                y,
+                b.width().ceil() as i32 + 1,
+                b.height().ceil() as i32 + 1,
+            );
+            if last.replace(Some(r)) != Some(r) {
+                let rect = gtk::cairo::RectangleInt::new(r.0, r.1, r.2, r.3);
+                s.set_input_region(Some(&gtk::cairo::Region::create_rectangle(&rect)));
+            }
+        });
+    });
 }
 
 /// One display's board and the widget ids it holds in the saved layout.
@@ -1821,6 +1960,24 @@ mod gallery_tests {
             (0, 444)
         );
         assert_eq!(gallery_margins(std::iter::empty(), 1920, 24), (0, 0));
+    }
+}
+
+/// QA bug 5: `wol shell hide widgets` is Done (the gallery's button and Esc call `set_edit(false)`
+/// too); other targets are not the board's.
+#[cfg(test)]
+mod edit_command_tests {
+    use super::edit_after;
+    use crate::protocol::parse;
+
+    #[test]
+    fn hide_widgets_is_done() {
+        let c = |l: &str| parse(l).expect(l);
+        assert_eq!(edit_after(&c("hide widgets"), true), Some(false));
+        assert_eq!(edit_after(&c("hide widgets"), false), Some(false));
+        assert_eq!(edit_after(&c("show widgets"), false), Some(true));
+        assert_eq!(edit_after(&c("toggle widgets"), true), Some(false));
+        assert_eq!(edit_after(&c("hide transient"), true), None);
     }
 }
 

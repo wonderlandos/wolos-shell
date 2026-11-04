@@ -575,3 +575,207 @@ fn live_host_snapshot() {
     println!("{s:#?}\nnetwork {:?}", sys.network());
     assert!(s.volume.is_some() || s.wifi_on.is_some());
 }
+
+/// A FakeHost whose Bluetooth and monitor helpers take `delay` (the slow topic, as on a VM with
+/// bluetoothctl waiting on its daemon).
+struct SlowHost {
+    fake: wol_core::system::fake::FakeHost,
+    delay: std::time::Duration,
+}
+
+impl wol_core::system::Host for SlowHost {
+    fn now(&self) -> f64 {
+        self.fake.now()
+    }
+    fn read_text(&self, path: &str) -> Option<String> {
+        self.fake.read_text(path)
+    }
+    fn run(&self, argv: &[&str]) -> Option<String> {
+        if matches!(argv.first(), Some(&"bluetoothctl" | &"hyprctl")) {
+            std::thread::sleep(self.delay);
+        }
+        self.fake.run(argv)
+    }
+    fn load_average(&self) -> Option<wol_core::system::Load> {
+        self.fake.load_average()
+    }
+    fn list_dir(&self, dir: &str) -> Vec<String> {
+        self.fake.list_dir(dir)
+    }
+}
+
+/// wol-admind's answer: NeedsAuth without a password, Ok with "right", Denied with any other.
+/// Every request is logged with the password it carried.
+fn asking_admin(c: &mut Controls) -> Arc<Mutex<Vec<(String, String)>>> {
+    use shared::admin::AdminReply;
+    let sent = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+    let log = sent.clone();
+    c.admin = Arc::new(move |req, pw| {
+        log.lock()
+            .unwrap()
+            .push((req.action.name().to_string(), pw.to_string()));
+        Some(match pw {
+            "" => AdminReply::NeedsAuth,
+            "right" => AdminReply::Ok,
+            _ => AdminReply::Denied,
+        })
+    });
+    sent
+}
+
+fn admin_action(action: shared::admin::AdminAction, arg: &str) -> Action {
+    Action::Admin(shared::admin::AdminRequest {
+        action,
+        args: vec![arg.into()],
+    })
+}
+
+/// QA 0.12.0 bug 3: the Authenticate sheet came up seconds late. wol-admind's NeedsAuth came
+/// back at once, but the reply waited on a refresh of every topic (and on the 1 s poll's refresh
+/// in progress). An answer that changed nothing is replied at once, whatever its topics cost.
+#[test]
+fn needs_auth_is_answered_before_any_refresh() {
+    use shared::admin::AdminAction as A;
+    let delay = std::time::Duration::from_millis(500);
+    let h = Arc::new(SlowHost {
+        fake: wol_core::system::fake::FakeHost::new(false),
+        delay,
+    });
+    let mut c = Controls::new(h);
+    let sent = asking_admin(&mut c);
+    let (_tick, ticks) = std::sync::mpsc::channel();
+    let sys = CoreSystem::with_ticks(c, Sysfs::default(), None, ticks);
+    // The watched poll is mid-run on the slow topic (it holds the one-refresh lock).
+    let poll = {
+        let i = sys.inner.clone();
+        std::thread::spawn(move || i.refresh(true))
+    };
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    for a in [
+        admin_action(A::Hostname, "alice-pc"),
+        // Its topics (slow, panel) are the slow ones: an answer that changed nothing skips them.
+        admin_action(A::Bluetooth, "on"),
+    ] {
+        let t = std::time::Instant::now();
+        let r = sys.spawn(a.clone()).recv_blocking();
+        let took = t.elapsed();
+        assert_eq!(r, Ok(Err(ActionError::NeedsAuth)), "{a:?}");
+        assert!(
+            took < std::time::Duration::from_millis(100),
+            "{a:?}: NeedsAuth after {took:?}"
+        );
+    }
+    poll.join().unwrap();
+    assert_eq!(sent.lock().unwrap().len(), 2);
+}
+
+/// QA 0.12.0 bugs 4 and 6: two changes waited on one Authenticate sheet; the password went to
+/// whichever ran first and the other asked again. Each retry carries its own copy now.
+#[test]
+fn two_queued_changes_both_carry_the_password() {
+    use shared::admin::AdminAction as A;
+    let h = Arc::new(wol_core::system::fake::FakeHost::new(false));
+    let mut c = Controls::new(h);
+    let sent = asking_admin(&mut c);
+    let (_tick, ticks) = std::sync::mpsc::channel();
+    let sys = CoreSystem::with_ticks(c, Sysfs::default(), None, ticks);
+    let (a, b) = (
+        admin_action(A::RemoteLogin, "on"),
+        admin_action(A::AirPlayReceiver, "on"),
+    );
+    for x in [&a, &b] {
+        assert_eq!(
+            sys.spawn(x.clone()).recv_blocking(),
+            Ok(Err(ActionError::NeedsAuth))
+        );
+    }
+    let (ra, rb) = (
+        sys.spawn_with(a, Some("right")),
+        sys.spawn_with(b, Some("right")),
+    );
+    assert_eq!(ra.recv_blocking(), Ok(Ok(())));
+    assert_eq!(rb.recv_blocking(), Ok(Ok(())));
+    let mut log = sent.lock().unwrap().clone();
+    log.sort();
+    assert_eq!(
+        log,
+        [
+            ("airplay-receiver".to_string(), String::new()),
+            ("airplay-receiver".to_string(), "right".to_string()),
+            ("remote-login".to_string(), String::new()),
+            ("remote-login".to_string(), "right".to_string()),
+        ]
+    );
+    // A retry's own password is never left behind for an unrelated action.
+    assert!(sys.inner.password.lock().unwrap().is_empty());
+    assert_eq!(
+        sys.spawn_with(admin_action(A::Hostname, "alice-pc"), Some("wrong"))
+            .recv_blocking(),
+        Ok(Err(ActionError::Denied))
+    );
+}
+
+/// A Sharing or computer-name request re-read every topic before its reply (QA 0.12.0 bug 3):
+/// only what the request changes is read again now.
+#[test]
+fn admin_requests_read_only_their_topics() {
+    use shared::admin::AdminAction as A;
+    for a in [
+        A::Hostname,
+        A::RemoteLogin,
+        A::AirPlayReceiver,
+        A::Firewall,
+        A::PrinterAdd,
+    ] {
+        assert_eq!(topics_of(&admin_action(a, "x")), [false; TOPICS], "{a:?}");
+    }
+    assert_eq!(
+        topics_of(&admin_action(A::WifiPower, "on")),
+        [false, true, false, false, false]
+    );
+    assert_eq!(
+        topics_of(&admin_action(A::Bluetooth, "on")),
+        topics_of(&Action::Bluetooth(true))
+    );
+    assert_eq!(
+        topics_of(&admin_action(A::WifiJoin, "x")),
+        topics_of(&Action::WifiJoin("x".into(), None))
+    );
+}
+
+/// QA 0.12.0 bug 9: undoing a desktop change rewrote the file but only reloaded the compositor;
+/// the keywords the undo brings back are set live, and a tiling switch re-tiles open windows.
+#[test]
+fn a_desktop_undo_sets_the_restored_keywords_live() {
+    use wol_core::hyprprefs::{DesktopPrefs, PREFS_FILE};
+    use wol_core::journal::{Change, Entry};
+    let old = DesktopPrefs::default();
+    let mut new = old.clone();
+    new.tiling = !old.tiling;
+    let file = |p: &DesktopPrefs| Some(p.to_json());
+    let undo = Entry {
+        id: 7,
+        t: 0,
+        by: "settings".into(),
+        what: "desktop".into(),
+        changes: vec![Change::File {
+            path: PREFS_FILE.into(),
+            before: file(&old),
+            after: file(&new),
+        }],
+        undoes: Some(6),
+    };
+    let asked = std::cell::Cell::new(false);
+    let cmds = desktop_undo_cmds(&undo, || {
+        asked.set(true);
+        "[]".into()
+    });
+    assert!(asked.get(), "a tiling switch reads the open windows");
+    assert_eq!(cmds, new.live(&old));
+    let other = Entry {
+        what: "sound".into(),
+        changes: vec![],
+        ..undo
+    };
+    assert!(desktop_undo_cmds(&other, || unreachable!()).is_empty());
+}

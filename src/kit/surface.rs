@@ -102,7 +102,7 @@ impl Spec {
         }
     }
     /// Desktop widgets: above the wallpaper, below windows, inside the menu bar and Dock zones.
-    /// Edit Widgets raises it above windows (`set_layer`) and lets it take the keyboard.
+    /// It stays there in Edit Widgets; the gallery has its own surface ([`Spec::widgets_gallery`]).
     pub const fn desktop() -> Self {
         Spec {
             namespace: "wol-desktop",
@@ -110,6 +110,16 @@ impl Spec {
             anchor: [true; 4],
             exclusive: false,
             keyboard: Keyboard::None,
+        }
+    }
+    /// Edit Widgets' gallery: its own surface above app windows (Top, not the desktop re-layered
+    /// at runtime, which stayed under Settings: QA bug 5), along the bottom edge inside the Dock
+    /// zone, left/right layer margins keep it clear of the cards. A `wol-panel-*` namespace:
+    /// the compositor's glass rule blurs it and forwards Esc while it is mapped.
+    pub const fn widgets_gallery() -> Self {
+        Spec {
+            layer: Layer::Top,
+            ..Self::panel("wol-panel-widgets", span(Edge::Bottom), Keyboard::OnDemand)
         }
     }
     /// Click-catcher under open transient panels: covers the screen between the menu bar and
@@ -700,6 +710,25 @@ mod tests {
         assert_eq!(Spec::dock(Edge::Bottom).namespace, "wol-dock");
         assert!(Spec::menubar().exclusive && Spec::dock(Edge::Bottom).exclusive);
         assert_eq!(Spec::wallpaper().layer, Layer::Background);
+        // The compositor blurs `^(wol-menubar|wol-dock|wol-panel-.*)$` (desktop hyprland.conf).
+        assert!(Spec::widgets_gallery().namespace.starts_with("wol-panel-"));
+    }
+
+    /// QA bug 5: the gallery is its own Top-layer surface (above Settings) that takes the
+    /// keyboard on demand; the desktop under it stays on the Bottom layer.
+    #[test]
+    fn widgets_gallery_is_its_own_top_surface() {
+        let g = Spec::widgets_gallery();
+        assert_eq!(g.namespace, "wol-panel-widgets");
+        assert_eq!(g.layer, Layer::Top);
+        assert_eq!(g.keyboard, Keyboard::OnDemand);
+        // [top, bottom, left, right]: the bottom edge, both sides (layer margins clear the cards).
+        assert_eq!(g.anchor, [false, true, true, true]);
+        assert!(!g.exclusive);
+        assert_eq!(g.zone(), Zone::Respect, "above the Dock, not under it");
+        assert_eq!(g.on_output_lost(), OutputLost::Hide);
+        let d = Spec::desktop();
+        assert_eq!((d.layer, d.keyboard), (Layer::Bottom, Keyboard::None));
     }
 
     /// Live on the compositor: the screenshot bar sat at the left edge, the thumbnail bottom-left.

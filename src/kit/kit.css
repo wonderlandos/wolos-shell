@@ -510,8 +510,8 @@ button.corner-button:hover { background: var(--control); }
 .widget-gallery button.row-button.selected { background: var(--control); }
 /* Opaque: desktop cards behind the gallery never show through its text. */
 .glass-panel.widget-gallery { background: var(--surface); }
-list.sidebar row.source-gap { min-height: 12px; }
-list.sidebar row.source-gap:hover { background: none; }
+/* Space above a sidebar group: a list header, not a row, so arrow keys never stop on it. */
+list.sidebar > .source-gap { min-height: 12px; }
 .subpage-header { margin-left: -4px; }
 
 /* ---- Pickers (kit/pickers.rs): Looks previews and preset cards, colour wells, usage bar, key caps ---- */
@@ -565,9 +565,12 @@ button.btn:hover { background-image: image(alpha(currentColor, 0.08)); }
 button.btn:active, button.capture-close:active, button.capture-mode:active, button.control-detail:active, button.corner-button:active, button.detail-link:active, button.device-button:active, button.get-button:active, button.hit:active, button.icon-button:active, button.lock-round:active, button.lock-submit:active, button.menubar-item:active, button.menu-item:active, button.nav-row:active, button.overview-window-button:active, button.row-button:active, button.session-item:active, button.shortcut-recorder:active, button.square-tile:active, button.stack-item:active, button.toggle-tile:active { background-image: image(alpha(black, 0.16)); }
 button.btn:disabled { opacity: 0.45; }
 button.dock-tile:active image { -gtk-icon-filter: brightness(0.65); }
-/* Keyboard focus, everywhere: a 2 px accent ring 2 px off the widget. Surfaces that draw focus differently say so. */
-*:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-window:focus-visible, viewport:focus-visible, scrolledwindow:focus-visible { outline: none; }
+/* Keyboard focus, everywhere: a 2 px accent ring 2 px off the focused control only. GTK marks every
+   ancestor of the focus :focus-visible too (the rows, cards and pages around it), so the ring keys on
+   :focus, the widget itself; a text field rings the whole field, not its inner text node
+   (kit::check "ring only on the focused control"). Surfaces that draw focus differently say so. */
+*:focus:focus-visible, entry:focus-visible, spinbutton:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+entry > text:focus:focus-visible, spinbutton > text:focus:focus-visible { outline: none; }
 
 /* A note on the desktop: text straight on the card, no field box. */
 .note-widget { padding: 4px; }

@@ -131,6 +131,18 @@ fn ink(w: &gtk::Widget, root: &gtk::Widget) -> Option<Rect> {
     out
 }
 
+/// `w` draws the keyboard focus ring now: kit.css's "Keyboard focus" rule, which rings the focused
+/// widget itself (GTK marks every ancestor `:focus-visible` too) and a text field around its
+/// focused inner text (pinned by `the_ring_model_is_the_stylesheets_rule`).
+fn rings(w: &gtk::Widget) -> bool {
+    let f = w.state_flags();
+    let field = |x: &gtk::Widget| matches!(x.css_name().as_str(), "entry" | "spinbutton");
+    f.contains(gtk::StateFlags::FOCUS_VISIBLE)
+        && (field(w)
+            || (f.contains(gtk::StateFlags::FOCUSED)
+                && !(w.css_name() == "text" && w.parent().is_some_and(|p| field(&p)))))
+}
+
 /// Measured tree rooted at `w`; coordinates relative to `root`.
 pub fn tree(w: &gtk::Widget, root: &gtk::Widget, parent: &str) -> Node {
     let path = if parent.is_empty() {
@@ -169,6 +181,7 @@ pub fn tree(w: &gtk::Widget, root: &gtk::Widget, parent: &str) -> Node {
         list_row: w.has_css_class("list-row"),
         clipped_text,
         square: w.has_css_class("avatar"),
+        ring: rings(w),
         inset: if w.has_css_class("glass-panel") || w.has_css_class("module") {
             layout::Inset::Panel
         } else if ["card-list", "sheet", "widget-card"]
@@ -241,6 +254,24 @@ fn covered_cards(top: &gtk::Widget, root: &gtk::Widget) -> Vec<layout::Issue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The kit.css focus rules [`rings`] models, as written there.
+    const RING_RULE: &str = "*:focus:focus-visible, entry:focus-visible, spinbutton:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }";
+    const RING_TEXT_RULE: &str = "entry > text:focus:focus-visible, spinbutton > text:focus:focus-visible { outline: none; }";
+
+    /// [`rings`] models kit.css's focus rule: the two must say the same, and the old catch-all
+    /// `*:focus-visible` (a ring on every ancestor of the focus) must not come back.
+    #[test]
+    fn the_ring_model_is_the_stylesheets_rule() {
+        let css = include_str!("kit.css");
+        for rule in [RING_RULE, RING_TEXT_RULE] {
+            assert!(css.contains(&format!("\n{rule}\n")), "kit.css has {rule}");
+        }
+        assert!(
+            !css.contains("\n*:focus-visible"),
+            "a ring on every ancestor of the focus"
+        );
+    }
 
     /// A scroller's content counts only where the scroller shows it (the share sheet's long
     /// entry is not ink below the sheet).

@@ -13,6 +13,8 @@ use std::rc::Rc;
 mod app_view_cases;
 #[path = "golden_cases/controlcenter.rs"]
 mod controlcenter_cases;
+#[path = "golden_cases/focus.rs"]
+mod focus_cases;
 #[path = "golden_cases/font.rs"]
 mod font_cases;
 #[path = "golden_cases/form_kit.rs"]
@@ -1242,6 +1244,7 @@ fn cases() -> Vec<Case> {
     v.extend(audit4_shell_cases());
     v.extend(widget_cases::cases());
     v.extend(settings_cases::cases());
+    v.extend(focus_cases::cases());
     v.extend(plugin_host_cases::cases());
     v.extend(package_cases::cases());
     v.extend(app_view_cases::cases());
@@ -1758,6 +1761,8 @@ fn main() {
     regressions::the_dock_takes_a_new_layout();
     motion_cases::reduce_motion_snaps();
     regressions::an_app_tile_keeps_one_source_badge();
+    focus_cases::sidebar_arrows_go_from_group_to_group();
+    focus_cases::only_the_focused_control_has_the_ring();
     let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("golden");
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");

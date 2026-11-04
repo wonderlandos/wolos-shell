@@ -439,32 +439,64 @@ fn read(p: &std::path::Path) -> Option<String> {
     std::fs::read_to_string(p).ok()
 }
 
-/// Atomic write (watchers never see half a file).
-/// Settings file change recorded in the journal (`wol undo`, Settings > Restore).
+/// Settings file change recorded in the journal (`wol undo`, Settings > Restore); the window's
+/// Undo toast hears of it with its entry id ([`changed`]).
 fn save_journaled(what: &str, rel: &str, text: Option<&str>) -> std::io::Result<()> {
-    wol_core::journal::Journal::for_config(&PathBuf::from(kit::config_home())).save(
+    save_entry(what, rel, text).map(drop)
+}
+
+/// [`save_journaled`], returning the journal entry's id (None = the file already had `text`, so
+/// nothing was recorded and no toast offers to undo an older change).
+fn save_entry(what: &str, rel: &str, text: Option<&str>) -> std::io::Result<Option<u64>> {
+    let id = wol_core::journal::Journal::for_config(&PathBuf::from(kit::config_home())).save(
         what,
         "settings",
         &[(rel, text)],
         wol_core::journal::now(),
     )?;
-    changed(what);
-    Ok(())
+    if let Some(id) = id {
+        changed(what, id);
+    }
+    Ok(id)
 }
 
-/// Called with what changed (as in the journal).
-type ChangeHook = Rc<dyn Fn(&str)>;
+/// Called with what changed (as in the journal) and the journal entry that recorded it. The
+/// toast's Undo reverts that entry: reading the newest entry instead reverted an older change
+/// when a save recorded nothing (QA 0.12.0 bug 9).
+type ChangeHook = Rc<dyn Fn(&str, u64)>;
 
 thread_local! {
     /// The Settings window's hook for journaled changes (its Undo toast); unset elsewhere.
     static CHANGED: RefCell<Option<ChangeHook>> = const { RefCell::new(None) };
 }
 
-/// Tells the window that a journaled change (`what`, as in the journal) was just saved.
-fn changed(what: &str) {
+/// Tells the window that the journaled change `id` (`what`, as in the journal) was just saved.
+fn changed(what: &str, id: u64) {
     if let Some(f) = CHANGED.with(|c| c.borrow().clone()) {
-        f(what)
+        f(what, id)
     }
+}
+
+/// [`changed`] for a save made in `wol_core` (desktop prefs, shortcuts, sound fragments), whose
+/// entry id does not come back: Settings' newest entry about `what`, if any.
+fn changed_latest(what: &str) {
+    if CHANGED.with(|c| c.borrow().is_none()) {
+        return;
+    }
+    let j = wol_core::journal::Journal::for_config(&PathBuf::from(kit::config_home()));
+    if let Some(id) = latest_entry(&j.entries(), what) {
+        changed(what, id)
+    }
+}
+
+/// The id of the newest entry Settings recorded about `what` (oldest-first `entries`), never an
+/// undo's own entry.
+fn latest_entry(entries: &[wol_core::journal::Entry], what: &str) -> Option<u64> {
+    entries
+        .iter()
+        .rev()
+        .find(|e| e.what == what && e.by == "settings" && e.undoes.is_none())
+        .map(|e| e.id)
 }
 
 /// Runs argv lists in order on a worker thread (2 s timeout each); never blocks the UI.
@@ -558,11 +590,124 @@ fn control_in<T: IsA<gtk::Widget>>(row: &gtk::Widget) -> Option<T> {
 /// Completion callback for one action.
 pub(crate) type Done = Rc<dyn Fn(Result<(), ActionError>)>;
 
+/// A change waiting on the Authenticate sheet, with the status line that tells how it went.
+pub(crate) struct Waiting {
+    a: Action,
+    done: Done,
+    status: Option<gtk::Label>,
+}
+
+/// After this many wrong passwords in a row the sheet stops asking: every waiting change fails
+/// and its control flips back (QA 0.12.0 bug 4: the sheet looped forever).
+const MAX_REFUSALS: u32 = 3;
+/// A change with no answer after this long says "Checking…" on its status line (QA 0.12.0 bug 7).
+const CHECKING_AFTER: std::time::Duration = std::time::Duration::from_millis(300);
+/// The sheet stays up (busy) at most this long after Allow: a wrong password answers within it,
+/// a long change (an install) goes on under its status line.
+const AUTH_HOLD: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// What the Authenticate sheet does with one answer.
+pub(crate) enum Next {
+    /// The change ended: its `done` gets this.
+    Finish(Waiting, Result<(), ActionError>),
+    /// It waits for the password: the sheet shows, with this sentence (may be empty).
+    Ask(&'static str),
+    /// Too many wrong passwords: every waiting change fails with `Denied`.
+    GiveUp(Vec<Waiting>),
+}
+
+/// The Authenticate sheet's bookkeeping, GTK-free (QA 0.12.0 bugs 4, 6). Every change that
+/// answered `NeedsAuth` waits here in order; one password re-runs all of them, each with its own
+/// copy (a one-shot slot went to whichever ran first); Cancel fails all of them. A single slot
+/// lost the first change and left its switch grey.
+#[derive(Default)]
+pub(crate) struct AuthQueue {
+    waiting: std::collections::VecDeque<Waiting>,
+    /// Wrong passwords in a row (one per Allow, however many changes it re-ran).
+    refusals: u32,
+    /// The Allow that was last counted as a wrong password.
+    counted: u32,
+    /// Allows so far: numbers the retries.
+    attempt: u32,
+    /// Retries sent with a typed password and not answered yet.
+    checking: usize,
+    /// The Allow whose wrong password ended the sheet: its later answers fail at once too.
+    gave_up: u32,
+}
+
+impl AuthQueue {
+    /// A change was sent; `retry` = the Allow it carries the password of.
+    pub(crate) fn sent(&mut self, retry: Option<u32>) {
+        if retry.is_some() {
+            self.checking += 1;
+        }
+    }
+    /// The answer `r` to `w` (sent with the password of Allow `retry`, if any).
+    pub(crate) fn answered(
+        &mut self,
+        w: Waiting,
+        r: Result<(), ActionError>,
+        retry: Option<u32>,
+    ) -> Next {
+        if retry.is_some() {
+            self.checking = self.checking.saturating_sub(1);
+        }
+        match r {
+            Err(ActionError::NeedsAuth | ActionError::Denied)
+                if retry.is_some() && retry == Some(self.gave_up) =>
+            {
+                Next::Finish(w, Err(ActionError::Denied))
+            }
+            Err(e @ (ActionError::NeedsAuth | ActionError::Denied)) => {
+                if let Some(n) = retry
+                    && n != self.counted
+                {
+                    self.counted = n;
+                    self.refusals += 1;
+                }
+                self.waiting.push_back(w);
+                if self.refusals >= MAX_REFUSALS {
+                    self.refusals = 0;
+                    self.gave_up = retry.unwrap_or_default();
+                    return Next::GiveUp(self.waiting.drain(..).collect());
+                }
+                Next::Ask(if retry.is_some() || e == ActionError::Denied {
+                    ActionError::Denied.message()
+                } else {
+                    ""
+                })
+            }
+            r => {
+                if retry.is_some() && r.is_ok() {
+                    self.refusals = 0;
+                }
+                Next::Finish(w, r)
+            }
+        }
+    }
+    /// Allow: every waiting change, in order, and the number of this Allow.
+    pub(crate) fn allow(&mut self) -> (Vec<Waiting>, u32) {
+        self.attempt = self.attempt.wrapping_add(1).max(1);
+        (self.waiting.drain(..).collect(), self.attempt)
+    }
+    /// Cancel: every waiting change (each fails with `Denied`).
+    pub(crate) fn cancel(&mut self) -> Vec<Waiting> {
+        self.refusals = 0;
+        self.waiting.drain(..).collect()
+    }
+    pub(crate) fn len(&self) -> usize {
+        self.waiting.len()
+    }
+    pub(crate) fn checking(&self) -> usize {
+        self.checking
+    }
+}
+
 /// Shared page state: the System, the Authenticate sheet and an inline status line per action.
 pub(crate) struct Ctx {
     pub(crate) sys: Rc<dyn System>,
     auth: w::AuthSheet,
-    pending: RefCell<Option<(Action, Done)>>,
+    queue: RefCell<AuthQueue>,
 }
 
 impl Ctx {
@@ -571,7 +716,7 @@ impl Ctx {
         let ctx = Rc::new(Ctx {
             sys,
             auth: w::authenticate_sheet(who),
-            pending: Default::default(),
+            queue: Default::default(),
         });
         let c = ctx.clone();
         ctx.auth.allow.connect_clicked(move |_| c.allow());
@@ -592,31 +737,25 @@ impl Ctx {
     }
     /// `a` off the UI thread; root actions ask for the password, then retry; `done` gets the final result.
     pub(crate) fn act(self: &Rc<Self>, a: Action, done: Rc<dyn Fn(Result<(), ActionError>)>) {
-        let rx = self.sys.spawn(a.clone());
-        let c = self.clone();
-        glib::spawn_future_local(async move {
-            let Ok(r) = rx.recv().await else { return };
-            match r {
-                Err(e @ (ActionError::NeedsAuth | ActionError::Denied)) => {
-                    c.auth.message.set_label(if e == ActionError::Denied {
-                        e.message()
-                    } else {
-                        ""
-                    });
-                    *c.pending.borrow_mut() = Some((a, done));
-                    c.auth.revealer.set_reveal_child(true);
-                    c.auth.field.grab_focus();
-                }
-                r => done(r),
-            }
-        });
+        self.run(
+            Waiting {
+                a,
+                done,
+                status: None,
+            },
+            None,
+        );
     }
     /// `a`, then its one-sentence error (if any) on `status`.
     pub(crate) fn act_say(self: &Rc<Self>, a: Action, status: &gtk::Label) {
         let st = status.clone();
-        self.act(
-            a,
-            Rc::new(move |r| say(&st, r.err().map_or("", |e| e.message()))),
+        self.run(
+            Waiting {
+                a,
+                done: Rc::new(move |r| say(&st, r.err().map_or("", |e| e.message()))),
+                status: Some(status.clone()),
+            },
+            None,
         );
     }
     /// [`Self::act_say`] for a switch: `done(ok)` lets it settle or flip back.
@@ -627,32 +766,131 @@ impl Ctx {
         done: Box<dyn FnOnce(bool)>,
     ) {
         let (st, done) = (status.clone(), std::cell::RefCell::new(Some(done)));
-        self.act(
-            a,
-            Rc::new(move |r| {
-                say(&st, r.as_ref().err().map_or("", |e| e.message()));
-                if let Some(d) = done.borrow_mut().take() {
-                    d(r.is_ok())
-                }
-            }),
+        self.run(
+            Waiting {
+                a,
+                done: Rc::new(move |r| {
+                    say(&st, r.as_ref().err().map_or("", |e| e.message()));
+                    if let Some(d) = done.borrow_mut().take() {
+                        d(r.is_ok())
+                    }
+                }),
+                status: Some(status.clone()),
+            },
+            None,
         );
     }
-    fn allow(self: &Rc<Self>) {
-        let pw = self.auth.field.text();
-        self.auth.field.set_text("");
-        if let Err(e) = self.sys.authorize(&pw) {
-            return self.auth.message.set_label(e.message());
+    /// Sends `w` (with the password of Allow number `pw.1`, if any) and handles its answer.
+    fn run(self: &Rc<Self>, w: Waiting, pw: Option<(Rc<str>, u32)>) {
+        let rx = self
+            .sys
+            .spawn_with(w.a.clone(), pw.as_ref().map(|(p, _)| &**p));
+        let retry = pw.map(|(_, n)| n);
+        self.queue.borrow_mut().sent(retry);
+        let answered = Rc::new(Cell::new(false));
+        if let Some(st) = w.status.clone() {
+            let answered = answered.clone();
+            glib::timeout_add_local_once(CHECKING_AFTER, move || {
+                if !answered.get() {
+                    say(&st, crate::copy::CHECKING);
+                }
+            });
         }
-        self.auth.revealer.set_reveal_child(false);
-        if let Some((a, done)) = self.pending.borrow_mut().take() {
-            self.act(a, done);
+        let c = self.clone();
+        glib::spawn_future_local(async move {
+            let Ok(r) = rx.recv().await else { return };
+            answered.set(true);
+            if let Some(st) = &w.status {
+                if st.text() == crate::copy::CHECKING {
+                    say(st, "");
+                }
+                // The sheet says it too; the status line keeps it once the sheet is gone.
+                if retry.is_some() && matches!(r, Err(ActionError::Denied | ActionError::NeedsAuth))
+                {
+                    say(st, ActionError::Denied.message());
+                }
+            }
+            let next = c.queue.borrow_mut().answered(w, r, retry);
+            match next {
+                Next::Finish(w, r) => (w.done)(r),
+                Next::Ask(message) => c.ask(message),
+                Next::GiveUp(all) => {
+                    c.auth.revealer.set_reveal_child(false);
+                    for w in all {
+                        (w.done)(Err(ActionError::Denied));
+                    }
+                }
+            }
+            c.settle();
+        });
+    }
+    /// Shows the sheet for the waiting changes.
+    fn ask(&self, message: &str) {
+        let n = self.queue.borrow().len();
+        let text = if message.is_empty() && n > 1 {
+            crate::copy::auth_waiting(n)
+        } else {
+            message.to_string()
+        };
+        self.auth.message.set_label(&text);
+        if !self.auth.revealer.reveals_child() {
+            self.auth.revealer.set_reveal_child(true);
+        }
+        if self.queue.borrow().checking() == 0 {
+            self.auth.field.grab_focus();
         }
     }
-    fn cancel(&self) {
-        if let Some((_, done)) = self.pending.borrow_mut().take() {
-            done(Err(ActionError::Denied));
+    /// Once no retry is out: the sheet takes input again, or goes when nothing waits.
+    fn settle(&self) {
+        let q = self.queue.borrow();
+        if q.checking() > 0 {
+            return;
         }
+        self.auth.set_busy(false);
+        self.auth.allow.set_sensitive(true);
+        self.auth.field.set_sensitive(true);
+        if q.len() == 0 {
+            self.auth.revealer.set_reveal_child(false);
+        } else {
+            self.auth.field.grab_focus();
+        }
+    }
+    fn allow(self: &Rc<Self>) {
+        if self.queue.borrow().checking() > 0 {
+            return;
+        }
+        let pw: Rc<str> = self.auth.field.text().as_str().into();
+        self.auth.field.set_text("");
+        let (all, n) = self.queue.borrow_mut().allow();
+        if all.is_empty() {
+            return self.auth.revealer.set_reveal_child(false);
+        }
+        self.auth.message.set_label("");
+        self.auth.set_busy(true);
+        self.auth.allow.set_sensitive(false);
+        self.auth.field.set_sensitive(false);
+        for w in all {
+            self.run(w, Some((pw.clone(), n)));
+        }
+        drop(pw);
+        // A long change (an install) does not hold the sheet: its status line says "Checking…".
+        let c = Rc::downgrade(self);
+        glib::timeout_add_local_once(AUTH_HOLD, move || {
+            let Some(c) = c.upgrade() else { return };
+            if c.queue.borrow().len() == 0 && c.queue.borrow().checking() > 0 {
+                c.auth.set_busy(false);
+                c.auth.allow.set_sensitive(true);
+                c.auth.field.set_sensitive(true);
+                c.auth.revealer.set_reveal_child(false);
+            }
+        });
+    }
+    fn cancel(&self) {
+        let all = self.queue.borrow_mut().cancel();
         self.auth.revealer.set_reveal_child(false);
+        for w in all {
+            (w.done)(Err(ActionError::Denied));
+        }
     }
 }
 
@@ -1024,14 +1262,12 @@ fn undo_toast(aw: &w::AppWindow, env: &Rc<Env>) {
     let sys = env.sys().clone();
     let hook: ChangeHook = {
         let toast = Rc::downgrade(&toast);
-        Rc::new(move |what: &str| {
+        Rc::new(move |what: &str, id: u64| {
             let Some(t) = toast.upgrade() else { return };
             if !t.revealer.reveals_child() {
                 burst.borrow_mut().clear();
             }
-            if let Some(id) = sys.history().first().map(|e| e.id)
-                && !burst.borrow().contains(&id)
-            {
+            if !burst.borrow().contains(&id) {
                 burst.borrow_mut().push(id);
             }
             let (sys, burst, rebuild, toast) = (
@@ -1150,7 +1386,7 @@ impl Desk {
             Rc::new(move |r| {
                 say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
                 if r.is_ok() {
-                    changed("desktop");
+                    changed_latest("desktop");
                 } else {
                     me.reload();
                     if let Some(f) = failed.borrow_mut().take() {
@@ -1175,7 +1411,7 @@ impl Desk {
             Rc::new(move |r| {
                 say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
                 if r.is_ok() {
-                    changed("desktop");
+                    changed_latest("desktop");
                 } else {
                     me.reload();
                 }
@@ -1235,7 +1471,7 @@ impl Keys {
             Rc::new(move |r| {
                 say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
                 if r.is_ok() {
-                    changed("shortcuts");
+                    changed_latest("shortcuts");
                 } else {
                     me.reload();
                     let resync = me.resync.borrow().upgrade();
@@ -1322,6 +1558,216 @@ fn load_shell() -> ShellPrefs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// wol-admind as the sheet meets it: NeedsAuth without a password, Ok with "right",
+    /// Denied with any other; `pkg` actions are wold's refusal (no password helps).
+    #[derive(Default)]
+    struct Asking {
+        sent: std::sync::Mutex<Vec<(Action, Option<String>)>>,
+    }
+
+    impl System for Asking {
+        fn battery(&self) -> Option<crate::status::Battery> {
+            None
+        }
+        fn audio(&self) -> crate::status::Audio {
+            Default::default()
+        }
+        fn network(&self) -> crate::status::Network {
+            Default::default()
+        }
+        fn brightness(&self) -> Option<u8> {
+            None
+        }
+        fn spawn_with(&self, a: Action, pw: Option<&str>) -> crate::system::Done {
+            self.sent
+                .lock()
+                .unwrap()
+                .push((a.clone(), pw.map(String::from)));
+            let r = match (&a, pw) {
+                (Action::PkgInstall(_), _) => Err(ActionError::Refused),
+                (_, None) => Err(ActionError::NeedsAuth),
+                (_, Some("right")) => Ok(()),
+                (_, Some(_)) => Err(ActionError::Denied),
+            };
+            let (tx, rx) = async_channel::bounded(1);
+            let _ = tx.try_send(r);
+            rx
+        }
+    }
+
+    type Log = Rc<RefCell<Vec<(&'static str, Result<(), ActionError>)>>>;
+
+    fn waiting(a: Action, name: &'static str, log: &Log) -> Waiting {
+        let log = log.clone();
+        Waiting {
+            a,
+            done: Rc::new(move |r| log.borrow_mut().push((name, r))),
+            status: None,
+        }
+    }
+
+    /// One send and its answer through the queue, as `Ctx::run` does (blocking here).
+    fn send(
+        q: &mut AuthQueue,
+        sys: &Asking,
+        w: Waiting,
+        pw: Option<(&str, u32)>,
+    ) -> Option<&'static str> {
+        let retry = pw.map(|(_, n)| n);
+        q.sent(retry);
+        let r = sys
+            .spawn_with(w.a.clone(), pw.map(|(p, _)| p))
+            .recv_blocking()
+            .unwrap();
+        match q.answered(w, r, retry) {
+            Next::Finish(w, r) => {
+                (w.done)(r);
+                None
+            }
+            Next::Ask(m) => Some(m),
+            Next::GiveUp(all) => {
+                for w in all {
+                    (w.done)(Err(ActionError::Denied));
+                }
+                Some("gave up")
+            }
+        }
+    }
+
+    fn toggles() -> [Action; 2] {
+        use shared::admin::{AdminAction as A, AdminRequest};
+        let req = |action, on: &str| {
+            Action::Admin(AdminRequest {
+                action,
+                args: vec![on.into()],
+            })
+        };
+        [req(A::RemoteLogin, "on"), req(A::AirPlayReceiver, "on")]
+    }
+
+    /// QA 0.12.0 bug 6: two Sharing switches asked at once; the second overwrote the first,
+    /// whose switch stayed grey. Both wait now: one Allow runs both with the password, in order.
+    #[test]
+    fn two_queued_toggles_both_run_after_one_allow() {
+        let (sys, log, mut q) = (Asking::default(), Log::default(), AuthQueue::default());
+        let [a, b] = toggles();
+        assert_eq!(
+            send(&mut q, &sys, waiting(a.clone(), "remote", &log), None),
+            Some("")
+        );
+        assert_eq!(
+            send(&mut q, &sys, waiting(b.clone(), "airplay", &log), None),
+            Some("")
+        );
+        assert_eq!(q.len(), 2, "both wait");
+        assert!(log.borrow().is_empty());
+        let (all, n) = q.allow();
+        assert_eq!(q.len(), 0);
+        for w in all {
+            assert_eq!(send(&mut q, &sys, w, Some(("right", n))), None);
+        }
+        assert_eq!(q.checking(), 0);
+        assert_eq!(*log.borrow(), [("remote", Ok(())), ("airplay", Ok(()))]);
+        let sent = sys.sent.lock().unwrap();
+        assert_eq!(
+            sent[2..],
+            [(a, Some("right".into())), (b, Some("right".into()))]
+        );
+    }
+
+    /// Cancel flips every waiting switch back, not just the last one.
+    #[test]
+    fn cancel_fails_every_waiting_change() {
+        let (sys, log, mut q) = (Asking::default(), Log::default(), AuthQueue::default());
+        let [a, b] = toggles();
+        send(&mut q, &sys, waiting(a, "remote", &log), None);
+        send(&mut q, &sys, waiting(b, "airplay", &log), None);
+        for w in q.cancel() {
+            (w.done)(Err(ActionError::Denied));
+        }
+        assert_eq!(q.len(), 0);
+        assert_eq!(
+            *log.borrow(),
+            [
+                ("remote", Err(ActionError::Denied)),
+                ("airplay", Err(ActionError::Denied))
+            ]
+        );
+    }
+
+    /// QA 0.12.0 bug 4: the sheet asked forever. A wrong password asks again with its sentence
+    /// (once per Allow, however many changes it re-ran); the third gives up and fails them all.
+    #[test]
+    fn three_wrong_passwords_end_the_sheet() {
+        let (sys, log, mut q) = (Asking::default(), Log::default(), AuthQueue::default());
+        let [a, b] = toggles();
+        send(&mut q, &sys, waiting(a, "remote", &log), None);
+        send(&mut q, &sys, waiting(b, "airplay", &log), None);
+        for round in 1..=3 {
+            let (all, n) = q.allow();
+            let said: Vec<_> = all
+                .into_iter()
+                .map(|w| send(&mut q, &sys, w, Some(("wrong", n))))
+                .collect();
+            if round < 3 {
+                assert_eq!(said, [Some(ActionError::Denied.message()); 2], "{round}");
+                assert_eq!(q.len(), 2);
+            } else {
+                // The second retry of that Allow was still out: it fails too, no sheet.
+                assert_eq!(said, [Some("gave up"), None]);
+            }
+        }
+        assert_eq!(q.len(), 0);
+        assert_eq!(log.borrow().len(), 2, "{:?}", log.borrow());
+        assert!(
+            log.borrow()
+                .iter()
+                .all(|(_, r)| *r == Err(ActionError::Denied))
+        );
+    }
+
+    /// wold's refusal never opens the sheet: the change ends with its own sentence.
+    #[test]
+    fn a_refusal_ends_the_change_without_the_sheet() {
+        let (sys, log, mut q) = (Asking::default(), Log::default(), AuthQueue::default());
+        assert_eq!(
+            send(
+                &mut q,
+                &sys,
+                waiting(Action::PkgInstall("vim".into()), "vim", &log),
+                None
+            ),
+            None
+        );
+        assert_eq!(q.len(), 0);
+        assert_eq!(*log.borrow(), [("vim", Err(ActionError::Refused))]);
+        assert!(!ActionError::Refused.message().contains("password."));
+    }
+
+    /// QA 0.12.0 bug 9: the toast's Undo reverted the newest entry of any topic. It reverts the
+    /// entry the change recorded; a save made in `wol_core` resolves to the newest of its topic.
+    #[test]
+    fn the_undo_toast_targets_the_changes_own_entry() {
+        use wol_core::journal::Entry;
+        let e = |id, what: &str, by: &str, undoes| Entry {
+            id,
+            t: 0,
+            by: by.into(),
+            what: what.into(),
+            changes: vec![],
+            undoes,
+        };
+        let all = [
+            e(1, "desktop", "settings", None),
+            e(2, "sound", "settings", None),
+            e(3, "desktop", "cli", None),
+            e(4, "desktop", "settings", Some(1)),
+        ];
+        assert_eq!(latest_entry(&all, "desktop"), Some(1));
+        assert_eq!(latest_entry(&all, "sound"), Some(2));
+        assert_eq!(latest_entry(&all, "theme"), None);
+    }
 
     #[test]
     fn pages_list_the_sidebar_once_each() {

@@ -29,13 +29,15 @@ fn save_pick(home: &std::path::Path, id: Option<&str>) -> std::io::Result<()> {
 "
         )
     });
-    wol_core::journal::Journal::for_config(home).save(
+    let id = wol_core::journal::Journal::for_config(home).save(
         "theme",
         "settings",
         &[(shared::theme::ACTIVE_FILE, text.as_deref())],
         wol_core::journal::now(),
     )?;
-    changed("theme");
+    if let Some(id) = id {
+        changed("theme", id);
+    }
     Ok(())
 }
 

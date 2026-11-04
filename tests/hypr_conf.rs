@@ -10,13 +10,15 @@ const PLUGIN: &str = include_str!("../../../plugins/wol-hypr/main.cpp");
 const POLICY: &str = include_str!("../../realtime/src/wm_gates.rs");
 
 /// Every shell glass surface (ui::searchbar, ui::control_center are `wol-panel-*` too).
-const GLASS: [&str; 6] = [
+const GLASS: [&str; 7] = [
     "wol-menubar",
     "wol-dock",
     "wol-panel-switcher",
     "wol-panel-banners",
     "wol-panel-searchbar",
     "wol-panel-controlcenter",
+    // Edit Widgets' gallery (kit::surface::Spec::widgets_gallery).
+    "wol-panel-widgets",
 ];
 
 /// Supports the anchored alternation the conf uses: `^(a|b|c-.*)$`.

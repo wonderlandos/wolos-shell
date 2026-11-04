@@ -2,8 +2,9 @@
 //! App Store search through wopkg's local index (ADR 0021): milliseconds instead of running
 //! `pacman -Ss` and `flatpak search`. None when the index has not been built yet, so the caller
 //! falls back to the old commands.
+use crate::system::ActionError;
 use serde_json::Value;
-use wol_core::{controls::ControlError, flatpak, store, store::PkgHit};
+use wol_core::{flatpak, store, store::PkgHit};
 
 /// The package tool. Installing, removing and updating go through it (ADR 0021): it runs as the
 /// person and asks wold for the system change, which checks the consent grant.
@@ -427,15 +428,40 @@ pub fn upgrade_argv() -> Vec<String> {
 }
 
 /// wopkg's exit code in the Store's own error kinds (`copy.rs` words them): 0 done, 2 bad request,
-/// 77 wold refused (the consent grant is off), anything else did not finish.
-pub fn outcome(code: Option<i32>) -> Result<(), ControlError> {
+/// anything else did not finish. 77 is wold's refusal: the consent grant is off, the person said
+/// no on wold's own sheet, or nobody answered it. No password was checked, so it is `Refused`,
+/// never `Denied`: `Denied` reopens the Authenticate sheet, whose password never reaches wopkg
+/// (QA 0.12.0 bug 4: "Incorrect password. Try again." for the right password, forever).
+pub fn outcome(code: Option<i32>) -> Result<(), ActionError> {
     match code {
         Some(0) => Ok(()),
-        Some(2) => Err(ControlError::Invalid),
-        Some(77) => Err(ControlError::Denied),
-        Some(_) => Err(ControlError::Failed),
-        None => Err(ControlError::Unavailable),
+        Some(2) => Err(ActionError::Invalid),
+        Some(77) => Err(ActionError::Refused),
+        Some(_) => Err(ActionError::Failed),
+        None => Err(ActionError::Unavailable),
     }
+}
+
+/// `grant` (`packages-install`, `-remove`, `-update`) is held by wopkg in the consent file
+/// `consent` (`wol_core::consent::FILE`'s text, None when there is none). Without it wold refuses
+/// wopkg before any sheet, so the change goes through wol-admind and the Authenticate sheet.
+pub fn wopkg_granted(consent: Option<&str>, grant: &str) -> bool {
+    consent
+        .map(wol_core::consent::parse)
+        .unwrap_or_default()
+        .iter()
+        .any(|(app, cap)| app == WOPKG && cap == grant)
+}
+
+/// wopkg is on this system and may make the change `grant` names (read on every call, like wold).
+pub fn usable(grant: &str) -> bool {
+    present()
+        && wopkg_granted(
+            std::fs::read_to_string(wol_core::consent::FILE)
+                .ok()
+                .as_deref(),
+            grant,
+        )
 }
 
 /// Run wopkg with `argv`; its exit code, None when it could not start. Replaced in tests.
@@ -494,15 +520,15 @@ pub fn run_wopkg(argv: &[String]) -> Option<i32> {
 }
 
 /// Install through wopkg; None when wopkg is not on this system (the caller keeps the old path).
-pub fn install(target: &str, present: bool, run: Run) -> Option<Result<(), ControlError>> {
-    present.then(|| install_argv(target).map_or(Err(ControlError::Invalid), |a| outcome(run(&a))))
+pub fn install(target: &str, present: bool, run: Run) -> Option<Result<(), ActionError>> {
+    present.then(|| install_argv(target).map_or(Err(ActionError::Invalid), |a| outcome(run(&a))))
 }
 
-pub fn remove(target: &str, present: bool, run: Run) -> Option<Result<(), ControlError>> {
-    present.then(|| remove_argv(target).map_or(Err(ControlError::Invalid), |a| outcome(run(&a))))
+pub fn remove(target: &str, present: bool, run: Run) -> Option<Result<(), ActionError>> {
+    present.then(|| remove_argv(target).map_or(Err(ActionError::Invalid), |a| outcome(run(&a))))
 }
 
-pub fn upgrade(present: bool, run: Run) -> Option<Result<(), ControlError>> {
+pub fn upgrade(present: bool, run: Run) -> Option<Result<(), ActionError>> {
     present.then(|| outcome(run(&upgrade_argv())))
 }
 
@@ -696,11 +722,11 @@ mod tests {
             ]
         );
         for (c, want) in [
-            (Some(77), ControlError::Denied),
-            (Some(2), ControlError::Invalid),
-            (Some(1), ControlError::Failed),
-            (Some(3), ControlError::Failed),
-            (None, ControlError::Unavailable),
+            (Some(77), ActionError::Refused),
+            (Some(2), ActionError::Invalid),
+            (Some(1), ActionError::Failed),
+            (Some(3), ActionError::Failed),
+            (None, ActionError::Unavailable),
         ] {
             code.set(c);
             assert_eq!(install("vim", true, &run), Some(Err(want)), "{c:?}");
@@ -731,11 +757,32 @@ mod tests {
         ] {
             assert_eq!(
                 install(bad, true, &run),
-                Some(Err(ControlError::Invalid)),
+                Some(Err(ActionError::Invalid)),
                 "{bad:?}"
             );
-            assert_eq!(remove(bad, true, &run), Some(Err(ControlError::Invalid)));
+            assert_eq!(remove(bad, true, &run), Some(Err(ActionError::Invalid)));
         }
+    }
+
+    /// QA 0.12.0 bug 4: a fresh install has no consent file, so wold refuses wopkg (exit 77). The
+    /// shell must not take that path then; it goes to wol-admind, which asks for the password.
+    #[test]
+    fn wopkg_is_used_only_with_its_grant() {
+        assert!(!wopkg_granted(None, "packages-install"));
+        assert!(!wopkg_granted(Some("not json"), "packages-install"));
+        let file = wol_core::consent::set(None, WOPKG, "packages-install", true);
+        assert!(wopkg_granted(Some(&file), "packages-install"));
+        assert!(!wopkg_granted(Some(&file), "packages-remove"));
+        let other = wol_core::consent::set(None, "/usr/bin/other", "packages-install", true);
+        assert!(!wopkg_granted(Some(&other), "packages-install"));
+    }
+
+    /// wold's refusal is its own error, never a wrong password (which reopens the sheet).
+    #[test]
+    fn a_refusal_is_not_a_wrong_password() {
+        assert_eq!(outcome(Some(77)), Err(ActionError::Refused));
+        assert_ne!(outcome(Some(77)), Err(ActionError::Denied));
+        assert_ne!(outcome(Some(77)), Err(ActionError::NeedsAuth));
     }
 
     #[test]

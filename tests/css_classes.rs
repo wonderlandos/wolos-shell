@@ -226,9 +226,14 @@ fn rule(sel: &str) -> &'static str {
 /// Audit A6-ux #9: keyboard focus is visible on every widget, one ring everywhere.
 #[test]
 fn keyboard_focus_is_one_accent_ring_everywhere() {
-    let r = rule("*:focus-visible");
+    // QA 0.12.0 bug 1: on the focused control only (GTK marks every ancestor :focus-visible).
+    let r = rule("*:focus:focus-visible, entry:focus-visible, spinbutton:focus-visible");
     assert!(r.contains("outline: 2px solid var(--accent)"), "{r}");
     assert!(r.contains("outline-offset: 2px"), "{r}");
+    assert!(
+        !CSS[0].contains("\n*:focus-visible"),
+        "a ring on every ancestor of the focus"
+    );
 }
 
 /// Audit A6-ux #2: a selected sidebar row is a quiet accent tint that keeps the text colour; the

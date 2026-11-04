@@ -452,6 +452,8 @@ struct View {
     louder: gtk::Switch,
     auto_level: gtk::Switch,
     noise: gtk::Switch,
+    /// Each switch's wait for the state that shows its flip (bug 8).
+    echoes: Echoes,
     bluetooth: gtk::Box,
     pro: gtk::Box,
     /// Set while the page moves its own controls (their handlers then send nothing).
@@ -482,16 +484,20 @@ impl View {
         // the poll's (A6-1, A6-3).
         let hold = Touch::hold(form::SETTLE_MS);
         set_scale(&self.out_slider, out, s.boost, self.out_touch.busy(hold));
-        self.out_mute.set_active(out.is_some_and(|d| d.muted));
-        self.out_mute.set_sensitive(out.is_some());
+        // A switch the user just flipped keeps their flip until a state shows it (bug 8).
+        let e = &self.echoes;
+        draw_switch(&self.out_mute, &e.out_mute, out.is_some_and(|d| d.muted));
+        self.out_mute
+            .set_sensitive(out.is_some() && !e.out_mute.waiting());
         set_scale(&self.in_slider, inp, s.boost, self.in_touch.busy(hold));
-        self.in_mute.set_active(inp.is_some_and(|d| d.muted));
-        self.in_mute.set_sensitive(inp.is_some());
+        draw_switch(&self.in_mute, &e.in_mute, inp.is_some_and(|d| d.muted));
+        self.in_mute
+            .set_sensitive(inp.is_some() && !e.in_mute.waiting());
         self.meter
             .set_fraction(meter_fraction(s.meter.hold.max(s.meter.peak)));
-        self.louder.set_active(s.boost);
-        self.auto_level.set_active(s.auto_input_level);
-        self.noise.set_active(s.noise_suppression);
+        draw_switch(&self.louder, &e.louder, s.boost);
+        draw_switch(&self.auto_level, &e.auto_level, s.auto_input_level);
+        draw_switch(&self.noise, &e.noise, s.noise_suppression);
         say(&self.notice, service_notice(&s).unwrap_or(""));
         if self.reset_pending.get()
             && let Some(r) = reset_outcome(&s)
@@ -699,6 +705,116 @@ pub fn apply_scale_plan(s: &gtk::Scale, plan: &ScalePlan) {
     }
 }
 
+/// How long a Sound switch waits for the service to show the user's flip before it flips back.
+const SWITCH_WAIT_MS: u64 = 2000;
+
+/// A Sound switch the user flipped, until a state shows the flip (bug 8). States arrive every
+/// 100 ms and lag the click, so drawing each one on the switch moved the knob back and forth
+/// under fast clicks and left it half way. While it waits, [`View::apply`] leaves the switch
+/// alone; the first state that reports `want` ends the wait (`done(true)`), and none within the
+/// wait flips the switch back (`done(false)`).
+#[derive(Default)]
+struct Echo {
+    want: Cell<Option<bool>>,
+    done: RefCell<Option<Box<dyn FnOnce(bool)>>>,
+    /// Counts waits, so a timer left from an ended one does nothing.
+    round: Cell<u64>,
+}
+
+impl Echo {
+    /// The flip to `want` was sent: wait up to `wait` for it, then `done(false)` and `gave_up()`.
+    fn begin(
+        self: &Rc<Self>,
+        want: bool,
+        done: Box<dyn FnOnce(bool)>,
+        wait: std::time::Duration,
+        gave_up: impl FnOnce() + 'static,
+    ) {
+        self.end(false);
+        self.want.set(Some(want));
+        *self.done.borrow_mut() = Some(done);
+        let (me, round) = (Rc::downgrade(self), self.round.get());
+        glib::timeout_add_local_once(wait, move || {
+            if let Some(me) = me.upgrade()
+                && me.round.get() == round
+                && me.end(false)
+            {
+                gave_up()
+            }
+        });
+    }
+
+    fn waiting(&self) -> bool {
+        self.want.get().is_some()
+    }
+
+    /// A state reports `now`: whether the page may draw it on the switch. A state that shows
+    /// the flip ends the wait; an older one is not drawn.
+    fn seen(&self, now: bool) -> bool {
+        match self.want.get() {
+            None => true,
+            Some(w) if w == now => {
+                self.end(true);
+                true
+            }
+            Some(_) => false,
+        }
+    }
+
+    /// Ends the wait with `done(ok)`; false when there was none.
+    fn end(&self, ok: bool) -> bool {
+        self.want.set(None);
+        self.round.set(self.round.get() + 1);
+        let done = self.done.borrow_mut().take();
+        done.map(|d| d(ok)).is_some()
+    }
+}
+
+/// One [`Echo`] per Sound switch.
+#[derive(Default)]
+struct Echoes {
+    out_mute: Rc<Echo>,
+    in_mute: Rc<Echo>,
+    louder: Rc<Echo>,
+    auto_level: Rc<Echo>,
+    noise: Rc<Echo>,
+}
+
+/// Draws a state's `now` on a pending switch unless the user's flip is still on its way. State
+/// first, so the switch takes it as the real state and does not start a change.
+fn draw_switch(s: &gtk::Switch, echo: &Echo, now: bool) {
+    if echo.seen(now) {
+        s.set_state(now);
+        s.set_active(now);
+    }
+}
+
+/// A Sound switch on the pending pattern: a flip sends `ask(on)` and waits for its [`Echo`].
+/// A fixed preview state never changes, so there the flip is taken at once.
+fn sound_switch(
+    echo: &Rc<Echo>,
+    status: &gtk::Label,
+    live: bool,
+    ask: impl Fn(bool) + 'static,
+) -> gtk::Switch {
+    let (echo, st) = (echo.clone(), status.clone());
+    w::pending_toggle(false, move |on, done| {
+        if live {
+            let st = st.clone();
+            echo.begin(
+                on,
+                done,
+                std::time::Duration::from_millis(SWITCH_WAIT_MS),
+                move || say(&st, copy::SOUND_NOT_SAVED),
+            );
+            ask(on);
+        } else {
+            ask(on);
+            done(true);
+        }
+    })
+}
+
 /// When the user last moved a slider. The page's state arrives every 100 ms (every buffer while
 /// the meter runs) and is older than their hand until the service has carried out the change, so
 /// a slider they touched lately is left alone (A6-3).
@@ -829,7 +945,7 @@ fn fragment_switch(
             },
             move |r| {
                 if r != Fragment::NotSaved {
-                    changed("sound");
+                    changed_latest("sound");
                 }
                 say(
                     &st,
@@ -888,12 +1004,24 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             })
         })
     };
+    // The switches wait for the state that shows their flip ([`Echo`]); `quiet` is not needed
+    // here: the page draws them with their state first, which starts no change.
+    let echoes = Echoes::default();
+    let live = src.live();
     let out_mute = {
-        let (ctx, st, quiet) = (e.ctx.clone(), status.clone(), quiet.clone());
-        w::toggle(false, move |on| {
-            if !quiet.get() {
-                ctx.act_say(Action::Muted(on), &st)
-            }
+        let (ctx, st, echo) = (e.ctx.clone(), status.clone(), echoes.out_mute.clone());
+        sound_switch(&echoes.out_mute, &status, live, move |on| {
+            // A refused mute flips back at once, under its own reason; a done one waits for the state.
+            let echo = echo.clone();
+            ctx.act_switch(
+                Action::Muted(on),
+                &st,
+                Box::new(move |ok| {
+                    if !ok {
+                        echo.end(false);
+                    }
+                }),
+            )
         })
     };
     let in_slider = {
@@ -902,28 +1030,29 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             wv(&|view| view.send(Request::Act(AudioAction::MicVolume(v))))
         })
     };
-    let in_mute = {
-        let wv = with_view.clone();
-        w::toggle(false, move |on| {
-            wv(&|view| view.send(Request::Act(AudioAction::MicMuted(on))))
-        })
+    let ask = |r: fn(bool) -> Request| {
+        let src = src.clone();
+        move |on| src.request(r(on))
     };
-    let louder = {
-        let wv = with_view.clone();
-        w::toggle(false, move |on| wv(&|view| view.send(Request::Boost(on))))
-    };
-    let auto_level = {
-        let wv = with_view.clone();
-        w::toggle(false, move |on| {
-            wv(&|view| view.send(Request::Act(AudioAction::AutoInputLevel(on))))
-        })
-    };
-    let noise = {
-        let wv = with_view.clone();
-        w::toggle(false, move |on| {
-            wv(&|view| view.send(Request::Act(AudioAction::NoiseSuppression(on))))
-        })
-    };
+    let in_mute = sound_switch(
+        &echoes.in_mute,
+        &status,
+        live,
+        ask(|on| Request::Act(AudioAction::MicMuted(on))),
+    );
+    let louder = sound_switch(&echoes.louder, &status, live, ask(Request::Boost));
+    let auto_level = sound_switch(
+        &echoes.auto_level,
+        &status,
+        live,
+        ask(|on| Request::Act(AudioAction::AutoInputLevel(on))),
+    );
+    let noise = sound_switch(
+        &echoes.noise,
+        &status,
+        live,
+        ask(|on| Request::Act(AudioAction::NoiseSuppression(on))),
+    );
     let meter = w::progress();
     let bluetooth = w::vbox(w::S6);
     let pro = w::vbox(w::S2);
@@ -999,6 +1128,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         louder,
         auto_level,
         noise,
+        echoes,
         bluetooth,
         pro,
         quiet,
@@ -1356,6 +1486,53 @@ mod tests {
         assert!(apply.contains("say(&self.notice"), "{apply}");
         assert_eq!(apply.matches("say(&self.status").count(), 1, "{apply}");
         assert!(apply.contains("reset_pending"), "{apply}");
+    }
+
+    /// Bug 8: a flipped switch keeps the flip through older states (they used to move the knob
+    /// back mid-flip); the state that shows it ends the wait once; none within the wait flips it
+    /// back and says so. `apply` draws all five switches through their wait.
+    #[test]
+    fn a_flipped_switch_waits_for_the_state_that_shows_it() {
+        use std::time::{Duration, Instant};
+        // The page's timers run on the default context (the GTK thread's); this test owns it.
+        let main = glib::MainContext::default();
+        let _owner = main.acquire().expect("the default main context");
+        {
+            let echo = Rc::new(Echo::default());
+            let ended: Rc<RefCell<Vec<bool>>> = Rc::default();
+            let gave_up = Rc::new(Cell::new(0));
+            let record = || {
+                let e = ended.clone();
+                Box::new(move |ok| e.borrow_mut().push(ok)) as Box<dyn FnOnce(bool)>
+            };
+            let count = || {
+                let g = gave_up.clone();
+                move || g.set(g.get() + 1)
+            };
+            assert!(echo.seen(false), "no flip: every state is drawn");
+            echo.begin(true, record(), Duration::from_millis(30), count());
+            assert!(echo.waiting());
+            assert!(!echo.seen(false), "an older state is not drawn");
+            assert!(ended.borrow().is_empty());
+            assert!(echo.seen(true), "the state that shows the flip is");
+            assert_eq!(*ended.borrow(), [true]);
+            assert!(echo.seen(true) && echo.seen(false), "the wait is over");
+            // The first wait's timer must not end anything once it fires.
+            echo.begin(false, record(), Duration::from_millis(60), count());
+            let until = Instant::now() + Duration::from_secs(5);
+            while echo.waiting() && Instant::now() < until {
+                main.iteration(false);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(*ended.borrow(), [true, false], "flipped back once");
+            assert_eq!(gave_up.get(), 1, "and said so once");
+        }
+        assert_eq!(SWITCH_WAIT_MS, 2000);
+        let src = include_str!("sound.rs");
+        let apply = &src[src.find("fn apply(self: &Rc<Self>").unwrap()..];
+        let apply = &apply[..apply.find("\n    }\n").unwrap()];
+        assert_eq!(apply.matches("draw_switch(&self.").count(), 5, "{apply}");
+        assert!(!apply.contains(".set_active("), "{apply}");
     }
 
     /// "Sound settings were reset" waits for a state that shows the reset, not the click.

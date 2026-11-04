@@ -28,6 +28,8 @@ pub struct Node {
     pub clipped_text: bool,
     /// Must be allocated square (avatars are circles, never pills).
     pub square: bool,
+    /// Draws the keyboard focus ring now (kit.css "Keyboard focus").
+    pub ring: bool,
     /// Container whose content must sit centred in it (glass panels, cards).
     pub inset: Inset,
     /// Union of what the container's content draws, measured through layout-only wrappers (a
@@ -75,6 +77,32 @@ fn insets(n: &Node) -> Option<String> {
     })
 }
 
+/// The focus ring belongs to the focused control alone: a list row, card, sheet or panel never
+/// draws it, and no ring encloses another (GTK marks every ancestor of the focus `:focus-visible`;
+/// rings on them made a whole list look selected).
+fn ring_around(n: &Node) -> Option<String> {
+    fn inner(n: &Node) -> Option<&Node> {
+        n.children
+            .iter()
+            .find_map(|c| if c.ring { Some(c) } else { inner(c) })
+    }
+    if !n.ring {
+        return None;
+    }
+    if n.list_row || n.inset != Inset::None {
+        return Some(format!(
+            "{} draws the focus ring around a whole container",
+            n.path
+        ));
+    }
+    inner(n).map(|c| {
+        format!(
+            "{} draws a focus ring around {}, which has its own",
+            n.path, c.path
+        )
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Issue {
     pub path: String,
@@ -117,6 +145,12 @@ fn walk(n: &Node, view: Option<Rect>, out: &mut Vec<Issue>) {
         });
     }
     if let Some(message) = insets(n) {
+        out.push(Issue {
+            path: n.path.clone(),
+            message,
+        });
+    }
+    if let Some(message) = ring_around(n) {
         out.push(Issue {
             path: n.path.clone(),
             message,
@@ -341,5 +375,42 @@ mod tests {
         l.clipped_text = true;
         root.children = vec![l];
         assert_eq!(find(&root).len(), 1);
+    }
+
+    /// QA 0.12.0 bug 1: with focus on a row's Install button, the row, the card list and the page
+    /// drew the ring too. Only the button may.
+    #[test]
+    fn the_focus_ring_is_on_the_focused_control_only() {
+        let ring = |mut x: Node| {
+            x.ring = true;
+            x
+        };
+        let button = n("Button.btn", 300, 10, 80, 28);
+        let row = |button: Node, ringed: bool| {
+            let r = Node {
+                list_row: true,
+                children: vec![button],
+                ..n("Box.list-row", 0, 0, 400, 48)
+            };
+            if ringed { ring(r) } else { r }
+        };
+        let list = |row: Node| Node {
+            children: vec![row],
+            ..n("Box.page", 0, 0, 400, 48)
+        };
+        assert!(find(&list(row(ring(button.clone()), false))).is_empty());
+        let issues = find(&list(row(ring(button.clone()), true)));
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].message.contains("whole container"), "{issues:?}");
+        let wrapped = ring(Node {
+            children: vec![row(ring(button), false)],
+            ..n("Box.page", 0, 0, 400, 48)
+        });
+        let issues = find(&wrapped);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(
+            issues[0].message.contains("around Button.btn,"),
+            "{issues:?}"
+        );
     }
 }
