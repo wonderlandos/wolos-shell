@@ -813,6 +813,43 @@ fn cases() -> Vec<Case> {
             });
         }
     }
+    // First sign-in Setup: every page, as the person sees it before the desktop.
+    for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
+        for p in shell::first_login::PAGES {
+            v.push(Case {
+                name: format!("firstlogin-{}-{tag}", p.id()),
+                size: (sw, sh),
+                class: "lock-window",
+                wallpaper: false,
+                build: Box::new(move || {
+                    let s = ui::first_login::FirstLogin::new(std::rc::Rc::new(shell::system::Fake));
+                    s.show(p);
+                    s.root.clone()
+                }),
+            });
+        }
+    }
+    // An administrator turned error reports on: the password row asks once.
+    v.push(Case {
+        name: "firstlogin-privacy-password-1024".into(),
+        size: (1024, 640),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| {
+            let facts = ui::first_login::Facts {
+                choices: shell::first_login::Choices {
+                    reports: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let s =
+                ui::first_login::FirstLogin::with(std::rc::Rc::new(shell::system::Fake), &facts);
+            s.show(shell::first_login::Page::Privacy);
+            s.ask_password();
+            s.root.clone()
+        }),
+    });
     v.push(Case {
         name: "login-hint".into(),
         size: (900, 600),
@@ -1456,7 +1493,11 @@ fn render(win: &gtk::Window) -> gdk::Texture {
 
 /// Text that must meet WCAG AA (4.5:1) against what is behind it, measured from the render.
 fn contrast_classes(case: &str) -> &'static [&'static str] {
-    if case.starts_with("lock") || case.starts_with("login") || case.starts_with("setup") {
+    if case.starts_with("lock")
+        || case.starts_with("login")
+        || case.starts_with("setup")
+        || case.starts_with("firstlogin")
+    {
         &[
             "lock-field",
             "lock-message",

@@ -10,6 +10,7 @@ pub mod control_center;
 pub mod displays;
 pub mod dock;
 pub mod drop_shelf;
+pub mod first_login;
 pub mod flatpak_consent;
 pub mod force_quit;
 pub mod installer;

@@ -797,6 +797,7 @@ const VERBS: &[&str] = &[
     "Install",
     "Join",
     "Keep",
+    "Later",
     "Learn",
     "Look",
     "Move",
