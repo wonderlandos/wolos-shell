@@ -4,7 +4,9 @@
 #[path = "golden_cases/wol_file.rs"]
 mod wol_file;
 
-use shell::ui::store::{PackageFile, TRUST_ROWS, capability_row, package_sheet};
+use shell::ui::store::{
+    PackageFile, ROW_REFUSED, ROW_UNSIGNED, ROW_WOLOS, TRUST_ROWS, capability_row, package_sheet,
+};
 use std::path::Path;
 
 fn read(p: &Path, records: &Path) -> PackageFile {
@@ -20,13 +22,13 @@ fn signed_unsigned_and_damaged_files() {
     assert_eq!(s.name, "File Shredder");
     assert_eq!(s.summary, "Permanently delete your files");
     assert_eq!(s.detail, "Version 3.1.0 · com.github.ADBeveridge.Raider");
-    assert_eq!(s.trust, TRUST_ROWS[0]);
+    assert_eq!(s.trust, TRUST_ROWS[ROW_WOLOS]);
     assert_eq!(s.capabilities, [("folder-symbolic", "Your files")]);
     assert_eq!((s.install, s.button), (Some("signed"), "Install"));
 
     let unsigned = wol_file::write(&d, "Wike.wol", wol_file::WIKE, None, false);
     let s = package_sheet(&read(&unsigned, &none));
-    assert_eq!(s.trust, TRUST_ROWS[1]);
+    assert_eq!(s.trust, TRUST_ROWS[ROW_UNSIGNED]);
     assert_eq!(s.install, Some("unsigned"));
     assert_eq!(s.capabilities.len(), 2);
 
@@ -35,7 +37,7 @@ fn signed_unsigned_and_damaged_files() {
     let stranger = PackageFile::read_with(signed.to_str().unwrap(), &[[1; 32]], &none);
     for f in [tampered, stranger] {
         let s = package_sheet(&f);
-        assert_eq!(s.trust, TRUST_ROWS[2]);
+        assert_eq!(s.trust, TRUST_ROWS[ROW_REFUSED]);
         assert_eq!(s.install, None);
         assert!(s.capabilities.is_empty() && s.summary.is_empty());
         assert!(!s.name.is_empty(), "file name stands in for the app name");
@@ -99,4 +101,34 @@ fn clean(s: &str) {
         "{s}: {:?}",
         shell::copy::lint(s)
     );
+}
+
+/// ADR 0046: every certificate verdict has its row; withdrawn and invalid can't be installed.
+#[test]
+fn each_certificate_verdict_maps_to_its_row() {
+    use shell::ui::store::{ROW_VERIFIED, ROW_WITHDRAWN, trust_row};
+    use wol_core::woltrust::Trust as T;
+    assert_eq!(trust_row(T::Wolos), (TRUST_ROWS[ROW_WOLOS], Some("signed")));
+    assert_eq!(
+        trust_row(T::Verified),
+        (TRUST_ROWS[ROW_VERIFIED], Some("signed"))
+    );
+    assert_eq!(
+        trust_row(T::Community),
+        (TRUST_ROWS[ROW_UNSIGNED], Some("unsigned"))
+    );
+    assert_eq!(trust_row(T::Withdrawn), (TRUST_ROWS[ROW_WITHDRAWN], None));
+    assert_eq!(trust_row(T::Invalid), (TRUST_ROWS[ROW_REFUSED], None));
+}
+
+/// ADR 0046 origin: the verified row names the maker and the repository.
+#[test]
+fn the_made_by_line_names_the_person_and_the_repository() {
+    let line = shell::copy::trust_made_by("Ana Lima", "ana", Some("github.com/ana/notes"), "1.2");
+    assert_eq!(
+        line,
+        "Made by Ana Lima (ana on GitHub), from github.com/ana/notes, version 1.2."
+    );
+    clean(&line);
+    clean(&shell::copy::trust_made_by("Ana Lima", "ana", None, "1.2"));
 }

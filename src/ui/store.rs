@@ -182,22 +182,52 @@ pub struct PackageFile {
     pub installed: Option<String>,
     /// `icon.png` from the file.
     pub icon: Option<Vec<u8>>,
+    /// The certificate verdict of ADR 0046 (None: only the legacy signature was judged).
+    pub outcome: Option<wol_core::woltrust::Outcome>,
 }
 
 impl PackageFile {
     /// Blocking: hashes the whole file.
     pub fn read(path: &str) -> Self {
         let keys = package::read_keys(std::path::Path::new(shared::package::KEYS_DIR));
-        Self::read_with(
+        let host = wol_core::system::PosixHost;
+        let store = wol_core::trust::TrustStore::load(&host);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        Self::read_trusted(
             path,
             &keys,
             std::path::Path::new(shared::package::RECORDS_DIR),
+            &store,
+            now,
         )
     }
 
+    /// [`PackageFile::read_trusted`] with an empty certificate store.
     pub fn read_with(path: &str, keys: &[[u8; 32]], records: &std::path::Path) -> Self {
+        Self::read_trusted(
+            path,
+            keys,
+            records,
+            &wol_core::trust::TrustStore::default(),
+            0,
+        )
+    }
+
+    /// Reads and judges a `.wol`: the legacy keys, then the certificate store at `now`.
+    pub fn read_trusted(
+        path: &str,
+        keys: &[[u8; 32]],
+        records: &std::path::Path,
+        store: &wol_core::trust::TrustStore,
+        now: u64,
+    ) -> Self {
         let p = std::path::Path::new(path);
-        let verified = package::verify(p, keys);
+        let (verified, outcome) = match store.verify_wol_at(p, keys, None, now) {
+            Ok(c) => (Ok(c.verified), Some(c.outcome)),
+            Err(e) => (Err(e), None),
+        };
         let (installed, icon) = match &verified {
             Ok(v) => (
                 package::installed(records)
@@ -215,6 +245,7 @@ impl PackageFile {
             verified,
             installed,
             icon,
+            outcome,
         }
     }
 }
@@ -234,19 +265,29 @@ pub struct PackageSheet {
     pub install: Option<&'static str>,
     /// "Install", "Update", or "Open" when this version is installed already.
     pub button: &'static str,
+    /// Who made it and where from, for a verified author (shown instead of the row's sentence).
+    pub maker: Option<String>,
 }
 
-/// Trust rows of the install page: signed by a trusted key, not signed, refused.
-pub const TRUST_ROWS: [(&str, &str, &str); 3] = [
+/// Trust rows of the install page (ADR 0046): made by WolOS, a verified author, not signed,
+/// withdrawn, refused. Indexes: [`ROW_WOLOS`], [`ROW_VERIFIED`], [`ROW_UNSIGNED`],
+/// [`ROW_WITHDRAWN`], [`ROW_REFUSED`].
+pub const TRUST_ROWS: [(&str, &str, &str); 5] = [
+    ("security-high-symbolic", "WolOS", "Made by WolOS."),
     (
         "security-high-symbolic",
-        "Verified",
-        "Signed by a developer WolOS trusts, and unchanged since.",
+        "Verified author",
+        crate::copy::TRUST_VERIFIED,
     ),
     (
         "dialog-warning-symbolic",
         "Not signed",
-        "WolOS can’t check who made this app. Install it only if you trust where it came from.",
+        "Nobody vouches for this app. WolOS can’t tell who made it or whether someone changed it on the way.",
+    ),
+    (
+        "dialog-error-symbolic",
+        "Withdrawn",
+        crate::copy::TRUST_WITHDRAWN,
     ),
     (
         "dialog-warning-symbolic",
@@ -254,6 +295,33 @@ pub const TRUST_ROWS: [(&str, &str, &str); 3] = [
         "This file is damaged, was changed after it was signed, or comes from a developer WolOS doesn’t know.",
     ),
 ];
+/// Row of a file made by WolOS (its own keys or the Packages CA).
+pub const ROW_WOLOS: usize = 0;
+/// Row of a file signed by a verified author or organisation.
+pub const ROW_VERIFIED: usize = 1;
+/// Row of an unsigned file (also an expired certificate or a revocation list too old to trust).
+pub const ROW_UNSIGNED: usize = 2;
+/// Row of a file whose certificate was withdrawn.
+pub const ROW_WITHDRAWN: usize = 3;
+/// Row of a file that can't be installed.
+pub const ROW_REFUSED: usize = 4;
+
+/// The row and the wol-admind trust argument for a certificate verdict (None: not installable).
+pub fn trust_row(
+    t: wol_core::woltrust::Trust,
+) -> (
+    (&'static str, &'static str, &'static str),
+    Option<&'static str>,
+) {
+    use wol_core::woltrust::Trust as T;
+    match t {
+        T::Wolos => (TRUST_ROWS[ROW_WOLOS], Some("signed")),
+        T::Verified => (TRUST_ROWS[ROW_VERIFIED], Some("signed")),
+        T::Community => (TRUST_ROWS[ROW_UNSIGNED], Some("unsigned")),
+        T::Withdrawn => (TRUST_ROWS[ROW_WITHDRAWN], None),
+        T::Invalid => (TRUST_ROWS[ROW_REFUSED], None),
+    }
+}
 
 /// Capability rows: icon and label for every `shared::package::CAPABILITIES` id.
 pub fn capability_row(id: &str) -> Option<(&'static str, &'static str)> {
@@ -281,17 +349,31 @@ pub fn package_sheet(f: &PackageFile) -> PackageSheet {
             name: stem.unwrap_or_default(),
             summary: String::new(),
             detail: String::new(),
-            trust: TRUST_ROWS[2],
+            trust: TRUST_ROWS[ROW_REFUSED],
             capabilities: vec![],
             install: None,
             button: "Install",
+            maker: None,
         };
     };
     let i = &v.info;
-    let (trust, install) = match v.trust {
-        package::Trust::Signed(_) => (TRUST_ROWS[0], "signed"),
-        package::Trust::Unsigned => (TRUST_ROWS[1], "unsigned"),
+    let (trust, install) = match (&f.outcome, v.trust) {
+        (Some(o), _) => trust_row(o.trust),
+        (None, package::Trust::Signed(_)) => (TRUST_ROWS[ROW_WOLOS], Some("signed")),
+        (None, package::Trust::Unsigned) => (TRUST_ROWS[ROW_UNSIGNED], Some("unsigned")),
     };
+    if install.is_none() {
+        return PackageSheet {
+            name: i.id.clone(),
+            summary: String::new(),
+            detail: format!("Version {} · {}", i.version, i.id),
+            trust,
+            capabilities: vec![],
+            install: None,
+            button: "Install",
+            maker: None,
+        };
+    }
     PackageSheet {
         name: if i.name.is_empty() {
             i.id.clone()
@@ -306,7 +388,19 @@ pub fn package_sheet(f: &PackageFile) -> PackageSheet {
             .iter()
             .filter_map(|c| capability_row(c))
             .collect(),
-        install: Some(install),
+        maker: f.outcome.as_ref().and_then(|o| {
+            let c = o.cert.as_ref()?;
+            let (name, login) = (c.subject.name.as_deref()?, c.subject.login.as_deref()?);
+            (o.trust == wol_core::woltrust::Trust::Verified).then(|| {
+                crate::copy::trust_made_by(
+                    name,
+                    login,
+                    o.origin.as_ref().map(|x| x.shown()),
+                    &i.version,
+                )
+            })
+        }),
+        install,
         button: match &f.installed {
             Some(v) if *v == i.version => "Open",
             Some(_) => "Update",
@@ -1398,7 +1492,11 @@ fn fill_package(sh: &Rc<Shared>, page: &gtk::Box, f: Option<PackageFile>) {
     page.append(&head);
     page.append(&w::section(
         "",
-        &[note_row(s.trust.0, s.trust.1, s.trust.2)],
+        &[note_row(
+            s.trust.0,
+            s.trust.1,
+            s.maker.as_deref().unwrap_or(s.trust.2),
+        )],
     ));
     let (Ok(v), Some(trust)) = (&f.verified, s.install) else {
         return;

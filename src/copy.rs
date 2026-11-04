@@ -803,6 +803,26 @@ pub const TIMER_BREAK_OVER: (&str, &str) = (
 );
 pub const TIMER_DONE: (&str, &str) = ("Timer done", "Your countdown has finished.");
 
+// ---- App Store: who made a .wol (ADR 0046) ----
+
+/// Install page row "Verified author".
+pub const TRUST_VERIFIED: &str =
+    "Made by an author WolOS has verified, and unchanged since it was signed.";
+/// Install page row "Withdrawn".
+pub const TRUST_WITHDRAWN: &str =
+    "WolOS no longer trusts the certificate this app was signed with. It won’t be installed.";
+
+/// Install page, verified author: who made it and, when the signature carries it, where from
+/// ("Made by Ana Lima (ana on GitHub), from github.com/ana/notes, version 1.2.").
+pub fn trust_made_by(name: &str, login: &str, from: Option<&str>, version: &str) -> String {
+    match from {
+        Some(repo) => {
+            format!("Made by {name} ({login} on GitHub), from {repo}, version {version}.")
+        }
+        None => format!("Made by {name} ({login} on GitHub), version {version}."),
+    }
+}
+
 // ---- App Store: Kits and Plugins (ADR 0032 B, ADR 0031 W4) ----
 
 /// A wopkg kit install or a plugin action did not complete.
