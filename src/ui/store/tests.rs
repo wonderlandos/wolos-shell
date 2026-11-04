@@ -165,6 +165,25 @@ fn native_packages_win_over_flathub() {
         &hit("com.example.NoSuchApp", "No Such App Here"),
         &[]
     ));
+    // QA-STORE-70: a repo hit with the Flathub app's name covers it, whatever its id says,
+    // and the package index's answer is filtered the same way.
+    let pony = [store::PkgHit {
+        name: "ponysay".into(),
+        summary: String::new(),
+    }];
+    assert!(covered_natively(
+        &hit("com.example.PonySayApp", "Ponysay"),
+        &pony
+    ));
+    let left = flathub_beyond_native(
+        &pony,
+        vec![
+            hit("com.example.PonySayApp", "Ponysay"),
+            hit("org.gnome.Other", "Other Thing"),
+        ],
+    );
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].name, "Other Thing");
 }
 
 /// QA-STORE-30: a repo package the catalog does not know but the package database lists is
@@ -206,4 +225,54 @@ fn launch_arg_always_names_the_desktop_file() {
         assert_eq!(launch_arg(d), format!("{d}.desktop"));
         assert!(!d.contains(' '), "{d}");
     }
+}
+
+/// QA-STORE-31, QA-STORE-64: what this window installed or removed is what every later tile,
+/// page and search shows (last change per target wins), whatever the start-up snapshot said.
+#[test]
+fn installed_state_follows_this_windows_changes() {
+    let mut c = Changes::default();
+    assert_eq!(c.get("cowsay"), None);
+    c.set("cowsay", true);
+    c.set("org.example.Pony", true);
+    c.set("cowsay", false);
+    assert_eq!(c.get("cowsay"), Some(false));
+    assert_eq!(c.get("org.example.Pony"), Some(true));
+    assert_eq!(
+        action_target(&Action::PkgInstall("htop".into())),
+        Some("htop")
+    );
+    assert_eq!(
+        action_target(&Action::FlatpakRemove("org.example.Pony".into())),
+        Some("org.example.Pony")
+    );
+    assert_eq!(
+        action_target(&Action::Admin(shared::admin::AdminRequest {
+            action: shared::admin::AdminAction::FlatpakInstall,
+            args: vec!["org.example.Pony".into()],
+        })),
+        Some("org.example.Pony")
+    );
+    assert_eq!(action_target(&Action::PkgUpgrade), None);
+}
+
+/// QA-STORE-37: a remove says "Removing…", never "Installing…", and is busy like an install.
+#[test]
+fn remove_says_removing() {
+    assert_eq!(button_label(w::TileState::Removing), "Removing…");
+    assert!(w::TileState::Removing.busy());
+    assert_eq!(kit_label(w::TileState::Removing), "Removing…");
+}
+
+/// QA-STORE-35: a screenshot download is capped and HTTPS only.
+#[test]
+fn screenshot_download_is_capped() {
+    let a = details::shot_argv("https://x/s.png", "/t/s.part");
+    let has = |w: &[&str]| a.windows(w.len()).any(|x| x == w);
+    assert!(has(&["--max-filesize", "8000000"]), "{a:?}");
+    assert!(
+        has(&["--proto", "=https"]) && has(&["--proto-redir", "=https"]),
+        "{a:?}"
+    );
+    assert_eq!(a[a.len() - 2..], ["--", "https://x/s.png"]);
 }

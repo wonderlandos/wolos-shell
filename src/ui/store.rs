@@ -331,6 +331,35 @@ struct Shared {
     /// Tiles waiting to hear where their app comes from.
     badges: RefCell<Vec<(String, w::AppTile)>>,
     open_details: RefCell<Option<OpenDetails>>,
+    /// What this window installed and removed: every tile, page and later search reads it
+    /// before the start-up snapshot (QA-STORE-31, QA-STORE-64).
+    changed: RefCell<Changes>,
+}
+
+/// Installs (true) and removals (false) this window made, last one per target wins.
+#[derive(Default, Debug)]
+pub struct Changes(Vec<(String, bool)>);
+
+impl Changes {
+    pub fn set(&mut self, target: &str, installed: bool) {
+        self.0.retain(|(t, _)| t != target);
+        self.0.push((target.to_owned(), installed));
+    }
+    pub fn get(&self, target: &str) -> Option<bool> {
+        self.0.iter().find(|(t, _)| t == target).map(|(_, i)| *i)
+    }
+}
+
+/// The app or package an install or remove action is about.
+pub fn action_target(a: &Action) -> Option<&str> {
+    match a {
+        Action::PkgInstall(t)
+        | Action::PkgRemove(t)
+        | Action::FlatpakInstall(t)
+        | Action::FlatpakRemove(t) => Some(t),
+        Action::Admin(r) => r.args.first().map(String::as_str),
+        _ => None,
+    }
 }
 
 fn say(l: &gtk::Label, text: &str) {
@@ -383,10 +412,16 @@ fn run_store_action(
     now_installed: bool,
     name: String,
 ) {
-    set(w::TileState::Installing);
+    set(if now_installed {
+        w::TileState::Installing
+    } else {
+        w::TileState::Removing
+    });
     say(&sh.status, "");
     let poll = poll_progress(progress, set.clone());
     let st = sh.status.clone();
+    let target = action_target(&action).map(str::to_owned);
+    let shared = Rc::downgrade(sh);
     sh.ctx.act(
         action,
         Rc::new(move |r: Result<(), ActionError>| {
@@ -394,7 +429,12 @@ fn run_store_action(
                 id.remove();
             }
             match r {
-                Ok(()) => installed.set(now_installed),
+                Ok(()) => {
+                    installed.set(now_installed);
+                    if let (Some(t), Some(sh)) = (&target, shared.upgrade()) {
+                        sh.changed.borrow_mut().set(t, now_installed);
+                    }
+                }
                 Err(e) => say(
                     &st,
                     &if now_installed {
@@ -470,6 +510,9 @@ pub(crate) fn can_open(flathub: bool, desktop: Option<&str>) -> bool {
 }
 
 fn is_present(sh: &Shared, target: &str, flathub: bool) -> bool {
+    if let Some(now) = sh.changed.borrow().get(target) {
+        return now;
+    }
     if flathub {
         sh.env.flatpaks.iter().any(|f| f == target)
     } else {
@@ -880,14 +923,29 @@ fn aur_details(page: &gtk::Box, s: &Subject) {
     page.append(&found);
 }
 
-/// Whether a native package (catalog first, then a repo hit) already covers a Flathub app.
+/// Whether a native package (catalog first, then a repo hit) already covers a Flathub app: by
+/// the id's last part or by the app's name, either case (QA-STORE-70: Arch `ponysay` and
+/// Flathub "Ponysay" were two tiles).
 pub fn covered_natively(h: &wol_core::flatpak::Hit, pkgs: &[store::PkgHit]) -> bool {
     let guess = wol_core::flatpak::native_guess(h);
     let name = h.name.to_lowercase();
     store::search(&h.name)
         .iter()
         .any(|a| a.name.to_lowercase() == name || a.packages.contains(&guess.as_str()))
-        || pkgs.iter().any(|p| p.name == guess)
+        || pkgs
+            .iter()
+            .any(|p| p.name == guess || p.name.to_lowercase() == name)
+}
+
+/// The Flathub hits no native one covers ([`covered_natively`]), for every search path (the
+/// package index's answer had no such filter).
+pub fn flathub_beyond_native(
+    pkgs: &[store::PkgHit],
+    flat: Vec<wol_core::flatpak::Hit>,
+) -> Vec<wol_core::flatpak::Hit> {
+    flat.into_iter()
+        .filter(|h| !covered_natively(h, pkgs))
+        .collect()
 }
 
 /// Repo hits the catalog's tiles for `term` do not already show: one app, one tile.
@@ -1322,8 +1380,9 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
         // The package index answers in milliseconds; the commands below are the fallback.
-        if let Some(found) = crate::packages::search(&term) {
-            let _ = tx.send_blocking(found);
+        if let Some((pkgs, flat)) = crate::packages::search(&term) {
+            let flat = flathub_beyond_native(&pkgs, flat);
+            let _ = tx.send_blocking((pkgs, flat));
             return;
         }
         let run = |argv: &[String]| {
@@ -1506,6 +1565,7 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
         preset: RefCell::new(None),
         status: status.clone(),
         badges: RefCell::new(Vec::new()),
+        changed: RefCell::default(),
         open_details: RefCell::new(None),
     });
     let search = aw.sidebar_search("Search");

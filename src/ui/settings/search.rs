@@ -323,6 +323,7 @@ pub(super) const ROWS: [(&str, &[&str]); 37] = [
             "Download new updates",
             "Download on metered connections",
             "Install app updates",
+            "Update channel",
             "Check Now",
         ],
     ),

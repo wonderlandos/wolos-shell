@@ -397,6 +397,21 @@ fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool, mete
     into.append(&status);
 }
 
+/// The channel this computer follows, shown only: this release offers one (stable; QA-STORE-9,
+/// QA-STORE-68). `wol update channel` says the same.
+fn channel_section() -> gtk::Widget {
+    use crate::copy::settings::{UPDATE_CHANNEL, UPDATE_CHANNEL_DETAIL, channel_name};
+    let value = w::label(
+        &channel_name(shared::packages::channel_of(None)),
+        "secondary",
+    );
+    w::section(
+        "",
+        &[form::row(UPDATE_CHANNEL, UPDATE_CHANNEL_DETAIL, &value)],
+    )
+    .upcast()
+}
+
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let ctx = &e.ctx;
     let p = general::subpage(e, "Software Update");
@@ -447,6 +462,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     buttons.append(&install);
     p.append(&buttons);
     automatic(e, &p);
+    p.append(&channel_section());
 
     // What the daily check adds under the title (security fixes, when it ran); a fresh Check Now
     // clears it.
@@ -605,6 +621,23 @@ mod tests {
             "a change waits for the sheet"
         );
         assert!(!options_shown(false, false, false), "settled off");
+    }
+
+    /// QA-STORE-9/68: the channel row names the one channel this release offers, as
+    /// `wol update channel` does, and Settings search finds it.
+    #[test]
+    fn the_channel_row_shows_stable() {
+        use crate::copy::settings::{UPDATE_CHANNEL, channel_name};
+        assert_eq!(
+            channel_name(shared::packages::channel_of(Some("beta\n"))),
+            "Stable"
+        );
+        assert_eq!(channel_name(""), "");
+        assert!(
+            super::super::search::ROWS
+                .iter()
+                .any(|(p, rows)| *p == "Software Update" && rows.contains(&UPDATE_CHANNEL))
+        );
     }
 
     /// B6 follow-up: the metered option sits under the download switch: shown only while the

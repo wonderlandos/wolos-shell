@@ -947,7 +947,7 @@ impl Inner {
         // with wopkg's grant: without it wold refuses before any sheet (a fresh install has none),
         // so the Authenticate-sheet path through wol-admind stays (0.12.1, QA 0.12.0 bug 4).
         if let Some(r) = via_wopkg(a, &crate::packages::run_wopkg) {
-            return r;
+            return after_wopkg(a, r, || c.flatpak_update());
         }
         let r = match a {
             Action::Wifi(on) => c.set_wifi(*on, &pw),
@@ -1124,6 +1124,20 @@ fn via_wopkg(a: &Action, run: crate::packages::Run) -> Option<Result<(), ActionE
         Action::PkgInstall(t) => install(t, usable("packages-install"), run),
         Action::PkgRemove(t) => remove(t, usable("packages-remove"), run),
         _ => None,
+    }
+}
+
+/// What follows a change wopkg made: wopkg's update covers the system and pacman only, so an
+/// Update All also updates this account's Flathub apps, as the wol-admind path does
+/// (`Controls::pkg_upgrade`): the Store's Updates page lists them (QA-STORE-29).
+fn after_wopkg(
+    a: &Action,
+    r: Result<(), ActionError>,
+    flatpak: impl FnOnce() -> Result<(), wol_core::controls::ControlError>,
+) -> Result<(), ActionError> {
+    match (a, r) {
+        (Action::PkgUpgrade, Ok(())) => flatpak().map_err(ActionError::from),
+        (_, r) => r,
     }
 }
 

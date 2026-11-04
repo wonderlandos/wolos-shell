@@ -1707,14 +1707,14 @@ pub fn ring_with(value: Rc<Cell<Option<u8>>>) -> gtk::DrawingArea {
 pub enum TileState {
     Get,
     Installing,
-    /// Installing, this far (percent).
-    Progress(u8),
+    Removing,
+    Progress(u8), // installing, this far (percent)
     Open,
 }
 
 impl TileState {
     pub fn busy(self) -> bool {
-        matches!(self, TileState::Installing | TileState::Progress(_))
+        matches!(self, Self::Installing | Self::Removing | Self::Progress(_))
     }
 }
 

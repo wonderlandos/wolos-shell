@@ -200,10 +200,39 @@ pub fn open_label(s: w::TileState, can_open: bool) -> String {
     }
 }
 
+/// Most bytes one screenshot may be: a listing names any URL, and an unbounded download filled
+/// the cache (QA-STORE-35).
+pub const SHOT_MAX_BYTES: u64 = 8_000_000;
+
+/// curl for one screenshot into `tmp`: HTTPS only (redirects too), at most [`SHOT_MAX_BYTES`],
+/// 30 s, the URL never an option.
+pub fn shot_argv(url: &str, tmp: &str) -> Vec<String> {
+    let max = SHOT_MAX_BYTES.to_string();
+    [
+        "curl",
+        "-fsL",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+        "--max-filesize",
+        &max,
+        "--max-time",
+        "30",
+        "-o",
+        tmp,
+        "--",
+        url,
+    ]
+    .map(String::from)
+    .to_vec()
+}
+
 pub fn button_label(s: w::TileState) -> String {
     match s {
         w::TileState::Get => "Get".into(),
         w::TileState::Installing => "Installing…".into(),
+        w::TileState::Removing => "Removing…".into(),
         w::TileState::Progress(p) => format!("{p}%"),
         w::TileState::Open => "Open".into(),
     }
@@ -256,11 +285,10 @@ pub(super) fn screenshots(urls: &[String]) -> Option<gtk::Widget> {
                     let _ = std::fs::create_dir_all(d);
                 }
                 let tmp = format!("{path}.part");
-                let ok = wol_core::system::run_with_timeout(
-                    &["curl", "-fsSL", "--max-time", "30", "-o", &tmp, "--", &url],
-                    std::time::Duration::from_secs(35),
-                )
-                .is_some();
+                let argv = shot_argv(&url, &tmp);
+                let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+                let ok = wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(35))
+                    .is_some();
                 if !(ok && std::fs::rename(&tmp, &path).is_ok()) {
                     let _ = std::fs::remove_file(&tmp);
                     return;
