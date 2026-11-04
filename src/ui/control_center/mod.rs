@@ -138,6 +138,14 @@ fn spec() -> Spec {
 pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
     let win = super::window(app, "controlcenter", spec());
     win.set_hide_on_close(true);
+    dress(&win, sys);
+    win.upcast()
+}
+
+/// The panel's content and behaviour on `win` (a layer surface in the shell, a plain window in the
+/// tests): see [`panel`].
+pub fn dress(win: &impl IsA<gtk::Window>, sys: Rc<dyn System>) {
+    let win = win.as_ref().clone();
     let cc = build(sys.clone(), ControlCenterPrefs::default());
     win.set_child(Some(&cc.root));
     {
@@ -221,11 +229,26 @@ pub fn panel(app: &gtk::Application, sys: Rc<dyn System>) -> gtk::Window {
             // Closed: the sound service's client leaves PipeWire with it (QA-SET-48).
             cc.sound_page.clear_source();
             forget_page();
+            // The Authenticate sheet and the changes waiting behind it go with the visit: the
+            // next open showed the stale sheet, and Allow ran the old action (QA-SHEET-1).
+            cc.ui.dismiss_auth();
+        });
+    }
+    // Esc takes the Authenticate sheet down first; the next Esc hides the panel.
+    {
+        let weak = Rc::downgrade(&cc);
+        kit::surface::on_escape_first(&win, move || {
+            weak.upgrade().is_some_and(|cc| {
+                let up = cc.ui.auth.revealer.reveals_child();
+                if up {
+                    cc.ui.cancel();
+                }
+                up
+            })
         });
     }
     let w2 = win.clone();
     kit::surface::on_escape(&win, move || w2.set_visible(false));
-    win.upcast()
 }
 
 /// The main page's modules as they stand top to bottom (the visible ones), under `root` (the
@@ -641,6 +664,13 @@ impl Ui {
         for p in all {
             self.run(p, Some((pw.clone(), n)));
         }
+    }
+    /// The panel went away: the waiting changes are dropped like a Cancel (not while a retry is
+    /// out, [`can_cancel`]) and the sheet is empty and closed.
+    fn dismiss_auth(&self) {
+        self.cancel();
+        self.auth.field.set_text("");
+        self.auth.revealer.set_reveal_child(false);
     }
     /// Cancel: nothing changed, so no sentence; every waiting tile shows the host's state again.
     fn cancel(&self) {

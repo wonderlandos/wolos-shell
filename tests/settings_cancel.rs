@@ -203,22 +203,8 @@ fn sheet_is_modal_esc_cancels(
         "the sidebar takes no click behind the sheet"
     );
     assert!(!a.content.is_sensitive(), "nor the page");
-    // Esc reaches the window's key controller first (capture), wherever the focus is.
-    let esc = a
-        .root
-        .observe_controllers()
-        .iter::<gtk::glib::Object>()
-        .filter_map(Result::ok)
-        .find_map(|c| c.downcast::<gtk::EventControllerKey>().ok())
-        .expect("the window's Esc");
-    let stopped: bool = esc.emit_by_name(
-        "key-pressed",
-        &[
-            &gtk::glib::translate::IntoGlib::into_glib(gtk::gdk::Key::Escape),
-            &0u32,
-            &gtk::gdk::ModifierType::empty(),
-        ],
-    );
+    // Esc reaches the window's key controllers first (capture), wherever the focus is.
+    let stopped = press_esc(a);
     broadway::pump(100);
     assert!(stopped, "Esc is the sheet's");
     assert!(!sheet.reveals_child(), "Esc cancels");
@@ -301,6 +287,58 @@ fn search_paste_capped_esc_clears(a: &shell::kit::widgets::AppWindow) {
     assert_eq!(field.text(), "", "Esc clears the field");
 }
 
+/// Esc as the window's key controllers see it, in the order they were added: true when one took it.
+fn press_esc(a: &shell::kit::widgets::AppWindow) -> bool {
+    let mut keys: Vec<gtk::EventControllerKey> = a
+        .root
+        .observe_controllers()
+        .iter::<gtk::glib::Object>()
+        .filter_map(Result::ok)
+        .filter_map(|c| c.downcast::<gtk::EventControllerKey>().ok())
+        .collect();
+    // As GTK delivers a key: the capture phase first, then the bubble phase.
+    keys.sort_by_key(|k| k.propagation_phase() != gtk::PropagationPhase::Capture);
+    let esc = gtk::glib::translate::IntoGlib::into_glib(gtk::gdk::Key::Escape);
+    let stopped = keys.iter().any(|k| {
+        k.emit_by_name::<bool>(
+            "key-pressed",
+            &[&esc, &0u32, &gtk::gdk::ModifierType::empty()],
+        )
+    });
+    broadway::pump(100);
+    stopped
+}
+
+/// QA-VIS2-37: Esc closes a sheet (New account, Join, Change Password) and a pane change closes
+/// it too, or cancels the Authenticate sheet; they used to pile up behind each other. Esc with no
+/// sheet up goes on to whoever wanted it.
+fn sheets_close_on_esc_and_on_a_pane_change(
+    a: &shell::kit::widgets::AppWindow,
+    root: &gtk::Widget,
+    auth: &gtk::Revealer,
+) {
+    open(a, "Wi-Fi");
+    let plain = of::<gtk::Revealer>(root)
+        .into_iter()
+        .find(|r| r.has_css_class("toolbar-sheet") && r != auth)
+        .expect("a plain toolbar sheet");
+    assert!(!press_esc(a), "no sheet up: Esc is nobody's here");
+    plain.set_reveal_child(true);
+    broadway::pump(100);
+    assert!(press_esc(a), "Esc is the sheet's");
+    assert!(!plain.reveals_child(), "Esc closes the sheet");
+    plain.set_reveal_child(true);
+    broadway::pump(100);
+    open(a, "Keyboard");
+    assert!(!plain.reveals_child(), "a pane change closes the sheet");
+    // The Authenticate sheet is cancelled by a pane change, and the switch flips back.
+    let power = flip_wifi(a, auth);
+    open(a, "Keyboard");
+    assert!(!auth.reveals_child(), "a pane change cancels the sheet");
+    assert!(power.is_active(), "the switch flipped back");
+    assert_eq!(blames(root), Vec::<String>::new());
+}
+
 #[test]
 fn cancel_has_no_incorrect_password() {
     let _display = broadway::start(460);
@@ -322,6 +360,7 @@ fn cancel_has_no_incorrect_password() {
     cancel_on_sharing_says_nothing_wrong(&a, &root, &sheet);
     cancel_says_nothing_wrong(&a, &root, &sheet);
     sheet_is_modal_esc_cancels(&a, &root, &sheet);
+    sheets_close_on_esc_and_on_a_pane_change(&a, &root, &sheet);
     act_without_status_shows_checking(&a, &root, &sys);
     search_paste_capped_esc_clears(&a);
     dead_worker_puts_the_switch_back(&a, &sys);

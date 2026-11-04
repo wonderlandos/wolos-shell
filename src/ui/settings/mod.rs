@@ -1204,6 +1204,35 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
     undo_toast(&aw, &env);
     aw.content
         .connect_visible_child_name_notify(move |s| ensure(s));
+    // A sheet belongs to the pane it was opened on (QA-VIS2-37: the New account sheet stayed
+    // through Hardware, Keyboard and Printers while an Authenticate sheet opened over it): the
+    // Authenticate sheet is cancelled (its switches flip back), the others close.
+    {
+        let (ctx, over) = (Rc::downgrade(&env.ctx), w::content_overlay(&aw));
+        aw.content.connect_visible_child_name_notify(move |_| {
+            if let Some(ctx) = ctx.upgrade() {
+                ctx.cancel();
+            }
+            for sheet in open_sheets(&over) {
+                sheet.set_reveal_child(false);
+            }
+        });
+    }
+    // Escape closes the sheet on top. Not while the Authenticate sheet is up: that one is Cancel
+    // (`Ctx::place`), whichever of the two Escape handlers GTK runs first.
+    {
+        let (ctx, over) = (Rc::downgrade(&env.ctx), w::content_overlay(&aw));
+        kit::surface::on_escape_first(&aw.root, move || {
+            if ctx
+                .upgrade()
+                .is_none_or(|c| c.auth.revealer.reveals_child())
+            {
+                return false;
+            }
+            let top = open_sheets(&over).into_iter().next();
+            top.inspect(|sheet| sheet.set_reveal_child(false)).is_some()
+        });
+    }
 
     // Search: rows whose title or words match; gaps hide while searching; Enter opens the first.
     // The content shows every hit (pane and row) until the field is cleared.
@@ -1668,6 +1697,25 @@ struct Sheets {
     user: gtk::Revealer,
     /// Users & Groups > Change Password.
     password: gtk::Revealer,
+}
+
+/// The toolbar sheets over `overlay` ([`w::content_overlay`]) that are open now, the one on top
+/// first (the last one placed is on top). Escape closes the first; a pane change closes them all
+/// (QA-VIS2-37).
+fn open_sheets(overlay: &gtk::Overlay) -> Vec<gtk::Revealer> {
+    let mut open = Vec::new();
+    let mut child = overlay.first_child();
+    while let Some(c) = child {
+        if let Some(r) = c.downcast_ref::<gtk::Revealer>()
+            && r.has_css_class("toolbar-sheet")
+            && r.reveals_child()
+        {
+            open.push(r.clone());
+        }
+        child = c.next_sibling();
+    }
+    open.reverse();
+    open
 }
 
 /// Replace a toolbar sheet's body.

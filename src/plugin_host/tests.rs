@@ -308,7 +308,8 @@ fn the_layout_places_items_and_drops_plugins_that_are_off() {
 #[test]
 fn the_control_center_panel_installs_the_plugin_tile_source() {
     let src = include_str!("../ui/control_center/mod.rs");
-    let body = &src[src.find("pub fn panel(").unwrap()..];
+    // `panel` builds the window; `dress` is what it puts on it (the tests dress a plain window).
+    let body = &src[src.find("pub fn dress(").unwrap()..];
     let body = &body[..body
         .find(
             "
@@ -318,7 +319,7 @@ fn the_control_center_panel_installs_the_plugin_tile_source() {
         .unwrap()];
     assert!(
         body.contains("set_tile_source(Some("),
-        "panel() installs a TileSource"
+        "the panel (dress) installs a TileSource"
     );
     assert!(body.contains("TileCache::new("), "the plugin TileCache");
 }
