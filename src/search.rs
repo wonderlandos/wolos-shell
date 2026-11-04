@@ -41,6 +41,9 @@ pub struct Item {
     pub exec: Vec<String>,
     /// Lowercase search words, each preceded by a space (`" theme dark"`); see [`Item::with_words`].
     pub words: String,
+    /// The app's desktop id without `.desktop` for an installed app, "" for anything else: what
+    /// the row hands the Dock (drag it there, or Keep in Dock; `apps::keep_in_dock`).
+    pub app: String,
 }
 
 impl Item {
@@ -52,7 +55,14 @@ impl Item {
             icon: icon.into(),
             exec,
             words: String::new(),
+            app: String::new(),
         }
+    }
+
+    /// An installed app's row: the Dock can keep it by `id` ([`Item::app`]).
+    pub fn with_app(mut self, id: &str) -> Self {
+        self.app = id.into();
+        self
     }
 
     /// Also found when a query of [`WORDS_FROM`]+ letters starts one of `words` (rank 2). A word with a

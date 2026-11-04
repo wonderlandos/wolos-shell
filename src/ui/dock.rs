@@ -166,7 +166,10 @@ pub fn focus_target(p: &apps::Pin) -> String {
             .collect()
     };
     let mut alts = vec![escape(p.id)];
-    if let Some(prog) = p.exec.first().map(|e| e.rsplit('/').next().unwrap_or(e))
+    if !p.class.is_empty() {
+        // A web app: its windows' own class, never the browser's (`apps::is_running`).
+        alts.push(escape(p.class));
+    } else if let Some(prog) = p.exec.first().map(|e| e.rsplit('/').next().unwrap_or(e))
         && !prog.eq_ignore_ascii_case(p.id)
     {
         alts.push(escape(prog));
@@ -255,6 +258,12 @@ pub struct Dock {
     layout: RefCell<(Edge, Vec<DockItem>)>,
     /// The running classes last seen, for tiles built after them.
     running: RefCell<HashSet<String>>,
+    /// The kept apps that are not pinned apps (`DockItem::App` resolved from the installed
+    /// entries off the GTK thread, [`read_layout`]).
+    kept: RefCell<Vec<apps::Pin>>,
+    /// The installed entries (read off the GTK thread, [`read_layout`]): names and icons of the
+    /// running apps that have no tile of their own.
+    installed: RefCell<Vec<crate::desktop::Entry>>,
     /// Keyboard access ([`keyboard`]): a tile click gives the keyboard back.
     keys: RefCell<Option<Keys>>,
     /// Hover magnify (Settings > Dock > Magnification).
@@ -521,6 +530,18 @@ struct Shelf {
     pins: Vec<apps::Pin>,
     /// Per tile: bumped on every start and stop, so a stale 60 s timer cannot stop a newer bounce.
     epochs: Vec<Rc<std::cell::Cell<u32>>>,
+    /// The ids of the running apps shown after the kept ones (no tile of their own otherwise).
+    running: Vec<&'static str>,
+}
+
+/// A tile's right-click menu.
+#[derive(Clone, Copy, PartialEq)]
+enum Menu {
+    None,
+    /// A kept app: Remove from Dock.
+    Remove,
+    /// A running app with an installed entry: Keep in Dock.
+    Keep,
 }
 
 pub fn content(running: &HashSet<String>) -> Rc<Dock> {
@@ -557,6 +578,8 @@ pub fn content_with(running: &HashSet<String>, items: &[DockItem], edge: Edge) -
         host: RefCell::new(None),
         layout: RefCell::new((edge, Vec::new())),
         running: RefCell::new(running.clone()),
+        kept: RefCell::new(Vec::new()),
+        installed: RefCell::new(Vec::new()),
         keys: RefCell::new(None),
         magnify: Default::default(),
     });
@@ -581,9 +604,119 @@ pub fn content_with(running: &HashSet<String>, items: &[DockItem], edge: Edge) -
         motion.connect_leave(move |_| m.hover(None));
         d.root.add_controller(motion);
     }
+    d.root.add_controller(drop_target());
     d.set_edge(edge);
     d.fill(items);
     d
+}
+
+/// Labels of the Dock's own menu and its drop.
+pub const KEEP_IN_DOCK: &str = "Keep in Dock";
+pub const REMOVE_FROM_DOCK: &str = "Remove from Dock";
+
+/// `shell.json` (its text now: `old`) with its Dock items changed by `change` (None: nothing to
+/// do), saved through the change journal like a Settings change; the Dock (any process's) follows
+/// through `ipc::watch_prefs`. Ok(false) when nothing changed. Writes a file: call it off the GTK
+/// thread, like the read of `old` ([`shell_file`]).
+pub fn change_items(
+    old: Option<String>,
+    change: impl FnOnce(&[DockItem]) -> Option<Vec<DockItem>>,
+) -> std::io::Result<bool> {
+    let mut l = wol_core::prefs::layout(old.as_deref());
+    let Some(items) = change(&l.dock_items) else {
+        return Ok(false);
+    };
+    l.dock_items = items;
+    let text = wol_core::prefs::with_layout(old.as_deref(), &l).map_err(std::io::Error::other)?;
+    wol_core::journal::Journal::for_config(std::path::Path::new(&kit::config_home())).save(
+        "shell",
+        "dock",
+        &[(wol_core::prefs::SHELL_FILE, Some(&text))],
+        wol_core::journal::now(),
+    )?;
+    Ok(true)
+}
+
+/// Keeps the installed app `id` (desktop id without `.desktop`) in the Dock, after the others;
+/// `old` is `shell.json` now ([`change_items`]).
+pub fn keep(old: Option<String>, id: &str) -> std::io::Result<bool> {
+    change_items(old, |items| apps::keep_in_dock(items, apps::here(), id))
+}
+
+/// Takes the kept app `id` off the Dock (the app stays installed).
+pub fn unkeep(old: Option<String>, id: &str) -> std::io::Result<bool> {
+    change_items(old, |items| apps::remove_from_dock(items, id))
+}
+
+/// [`keep`] (or [`unkeep`]) off the GTK thread: reads `shell.json` and saves the change there.
+pub fn keep_later(id: String, on: bool) {
+    glib::spawn_future_local(async move {
+        let _ = gio::spawn_blocking(move || {
+            let old = std::fs::read_to_string(shell_file()).ok();
+            if on { keep(old, &id) } else { unkeep(old, &id) }
+        })
+        .await;
+    });
+}
+
+/// An app dropped on the shelf (a Search row, a `.desktop` file from Files) is kept
+/// ([`apps::dropped_app`]); the save runs off the GTK thread.
+fn drop_target() -> gtk::DropTarget {
+    let t = gtk::DropTarget::new(glib::Type::INVALID, gtk::gdk::DragAction::COPY);
+    t.set_types(&[String::static_type(), gtk::gdk::FileList::static_type()]);
+    t.connect_drop(|_, v, _, _| dropped(v));
+    t
+}
+
+/// What the shelf's drop does with `v` (a string or a file list): keeps the app it names, the
+/// save off the GTK thread. False when it names none.
+pub fn dropped(v: &glib::Value) -> bool {
+    let text = if let Ok(s) = v.get::<String>() {
+        s
+    } else if let Ok(f) = v.get::<gtk::gdk::FileList>() {
+        f.files()
+            .first()
+            .and_then(|f| f.path())
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let Some(id) = apps::dropped_app(&text) else {
+        return false;
+    };
+    keep_later(id, true);
+    true
+}
+
+/// Right-click on a kept app's tile: Remove from Dock; on a running app's: Keep in Dock.
+fn tile_menu(button: &gtk::Button, id: &'static str, menu: Menu) {
+    let (label, keep) = match menu {
+        Menu::None => return,
+        Menu::Remove => (REMOVE_FROM_DOCK, false),
+        Menu::Keep => (KEEP_IN_DOCK, true),
+    };
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let b = button.clone();
+    click.connect_pressed(move |_, _, x, y| {
+        kit::data::popup_menu(
+            &b,
+            x,
+            y,
+            vec![(
+                label.to_string(),
+                None,
+                Box::new(move || keep_later(id.to_string(), keep)),
+            )],
+        );
+    });
+    button.add_controller(click);
+}
+
+/// The image of a Dock tile (its first child's first child).
+fn tile_image(t: &w::DockTile) -> Option<gtk::Image> {
+    t.button.child()?.first_child().and_downcast::<gtk::Image>()
 }
 
 /// The Dock window, its tiles, and its keyboard access (⌃F2/⌃F3 style, see [`keyboard`]).
@@ -600,7 +733,7 @@ pub fn layout_of(text: Option<&str>) -> (Layout, Edge) {
     (l, edge)
 }
 
-fn shell_file() -> std::path::PathBuf {
+pub fn shell_file() -> std::path::PathBuf {
     std::path::Path::new(&kit::config_home()).join(wol_core::prefs::SHELL_FILE)
 }
 
@@ -702,12 +835,20 @@ fn read_layout(
 ) {
     let (d, layout) = (Rc::downgrade(d), layout.clone());
     glib::spawn_future_local(async move {
-        let text = gio::spawn_blocking(|| std::fs::read_to_string(shell_file()).ok())
-            .await
-            .ok()
-            .flatten();
+        let (text, kept, installed) = gio::spawn_blocking(|| {
+            let text = std::fs::read_to_string(shell_file()).ok();
+            let items = layout_of(text.as_deref()).0.dock_items;
+            // Kept apps and running apps without a tile are named from the installed entries.
+            let installed = crate::desktop::load_all();
+            let kept = apps::kept_pins(&items, apps::here(), &installed);
+            (text, kept, installed)
+        })
+        .await
+        .unwrap_or_default();
         let (l, edge) = layout_of(text.as_deref());
         let Some(d) = d.upgrade() else { return };
+        let kept_changed = d.set_kept(kept);
+        d.installed.replace(installed);
         if d.edge() != edge {
             if let Some(w) = win.upgrade() {
                 kit::surface::reanchor(&w, Spec::dock(edge));
@@ -717,7 +858,8 @@ fn read_layout(
             }
         }
         let moved = d.edge() != edge;
-        let rebuilt = d.set_layout(edge, &l.dock_items);
+        let rebuilt = d.set_layout(edge, &l.dock_items)
+            || ((kept_changed || d.running_changed()) && d.refill());
         let reorder = rebuilt || *layout.borrow() != l;
         *layout.borrow_mut() = l;
         if reorder && let Some(h) = d.host.borrow().clone() {
@@ -823,6 +965,28 @@ impl Dock {
         true
     }
 
+    /// The kept apps that are not pinned apps; true when they changed (the shelf needs a
+    /// [`Dock::refill`]).
+    pub fn set_kept(&self, kept: Vec<apps::Pin>) -> bool {
+        if *self.kept.borrow() == kept {
+            return false;
+        }
+        self.kept.replace(kept);
+        true
+    }
+
+    /// Builds the shelf again from the items it shows. Always true.
+    pub fn refill(&self) -> bool {
+        let items = self.items();
+        self.fill(&items);
+        true
+    }
+
+    /// The pinned and kept apps the shelf shows now, in order.
+    pub fn pins(&self) -> Vec<apps::Pin> {
+        self.shelf.borrow().pins.clone()
+    }
+
     /// Builds the shelf from `items`, in their order, on the current edge: the pinned apps, the
     /// separators, the Downloads stack, Trash, and the plugin box at the first plugin item.
     fn fill(&self, items: &[DockItem]) {
@@ -834,24 +998,49 @@ impl Dock {
             .position(|i| matches!(i, DockItem::Plugin { .. }));
         let mut shelf = Shelf::default();
         let root = &self.root;
-        let mut pin = |p: &apps::Pin| {
+        let kept = self.kept.borrow();
+        // Running apps without a tile go after the kept ones, where the layout lists the apps.
+        let running_apps = if items.contains(&DockItem::Apps) {
+            let shown: Vec<apps::Pin> = apps::here().iter().chain(kept.iter()).cloned().collect();
+            apps::running_unpinned(&self.running.borrow(), &shown, &self.installed.borrow())
+        } else {
+            Vec::new()
+        };
+        let mut pin = |p: &apps::Pin, menu: Menu, after_apps: bool| {
             if shelf.pins.iter().any(|q| q.id == p.id) {
                 return;
             }
             let t = w::DockTile::new(p.icon, p.name, || {});
+            if p.icon.starts_with('/')
+                && let Some(img) = tile_image(&t)
+            {
+                // A web app's own icon file (wol_core::webapps::icon_path), not a theme name.
+                img.set_from_file(Some(p.icon));
+            }
+            tile_menu(&t.button, p.id, menu);
             let (tile, pp) = (t.clone(), p.clone());
             t.button.connect_clicked(move |_| clicked(&tile, &pp));
-            root.append(&t.button);
+            if after_apps {
+                let last = shelf
+                    .tiles
+                    .last()
+                    .map(|t| t.button.clone().upcast::<gtk::Widget>());
+                root.insert_child_after(&t.button, last.as_ref());
+            } else {
+                root.append(&t.button);
+            }
             shelf.pins.push(p.clone());
             shelf.epochs.push(Default::default());
             shelf.tiles.push(t);
         };
         for (n, item) in items.iter().enumerate() {
             match item {
-                DockItem::Apps => apps::here().iter().for_each(&mut pin),
+                DockItem::Apps => apps::here().iter().for_each(|p| pin(p, Menu::None, false)),
                 DockItem::App { id } => {
                     if let Some(p) = apps::here().iter().find(|p| p.id == id) {
-                        pin(p);
+                        pin(p, Menu::None, false);
+                    } else if let Some(p) = kept.iter().find(|p| p.id == id) {
+                        pin(p, Menu::Remove, false);
                     }
                 }
                 DockItem::Separator => root.append(&gtk::Separator::new(across(self.edge()))),
@@ -874,6 +1063,11 @@ impl Dock {
                 DockItem::Plugin { .. } => {}
             }
         }
+        for r in &running_apps {
+            let menu = if r.keepable { Menu::Keep } else { Menu::None };
+            pin(&r.pin, menu, true);
+        }
+        shelf.running = running_apps.iter().map(|r| r.pin.id).collect();
         // No plugin item in the layout: the box sits after the apps (new entries go there).
         if self.plugin_box.parent().is_none() {
             let after = shelf
@@ -971,10 +1165,45 @@ impl Dock {
 
     pub fn set_running(&self, classes: &HashSet<String>) {
         self.running.replace(classes.clone());
+        if self.running_changed() {
+            // An app without a tile started or stopped: its tile comes or goes.
+            self.refill();
+            return;
+        }
         let s = self.shelf.borrow();
         for (p, t) in s.pins.iter().zip(&s.tiles) {
             t.set_running(apps::is_running(p, classes));
         }
+    }
+
+    /// The installed entries the running apps without a tile are named from (tests and
+    /// previews; the Dock reads them itself in `read_layout`). Refills when that changes them.
+    pub fn set_installed(&self, installed: Vec<crate::desktop::Entry>) {
+        self.installed.replace(installed);
+        if self.running_changed() {
+            self.refill();
+        }
+    }
+
+    /// The running apps without a tile are not the ones the shelf shows.
+    fn running_changed(&self) -> bool {
+        let items = self.items();
+        if !items.contains(&DockItem::Apps) {
+            return false;
+        }
+        let s = self.shelf.borrow();
+        let shown: Vec<apps::Pin> = s
+            .pins
+            .iter()
+            .filter(|p| !s.running.contains(&p.id))
+            .cloned()
+            .collect();
+        let want: Vec<&str> =
+            apps::running_unpinned(&self.running.borrow(), &shown, &self.installed.borrow())
+                .iter()
+                .map(|r| r.pin.id)
+                .collect();
+        want != s.running
     }
 }
 
@@ -1034,6 +1263,7 @@ mod click_tests {
             name: "Files",
             icon: "wolos-files",
             exec: &["nautilus"],
+            class: "",
         };
         assert_eq!(click(&files, false), Click::Launch);
         assert_eq!(
@@ -1045,6 +1275,7 @@ mod click_tests {
             name: "Browser",
             icon: "wolos-browser",
             exec: &["/usr/bin/helium"],
+            class: "",
         };
         assert_eq!(
             focus_target(&same),

@@ -165,6 +165,70 @@ fn cases() -> Vec<Case> {
             }),
         },
         Case {
+            // QA-MANUAL-5/43 (manual webapps.md): a web app kept in the Dock sits after the
+            // pinned apps with its own icon file, and its window lights its own dot.
+            name: "dock-kept-webapp".into(),
+            size: (1043, 120),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let app = wol_core::webapps::WebApp::new(
+                    "Mail",
+                    "https://mail.example.com",
+                    wol_core::webapps::Profile::Own,
+                )
+                .unwrap();
+                let text =
+                    wol_core::webapps::desktop_entry(&app, std::path::Path::new("/h/.local/share"));
+                let mut e = shell::desktop::parse("wolos-webapp-mail.desktop", &text).unwrap();
+                e.icon = concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../design/icons/store/evolution.svg"
+                )
+                .into();
+                let items = shell::apps::keep_in_dock(
+                    &shared::layout::Layout::default().dock_items,
+                    shell::apps::PINS,
+                    "wolos-webapp-mail",
+                )
+                .unwrap();
+                let running = [e.wm_class.to_lowercase()].into_iter().collect();
+                let d = ui::dock::content_with(&running, &items, shared::layout::Edge::Bottom);
+                d.set_kept(vec![shell::apps::entry_pin(&e)]);
+                d.refill();
+                d.set_running(&running);
+                assert_eq!(d.pins().last().map(|p| p.name), Some("Mail"));
+                d.root.clone().upcast()
+            }),
+        },
+        Case {
+            // manual apps.md:60: an app running without a Dock icon (Geany) shows after the
+            // pinned apps with its running dot while it runs.
+            name: "dock-running-unpinned".into(),
+            size: (1043, 120),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                let calc = shell::desktop::Entry {
+                    id: "geany.desktop".into(),
+                    name: "Geany".into(),
+                    exec: vec!["geany".into()],
+                    icon: concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/../../design/icons/store/geany.svg"
+                    )
+                    .into(),
+                    wm_class: String::new(),
+                };
+                let running = ["foot".to_string(), "geany".into()].into_iter().collect();
+                let d = ui::dock::content(&Default::default());
+                d.set_installed(vec![calc]);
+                d.set_running(&running);
+                assert_eq!(d.pins().last().map(|p| p.name), Some("Geany"));
+                d.root.clone().upcast()
+            }),
+        },
+        Case {
             // A helper (wol mcp) asks before a change: Deny, Always Allow, Allow Once.
             name: "approval".into(),
             size: (400, 1),

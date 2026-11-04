@@ -26,7 +26,10 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
     let mut v: Vec<Item> = apps
         .into_iter()
         .filter(|e| crate::apps::pin_for_entry(e, crate::apps::here()).is_none())
-        .map(|e| Item::new(&e.name, "Application", &e.icon, e.exec))
+        .map(|e| {
+            Item::new(&e.name, "Application", &e.icon, e.exec)
+                .with_app(crate::apps::desktop_stem(&e.id))
+        })
         .collect();
     for p in crate::apps::here() {
         if !v.iter().any(|i| i.title == p.name) {
@@ -38,7 +41,8 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
                     p.icon,
                     p.exec.iter().map(|s| s.to_string()).collect(),
                 )
-                .with_words(&crate::apps::product_words(p)),
+                .with_words(&crate::apps::product_words(p))
+                .with_app(p.id),
             );
         }
     }
@@ -209,6 +213,48 @@ pub fn provided(rows: Vec<crate::app_session::ProviderRow>) -> Vec<Item> {
 }
 
 /// Open a result: run it, or tell the app that provided it.
+/// An app row goes to the Dock (manual webapps.md; QA-MANUAL-5/43): dragged onto it, it hands the
+/// Dock its desktop id ([`crate::apps::DRAG_PREFIX`]); right-click offers Keep in Dock. The
+/// Dock's own pinned apps are there already, so their rows offer nothing.
+fn dock_handle(row: &gtk::Button, id: &str) {
+    let drag = gtk::DragSource::new();
+    drag.set_actions(gdk::DragAction::COPY);
+    let text = format!("{}{id}", crate::apps::DRAG_PREFIX);
+    drag.set_content(Some(&gdk::ContentProvider::for_value(&text.to_value())));
+    {
+        let icon = row
+            .child()
+            .and_then(|c| c.first_child())
+            .and_downcast::<gtk::Image>();
+        drag.connect_drag_begin(move |src, _| {
+            if let Some(p) = icon.as_ref().and_then(|i| i.paintable()) {
+                src.set_icon(Some(&p), 0, 0);
+            }
+        });
+    }
+    row.add_controller(drag);
+    if crate::apps::here().iter().any(|p| p.id == id) {
+        return;
+    }
+    let click = gtk::GestureClick::new();
+    click.set_button(gdk::BUTTON_SECONDARY);
+    let (b, id) = (row.clone(), id.to_string());
+    click.connect_pressed(move |_, _, x, y| {
+        let id = id.clone();
+        crate::kit::data::popup_menu(
+            &b,
+            x,
+            y,
+            vec![(
+                crate::ui::dock::KEEP_IN_DOCK.to_string(),
+                None,
+                Box::new(move || crate::ui::dock::keep_later(id.clone(), true)),
+            )],
+        );
+    });
+    row.add_controller(click);
+}
+
 fn launch(exec: &[String]) {
     match exec {
         [open, pid, key] if open == OPEN_ROW => {
@@ -378,6 +424,9 @@ pub fn content(
                 b.add_css_class("hit");
                 if i == 0 {
                     b.add_css_class("selected");
+                }
+                if !it.app.is_empty() {
+                    dock_handle(&b, &it.app);
                 }
                 let exec = it.exec.clone();
                 b.connect_clicked(move |b| {
