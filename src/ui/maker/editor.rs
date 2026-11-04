@@ -91,7 +91,17 @@ impl Services for Headless {
 /// `wol_lua::plugin::lua_problems`, the host's deadlines and services that act on nothing).
 /// Blocks: run it off the GTK thread.
 pub fn check_folder(dir: &Path) -> Vec<String> {
-    cp::check_full(dir, false, |d, m| {
+    check_folder_as(dir, is_system_dir(dir))
+}
+
+/// A folder of the shipped plugins (QA-PLUG-53): `org.wolos.*` ids are theirs, not "reserved".
+pub fn is_system_dir(dir: &Path) -> bool {
+    dir.starts_with(shared::plugins::SYSTEM_DIR)
+}
+
+/// [`check_folder`] with the folder's kind given (a scratch copy of a shipped plugin is one too).
+fn check_folder_as(dir: &Path, system: bool) -> Vec<String> {
+    cp::check_full(dir, system, |d, m| {
         wol_lua::plugin::lua_problems(
             d,
             m,
@@ -108,6 +118,12 @@ static SCRATCH: AtomicU64 = AtomicU64::new(0);
 /// [`check_folder`] on `dir` as it would be with `rel` holding `text`: a scratch copy under the
 /// temp folder, named like `dir` (the check wants the folder named after the id), removed after.
 pub fn check_draft(dir: &Path, rel: &str, text: &str) -> Vec<String> {
+    check_drafts(dir, &[(rel.to_owned(), text.to_owned())])
+}
+
+/// [`check_draft`] with every open file's draft (QA-PLUG-31: an edit to `plugin.toml` was
+/// checked against the saved `bar.lua`, not the one being typed).
+pub fn check_drafts(dir: &Path, drafts: &[(String, String)]) -> Vec<String> {
     let n = SCRATCH.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!("wol-maker-check-{}-{n}", std::process::id()));
     let name = dir.file_name().unwrap_or_default();
@@ -122,22 +138,31 @@ pub fn check_draft(dir: &Path, rel: &str, text: &str) -> Vec<String> {
                     && std::fs::copy(p, &to).is_ok()
             })
         });
-    let safe = shared::safe_path::safe_join_str(&copy_to, rel).ok();
+    let safe: Option<Vec<(PathBuf, &str)>> = drafts
+        .iter()
+        .map(|(rel, text)| {
+            shared::safe_path::safe_join_str(&copy_to, rel)
+                .ok()
+                .map(|p| (p, text.as_str()))
+        })
+        .collect();
     // What this call may have written, for the cleanup below.
     let mut written: Vec<PathBuf> = listed
         .unwrap_or_default()
         .iter()
         .map(|(r, _)| copy_to.join(r))
         .collect();
-    written.extend(safe.clone());
+    written.extend(safe.iter().flatten().map(|(p, _)| p.clone()));
     let out = match safe {
-        Some(target) if copied => {
-            let wrote = target
-                .parent()
-                .is_some_and(|d| std::fs::create_dir_all(d).is_ok())
-                && std::fs::write(&target, text).is_ok();
+        Some(targets) if copied => {
+            let wrote = targets.iter().all(|(target, text)| {
+                target
+                    .parent()
+                    .is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+                    && std::fs::write(target, text).is_ok()
+            });
             if wrote {
-                check_folder(&copy_to)
+                check_folder_as(&copy_to, is_system_dir(dir))
             } else {
                 check_folder(dir)
             }
@@ -190,21 +215,46 @@ pub fn save_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     shared::atomic::atomic_write(path, mode, text.as_bytes())
 }
 
-/// Writes every file of `files` whose text differs from the disk ([`save_atomic`]); false when
-/// one could not be written. Blocks: run it off the GTK thread.
-pub fn save_all(dir: &Path, files: &[(String, String)]) -> bool {
-    let mut ok = true;
+/// How a save went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wrote {
+    /// Every changed file is on disk.
+    Yes,
+    /// The disk is full (or the person's quota is used up): their own sentence (QA-PLUG-77).
+    NoSpace,
+    /// Some file could not be written.
+    No,
+}
+
+/// True for "no space left" and "quota exceeded".
+fn no_space(e: &std::io::Error) -> bool {
+    use std::io::ErrorKind::{QuotaExceeded, StorageFull};
+    matches!(e.kind(), StorageFull | QuotaExceeded)
+}
+
+/// Writes every file of `files` whose text differs from the disk ([`save_atomic`]). Blocks: run
+/// it off the GTK thread.
+pub fn save_files(dir: &Path, files: &[(String, String)]) -> Wrote {
+    let mut wrote = Wrote::Yes;
     for (rel, text) in files {
         let Ok(p) = shared::safe_path::safe_join_str(dir, rel) else {
-            ok = false;
+            wrote = Wrote::No;
             continue;
         };
         let same = std::fs::read_to_string(&p).is_ok_and(|t| t == *text);
-        if !same && save_atomic(&p, text).is_err() {
-            ok = false;
+        if !same && let Err(e) = save_atomic(&p, text) {
+            if no_space(&e) {
+                return Wrote::NoSpace;
+            }
+            wrote = Wrote::No;
         }
     }
-    ok
+    wrote
+}
+
+/// [`save_files`], whether every file was written.
+pub fn save_all(dir: &Path, files: &[(String, String)]) -> bool {
+    save_files(dir, files) == Wrote::Yes
 }
 
 /// Reads `dir` off the GTK thread, then hands the result to `done` on it.
@@ -330,6 +380,7 @@ pub struct Editor {
     filling: Cell<bool>,
     /// Runs after every save (the preview reloads the folder).
     saved: RefCell<Option<Rc<dyn Fn()>>>,
+    dirty_changed: RefCell<Option<Rc<dyn Fn(bool)>>>,
     /// An edit since the last good save.
     dirty: Cell<bool>,
     /// Counts edits only (a Check does not count), so a save knows whether one came meanwhile.
@@ -380,6 +431,7 @@ impl Editor {
             turns: Turns::default(),
             filling: Cell::new(false),
             saved: RefCell::new(None),
+            dirty_changed: RefCell::new(None),
             dirty: Cell::new(false),
             edits: Turns::default(),
         });
@@ -414,6 +466,25 @@ impl Editor {
     /// Whether the editor holds text that is not on disk yet.
     pub fn has_unsaved(&self) -> bool {
         self.dirty.get()
+    }
+
+    /// The person chose to drop the edits (Discard Changes): the editor may be left now.
+    pub fn discard(&self) {
+        self.set_dirty(false);
+    }
+
+    /// Sets the unsaved flag and tells the window (Save is on only while there are edits).
+    fn set_dirty(&self, on: bool) {
+        self.dirty.set(on);
+        let f = self.dirty_changed.borrow().clone();
+        if let Some(f) = f {
+            f(on);
+        }
+    }
+
+    /// `f(unsaved)` runs whenever the unsaved flag changes.
+    pub fn on_dirty(&self, f: Rc<dyn Fn(bool)>) {
+        self.dirty_changed.replace(Some(f));
     }
 
     /// `f` runs after each save.
@@ -456,7 +527,7 @@ impl Editor {
 
     /// An edit: the check runs [`CHECK_AFTER`] after the last one, on the draft.
     fn edited(self: &Rc<Self>) {
-        self.dirty.set(true);
+        self.set_dirty(true);
         self.edits.next();
         self.status.set_label(copy::UNSAVED);
         let turn = self.turns.next();
@@ -471,11 +542,12 @@ impl Editor {
 
     /// Checks the draft off the GTK thread; the answer is shown when no edit came since.
     fn check_now(self: &Rc<Self>, turn: u64) {
-        let (rel, text) = self.draft();
+        self.keep_draft();
+        let drafts = self.files.borrow().clone();
         let dir = self.dir.clone();
         let me = Rc::downgrade(self);
         off_thread(
-            move || check_draft(&dir, &rel, &text),
+            move || check_drafts(&dir, &drafts),
             move |problems| {
                 if let Some(e) = me.upgrade()
                     && e.turns.is_current(turn)
@@ -496,14 +568,13 @@ impl Editor {
         let edit = self.edits.next();
         let me = Rc::downgrade(self);
         off_thread(
-            move || (save_all(&dir, &files), check_folder(&dir)),
-            move |(ok, problems)| {
+            move || (save_files(&dir, &files), check_folder(&dir)),
+            move |(wrote, problems)| {
                 let Some(e) = me.upgrade() else { return };
-                e.status
-                    .set_label(if ok { copy::SAVED } else { copy::NOT_SAVED });
-                if ok && e.edits.is_current(edit) {
+                e.status.set_label(save_status(wrote, &problems));
+                if wrote == Wrote::Yes && e.edits.is_current(edit) {
                     // No edit came while saving: the disk holds what is shown.
-                    e.dirty.set(false);
+                    e.set_dirty(false);
                 }
                 if e.turns.is_current(turn) {
                     e.show_problems(&problems);
@@ -551,6 +622,17 @@ impl Editor {
 
 /// The text area's least height (about 14 lines of 13 px text).
 const EDITOR_MIN_HEIGHT: i32 = 240;
+
+/// The status line after Save: written or not, and whether the saved plugin has a problem (the
+/// desktop then does not show this version, QA-PLUG-64).
+pub fn save_status(wrote: Wrote, problems: &[String]) -> &'static str {
+    match (wrote, problems.is_empty()) {
+        (Wrote::NoSpace, _) => copy::NOT_SAVED_FULL,
+        (Wrote::No, _) => copy::NOT_SAVED,
+        (Wrote::Yes, true) => copy::SAVED,
+        (Wrote::Yes, false) => copy::SAVED_WITH_PROBLEM,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -620,16 +702,24 @@ mod tests {
         assert!(p[0].starts_with("bar.lua: "), "{p:?}");
         // The real folder was never touched by the drafts.
         assert!(check_folder(&dir).is_empty());
-        assert!(
+        // Other tests of this process make scratch copies of their own at the same time: wait
+        // for theirs to go too, none may stay.
+        let left = || {
             std::fs::read_dir(std::env::temp_dir())
                 .unwrap()
                 .flatten()
-                .all(|e| !e
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(&format!("wol-maker-check-{}-", std::process::id()))),
-            "scratch copies are removed"
-        );
+                .filter(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .starts_with(&format!("wol-maker-check-{}-", std::process::id()))
+                })
+                .count()
+        };
+        let t = std::time::Instant::now();
+        while left() > 0 && t.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::park_timeout(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(left(), 0, "scratch copies are removed");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -741,5 +831,88 @@ mod tests {
     fn names_read_like_the_cli_makes_them() {
         assert_eq!(plugin_name("alice.weather"), "Weather");
         assert_eq!(plugin_name("alice.weather-now"), "Weather now");
+    }
+
+    /// QA-PLUG-64: Save of a manifest that does not parse says the plugin has a problem (it said
+    /// "Saved. The preview shows the new version." while the bar item vanished).
+    #[test]
+    fn save_with_broken_manifest_says_problem() {
+        let root = tmp("broken");
+        let dir = create(&root, "alice.demo", &[Kind::Menubar]).unwrap();
+        let toml = std::fs::read_to_string(dir.join("plugin.toml")).unwrap();
+        let broken = toml.replacen("description = ", "description EDITED = ", 1);
+        assert!(save_all(&dir, &[("plugin.toml".into(), broken)]));
+        let problems = check_folder(&dir);
+        assert!(!problems.is_empty());
+        assert_eq!(save_status(Wrote::Yes, &problems), copy::SAVED_WITH_PROBLEM);
+        assert_eq!(save_status(Wrote::Yes, &[]), copy::SAVED);
+        assert_eq!(save_status(Wrote::No, &problems), copy::NOT_SAVED);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// QA-PLUG-31: the as-you-type check sees every draft: a fixed `bar.lua` not saved yet is
+    /// what the check reads while `plugin.toml` is edited too.
+    #[test]
+    fn the_check_reads_every_draft() {
+        let root = tmp("drafts");
+        let dir = create(&root, "alice.demo", &[Kind::Menubar]).unwrap();
+        let good_bar = std::fs::read_to_string(dir.join("bar.lua")).unwrap();
+        std::fs::write(
+            dir.join("bar.lua"),
+            "return wol.menubar { render = function() error('boom') end }\n",
+        )
+        .unwrap();
+        let toml = std::fs::read_to_string(dir.join("plugin.toml")).unwrap();
+        let toml = toml.replacen("version = \"0.1\"", "version = \"0.2\"", 1);
+        assert!(
+            !check_draft(&dir, "plugin.toml", &toml).is_empty(),
+            "the saved bar.lua fails"
+        );
+        let both = [
+            ("plugin.toml".to_owned(), toml),
+            ("bar.lua".to_owned(), good_bar),
+        ];
+        assert_eq!(check_drafts(&dir, &both), Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// QA-PLUG-77: a full disk has its own sentence (not the generic "couldn't be saved").
+    #[test]
+    fn a_full_disk_has_its_own_sentence() {
+        let full = std::io::Error::from_raw_os_error(28);
+        let quota = std::io::Error::from_raw_os_error(122);
+        let other = std::io::Error::from_raw_os_error(13);
+        assert!(no_space(&full) && no_space(&quota) && !no_space(&other));
+        assert_eq!(save_status(Wrote::NoSpace, &[]), copy::NOT_SAVED_FULL);
+        assert!(crate::copy::lint(copy::NOT_SAVED_FULL).is_empty());
+        // /dev/full answers every write with ENOSPC: a file there is a full disk.
+        if Path::new("/dev/full").exists() {
+            let e = std::fs::write("/dev/full", "x").unwrap_err();
+            assert!(no_space(&e), "{e:?}");
+        }
+    }
+
+    /// QA-PLUG-53: a shipped plugin (`/usr/share/wolos/plugins/org.wolos.*`) opens as a system
+    /// folder, so its own id is not refused as reserved.
+    #[test]
+    fn a_shipped_plugin_is_not_reserved_for_itself() {
+        assert!(is_system_dir(Path::new(
+            "/usr/share/wolos/plugins/org.wolos.stats"
+        )));
+        assert!(!is_system_dir(Path::new(
+            "/home/a/.local/share/wolos/plugins/org.wolos.x"
+        )));
+        let root = tmp("shipped");
+        let files = cp::scaffold("org.wolos.demo", "Demo", &[Kind::Menubar]).unwrap();
+        let dir = root.join("org.wolos.demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        write_scaffold(&dir, &files).unwrap();
+        let as_user = check_folder_as(&dir, false);
+        assert!(
+            as_user.iter().any(|p| p.contains("reserved")),
+            "{as_user:?}"
+        );
+        assert_eq!(check_folder_as(&dir, true), Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(root);
     }
 }

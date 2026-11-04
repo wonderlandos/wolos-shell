@@ -1111,6 +1111,20 @@ pub fn plugin_not_on(plugin: &str) -> String {
     format!("No plugin {plugin} is turned on (wol plugin list shows them).")
 }
 
+/// `wol.http_get` on a site the person has not allowed for this plugin (QA-PLUG-12): the way to
+/// allow it, since no sheet asks yet.
+pub fn plugin_host_not_allowed(plugin: &str, host: &str) -> String {
+    format!(
+        "This plugin may not read from {host} yet. To allow it, run wol plugin allow-host {plugin} {host} in a terminal."
+    )
+}
+
+/// A turned-on plugin whose manifest stopped reading (an edit in progress): the desktop keeps the
+/// version that worked until it is fixed (QA-PLUG-64).
+pub fn plugin_kept_last_good(name: &str, why: &str) -> String {
+    format!("{name} has a problem, so your desktop keeps its last working version: {why}")
+}
+
 /// A shell part that panicked while it was built (`kit::fence` card, SP-1).
 pub const PART_STOPPED: &str =
     "Everything else keeps working. Sign out and in again to bring it back.";

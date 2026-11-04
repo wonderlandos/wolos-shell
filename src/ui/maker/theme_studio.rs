@@ -172,6 +172,35 @@ pub fn badges(tokens: &BTreeMap<String, String>) -> Vec<Badge> {
         .collect()
 }
 
+/// A token id as words (QA-PLUG-50): `accentText` is "accent text", `glass` is "glass".
+pub fn token_words(id: &str) -> String {
+    let mut out = String::new();
+    for c in id.chars() {
+        if c.is_uppercase() && !out.is_empty() {
+            out.push(' ');
+        }
+        out.extend(c.to_lowercase());
+    }
+    out
+}
+
+/// What a badge says: "Accent text on accent 4.5:1" (the words, then the ratio).
+pub fn badge_text(b: &Badge) -> String {
+    let said = format!(
+        "{} on {} {:.1}:1",
+        token_words(b.fg),
+        token_words(b.bg),
+        b.ratio
+    );
+    let mut c = said.chars();
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
+}
+
+/// The longest theme name Save Theme takes.
+pub const NAME_MAX: i32 = 40;
+
 /// The theme contract's own verdict (empty = readable everywhere).
 pub fn problems(tokens: &BTreeMap<String, String>) -> Vec<String> {
     validate(|t| tokens.get(t).cloned())
@@ -334,6 +363,7 @@ impl Studio {
         let actions = w::hbox(w::S2);
         root.append(&actions);
         let name = w::text_field("Theme name");
+        name.set_max_length(NAME_MAX);
         name.set_text(&base.name);
         name.set_width_chars(w::VALUE_CHARS);
         let preview = w::hbox(w::S4);
@@ -467,10 +497,7 @@ impl Studio {
                 } else {
                     d::Tone::Danger
                 };
-                row.append(&d::badge(
-                    &format!("{} on {} {:.1}:1", b.fg, b.bg, b.ratio),
-                    tone,
-                ));
+                row.append(&d::badge(&badge_text(b), tone));
             }
             self.checks.append(&row);
         }
@@ -628,6 +655,25 @@ const TERMINAL: (i32, i32) = (200, 72);
 /// Every token group lists real tokens, and every token is in exactly one group.
 #[cfg(test)]
 mod tests {
+    /// QA-PLUG-50: badges say "Accent text on accent 4.5:1", not the token ids; the name has a cap.
+    #[test]
+    fn badges_use_words_not_token_ids() {
+        use super::*;
+        assert_eq!(token_words("accentText"), "accent text");
+        assert_eq!(token_words("glass"), "glass");
+        let b = Badge {
+            fg: "accentText",
+            bg: "accent",
+            ratio: 4.52,
+            min: 4.5,
+        };
+        assert_eq!(badge_text(&b), "Accent text on accent 4.5:1");
+        assert!(!badge_text(&b).contains("accentText"));
+        assert_eq!(NAME_MAX, 40);
+        let src = include_str!("theme_studio.rs");
+        assert!(src.contains("name.set_max_length(NAME_MAX)"));
+    }
+
     use super::*;
 
     fn wol(id: &str) -> Theme {

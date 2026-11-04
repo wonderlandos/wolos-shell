@@ -39,7 +39,7 @@ use wol_lua::{Deadlines, Services, Stamp};
 /// Wall-clock limit of each entry point (R2C-3): the scripts run on the GTK thread.
 pub const DEADLINES: Deadlines = Deadlines::DEFAULT;
 /// Largest output of one `wol.run` or `wol.http_get`.
-pub const RUN_OUTPUT: usize = 256 * 1024;
+pub const RUN_OUTPUT: usize = shared::plugins::MAX_RUN_OUTPUT;
 /// Commands and web reads in flight (and answers kept) per host.
 pub const MAX_RUNS: usize = 32;
 /// What a script reads from `wol.run` / `wol.http_get` before the first answer is back.
@@ -87,6 +87,13 @@ impl Paths {
             config_home: xdg("XDG_CONFIG_HOME", ".config"),
             state_home: xdg("XDG_STATE_HOME", ".local/state"),
         }
+    }
+
+    /// The data folder the user plugin folder lives in (`<data>/wolos/plugins`): web app
+    /// launchers of plugins go to `<data>/applications`.
+    pub fn data_home(&self) -> Option<PathBuf> {
+        let (user, _) = self.dirs.iter().find(|(_, system)| !system)?;
+        Some(user.parent()?.parent()?.to_path_buf())
     }
 
     /// The user plugin folder (ADR 0031: reloaded on change) and the folder of `plugins.json`.
@@ -161,7 +168,7 @@ impl Snapshot {
 
 /// Why a toggle, Dock or hotkey command of a plugin did not run (audit C8-1).
 pub const NOT_ALLOWED_TO_RUN: &str =
-    "it runs a command as you and was not allowed to (Settings > Plugins)";
+    "it runs a command as you and was not allowed to (turn it on again in App Store > Plugins)";
 
 /// Reads the plugins, the enable list and the scripts of `kinds`. Blocks: run it off the GTK
 /// thread ([`load`]); tests call it directly.
@@ -193,6 +200,59 @@ pub fn read_snapshot(paths: &Paths, kinds: &[Kind]) -> Snapshot {
         enabled,
         sources,
     }
+}
+
+/// The key under which [`TOLD`] remembers the notice about an unreadable `plugins.json`.
+const SETTINGS_FILE: &str = "plugins.json";
+
+/// The last name each plugin was seen with ([`Host::name`]).
+static NAMES: std::sync::Mutex<std::collections::BTreeMap<String, String>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// What the person was told about once (a plugin's broken manifest, an unreadable
+/// `plugins.json`), shared by every surface's host; a key leaves it once the thing is fine again.
+static TOLD: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// True the first time `key` is told (until [`untell`]).
+fn tell(key: String) -> bool {
+    TOLD.lock().unwrap_or_else(|e| e.into_inner()).insert(key)
+}
+
+/// `key` is fine again: a later problem is told again.
+fn untell(key: &str) {
+    TOLD.lock().unwrap_or_else(|e| e.into_inner()).remove(key);
+}
+
+/// QA-PLUG-64: a turned-on plugin whose manifest no longer reads keeps the manifest and scripts
+/// `old` had for it, so a half-done edit (a Maker Save, an editor's autosave) does not take its
+/// items off the desktop. What was kept back: (id, name, the manifest's problem).
+pub fn keep_last_good(old: &Snapshot, new: &mut Snapshot) -> Vec<(String, String, String)> {
+    let mut kept = Vec::new();
+    for p in &mut new.plugins {
+        let why = match &p.manifest {
+            Ok(_) => {
+                untell(&p.id);
+                continue;
+            }
+            Err(e) => e.clone(),
+        };
+        if !new.enabled.is_enabled(&p.id) {
+            continue;
+        }
+        let Some(good) = old
+            .plugins
+            .iter()
+            .find(|o| o.id == p.id && o.dir == p.dir && o.manifest.is_ok())
+        else {
+            continue;
+        };
+        p.manifest = good.manifest.clone();
+        let name = good.name().to_owned();
+        new.sources
+            .extend(old.sources.iter().filter(|s| s.plugin == p.id).cloned());
+        kept.push((p.id.clone(), name, why));
+    }
+    kept
 }
 
 // ---- Services: what scripts reach ----
@@ -263,11 +323,7 @@ pub fn run_argv(
     argv: &[String],
     timeout_secs: u32,
 ) -> Result<String, String> {
-    let mut cmd: Vec<String> = Vec::new();
-    if argv.first().is_some_and(|a| a == "wol") {
-        cmd.extend(["env".to_owned(), format!("WOL_HELPER={plugin}")]);
-    }
-    cmd.extend(argv.iter().cloned());
+    let cmd = shared::plugins::helper_argv(plugin, argv);
     wol_core::widgets::run_limited(
         &cmd,
         dir,
@@ -338,9 +394,7 @@ impl Services for Live {
     fn http_get(&self, plugin: &str, url: &str) -> Result<String, String> {
         let host = shared::widgets::manifest::url_host(url).unwrap_or_default();
         if !self.snap.borrow().enabled.allows_host(plugin, &host) {
-            return Err(format!(
-                "{host}: not allowed for this plugin yet (Settings > Plugins)"
-            ));
+            return Err(crate::copy::plugin_host_not_allowed(plugin, &host));
         }
         let u = url.to_owned();
         self.runner.ask(format!("{plugin}\0http\0{url}"), move || {
@@ -453,6 +507,13 @@ pub struct DockTile {
     pub exec: Vec<String>,
 }
 
+impl DockTile {
+    /// What a click spawns: `exec`, with a `wol` verb run as the plugin's helper.
+    pub fn argv(&self) -> Vec<String> {
+        shared::plugins::helper_argv(&self.plugin, &self.exec)
+    }
+}
+
 /// The enabled plugins of one surface, their scripts and their failure streaks.
 pub struct Host {
     kinds: &'static [Kind],
@@ -519,7 +580,24 @@ impl Host {
 
     /// Takes a fresh read. False (nothing done) when it equals the one loaded. Every script
     /// loads again (a stopped one runs again) and the failure streaks start over.
-    pub fn apply(&mut self, s: Snapshot) -> bool {
+    pub fn apply(&mut self, mut s: Snapshot) -> bool {
+        for (id, name, why) in keep_last_good(&self.snap.borrow(), &mut s) {
+            if tell(id) {
+                self.toasts
+                    .push(crate::copy::plugin_kept_last_good(&name, &why));
+            }
+        }
+        // A plugins.json that does not read turns every plugin off; the person is told once
+        // (QA-PLUG-40).
+        let key = format!("{}/{SETTINGS_FILE}", self.paths.config_home.display());
+        match cp::enabled_problem(&self.paths.config_home) {
+            Some(m) => {
+                if tell(key) {
+                    self.toasts.push(m);
+                }
+            }
+            None => untell(&key),
+        }
         if *self.snap.borrow() == s && self.generation > 0 {
             return false;
         }
@@ -566,6 +644,16 @@ impl Host {
         if let Err(m) = cp::save_enabled(&self.paths.config_home, &e) {
             self.toasts.push(m);
         }
+        // `wol plugin list` names the reason (QA-PLUG-63); its web apps go too (QA-PLUG-17), as
+        // for `wol plugin disable`.
+        if let Err(m) = cp::note_turned_off(&self.paths.state_home, plugin, &toast) {
+            crate::diag::say!("wol-shell: plugin {plugin}: reason not kept: {m}");
+        }
+        if let Some(data) = self.paths.data_home()
+            && let Err(m) = cp::sync_webapps(&data, plugin, None)
+        {
+            crate::diag::say!("wol-shell: plugin {plugin}: web apps not removed: {m}");
+        }
         self.snap.borrow_mut().enabled = e;
         self.snap
             .borrow_mut()
@@ -604,12 +692,23 @@ impl Host {
             .any(|s| s.kind == kind && s.plugin == plugin && s.id == id)
     }
 
-    /// The plugin's name (its id when it has none).
+    /// The plugin's name; the last one it had when the snapshot has no manifest for it now (a
+    /// reload that failed), its id only when it never had one (QA-PLUG-74: a failing item flipped
+    /// between "Crashy" and "bob.crash").
     pub fn name(&self, plugin: &str) -> String {
-        self.snap
+        let now = self
+            .snap
             .borrow()
             .manifest(plugin)
-            .map_or_else(|| plugin.to_owned(), |(_, m)| m.name.clone())
+            .map(|(_, m)| m.name.clone());
+        let mut n = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+        match now {
+            Some(name) => {
+                n.insert(plugin.to_owned(), name.clone());
+                name
+            }
+            None => n.get(plugin).cloned().unwrap_or_else(|| plugin.to_owned()),
+        }
     }
 
     /// Runs the entry's `render`. None: no such entry (off, removed, another surface's kind).
@@ -1107,11 +1206,7 @@ pub fn shortcuts(list: &[Hotkey], o: &Overrides) -> Vec<Shortcut> {
     list.iter()
         .map(|h| {
             let id = h.shortcut_id();
-            let mut cmd: Vec<String> = Vec::new();
-            if h.exec.first().is_some_and(|a| a == "wol") {
-                cmd.extend(["env".to_owned(), format!("WOL_HELPER={}", h.plugin)]);
-            }
-            cmd.extend(h.exec.iter().cloned());
+            let cmd = shared::plugins::helper_argv(&h.plugin, &h.exec);
             Shortcut {
                 combo: match o.changed.get(&id) {
                     Some(c) => c.clone(),
@@ -1363,10 +1458,13 @@ pub fn toast(host: &Rc<RefCell<Host>>) {
     if t.is_empty() {
         return;
     }
-    let title = TOAST_TITLE.to_owned();
+    // The shell's own notice, on its own notification server: wold refuses the shell's
+    // `notification.post` (no notifications grant), which hid every turn-off (QA-PLUG-63).
     std::thread::spawn(move || {
         for body in t {
-            let _ = wol_lua::Live.notify(&title, &body);
+            if let Err(e) = crate::app_notices::post_own(TOAST_TITLE, &body) {
+                crate::diag::say!("wol-shell: plugin notice not shown: {e} ({body})");
+            }
         }
     });
 }
@@ -1608,9 +1706,10 @@ fn popover(host: &Rc<RefCell<Host>>, at: &gtk::Button, plugin: &str, id: &str, n
     pop.popup();
 }
 
-/// A Dock tile of a plugin entry: launches its `exec` as the user.
+/// A Dock tile of a plugin entry: launches its `exec` as the user, a `wol` verb as the plugin's
+/// helper ([`DockTile::argv`]).
 pub fn dock_tile(t: &DockTile) -> w::DockTile {
-    let argv = t.exec.clone();
+    let argv = t.argv();
     w::DockTile::new(&t.icon, &t.name, move || kit::spawn(&argv))
 }
 

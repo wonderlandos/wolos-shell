@@ -170,7 +170,7 @@ pub struct Read {
 /// Reads `dir` as one enabled plugin with every permission it declares (the sandbox grants
 /// them; nothing it asks for acts). Blocks: run it off the GTK thread.
 pub fn read(dir: &Path) -> Read {
-    let plugin = cp::load(dir, false);
+    let plugin = cp::load(dir, super::editor::is_system_dir(dir));
     let m = match &plugin.manifest {
         Ok(m) => m.clone(),
         Err(p) => {

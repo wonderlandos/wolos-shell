@@ -99,13 +99,26 @@ pub fn size_label(mb: u32) -> String {
     }
 }
 
-/// The row's subtitle: the summary and the download size.
+/// The row's subtitle: the summary, the download size, and what the module asks of this
+/// computer or person that is not obvious: an Anthropic account (QA-PLUG-27), the processor
+/// standing in for a graphics card (QA-PLUG-68). `network` is every module's need and the
+/// download size already says it.
 fn subtitle(s: &Status) -> String {
-    match (s.summary.is_empty(), size_label(s.size_mb)) {
-        (_, size) if size.is_empty() => s.summary.clone(),
-        (true, size) => size,
-        (false, size) => format!("{} · {size}", s.summary),
+    let mut parts: Vec<String> = Vec::new();
+    if !s.summary.is_empty() {
+        parts.push(s.summary.clone());
     }
+    let size = size_label(s.size_mb);
+    if !size.is_empty() {
+        parts.push(size);
+    }
+    if !s.enabled && s.needs.iter().any(|n| n == "anthropic-account") {
+        parts.push(copy::MODULES_NEEDS_ACCOUNT.to_owned());
+    }
+    if !s.installed && s.id == "ai-local" && s.backend.is_none() {
+        parts.push(copy::MODULES_ON_PROCESSOR.to_owned());
+    }
+    parts.join(" · ")
 }
 
 /// `wol modules enable <id>` off the UI thread (minutes: recipes and version managers); true
@@ -545,6 +558,64 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-PLUG-27 / 68: the row says what the module needs (an account) and that Local AI will
+    /// run on the processor; nothing extra for a module that needs only the network.
+    #[test]
+    fn subtitle_says_what_the_module_needs() {
+        let base = Status {
+            summary: "Agents".into(),
+            size_mb: 300,
+            ..Default::default()
+        };
+        assert_eq!(subtitle(&base), "Agents · 300 MB");
+        let claude = Status {
+            id: "ai-claude".into(),
+            needs: vec!["network".into(), "anthropic-account".into()],
+            ..base.clone()
+        };
+        assert_eq!(
+            subtitle(&claude),
+            "Agents · 300 MB · Needs an Anthropic account."
+        );
+        let set_up = Status {
+            enabled: true,
+            ..claude
+        };
+        assert_eq!(
+            subtitle(&set_up),
+            "Agents · 300 MB",
+            "nothing left to ask once set up"
+        );
+    }
+
+    #[test]
+    fn local_ai_subtitle_cpu_only() {
+        let cpu = Status {
+            id: "ai-local".into(),
+            summary: "Models on this computer".into(),
+            size_mb: 3470,
+            backend: None,
+            ..Default::default()
+        };
+        assert_eq!(
+            subtitle(&cpu),
+            "Models on this computer · 3.5 GB · Runs on the processor: no supported graphics card found."
+        );
+        let gpu = Status {
+            backend: Some("ollama-cuda".into()),
+            ..cpu.clone()
+        };
+        assert_eq!(subtitle(&gpu), "Models on this computer · 3.5 GB");
+        let done = Status {
+            installed: true,
+            ..cpu
+        };
+        assert_eq!(subtitle(&done), "Models on this computer · 3.5 GB");
+        for t in [copy::MODULES_NEEDS_ACCOUNT, copy::MODULES_ON_PROCESSOR] {
+            assert!(crate::copy::lint(t).is_empty(), "{t}");
+        }
+    }
 
     /// QA-SET-42: Remove removed only the meta package; the backend (ollama-cuda, 3.3 GB) stayed.
     #[test]

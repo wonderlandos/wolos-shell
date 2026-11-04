@@ -54,6 +54,9 @@ pub enum Listing {
     /// One sentence: why there is no list.
     Unavailable(String),
     Ready(Vec<Row>),
+    /// No index (offline, not published, not trusted: the sentence), but this account's own
+    /// plugins still have their rows, so they can be turned on, off or removed (QA-PLUG-66).
+    Partial(Vec<Row>, String),
 }
 
 /// What an enabled plugin's installed version asks for beyond its grant: (id, permission ids).
@@ -85,18 +88,8 @@ pub fn rows(
                 }
             } else if let Some(u) = update.filter(|u| u.reason == PluginReason::Available) {
                 State::Update(u.to.clone())
-            } else if !enabled.contains(&e.id) {
-                State::TurnOn
             } else {
-                match missing.iter().find(|(id, _)| *id == e.id) {
-                    Some((_, ids)) if !ids.is_empty() => State::NeedsGrant(
-                        ids.iter()
-                            .filter_map(|p| shared::plugins::Permission::parse(p))
-                            .map(|p| p.label().to_lowercase())
-                            .collect(),
-                    ),
-                    _ => State::On,
-                }
+                installed_state(&e.id, enabled, missing)
             };
             let held = update
                 .filter(|u| u.reason == PluginReason::NeedsNewerWolos)
@@ -108,12 +101,72 @@ pub fn rows(
             }
         })
         .collect();
+    sort(&mut v);
+    v
+}
+
+/// Installed ones (updates first) before the rest; a stable sort keeps index order in a group.
+fn sort(v: &mut [Row]) {
     let rank = |s: &State| match s {
         State::Update(_) | State::NeedsGrant(_) => 0,
         State::TurnOn | State::On => 1,
         State::Get | State::NeedsNewer(_) => 2,
     };
     v.sort_by_key(|r| rank(&r.state));
+}
+
+/// The switch of a plugin on this account: off, on, or on but asking for more.
+fn installed_state(id: &str, enabled: &[String], missing: &[Missing]) -> State {
+    if !enabled.iter().any(|e| e == id) {
+        return State::TurnOn;
+    }
+    match missing.iter().find(|(m, _)| m == id) {
+        Some((_, ids)) if !ids.is_empty() => State::NeedsGrant(
+            ids.iter()
+                .filter_map(|p| shared::plugins::Permission::parse(p))
+                .map(|p| p.label().to_lowercase())
+                .collect(),
+        ),
+        _ => State::On,
+    }
+}
+
+/// A row's entry for a plugin on this account, from its own manifest (sideloaded, made in
+/// Plugin Maker or with `wol plugin new`: not in the index).
+pub fn local_entry(m: &shared::plugins::Manifest) -> Entry {
+    Entry {
+        id: m.id.clone(),
+        name: m.name.clone(),
+        version: m.version.clone(),
+        summary: m.description.clone(),
+        author: m.author.clone(),
+        license: m.license.clone(),
+        kinds: m.kinds().iter().map(|k| k.id().to_owned()).collect(),
+        permissions: m.permissions.iter().map(|p| p.id().to_owned()).collect(),
+        min_wolos: m.min_wolos.clone(),
+        ..Entry::default()
+    }
+}
+
+/// QA-PLUG-66: `rows` plus a row for each plugin on this account the index does not list
+/// (`local`, from [`local_entry`]), so every installed plugin can be turned on, off or removed.
+pub fn with_local(
+    mut v: Vec<Row>,
+    local: &[Entry],
+    enabled: &[String],
+    missing: &[Missing],
+) -> Vec<Row> {
+    for e in local {
+        if v.iter().any(|r| r.entry.id == e.id) {
+            continue;
+        }
+        v.push(Row {
+            entry: e.clone(),
+            state: installed_state(&e.id, enabled, missing),
+            held: None,
+        });
+    }
+    sort(&mut v);
     v
 }
 
@@ -189,14 +242,24 @@ pub(crate) fn keys() -> Vec<[u8; 32]> {
 /// grant (a newer version that wants more: `Enabled::missing`, the same test `wol plugin list`
 /// uses).
 pub(crate) fn on_this_account(p: &Paths) -> (Vec<(String, String)>, Vec<String>, Vec<Missing>) {
+    let (have, on, more, _) = on_this_account_with_entries(p);
+    (have, on, more)
+}
+
+/// [`on_this_account`], and each plugin's [`local_entry`].
+fn on_this_account_with_entries(
+    p: &Paths,
+) -> (Vec<(String, String)>, Vec<String>, Vec<Missing>, Vec<Entry>) {
     let user = vec![(p.data.join(shared::plugins::USER_DIR), false)];
     let enabled = wol_core::plugins::load_enabled(&p.config);
     let mut have = Vec::new();
     let mut on = Vec::new();
     let mut more = Vec::new();
+    let mut local = Vec::new();
     for pl in wol_core::plugins::load_all(&user) {
         if let Ok(m) = &pl.manifest {
             have.push((m.id.clone(), m.version.clone()));
+            local.push(local_entry(m));
             if enabled.is_enabled(&m.id) {
                 on.push(m.id.clone());
                 let new: Vec<String> = enabled
@@ -210,7 +273,14 @@ pub(crate) fn on_this_account(p: &Paths) -> (Vec<(String, String)>, Vec<String>,
             }
         }
     }
-    (have, on, more)
+    (have, on, more, local)
+}
+
+/// The WolOS release this computer runs, for `min_wolos` (QA-PLUG-57): the slot's release file,
+/// else os-release's `VERSION_ID`, else this program's own version (a checkout). Two small
+/// reads: call it off the GTK thread.
+pub(crate) fn running_os() -> String {
+    wol_core::update::check::running_release(env!("CARGO_PKG_VERSION"))
 }
 
 /// The list on this computer: [`load_in`] over this account's folders and the index URL.
@@ -235,14 +305,19 @@ fn load_in(
     url: &str,
     fresh: bool,
 ) -> Listing {
+    let (have, on, more, local) = on_this_account_with_entries(p);
     match wopkg::index::plugins::load(net, url, &p.cache, keys, fresh) {
         Ok(index) => {
-            let (have, on, more) = on_this_account(p);
-            Listing::Ready(rows(&index, &have, &on, &more, env!("CARGO_PKG_VERSION")))
+            let v = rows(&index, &have, &on, &more, &running_os());
+            Listing::Ready(with_local(v, &local, &on, &more))
         }
         // e2e D5: every failure read "check that you are online", also with the network up and
         // no list on the server.
-        Err(e) => Listing::Unavailable(unavailable(e.status).into()),
+        Err(e) if local.is_empty() => Listing::Unavailable(unavailable(e.status).into()),
+        Err(e) => Listing::Partial(
+            with_local(Vec::new(), &local, &on, &more),
+            unavailable(e.status).into(),
+        ),
     }
 }
 
@@ -353,12 +428,10 @@ pub(super) fn page(sh: &Rc<Shared>) -> (gtk::Box, Rc<dyn Fn(Listing)>) {
     *show.borrow_mut() = Some(f.clone());
     f(Listing::Loading);
     if sh.env.pkg_search {
-        let (reload, once) = (reload.clone(), std::cell::Cell::new(false));
-        p.connect_map(move |_| {
-            if !once.replace(true) {
-                reload(false);
-            }
-        });
+        // Every time the page is shown, not only the first (QA-PLUG-56: a plugin made or removed
+        // since was not there until the Store was closed); the cached list makes it cheap.
+        let reload = reload.clone();
+        p.connect_map(move |_| reload(false));
     } else {
         f(Listing::Unavailable(STORE_PLUGINS_NOT_YET.into()));
     }
@@ -384,14 +457,25 @@ fn fill(sh: &Rc<Shared>, body: &gtk::Box, l: Listing, reload: &Rc<dyn Fn(bool)>)
             body.append(&again);
             return;
         }
-        Listing::Ready(rows) => rows,
+        Listing::Ready(rows) => (rows, None),
+        Listing::Partial(rows, why) => (rows, Some(why)),
     };
+    let (rows, why) = rows;
     let (mine, other): (Vec<&Row>, Vec<&Row>) = rows.iter().partition(|r| r.installed());
     if !mine.is_empty() {
         let v: Vec<gtk::Widget> = mine.iter().map(|r| row(sh, r, reload)).collect();
         body.append(&w::section(STORE_PLUGINS_MINE, &v));
     }
-    if other.is_empty() && mine.is_empty() {
+    if let Some(why) = why {
+        // No index: this account's plugins above, then why the rest is missing.
+        let l = w::label(&why, "secondary");
+        l.set_wrap(true);
+        body.append(&l);
+        let r = reload.clone();
+        let again = w::button(STORE_PLUGINS_TRY_AGAIN, w::Kind::Default, move || r(true));
+        again.set_halign(gtk::Align::Start);
+        body.append(&again);
+    } else if other.is_empty() && mine.is_empty() {
         body.append(&w::label(STORE_PLUGINS_EMPTY, "secondary"));
     } else if !other.is_empty() {
         let v: Vec<gtk::Widget> = other.iter().map(|r| row(sh, r, reload)).collect();
@@ -757,5 +841,85 @@ mod tests {
         for s in [INTRO, SIGNED, FAILED] {
             assert!(crate::copy::lint(s).is_empty(), "{s}");
         }
+    }
+
+    /// QA-PLUG-56: the page reads its list every time it is shown, not once per Store session.
+    #[test]
+    fn the_page_reloads_each_time_it_is_shown() {
+        let src = include_str!("store_plugins.rs");
+        let page = &src[src.find("pub(super) fn page(").unwrap()..];
+        let page = &page[..page.find("\nfn fill(").unwrap()];
+        assert!(
+            page.contains("p.connect_map(move |_| reload(false));"),
+            "{page}"
+        );
+        assert!(!page.contains("once"), "no once-only flag");
+    }
+
+    /// QA-PLUG-57: `min_wolos` is held against the release file the computer runs, not the
+    /// version of the program asking.
+    #[test]
+    fn min_wolos_reads_the_release_file() {
+        use wol_core::update::check::release_of;
+        let release = r#"{"version":"0.12.1","snapshot":"2026/11/02"}"#;
+        let own = env!("CARGO_PKG_VERSION");
+        assert_eq!(release_of(Some(release), None, own), "0.12.1");
+        let os = "ID=wolos\nVERSION_ID=\"0.11.3\"\n";
+        assert_eq!(release_of(None, Some(os), own), "0.11.3");
+        assert_eq!(release_of(None, None, own), own);
+        // A plugin asking for 0.13 is held back on 0.12.1 whatever this program is built as.
+        let on = release_of(Some(release), None, own);
+        assert!(!plugin_fits(&on, "0.13"));
+        assert!(plugin_fits(&on, "0.12"));
+        assert!(!running_os().is_empty());
+    }
+
+    /// QA-PLUG-66: a plugin on this account that the index does not list (made in Plugin Maker,
+    /// `wol plugin new`, a sideloaded .wolplug) has its row, with its switch and Remove; with no
+    /// index at all those rows still show, with the reason and Try Again.
+    #[test]
+    fn rows_include_installed_not_in_index() {
+        let root = std::env::temp_dir().join(format!("wol-store-local-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let p = Paths {
+            data: root.join("data"),
+            config: root.join("config"),
+            cache: root.join("cache"),
+        };
+        let user = p.data.join(shared::plugins::USER_DIR);
+        crate::ui::maker::editor::create(&user, "alice.mine", &[shared::plugins::Kind::Menubar])
+            .unwrap();
+        // Index rows plus the local one, which is off.
+        let (have, on, more, local) = on_this_account_with_entries(&p);
+        let index = PluginIndex {
+            plugins: vec![e("alice.weather", "1.3", "")],
+        };
+        let v = with_local(
+            rows(&index, &have, &on, &more, "0.12.0"),
+            &local,
+            &on,
+            &more,
+        );
+        let ids: Vec<(&str, &State)> = v.iter().map(|r| (r.entry.id.as_str(), &r.state)).collect();
+        assert_eq!(
+            ids,
+            [
+                ("alice.mine", &State::TurnOn),
+                ("alice.weather", &State::Get)
+            ]
+        );
+        assert!(v[0].installed(), "Remove is offered");
+        // No index reachable and no cache: the account's plugins still have rows.
+        let net = wopkg::fetch::Net::new(false);
+        match load_in(&p, &keys(), &net, "http://127.0.0.1:9/index.json", true) {
+            Listing::Partial(rows, why) => {
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0].entry.id, "alice.mine");
+                assert_eq!(rows[0].state, State::TurnOn);
+                assert!(!why.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 }

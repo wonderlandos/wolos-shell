@@ -119,7 +119,7 @@ pub fn plugin_news() -> Vec<PluginNews> {
         &crate::ui::store::plugins::keys(),
         &wopkg::fetch::Net::new(false),
         wopkg::index::plugins::DEFAULT_URL,
-        env!("CARGO_PKG_VERSION"),
+        &crate::ui::store::plugins::running_os(),
     )
 }
 

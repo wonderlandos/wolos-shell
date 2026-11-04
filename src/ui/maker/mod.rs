@@ -24,9 +24,9 @@ use crate::kit::{self, form, widgets as w};
 use crate::theme::Theme;
 use crate::ui::plugins::Paths;
 use gtk::{gio, glib, prelude::*};
-use shared::plugins::Kind;
+use shared::plugins::{Kind, MANIFEST_FILE};
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use wol_lua::Services;
 
@@ -90,20 +90,30 @@ pub fn parse_args(args: &[String]) -> Launch {
         [] => Launch::Start,
         [f] if f == THEME_FLAG => Launch::Theme(None),
         [f, p, ..] if f == THEME_FLAG => Launch::Theme(Some(PathBuf::from(p))),
-        [p, ..] => Launch::Plugin(PathBuf::from(p)),
+        [p, ..] => Launch::Plugin(plugin_folder(Path::new(p))),
     }
+}
+
+/// The plugin folder a launch argument names: the folder, or the `plugin.toml` inside it (QA-PLUG-51:
+/// Files hands the manifest to the desktop entry's `%f`).
+fn plugin_folder(p: &Path) -> PathBuf {
+    if p.file_name().is_some_and(|n| n == MANIFEST_FILE) {
+        return p
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    }
+    p.to_path_buf()
 }
 
 /// What Create Plugin offers, with the row titles; on at first: what `wol plugin new` makes
 /// when no kind is given. Planned kinds (`Kind::PLANNED`: the scaffold refuses them) are not
 /// offered.
-pub const KINDS: [(Kind, &str, bool); 11] = [
+pub const KINDS: [(Kind, &str, bool); 9] = [
     (Kind::Menubar, copy::KIND_MENUBAR, true),
     (Kind::Widget, copy::KIND_WIDGET, true),
     (Kind::Dock, copy::KIND_DOCK, false),
     (Kind::Tile, copy::KIND_TILE, false),
-    (Kind::Panel, copy::KIND_PANEL, false),
-    (Kind::Search, copy::KIND_SEARCH, false),
     (Kind::Toggle, copy::KIND_TOGGLE, false),
     (Kind::Hotkey, copy::KIND_HOTKEY, false),
     (Kind::Webapp, copy::KIND_WEBAPP, false),
@@ -206,6 +216,29 @@ impl Maker {
                     m.sheet.set_reveal_child(false);
                 }
             }));
+            // QA-PLUG-48: Esc closes the Share sheet; Ctrl+S saves what is being edited.
+            let (m_esc, m_save) = (me.clone(), me.clone());
+            kit::surface::on_escape(&aw.root, move || {
+                if let Some(m) = m_esc.upgrade()
+                    && m.sheet.reveals_child()
+                {
+                    m.sheet.set_reveal_child(false);
+                }
+            });
+            let keys = gtk::EventControllerKey::new();
+            keys.connect_key_pressed(move |_, key, _, state| {
+                let ctrl = state.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                if ctrl && matches!(key, gtk::gdk::Key::s | gtk::gdk::Key::S) {
+                    if let Some(m) = m_save.upgrade()
+                        && m.unsaved()
+                    {
+                        m.with_editor(|e| e.save());
+                    }
+                    return glib::Propagation::Stop;
+                }
+                glib::Propagation::Proceed
+            });
+            aw.root.add_controller(keys);
             Maker {
                 aw,
                 editor_page,
@@ -270,12 +303,19 @@ impl Maker {
         p.append(&w::section(copy::NEW_PLUGIN, &rows));
         p.append(&w::footnote(copy::NEW_ABOUT));
         let me = Rc::downgrade(self);
-        let create = w::button(copy::CREATE_PLUGIN, w::Kind::Primary, move || {
-            if let Some(m) = me.upgrade() {
-                let kinds = picked.borrow().clone();
-                m.create(id.text().trim().to_string(), kinds);
-            }
-        });
+        // One action for the button and for Enter in the id field (QA-PLUG-48).
+        let go: Rc<dyn Fn()> = {
+            let id = id.clone();
+            Rc::new(move || {
+                if let Some(m) = me.upgrade() {
+                    let kinds = picked.borrow().clone();
+                    m.create(id.text().trim().to_string(), kinds);
+                }
+            })
+        };
+        let enter = go.clone();
+        id.connect_activate(move |_| enter());
+        let create = w::button(copy::CREATE_PLUGIN, w::Kind::Primary, move || go());
         create.set_halign(gtk::Align::End);
         p.append(&create);
         self.set_editor_page(&p);
@@ -290,11 +330,10 @@ impl Maker {
 
     /// Create Plugin: the CLI's scaffold in this account's plugin folder, then open it.
     fn create(self: &Rc<Self>, id: String, kinds: Vec<Kind>) {
-        // In table order, as `wol plugin new --kinds` lists them.
-        let kinds: Vec<Kind> = Kind::ALL
-            .into_iter()
-            .filter(|k| kinds.contains(k) && !k.is_planned())
-            .collect();
+        let kinds = match kinds_to_make(&kinds) {
+            Ok(k) => k,
+            Err(sentence) => return self.aw.status.set_label(sentence),
+        };
         let dir = user_plugin_dir();
         let me = Rc::downgrade(self);
         off_thread(
@@ -327,8 +366,52 @@ impl Maker {
         });
     }
 
-    /// Reads `dir` for the editor and the preview off the GTK thread, then shows both.
+    /// Whether the open plugin has edits that are not saved.
+    pub fn unsaved(&self) -> bool {
+        self.editor
+            .borrow()
+            .as_ref()
+            .is_some_and(|e| e.has_unsaved())
+    }
+
+    /// Runs `then` once the editor may be left: at once when nothing is unsaved, else after the
+    /// person picks Discard Changes on the sheet (Keep Editing does nothing) (QA-PLUG-9).
+    pub fn leave_then(self: &Rc<Self>, then: impl FnOnce() + 'static) {
+        if leave_gate(self.unsaved()) == Leave::Go {
+            return then();
+        }
+        let d = gtk::AlertDialog::builder()
+            .modal(true)
+            .message(copy::UNSAVED_TITLE)
+            .detail(copy::UNSAVED_DETAIL)
+            .buttons([copy::KEEP_EDITING, copy::DISCARD_CHANGES])
+            .cancel_button(0)
+            .default_button(0)
+            .build();
+        let win = self.aw.root.root().and_downcast::<gtk::Window>();
+        let me = Rc::downgrade(self);
+        d.choose(win.as_ref(), gio::Cancellable::NONE, move |r| {
+            if r == Ok(1)
+                && let Some(m) = me.upgrade()
+            {
+                m.with_editor(|e| e.discard());
+                then();
+            }
+        });
+    }
+
+    /// Reads `dir` for the editor and the preview off the GTK thread, then shows both; unsaved
+    /// edits of the plugin open now are kept unless the person discards them.
     pub fn open_plugin(self: &Rc<Self>, dir: PathBuf) {
+        let me = Rc::downgrade(self);
+        self.leave_then(move || {
+            if let Some(m) = me.upgrade() {
+                m.read_plugin(dir);
+            }
+        });
+    }
+
+    fn read_plugin(self: &Rc<Self>, dir: PathBuf) {
         let me = Rc::downgrade(self);
         off_thread(
             move || (editor::load(&dir), preview::read(&dir)),
@@ -352,12 +435,17 @@ impl Maker {
                 m.with_editor(|e| m.preview.reload(e.dir()));
             }
         }));
+        // Save is on only while there are edits (QA-PLUG-77): the first action button.
+        let save = self.plugin_actions[0].clone();
+        ed.on_dirty(Rc::new(move |unsaved| {
+            save.set_sensitive(save_sensitive(unsaved))
+        }));
         self.set_editor_page(&ed.root);
         self.editor.replace(Some(ed));
         self.preview.show(r);
         self.packed.replace(None);
-        for b in &self.plugin_actions {
-            b.set_sensitive(true);
+        for (i, b) in self.plugin_actions.iter().enumerate() {
+            b.set_sensitive(i != 0 || save_sensitive(false));
         }
         self.select(EDITOR);
     }
@@ -377,16 +465,20 @@ impl Maker {
             return;
         }
         let me = Rc::downgrade(self);
+        let home = crate::envv::var("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        let out = publish::pack_out(&home);
         off_thread(
-            move || publish::pack(&dir),
+            move || publish::pack(&dir, &out),
             move |r| {
                 let Some(m) = me.upgrade() else { return };
                 match r {
                     Ok(p) => {
+                        m.aw.status.set_label(&copy::packed(&p.file));
                         m.packed.replace(Some(p));
-                        m.aw.status.set_label(copy::PACKED);
                     }
-                    Err(s) => m.aw.status.set_label(s),
+                    Err(s) => m.aw.status.set_label(&s),
                 }
             },
         );
@@ -396,7 +488,10 @@ impl Maker {
     fn share(self: &Rc<Self>) {
         let packed = self.packed.borrow().clone();
         match packed {
-            Some(p) => self.show_share(p),
+            Some(p) => match publish::scaffold_leftover(&p.manifest) {
+                Some(sentence) => self.aw.status.set_label(sentence),
+                None => self.show_share(p),
+            },
             None => self.aw.status.set_label(copy::PACK_FIRST),
         }
     }
@@ -414,7 +509,41 @@ fn share_scroll(text: &gtk::Label) -> gtk::ScrolledWindow {
     let s = kit::data::scroller(text);
     s.set_min_content_height(SHARE_HEIGHT);
     s.set_max_content_height(SHARE_HEIGHT);
+    // The steps run past the sheet: the scrollbar is always there to say so, not only under the
+    // pointer (QA-PLUG-78).
+    s.set_overlay_scrolling(false);
     s
+}
+
+/// The kinds Create Plugin makes, in table order as `wol plugin new --kinds` lists them. None
+/// ticked is not "menu bar and card in silence" (QA-PLUG-52): the person is asked to pick.
+pub fn kinds_to_make(picked: &[Kind]) -> Result<Vec<Kind>, &'static str> {
+    let kinds: Vec<Kind> = Kind::ALL
+        .into_iter()
+        .filter(|k| picked.contains(k) && !k.is_planned())
+        .collect();
+    if kinds.is_empty() {
+        Err(copy::PICK_A_KIND)
+    } else {
+        Ok(kinds)
+    }
+}
+
+/// QA-PLUG-77: Save has something to do only while there are unsaved edits.
+pub fn save_sensitive(unsaved: bool) -> bool {
+    unsaved
+}
+
+/// What leaving the editor does: go on, or ask first (edits not saved).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Leave {
+    Go,
+    Ask,
+}
+
+/// QA-PLUG-9: closing the window or opening another plugin never drops unsaved edits silently.
+pub fn leave_gate(unsaved: bool) -> Leave {
+    if unsaved { Leave::Ask } else { Leave::Go }
 }
 
 /// Whether Create Package may run: never on unsaved edits, so the package holds what is shown.
@@ -482,6 +611,21 @@ fn present(app: &gtk::Application, shown: &Rc<RefCell<Option<Rc<Maker>>>>, launc
                 .decorated(false)
                 .build();
             win.set_child(Some(&m.aw.root));
+            {
+                let m = Rc::downgrade(&m);
+                win.connect_close_request(move |win| match m.upgrade() {
+                    Some(m) if m.unsaved() => {
+                        let w = win.downgrade();
+                        m.leave_then(move || {
+                            if let Some(w) = w.upgrade() {
+                                w.close();
+                            }
+                        });
+                        glib::Propagation::Stop
+                    }
+                    _ => glib::Propagation::Proceed,
+                });
+            }
             kit::snapshot_on_map(&win, "plugin-maker");
             shown.replace(Some(m.clone()));
             m
@@ -573,12 +717,66 @@ mod tests {
         }
     }
 
+    /// QA-PLUG-78: the Share steps scroll, and the scrollbar shows without the pointer on it.
+    #[test]
+    fn the_share_scroller_always_shows_its_bar() {
+        let src = include_str!("mod.rs");
+        let f = &src[src.find("fn share_scroll(").unwrap()..];
+        assert!(f[..f.find("\n}\n").unwrap()].contains("set_overlay_scrolling(false)"));
+    }
+
+    /// QA-PLUG-48: Ctrl+S saves, Esc closes the Share sheet, Enter in the id field creates.
+    #[test]
+    fn maker_has_keyboard_shortcuts() {
+        let src = include_str!("mod.rs");
+        let body = src.split("#[cfg(test)]").next().unwrap();
+        assert!(body.contains("kit::surface::on_escape(&aw.root"));
+        assert!(body.contains("gtk::gdk::Key::s | gtk::gdk::Key::S"));
+        assert!(body.contains("id.connect_activate(move |_| enter());"));
+    }
+
+    /// QA-PLUG-77: Save is on only while there are unsaved edits; the editor tells the window.
+    #[test]
+    fn save_sensitive_only_when_dirty() {
+        assert!(!save_sensitive(false));
+        assert!(save_sensitive(true));
+        let src = include_str!("mod.rs");
+        let body = src.split("#[cfg(test)]").next().unwrap();
+        assert!(
+            body.contains("ed.on_dirty("),
+            "the window listens to the editor"
+        );
+        let editor = include_str!("editor.rs");
+        assert!(editor.contains("self.set_dirty(true)") && editor.contains("e.set_dirty(false)"));
+    }
+
+    /// QA-PLUG-52: no kind ticked asks for one; the others come back in table order.
+    #[test]
+    fn create_with_no_kind_asks_for_one() {
+        assert_eq!(kinds_to_make(&[]), Err(copy::PICK_A_KIND));
+        assert_eq!(
+            kinds_to_make(&[Kind::Theme, Kind::Menubar]),
+            Ok(vec![Kind::Menubar, Kind::Theme])
+        );
+        assert!(crate::copy::lint(copy::PICK_A_KIND).is_empty());
+        assert_eq!(kinds_to_make(&[Kind::Look]), Err(copy::PICK_A_KIND));
+    }
+
     #[test]
     fn launches_read_their_arguments() {
         assert_eq!(parse_args(&[]), Launch::Start);
         assert_eq!(
             parse_args(&args(&["/p/alice.demo"])),
             Launch::Plugin("/p/alice.demo".into())
+        );
+        // QA-PLUG-51: the manifest of a folder opens that folder.
+        assert_eq!(
+            parse_args(&args(&["/p/alice.demo/plugin.toml"])),
+            Launch::Plugin("/p/alice.demo".into())
+        );
+        assert_eq!(
+            parse_args(&args(&["plugin.toml"])),
+            Launch::Plugin(".".into())
         );
         assert_eq!(parse_args(&args(&["--theme"])), Launch::Theme(None));
         assert_eq!(
@@ -612,5 +810,33 @@ mod tests {
             [Kind::Menubar, Kind::Widget],
             "wol plugin new's default"
         );
+    }
+
+    /// QA-PLUG-9: closing the window, opening another plugin (also from a second launch) with
+    /// unsaved edits asks first; with nothing unsaved it goes on at once.
+    #[test]
+    fn close_with_dirty_editor_shows_the_sheet() {
+        assert_eq!(leave_gate(true), Leave::Ask);
+        assert_eq!(leave_gate(false), Leave::Go);
+        let src = include_str!("mod.rs");
+        let body = src.split("#[cfg(test)]").next().unwrap();
+        let open = &body[body.find("pub fn open_plugin(").unwrap()..];
+        assert!(open[..open.find("\n    }\n").unwrap()].contains("self.leave_then("));
+        assert!(body.contains("win.connect_close_request("));
+        assert!(body.contains("Some(m) if m.unsaved() =>"));
+        // Keep Editing is the cancel and the default: a stray Enter never discards.
+        assert!(body.contains(".cancel_button(0)") && body.contains(".default_button(0)"));
+        assert!(crate::copy::lint(copy::UNSAVED_DETAIL).is_empty());
+    }
+
+    /// QA-PLUG-11 / 32 / 76: the footer names where the package is and does not promise to send
+    /// it; the unsaved line says the list already checked the draft.
+    #[test]
+    fn package_and_draft_sentences_say_what_happened() {
+        let t = copy::packed(std::path::Path::new("/home/alice/alice.demo-0.1.wolplug"));
+        assert!(t.contains("/home/alice/alice.demo-0.1.wolplug"), "{t}");
+        assert!(!t.contains("send it to the Store"), "{t}");
+        assert!(copy::UNSAVED.contains("checks what you type"));
+        assert!(crate::copy::lint(copy::UNSAVED).is_empty());
     }
 }

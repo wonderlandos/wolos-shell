@@ -72,7 +72,39 @@ impl<T> Queue<T> {
         let at = self.items.iter().position(|i| i.0 == id)?;
         self.items.remove(at).map(|i| (at == 0, i.1, i.2))
     }
+    pub fn contains(&self, id: u64) -> bool {
+        self.items.iter().any(|i| i.0 == id)
+    }
+    /// Removes every request whose answerer `gone` says is gone, except `keep` (the change on
+    /// screen that is already running); what was removed, in order.
+    pub fn drop_where(
+        &mut self,
+        keep: Option<u64>,
+        gone: impl Fn(&T) -> bool,
+    ) -> Vec<(Approval, T)> {
+        let mut out = Vec::new();
+        let mut kept = VecDeque::new();
+        for i in self.items.drain(..) {
+            if Some(i.0) != keep && gone(&i.2) {
+                out.push((i.1, i.2));
+            } else {
+                kept.push_back(i);
+            }
+        }
+        self.items = kept;
+        out
+    }
 }
+
+/// True once the requester closed its connection (QA-PLUG-62/65): the kernel reports a hang-up
+/// only when the peer is gone, not for the half-close every requester does after its request.
+pub fn hung_up(sock: &gio::Socket) -> bool {
+    use glib::IOCondition as C;
+    gio::prelude::SocketExt::condition_check(sock, C::HUP | C::ERR).intersects(C::HUP | C::ERR)
+}
+
+/// How often the shell looks whether the requesters of queued sheets are still there.
+const HANGUP_POLL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Executables that may put a sheet on screen (`approve` on wol-shell.sock): wold only, as root.
 pub const APPROVERS: &[&str] = &["/usr/bin/wold", "/usr/lib/wolos/wold"];
@@ -194,6 +226,14 @@ type ShowFn = Box<dyn Fn(bool)>;
 pub struct Pending {
     tx: async_channel::Sender<Answer>,
     exe: Option<String>,
+    /// The requester's connection (socket requests): its sheet goes once it hangs up.
+    sock: Option<gio::Socket>,
+}
+
+impl Pending {
+    fn gone(&self) -> bool {
+        self.sock.as_ref().is_some_and(hung_up)
+    }
 }
 
 pub struct Approvals {
@@ -248,7 +288,7 @@ impl Approvals {
 
     /// Queues `a`; it shows now when nothing else is on screen. The receiver yields the answer.
     pub fn ask(self: &Rc<Self>, a: Approval) -> async_channel::Receiver<Answer> {
-        self.ask_from(a, None)
+        self.ask_from(a, None, None)
     }
 
     /// [`Approvals::ask`] for a requester whose executable the kernel reported as `exe`.
@@ -256,9 +296,11 @@ impl Approvals {
         self: &Rc<Self>,
         a: Approval,
         exe: Option<String>,
+        sock: Option<gio::Socket>,
     ) -> async_channel::Receiver<Answer> {
         let (tx, rx) = async_channel::bounded(1);
-        let pushed = self.queue.borrow_mut().push(a, Pending { tx, exe });
+        let watch = sock.is_some();
+        let pushed = self.queue.borrow_mut().push(a, Pending { tx, exe, sock });
         match pushed {
             Err(refused) => {
                 let _ = refused.1.tx.try_send(Answer::Busy);
@@ -270,10 +312,36 @@ impl Approvals {
                         a.expire(id);
                     }
                 });
+                if watch {
+                    let weak = Rc::downgrade(self);
+                    glib::timeout_add_local(HANGUP_POLL, move || match weak.upgrade() {
+                        Some(a) if a.queue.borrow().contains(id) => {
+                            a.sweep();
+                            glib::ControlFlow::Continue
+                        }
+                        _ => glib::ControlFlow::Break,
+                    });
+                }
                 self.show_front();
             }
         }
         rx
+    }
+
+    /// Drops the sheets of requesters that hung up (an MCP client that exited): nobody is left
+    /// to act on the answer, so none is given; a change already running finishes.
+    fn sweep(&self) {
+        let keep = self
+            .running
+            .get()
+            .then(|| self.queue.borrow().front_id())
+            .flatten();
+        let gone = self.queue.borrow_mut().drop_where(keep, Pending::gone);
+        if !gone.is_empty() {
+            // Dropping the senders ends each request's handler without an answer.
+            drop(gone);
+            self.show_front();
+        }
     }
 
     fn expire(&self, id: u64) {
@@ -366,6 +434,10 @@ impl Approvals {
 
     fn always(&self) {
         let Some(a) = self.front() else { return };
+        // QA-PLUG-73: no policy is saved for a requester that is gone.
+        if self.queue.borrow().front_item().is_some_and(Pending::gone) {
+            return self.sweep();
+        }
         let ApprovalRequest::Change { capability, .. } = &a.request else {
             return;
         };
@@ -503,9 +575,13 @@ pub fn handler(app: &gtk::Application, sys: Rc<dyn System>) -> super::ipc::Appro
                 return;
             };
             // The requester as the kernel reported it at accept (ui::ipc pins it, R2C-12).
-            let rx = ap.ask_from(a.clone(), exe);
+            let rx = ap.ask_from(a.clone(), exe, Some(conn.socket()));
             glib::spawn_future_local(async move {
-                let ans = rx.recv().await.unwrap_or(Answer::Deny);
+                // No answer: the requester hung up and its sheet was dropped.
+                let Ok(ans) = rx.recv().await else {
+                    let _ = conn.close_future(glib::Priority::DEFAULT).await;
+                    return;
+                };
                 let out = conn.output_stream();
                 if let Err(e) = out
                     .write_all_future(ans.line().into_bytes(), glib::Priority::DEFAULT)
@@ -847,5 +923,86 @@ mod tests {
         let s = self_named(&named, Some("/usr/bin/wol")).unwrap();
         assert!(!s.chars().any(char::is_control), "{s:?}");
         assert_eq!(plain("a\u{202A}b\u{85}c"), "abc");
+    }
+
+    /// Waits (at most 2 s) for the hang-up of `sock`'s peer to show. A test thread that forks
+    /// holds a copy of the closed end until its exec, so the kernel may report it a moment late.
+    fn wait_hup(sock: &gio::Socket) {
+        let t = std::time::Instant::now();
+        while !hung_up(sock) && t.elapsed() < std::time::Duration::from_secs(2) {
+            std::thread::park_timeout(std::time::Duration::from_millis(5));
+        }
+    }
+
+    /// A connected pair: (the shell's end as a GSocket, the requester's end).
+    fn pair() -> (gio::Socket, std::os::unix::net::UnixStream) {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let fd: std::os::fd::OwnedFd = ours.into();
+        (gio::Socket::from_fd(fd).unwrap(), theirs)
+    }
+
+    /// QA-PLUG-62/65: a requester that exited hangs up; one that only finished writing its
+    /// request (every requester half-closes) is still there.
+    #[test]
+    fn hup_removes_queued() {
+        let (sock, peer) = pair();
+        assert!(!hung_up(&sock));
+        peer.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(!hung_up(&sock), "a half-close is not a hang-up");
+        drop(peer);
+        wait_hup(&sock);
+        assert!(hung_up(&sock), "the requester is gone");
+    }
+
+    /// QA-PLUG-65: the sheets of dead clients leave the queue at once (they used to wait out their
+    /// minute or be denied one by one); live ones and the change already running stay.
+    #[test]
+    fn dead_client_leaves_queue() {
+        let mut q: Queue<gio::Socket> = Queue::default();
+        let mut peers = Vec::new();
+        for _ in 0..4 {
+            let (sock, peer) = pair();
+            q.push(change("Gone-client"), sock).unwrap();
+            peers.push(Some(peer));
+        }
+        // Clients 0, 1 and 3 time out and exit; 2 is still waiting for its answer.
+        for i in [0, 1, 3] {
+            peers[i] = None;
+        }
+        // A test thread that forks briefly holds a copy of the closed end (until its exec), so
+        // the hang-up may show a moment late: wait for it.
+        for i in q.items.iter().filter(|i| [1, 2, 4].contains(&i.0)) {
+            wait_hup(&i.2);
+        }
+        let running = q.front_id();
+        let dropped = q.drop_where(running, hung_up);
+        assert_eq!(
+            dropped.len(),
+            2,
+            "1 and 3 dropped; 0 is running and finishes"
+        );
+        assert_eq!(q.front_id(), running);
+        assert_eq!(q.waiting(), 1);
+        let dropped = q.drop_where(None, hung_up);
+        assert_eq!(dropped.len(), 1);
+        assert_eq!(q.waiting(), 0, "only the live client's sheet is left");
+        assert!(!hung_up(q.front_item().unwrap()));
+    }
+
+    /// QA-PLUG-73: Always Allow looks whether the requester is still there before it saves a
+    /// policy; the socket handler hands every request its connection, and an unanswered request
+    /// (dropped sheet) writes nothing back.
+    #[test]
+    fn always_allow_not_saved_when_write_fails() {
+        let src = include_str!("approval.rs");
+        let always = &src[src.find("    fn always(&self) {").unwrap()..];
+        let always = &always[..always.find("\n    }\n").unwrap()];
+        let check = always
+            .find("Pending::gone")
+            .expect("always() checks the requester");
+        let save = always.find("allow_helper_always").unwrap();
+        assert!(check < save, "the check comes before the policy is saved");
+        assert!(src.contains("ap.ask_from(a.clone(), exe, Some(conn.socket()))"));
+        assert!(src.contains("let Ok(ans) = rx.recv().await else"));
     }
 }

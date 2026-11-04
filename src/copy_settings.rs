@@ -52,6 +52,10 @@ pub const MODULES_UNREADABLE: &str =
 /// `wol modules enable` did not finish.
 pub const MODULES_ENABLE_NOT_DONE: &str =
     "That module couldn’t finish setting up. Check that you’re online, then try again.";
+/// A module that needs an Anthropic account (its record's `needs`), shown on its row.
+pub const MODULES_NEEDS_ACCOUNT: &str = "Needs an Anthropic account.";
+/// Local AI on a computer with no supported graphics card (`Status::backend` is empty).
+pub const MODULES_ON_PROCESSOR: &str = "Runs on the processor: no supported graphics card found.";
 /// A module the installer queued.
 pub const MODULES_PENDING: &str = "Installs when this computer next starts online.";
 /// A module modules-install gave up on (modules-gave-up).
@@ -228,7 +232,7 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 60] = [
+pub const ALL: [&str; 62] = [
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -265,6 +269,8 @@ pub const ALL: [&str; 60] = [
     MODULES_NONE,
     MODULES_UNREADABLE,
     MODULES_ENABLE_NOT_DONE,
+    MODULES_NEEDS_ACCOUNT,
+    MODULES_ON_PROCESSOR,
     MODULES_PENDING,
     MODULES_GAVE_UP,
     MODULES_GAVE_UP_MEDIA,
