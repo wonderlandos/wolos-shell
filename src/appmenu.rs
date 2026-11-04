@@ -554,7 +554,7 @@ mod tests {
         let all = [
             front.clone(),
             c("0xb", "foot", "2"),
-            c("0xc", "helium", "1"),
+            c("0xc", "atlas", "1"),
             c("0xd", "gimp", "special:hidden"),
         ];
         let b = |a| batch(a, &front, &all, ZONE).unwrap();
@@ -633,8 +633,8 @@ mod tests {
             (Cmd::NewTab, "foot", Nothing),
             (Cmd::Undo, "foot", Nothing),
             (Cmd::Save, "foot", Nothing),
-            (Cmd::Copy, "Helium", Keys("CTRL", "C")),
-            (Cmd::Close, "helium", Keys("CTRL", "W")),
+            (Cmd::Copy, "Atlas", Keys("CTRL", "C")),
+            (Cmd::Close, "atlas", Keys("CTRL", "W")),
             (Cmd::Redo, "org.gnome.TextEditor", Keys("CTRL SHIFT", "Z")),
             (Cmd::Emoji, "org.gnome.TextEditor", Keys("CTRL", "period")),
             // Empty desktop or a shell panel in front: the keyboard focus gets the Ctrl key.
@@ -649,6 +649,34 @@ mod tests {
                     assert!(!letter || m.contains("SHIFT"), "{c:?} in {class}: {m} {k}");
                 }
             }
+        }
+    }
+
+    /// AT-25: ⌘L, ⌘T, ⌘W, ⌘F in the browser are its Ctrl+L (address bar), Ctrl+T (new tab),
+    /// Ctrl+W (close the tab) and Ctrl+F (find), sent to the browser window itself.
+    #[test]
+    fn the_browser_gets_its_address_bar_tab_and_find_keys() {
+        use Handoff::*;
+        let atlas = wol_core::browser::ATLAS.class;
+        for (cmd, key) in [
+            (Cmd::Location, "L"),
+            (Cmd::NewTab, "T"),
+            (Cmd::Close, "W"),
+            (Cmd::Find, "F"),
+        ] {
+            assert_eq!(cmd.keys(), ("SUPER", key), "{cmd:?}");
+            for class in [atlas, "Atlas"] {
+                assert_eq!(send(cmd, class), Keys("CTRL", key), "{cmd:?} in {class}");
+            }
+            assert_eq!(
+                key_batch(cmd, atlas, "0xa", false),
+                Some(format!("dispatch sendshortcut CTRL, {key}, address:0xa")),
+                "{cmd:?}"
+            );
+            // Not a terminal: never its Shift twin, never nothing, never the window closed.
+            assert!(!TERMINALS.iter().any(|t| t.0 == atlas));
+            assert_ne!(send(cmd, atlas), Nothing);
+            assert_ne!(send(cmd, atlas), CloseWindow);
         }
     }
 
@@ -735,7 +763,7 @@ mod tests {
         assert_eq!(source("org.gnome.Nautilus", publishes), Source::Builtin);
         assert_eq!(source("", |_| true), Source::Builtin);
         assert_eq!(app_id(".glass"), ".glass");
-        assert_eq!(app_id("helium"), "helium");
+        assert_eq!(app_id("atlas"), "atlas");
     }
 
     #[test]

@@ -850,6 +850,7 @@ impl Dock {
             match item {
                 DockItem::Apps => apps::here().iter().for_each(&mut pin),
                 DockItem::App { id } => {
+                    let id = apps::current_id(id);
                     if let Some(p) = apps::here().iter().find(|p| p.id == id) {
                         pin(p);
                     }
@@ -1041,14 +1042,14 @@ mod click_tests {
             Click::Focus("class:^(?i)(org\\.gnome\\.Nautilus|nautilus)(\\.glass)?$".into())
         );
         let same = apps::Pin {
-            id: "helium",
+            id: "atlas",
             name: "Browser",
             icon: "wolos-browser",
-            exec: &["/usr/bin/helium"],
+            exec: &["/usr/bin/atlas"],
         };
         assert_eq!(
             focus_target(&same),
-            "class:^(?i)(helium)(\\.glass)?$",
+            "class:^(?i)(atlas)(\\.glass)?$",
             "program = id: once"
         );
         for p in apps::PINS {

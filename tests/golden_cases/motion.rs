@@ -179,7 +179,7 @@ pub fn cases() -> Vec<Case> {
                     &[
                         c("0x1", "foot", 0),
                         c("0x2", "org.gnome.Nautilus", 1),
-                        c("0x3", "helium", 2),
+                        c("0x3", "atlas", 2),
                     ],
                     &[],
                 );
