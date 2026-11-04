@@ -619,7 +619,7 @@ mod tests {
         assert_eq!(top("geary").as_deref(), Some("Mail"));
         assert_eq!(top("nautilus").as_deref(), Some("Files"));
         assert_eq!(top("amberol").as_deref(), Some("Music"));
-        assert_eq!(top("shotwell").as_deref(), Some("Photos"));
+        assert_eq!(top("gallery").as_deref(), Some("Photos"));
         assert_eq!(top("gnote").as_deref(), Some("Notes"));
         assert_eq!(
             top("browser").as_deref(),

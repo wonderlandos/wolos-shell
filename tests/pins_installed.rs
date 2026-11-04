@@ -12,7 +12,7 @@ const PROVIDERS: &[(&str, &str, &str)] = &[
     ("nautilus", "nautilus", "org.gnome.Nautilus"),
     ("geary", "geary", "org.gnome.Geary"),
     ("amberol", "amberol", "io.bassi.Amberol"),
-    ("shotwell", "shotwell", "org.gnome.Shotwell"),
+    ("wol-gallery", "wolos-app-gallery", "org.wolos.gallery"),
     ("gnome-calendar", "gnome-calendar", "org.gnome.Calendar"),
     ("gnote", "gnote", "org.gnome.Gnote"),
     ("foot", "foot", "foot"),

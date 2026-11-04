@@ -51,10 +51,10 @@ pub const PINS: &[Pin] = &[
         exec: &["amberol"],
     },
     Pin {
-        id: "org.gnome.Shotwell",
+        id: "org.wolos.gallery",
         name: "Photos",
         icon: "wolos-photos",
-        exec: &["shotwell"],
+        exec: &["wol-gallery"],
     },
     Pin {
         id: "org.gnome.Calendar",
