@@ -73,7 +73,7 @@ const BASELINE: [(&str, usize); 45] = [
     ("ui/settings/trackpad.rs", 4),
     ("ui/settings/wallpaper.rs", 2),
     ("ui/settings/widgets.rs", 4),
-    ("ui/settings/wifi.rs", 2),
+    ("ui/settings/wifi.rs", 1),
     ("ui/setup.rs", 5),
     ("ui/shortcut_sheet.rs", 1),
     ("ui/store.rs", 13),

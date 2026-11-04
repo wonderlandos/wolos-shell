@@ -84,6 +84,17 @@ fn run(argv: &[&str]) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// Saves the window set now, at most [`SAVE_AT_END`] seconds (Log Out, Restart and Shut Down save
+/// before any window is asked to close: ADR 0032 promises it, QA-FILES-5). Blocking: not on the
+/// UI thread.
+pub fn save_now() -> bool {
+    let secs = SAVE_AT_END.to_string();
+    run(&["timeout", &secs, "wol", "sessions", "save"])
+}
+
+/// Longest the save at the end of a session may take, in seconds (a hung save never holds it).
+pub const SAVE_AT_END: u32 = 10;
+
 /// The sessions file when it is at most `sessions::MAX_BYTES` (a longer one is not read; the core
 /// checks again).
 fn read_bounded(p: &Path) -> Option<String> {

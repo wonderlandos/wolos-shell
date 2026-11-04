@@ -51,6 +51,13 @@ pub(super) fn toggle_argv(t: Toggle) -> Vec<String> {
     ["wol", "toggle", t.id()].map(String::from).to_vec()
 }
 
+/// One `wol toggle` at a time per tile: a second click while the first runs would read the old
+/// state and flip it back (QA-SET-53: a double click on Stay Awake ended where it started).
+/// True when this click may start one, and it is marked running.
+pub(super) fn begin_flip(running: &std::cell::Cell<bool>) -> bool {
+    !running.replace(true)
+}
+
 /// Is `t` on now: one file check (no read), cheap enough for every refresh.
 pub(super) fn toggle_on(t: Toggle) -> bool {
     let config = std::path::PathBuf::from(crate::kit::config_home());
@@ -208,6 +215,17 @@ mod tests {
 
     /// Each toggle shows once: Night Light and Silence already have their control; the others
     /// get a tile that runs the CLI's `wol toggle`, a word the CLI accepts.
+    /// QA-SET-53: the second click of a double click starts nothing while the first flip runs;
+    /// once it ended the next click flips again.
+    #[test]
+    fn a_double_click_flips_once() {
+        let running = std::cell::Cell::new(false);
+        assert!(begin_flip(&running));
+        assert!(!begin_flip(&running), "second click while the first runs");
+        running.set(false);
+        assert!(begin_flip(&running));
+    }
+
     #[test]
     fn every_toggle_has_one_control() {
         let t = toggle_tiles();

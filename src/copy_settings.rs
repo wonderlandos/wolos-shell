@@ -99,6 +99,10 @@ pub const THEME_PICTURE_UNREADABLE: &str =
 
 // ---- Software Update ----
 
+/// Software Update > Download on metered connections: what counts as metered.
+pub const AUTO_METERED_HINT: &str = "Phone hotspots and plans with a data cap count as metered.";
+/// Privacy > Send error reports: what goes out, and only that (files/usr/lib/wolos/report).
+pub const REPORTS_HINT: &str = "When a program or service fails, WolOS sends its name and the system version. No files or names.";
 /// Software Update > Install app updates: the timer change did not take.
 pub const AUTO_APPS_FAILED: &str =
     "App updates couldn’t be turned on or off. Try again in a moment.";
@@ -143,8 +147,105 @@ pub const DISPLAYS_REVERT_FAILED: &str =
 pub const SEARCH_NONE_TITLE: &str = "No Results";
 pub const SEARCH_NONE: &str = "No settings match. Try another word.";
 
+// ---- Bluetooth ----
+
+/// Under the switch before the first read (a progress line ending in …, not a sentence: not in [`ALL`]).
+pub const BLUETOOTH_LOOKING: &str = "Looking for Bluetooth…";
+/// An adapter, but bluetoothd is not running: the switch offers Turn On.
+pub const BLUETOOTH_DOWN: &str = "Bluetooth isn’t running. Turn it on to use wireless devices.";
+/// Add Device… is looking around (a progress line ending in …, not a sentence: not in [`ALL`]).
+pub const BLUETOOTH_SEARCHING: &str = "Searching for devices…";
+/// The search found nothing new.
+pub const BLUETOOTH_NONE_FOUND: &str =
+    "No new devices found. Put the device in pairing mode, bring it close, and search again.";
+/// The agent asks for a PIN (older keyboards and headsets).
+pub const BLUETOOTH_PIN_HINT: &str =
+    "Type the PIN for this device. Keyboards and headsets often use 0000 or 1234.";
+/// The agent asks for a passkey.
+pub const BLUETOOTH_PASSKEY_HINT: &str = "Type the code the device shows.";
+/// The agent shows a code to compare.
+pub const BLUETOOTH_CONFIRM_HINT: &str = "Check that the device shows the same code.";
+/// The agent asks to accept without a code.
+pub const BLUETOOTH_CONFIRM_BARE: &str = "Confirm the pairing on the device if it asks.";
+/// The device wants a code typed on it.
+pub const BLUETOOTH_SHOW_HINT: &str = "Type this code on the device, then press Return there.";
+/// Pairing started, nothing asked yet (a progress line ending in …, not a sentence: not in [`ALL`]).
+pub const BLUETOOTH_WAITING: &str = "Waiting for the device…";
+/// Forget asks first.
+pub const BLUETOOTH_FORGET_BODY: &str = "You will need to pair it again to use it.";
+/// After Forget.
+pub const BLUETOOTH_FORGOT: &str = "The device was forgotten.";
+/// Forget did not work.
+pub const BLUETOOTH_FORGET_FAILED: &str = "Couldn’t forget the device. Try again.";
+/// No bluetoothctl in this build.
+pub const BLUETOOTH_NO_CLIENT: &str = "Bluetooth isn’t available on this computer.";
+/// The person closed the pairing sheet.
+pub const BLUETOOTH_CANCELLED: &str = "Pairing was canceled.";
+/// My Devices with nothing paired yet.
+pub const BLUETOOTH_EMPTY_HINT: &str = "Put a device in pairing mode to connect it the first time.";
+/// The empty state of a computer with no adapter.
+pub const BLUETOOTH_NO_ADAPTER: &str =
+    "This computer has no Bluetooth adapter. Plug in a USB adapter to use wireless devices.";
+/// Another pairing or Forget is still open.
+pub const BLUETOOTH_BUSY: &str = "Finish or cancel the open Bluetooth sheet first.";
+
+/// The pairing sheet's question.
+pub fn bluetooth_pair_title(name: &str) -> String {
+    format!("Pair with “{name}”?")
+}
+/// The sheet asking for a PIN.
+pub fn bluetooth_pin_title(name: &str) -> String {
+    format!("PIN for “{name}”")
+}
+/// The sheet showing a code to type on the device.
+pub fn bluetooth_show_title(name: &str) -> String {
+    format!("Pairing with “{name}”")
+}
+/// The Forget question.
+pub fn bluetooth_forget_title(name: &str) -> String {
+    format!("Forget “{name}”?")
+}
+/// After a pairing.
+pub fn bluetooth_paired(name: &str, connected: bool) -> String {
+    if connected {
+        format!("“{name}” is paired and connected.")
+    } else {
+        format!("“{name}” is paired.")
+    }
+}
+/// Under the switch: the name other devices see.
+pub fn bluetooth_appears_as(host: &str) -> String {
+    format!("This computer appears as “{host}”.")
+}
+/// The Bluetooth sentences built from a name, for the lint (the sheet's titles are questions
+/// and labels, not sentences).
+pub fn bluetooth_lines(name: &str) -> Vec<String> {
+    vec![
+        bluetooth_paired(name, true),
+        bluetooth_paired(name, false),
+        bluetooth_appears_as(name),
+    ]
+}
+
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 43] = [
+pub const ALL: [&str; 60] = [
+    AUTO_METERED_HINT,
+    REPORTS_HINT,
+    BLUETOOTH_EMPTY_HINT,
+    BLUETOOTH_NO_ADAPTER,
+    BLUETOOTH_DOWN,
+    BLUETOOTH_NONE_FOUND,
+    BLUETOOTH_PIN_HINT,
+    BLUETOOTH_PASSKEY_HINT,
+    BLUETOOTH_CONFIRM_HINT,
+    BLUETOOTH_CONFIRM_BARE,
+    BLUETOOTH_SHOW_HINT,
+    BLUETOOTH_FORGET_BODY,
+    BLUETOOTH_FORGOT,
+    BLUETOOTH_FORGET_FAILED,
+    BLUETOOTH_NO_CLIENT,
+    BLUETOOTH_CANCELLED,
+    BLUETOOTH_BUSY,
     SOUND_RECONNECTING,
     SOUND_LOUDER,
     SOUND_AUTO_LEVEL,
@@ -199,8 +300,89 @@ pub const GENERAL_TERMINAL_SHELL: &str =
 pub const GENERAL_TERMINAL_SHELL_NOT_SAVED: &str =
     "The shell couldn’t be changed. Try again in a moment.";
 
+// ---- Network, Wi-Fi and sharing (B7) ----
+
+/// An 802.1X network (Enterprise Wi-Fi): no password sheet (QA-NET-9).
+pub const WIFI_ENTERPRISE: &str = "This network asks for a user name or a certificate (Enterprise Wi-Fi). WolOS can’t join those yet.";
+/// The saved networks could not be read: no Wi-Fi device yet, NetworkManager silent (QA-SHADOW-55).
+pub const WIFI_SAVED_UNREAD: &str = "The saved networks couldn’t be read. Check that Wi-Fi is on.";
+/// Disconnect did not work (QA-NET-17).
+pub const WIFI_DISCONNECT_FAILED: &str =
+    "Couldn’t leave this network. Try again, or turn Wi-Fi off.";
+/// A join that worked.
+pub fn wifi_connected(name: &str) -> String {
+    format!("Connected to “{name}”.")
+}
+/// The row under the Control Center list when more networks are in range (a label, QA-NET-15).
+pub fn wifi_more_networks(n: usize) -> String {
+    format!("{n} More Networks…")
+}
+/// Under Internet Sharing (the Wi-Fi hotspot, NET2-2), while it is on.
+pub fn hotspot_on(name: &str) -> String {
+    format!(
+        "Other devices join “{name}” with the password you chose. They use this computer’s internet."
+    )
+}
+/// Under Internet Sharing while it is off.
+pub const HOTSPOT_OFF: &str =
+    "Share this computer’s internet with phones and other computers over Wi-Fi.";
+/// No Wi-Fi device: the hotspot cannot start.
+pub const HOTSPOT_NO_WIFI: &str = "Internet Sharing needs a Wi-Fi device.";
+/// The hotspot did not start.
+pub const HOTSPOT_FAILED: &str =
+    "The hotspot didn’t start. Check that Wi-Fi is on, then try again.";
+/// The hotspot password is too short or too long.
+pub const HOTSPOT_PASSWORD: &str = "Use 8 to 63 characters for the hotspot password.";
+/// Sharing rows on the live medium: its account has no password to give (QA-NET-6, NET2-8).
+pub const SHARING_LIVE: &str =
+    "Install WolOS to change these. The live system’s account has no password to allow them.";
+/// A sign-in page holds the network (NET2-3): the notification's title (a label).
+pub const PORTAL_TITLE: &str = "Sign In to This Network";
+/// The notification's body.
+pub const PORTAL_BODY: &str =
+    "This network shows a sign-in page before it lets you on the internet. Open it to sign in.";
+/// Network pane: the link reaches no internet (limited).
+pub const NETWORK_LIMITED: &str = "Connected, but the internet can’t be reached through it.";
+/// Network pane: a sign-in page holds the link.
+pub const NETWORK_PORTAL: &str = "Connected. Sign in on the network’s page to use the internet.";
+
+/// Network > Firewall while the kernel has the table (or cannot tell).
+pub const FIREWALL_ON: &str = "Blocks connections from other computers that you did not start.";
+/// Network > Firewall: on at startup, but the kernel has no table (QA-NET-2).
+pub const FIREWALL_STOPPED: &str = "On at startup, but not running now.";
+
+/// Every network sentence, for the lint.
+pub const NETWORK_ALL: [&str; 13] = [
+    FIREWALL_ON,
+    FIREWALL_STOPPED,
+    WIFI_ENTERPRISE,
+    WIFI_SAVED_UNREAD,
+    WIFI_DISCONNECT_FAILED,
+    HOTSPOT_OFF,
+    HOTSPOT_NO_WIFI,
+    HOTSPOT_FAILED,
+    HOTSPOT_PASSWORD,
+    SHARING_LIVE,
+    PORTAL_BODY,
+    NETWORK_LIMITED,
+    NETWORK_PORTAL,
+];
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn network_sentences_pass_the_lint() {
+        for s in super::NETWORK_ALL
+            .iter()
+            .copied()
+            .map(String::from)
+            .chain([super::wifi_connected("Home"), super::hotspot_on("WolOS")])
+        {
+            let p = crate::copy::lint(&s);
+            assert!(p.is_empty(), "“{s}”: {p:?}");
+        }
+    }
+
     #[test]
     fn every_settings_sentence_passes_the_lint() {
         for s in super::ALL
@@ -208,6 +390,7 @@ mod tests {
             .copied()
             .map(String::from)
             .chain([super::displays_keep_line(1), super::displays_keep_line(15)])
+            .chain(super::bluetooth_lines("Magic Keyboard"))
         {
             let s = s.as_str();
             let p = crate::copy::lint(s);

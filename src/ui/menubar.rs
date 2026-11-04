@@ -66,6 +66,11 @@ impl Bar {
         }
     }
 
+    /// The recording item as while a recording runs (goldens; the pid file drives it live).
+    pub fn set_recording(&self, on: bool) {
+        self.items.record.set_visible(on);
+    }
+
     /// Frontmost app: bold name with its real menu; the Window menu only when a window is focused.
     pub fn set_app(&self, name: String, class: String) {
         if !self.name_seen.borrow_mut().set(format!("{name}\n{class}")) {
@@ -348,17 +353,51 @@ fn status_target(tip: &str) -> String {
     format!("control-center:{}", status_page(tip))
 }
 
-/// WolOS menu (the logo), system menu order. Empty title = separator.
+/// WolOS menu (the logo), system menu order. Empty title = separator. Every power action has a
+/// row (QA-FDAY-5: Sleep and Restart were only on the Super+Esc panel): Sleep acts at once, like
+/// the session panel's; Restart…, Shut Down… and Log Out… open that panel on their question.
 pub const LOGO_MENU: &[(&str, &[&str])] = &[
     ("About This Computer", &["wol-settings", "About"]),
     ("", &[]),
     ("System Settings…", &["wol-settings"]),
     ("App Store…", &["wol-store"]),
     ("", &[]),
-    ("Lock Screen", &["wol-lock"]),
-    ("Log Out…", &["wol", "shell", "show", "session-logout"]),
+    ("Sleep", &["wol", "power", "sleep"]),
+    ("Restart…", &["wol", "shell", "show", "session-restart"]),
     ("Shut Down…", &["wol", "shell", "show", "session-shutdown"]),
+    ("", &[]),
+    (LOCK_ROW, &["wol-lock"]),
+    ("Log Out…", &["wol", "shell", "show", "session-logout"]),
 ];
+
+/// The Lock Screen row of [`LOGO_MENU`].
+const LOCK_ROW: &str = "Lock Screen";
+
+/// The WolOS menu on this kind of system. Live (`apps::LIVE_MARK`): no Lock Screen, the live
+/// account has no password, so nothing could unlock it (QA-FDAY-7).
+pub fn logo_menu(live: bool) -> Vec<(&'static str, &'static [&'static str])> {
+    LOGO_MENU
+        .iter()
+        .copied()
+        .filter(|(t, _)| !(live && *t == LOCK_ROW))
+        .collect()
+}
+
+/// The WolOS menu's rows as the popover shows them, out of their popover (goldens).
+pub fn logo_menu_view(live: bool) -> gtk::Widget {
+    let p = w::menu(
+        logo_menu(live)
+            .into_iter()
+            .map(|(t, argv)| (t, run(argv)))
+            .collect(),
+    );
+    let rows = p.child().unwrap_or_else(|| w::vbox(0).upcast());
+    p.set_child(None::<&gtk::Widget>);
+    let card = w::vbox(0);
+    card.add_css_class("menu");
+    card.append(&rows);
+    card.upcast()
+}
 
 fn run(argv: &'static [&'static str]) -> Box<dyn Fn()> {
     Box::new(move || kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>()))
@@ -375,6 +414,8 @@ struct Items {
     search: gtk::Button,
     control_center: gtk::Button,
     clock: gtk::Button,
+    /// A red Stop while a screen recording runs ([`follow_recording`]); first in the status slot.
+    record: gtk::Button,
     /// Apps' status items (SP-7, `ui::tray_items`).
     tray: Rc<super::tray_items::Strip>,
 }
@@ -424,6 +465,9 @@ impl Bar {
         }
         for (n, (slot, items)) in self.slots.iter().zip(slots).enumerate() {
             // A layout without the tray item: the status slot starts with it (hidden when empty).
+            if n == 2 {
+                slot.append(&self.items.record);
+            }
             if n == 2 && !tray_placed {
                 slot.append(&self.items.tray.root);
             }
@@ -471,7 +515,10 @@ pub fn content_with(
     logo.set_tooltip_text(Some("WolOS menu"));
     logo.set_valign(gtk::Align::Center);
     logo.set_popover(Some(&w::menu(
-        LOGO_MENU.iter().map(|&(t, argv)| (t, run(argv))).collect(),
+        logo_menu(crate::apps::is_live())
+            .into_iter()
+            .map(|(t, argv)| (t, run(argv)))
+            .collect(),
     )));
     // Only menus backed by real actions: the app menu and Window (no placeholder File/Edit/View).
     let appname = w::label(crate::apps::DESKTOP_NAME, "app-name");
@@ -540,6 +587,7 @@ pub fn content_with(
         b.connect_clicked(move |_| kit::spawn(&argv));
         b
     });
+    let record = recording_item();
     let clock = w::label("", "");
     let cb = w::menubar_item(&clock);
     cb.set_tooltip_text(Some("Notification Center"));
@@ -600,6 +648,7 @@ pub fn content_with(
             search,
             control_center,
             clock: cb,
+            record,
             tray: super::tray_items::strip(),
         },
         slots,
@@ -615,6 +664,7 @@ pub fn content_with(
     });
     refresh(&bar, sys);
     follow_focus(&bar);
+    follow_recording(&bar);
     {
         // Settings > Menu Bar: applied live on `reload`.
         let (b, battery) = (Rc::downgrade(&bar), sys.battery());
@@ -838,6 +888,46 @@ fn set_focus(bar: &Bar, seen: &mut Changed<Option<&'static str>>) {
     }
 }
 
+/// Tooltip of the recording item.
+pub const STOP_RECORDING: &str = "Stop Screen Recording";
+
+/// The menu bar's recording item: a red record mark that stops the recording (live-1 H4: a
+/// recording ran with nothing on screen saying so and nothing to stop it).
+fn recording_item() -> gtk::Button {
+    let dot = w::icon("media-record-symbolic", w::ICON);
+    dot.add_css_class("tone-danger");
+    let b = w::menubar_item(&dot);
+    b.set_tooltip_text(Some(STOP_RECORDING));
+    b.set_visible(false);
+    b.connect_clicked(|b| {
+        b.set_visible(false);
+        kit::spawn(&crate::capture::STOP_ARGV.map(String::from));
+    });
+    b
+}
+
+/// The recording item shows while wol-screenshot's pid file is there, whoever started the
+/// recording (toolbar, Record tile, hotkey), and goes when it ends.
+fn follow_recording(bar: &Rc<Bar>) {
+    use gtk::gio;
+    let file = crate::capture::record_pid_file(&kit::runtime_dir());
+    bar.items.record.set_visible(file.exists());
+    let Ok(m) = gio::File::for_path(&file)
+        .monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+    else {
+        return;
+    };
+    let b = Rc::downgrade(bar);
+    m.connect_changed(move |_, _, _, _| {
+        if let Some(bar) = b.upgrade() {
+            bar.items.record.set_visible(file.exists());
+        }
+    });
+    bar.life.on_end(move || {
+        m.cancel();
+    });
+}
+
 /// The moon follows the Focus file at once (Control Center writes it), not on the next poll.
 fn follow_focus(bar: &Rc<Bar>) {
     use gtk::gio;
@@ -886,6 +976,15 @@ pub fn set_app_all(name: String, class: String) {
     }
 }
 
+/// The app the bar names once a window closed: none left means the desktop (empty class and
+/// title), else the compositor's own `activewindow` events decide (QA-LN-6).
+pub fn app_when_no_client(clients: &[crate::hypr::Client]) -> Option<(String, String)> {
+    clients
+        .iter()
+        .all(|c| c.class.is_empty())
+        .then(|| (String::new(), String::new()))
+}
+
 /// The focus moved to display `connector`: its bar at full strength, the others dimmed.
 pub fn set_focused(connector: &str) {
     FOCUSED.set(Some(connector.to_string()));
@@ -916,7 +1015,7 @@ pub fn poll_status(sys: Rc<dyn crate::system::System>) {
         for bar in bars() {
             refresh(&bar, &*sys);
         }
-        crate::alerts::poll(sys.battery());
+        crate::alerts::poll(sys.battery(), sys.connectivity());
         glib::ControlFlow::Continue
     });
 }
@@ -969,14 +1068,81 @@ mod logo_tests {
         }
     }
 
+    /// QA-FDAY-7: on the live stick Lock Screen was a dead end (the live account's password is
+    /// locked, every unlock says Incorrect password). The live menu has no Lock Screen; an
+    /// installed system keeps it.
+    #[test]
+    fn live_hides_lock() {
+        use super::logo_menu;
+        let titles = |live| logo_menu(live).iter().map(|r| r.0).collect::<Vec<_>>();
+        assert!(titles(false).contains(&"Lock Screen"));
+        assert!(!titles(true).contains(&"Lock Screen"), "{:?}", titles(true));
+        assert!(
+            logo_menu(true).iter().all(|(_, a)| *a != ["wol-lock"]),
+            "nothing in the live menu starts wol-lock"
+        );
+        // Everything else is the same menu.
+        assert_eq!(titles(true).len(), titles(false).len() - 1);
+        for live in [false, true] {
+            let m = logo_menu(live);
+            assert!(!m.last().unwrap().0.is_empty(), "no separator last");
+            assert!(
+                m.windows(2)
+                    .all(|w| !(w[0].0.is_empty() && w[1].0.is_empty()))
+            );
+        }
+    }
+
+    /// QA-LN-6: the last app ended by a signal and the bar kept "Terminal  Window" for good: with
+    /// no client left the bar names the desktop; with one left the compositor's events decide.
+    #[test]
+    fn last_client_gone_clears_app_name() {
+        use super::app_when_no_client;
+        let c = |class: &str| crate::hypr::Client::new("0x1", class, "");
+        assert_eq!(
+            app_when_no_client(&[]),
+            Some((String::new(), String::new()))
+        );
+        assert_eq!(
+            app_when_no_client(&[c("")]),
+            Some((String::new(), String::new()))
+        );
+        assert_eq!(app_when_no_client(&[c("foot")]), None);
+    }
+
+    /// QA-FDAY-5: the WolOS menu had no Sleep and no Restart (only Super+Esc reached them). Both
+    /// are rows now, before Shut Down…: Sleep runs the session panel's own command, Restart…
+    /// asks first on the session panel.
+    #[test]
+    fn wolos_menu_has_sleep_and_restart() {
+        let titles: Vec<&str> = LOGO_MENU.iter().map(|r| r.0).collect();
+        let at = |t: &str| {
+            titles
+                .iter()
+                .position(|x| *x == t)
+                .unwrap_or_else(|| panic!("{t}"))
+        };
+        assert!(at("Sleep") < at("Restart…") && at("Restart…") < at("Shut Down…"));
+        let argv = |title: &str| LOGO_MENU.iter().find(|r| r.0 == title).unwrap().1;
+        assert_eq!(
+            Some(argv("Sleep")),
+            crate::clipboard::session_command("sleep"),
+            "Sleep runs what the session panel's Sleep runs"
+        );
+        let [_, _, _, target] = argv("Restart…") else {
+            panic!("wol shell show <target>")
+        };
+        assert_eq!(crate::ui::panels::session_action(target), Some("restart"));
+    }
+
     /// Live: Log Out… and Shut Down… both toggled the plain session panel. Each opens it on its
     /// own question, through a shell target the CLI and wol-shell both know.
     #[test]
     fn log_out_and_shut_down_ask_their_own_question() {
         let argv = |title: &str| LOGO_MENU.iter().find(|r| r.0 == title).unwrap().1;
-        let (out, down) = (argv("Log Out…"), argv("Shut Down…"));
+        let (out, down, re) = (argv("Log Out…"), argv("Shut Down…"), argv("Restart…"));
         assert_ne!(out, down);
-        for a in [out, down] {
+        for a in [out, down, re] {
             let [wol, shell, verb, target] = a else {
                 panic!("{a:?}: wol shell <verb> <target>")
             };

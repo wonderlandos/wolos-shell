@@ -23,6 +23,40 @@ pub fn is_one_time_code(text: &str) -> bool {
     (4..=8).contains(&digits) && seps <= 1 && digits + seps == t.chars().count()
 }
 
+/// MIME type a password manager adds to a copied secret (KeePassXC, Bitwarden, Firefox's password
+/// field, GNOME Secrets): the de-facto standard is KDE's. A copy that carries it is pasted once,
+/// never kept (QA-LN-8).
+pub const PASSWORD_HINT_MIME: &str = "x-kde-passwordManagerHint";
+
+/// A payment card number: 13 to 19 digits (spaces or dashes between groups) that pass the Luhn
+/// check. It is pasted once and not kept, like a one-time code (QA-LN-8: a 16-digit number sat in
+/// the history and its preview in full).
+pub fn is_card_number(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty()
+        || !t
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == ' ' || c == '-')
+    {
+        return false;
+    }
+    let digits: Vec<u32> = t.chars().filter_map(|c| c.to_digit(10)).collect();
+    if !(13..=19).contains(&digits.len()) {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, d)| match (!i.is_multiple_of(2), d * 2) {
+            (true, x) if x > 9 => x - 9,
+            (true, x) => x,
+            (false, _) => *d,
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
 /// One entry of the history.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
@@ -62,7 +96,7 @@ impl History {
     /// A new copy: it becomes the newest recent entry; a pinned one stays where it is. Returns
     /// true when the list changed.
     pub fn push(&mut self, text: &str) -> bool {
-        if !keepable(text) || is_one_time_code(text) {
+        if !keepable(text) || is_one_time_code(text) || is_card_number(text) {
             return false;
         }
         if self.entries.iter().any(|e| e.pinned && e.text == text) {
@@ -86,6 +120,18 @@ impl History {
         );
         self.entries.truncate(first_recent + MAX);
         true
+    }
+
+    /// A copy as the panel sees it: `hinted` = the copy carried [`PASSWORD_HINT_MIME`], so it is
+    /// never kept and never previewed (QA-LN-8, QA-LN-17).
+    pub fn push_copy(&mut self, text: &str, hinted: bool) -> bool {
+        !hinted && self.push(text)
+    }
+
+    /// Whether Clear should empty the system selection too: it holds a text the history just
+    /// dropped (a pinned text stays copyable). QA-LN-16: `wl-paste` still returned the last text.
+    pub fn clear_wants_selection_empty(&self, selection: Option<&str>) -> bool {
+        selection.is_some_and(|t| !t.is_empty() && !self.entries.iter().any(|e| e.text == t))
     }
 
     /// Pins or unpins the entry with this text. Pinning moves it to the end of the pins;
@@ -191,15 +237,27 @@ pub fn preview(text: &str) -> String {
 
 /// Session menu action -> argv. Sleep, restart and shut down go through `wol power` (wol-admind:
 /// any account at the computer, no password; sleep locks first); compositor exit for log out.
+/// The three that end every app save the window set first and ask the windows to close
+/// (`ui::panels::end_session`, ADR 0032, QA-FILES-5, QA-LIVE1-22).
 pub fn session_command(action: &str) -> Option<&'static [&'static str]> {
     Some(match action {
         "lock" => &["wol-lock"],
         "sleep" => &["wol", "power", "sleep"],
         "restart" => &["wol", "power", "restart"],
         "shutdown" => &["wol", "power", "shutdown"],
-        "logout" => &["hyprctl", "dispatch", "exit"],
+        "logout" => &["sh", "-c", STOP_IDLE_THEN, "hyprctl", "dispatch", "exit"],
         _ => return None,
     })
+}
+
+/// Log Out (compositor exit) stops hypridle first: it aborted (SIGABRT) when its display went
+/// (QA-LIVE-32); then runs the action in its argv.
+pub const STOP_IDLE_THEN: &str = "pkill -x hypridle; exec \"$0\" \"$@\"";
+
+/// Restart, Shut Down and Log Out end every app: the shell asks the open windows to close first
+/// (`ui::panels::end_session`, QA-LIVE1-22); Lock and Sleep end nothing.
+pub fn ends_apps(action: &str) -> bool {
+    matches!(action, "restart" | "shutdown" | "logout")
 }
 
 /// Seconds the Restart / Shut Down / Log Out sheet waits before it acts by itself.
@@ -213,6 +271,70 @@ pub fn needs_confirm(action: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-LN-8: a copy with the password-manager hint is not kept.
+    #[test]
+    fn password_hint_skipped() {
+        let mut h = History::default();
+        assert!(!h.push_copy("hunter2-correct-horse", true));
+        assert!(h.entries().is_empty());
+        assert!(
+            h.push_copy("hunter2-correct-horse", false),
+            "the same text unhinted is kept"
+        );
+    }
+
+    /// QA-LN-8: a 16-digit card number is not kept (Luhn), an order number that fails Luhn is.
+    #[test]
+    fn card_number_skipped() {
+        let mut h = History::default();
+        for card in [
+            "4111 1111 1111 1111",
+            "4111-1111-1111-1111",
+            "5500000000000004",
+            "378282246310005",
+        ] {
+            assert!(is_card_number(card), "{card}");
+            assert!(!h.push(card), "{card}");
+        }
+        assert!(h.entries().is_empty());
+        for not in [
+            "4111 1111 1111 1112",
+            "1234567890",
+            "order 4111111111111111",
+            "12345678901234567890",
+        ] {
+            assert!(!is_card_number(not), "{not}");
+        }
+        assert!(h.push("4111 1111 1111 1112"));
+    }
+
+    /// QA-LN-17: no preview ever shows a hinted secret (it never reaches the list).
+    #[test]
+    fn preview_masks_password_hint() {
+        let mut h = History::default();
+        h.push_copy("S3cret!Passw0rd#2026", true);
+        h.push_copy("shopping list", false);
+        let shown: Vec<String> = h.entries().iter().map(|e| preview(&e.text)).collect();
+        assert_eq!(shown, ["shopping list"]);
+    }
+
+    /// QA-LN-16: Clear also empties the system selection when it holds a dropped text, and leaves
+    /// a pinned text (still the user's) and an empty selection alone.
+    #[test]
+    fn clear_clears_selection() {
+        let mut h = History::with_pins(vec!["address".into()]);
+        h.push("copied text");
+        assert!(
+            !h.clear_wants_selection_empty(Some("copied text")),
+            "before clear it is in the list"
+        );
+        h.clear();
+        assert!(h.clear_wants_selection_empty(Some("copied text")));
+        assert!(!h.clear_wants_selection_empty(Some("address")), "pinned");
+        assert!(!h.clear_wants_selection_empty(Some("")));
+        assert!(!h.clear_wants_selection_empty(None));
+    }
 
     #[test]
     fn history_rules() {
@@ -330,7 +452,11 @@ mod tests {
             ("sleep", &["wol", "power", "sleep"][..], false),
             ("restart", &["wol", "power", "restart"][..], true),
             ("shutdown", &["wol", "power", "shutdown"][..], true),
-            ("logout", &["hyprctl", "dispatch", "exit"][..], true),
+            (
+                "logout",
+                &["sh", "-c", STOP_IDLE_THEN, "hyprctl", "dispatch", "exit"][..],
+                true,
+            ),
         ] {
             assert_eq!(session_command(a), Some(argv), "{a}");
             assert_eq!(needs_confirm(a), confirm, "{a}");

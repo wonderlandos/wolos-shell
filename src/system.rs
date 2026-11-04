@@ -11,7 +11,13 @@ pub use wol_core::controls::{BtDevice, Monitor, Output};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
     Wifi(bool),
-    WifiJoin(String, Option<String>),
+    /// Join a Wi-Fi network; `hidden`: it does not announce its name, so NetworkManager asks for
+    /// it by name (`802-11-wireless.hidden yes`, QA-NET-10).
+    WifiJoin {
+        ssid: String,
+        password: Option<String>,
+        hidden: bool,
+    },
     Bluetooth(bool),
     Brightness(u8),
     Volume(u8),
@@ -82,6 +88,14 @@ pub trait System: Send + Sync {
     /// Admin action: may answer `NeedsAuth`; the UI then shows the Authenticate sheet and retries through `spawn_with`.
     fn wifi_join(&self, _ssid: &str, _password: Option<&str>) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
+    }
+    /// NetworkManager's connectivity (portal, limited), from the snapshot: no process.
+    fn connectivity(&self) -> wol_core::netinfo::Connectivity {
+        wol_core::netinfo::Connectivity::Unknown
+    }
+    /// A network that needs 802.1X (Enterprise): no password sheet, a sentence instead (QA-NET-9).
+    fn wifi_enterprise(&self, _ssid: &str) -> bool {
+        false
     }
     fn set_wifi(&self, _on: bool) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
@@ -216,7 +230,7 @@ pub trait System: Send + Sync {
     fn perform(&self, a: &Action) -> Result<(), ActionError> {
         match a {
             Action::Wifi(on) => self.set_wifi(*on),
-            Action::WifiJoin(s, p) => self.wifi_join(s, p.as_deref()),
+            Action::WifiJoin { ssid, password, .. } => self.wifi_join(ssid, password.as_deref()),
             Action::Bluetooth(on) => self.set_bluetooth(*on),
             Action::Brightness(p) => self.set_brightness(*p),
             Action::Volume(p) => self.set_volume(*p),
@@ -317,6 +331,10 @@ impl From<wol_core::controls::ControlError> for ActionError {
             C::Invalid => Self::Invalid,
             C::Failed => Self::Failed,
             C::WrongPassword => Self::WrongPassword,
+            // Not in range: the join sentence says to move closer.
+            C::NotFound => Self::Failed,
+            // The surfaces never send an 802.1X join ([`System::wifi_enterprise`]); `wol` names it.
+            C::Unsupported => Self::Unavailable,
         }
     }
 }
@@ -350,6 +368,7 @@ pub fn signal_icon(signal: u8) -> &'static str {
         online: true,
         wifi: true,
         signal: Some(signal),
+        limited: false,
     })
 }
 
@@ -465,6 +484,7 @@ impl System for Fake {
             online: true,
             wifi: true,
             signal: Some(80),
+            limited: false,
         }
     }
     fn brightness(&self) -> Option<u8> {
@@ -575,6 +595,7 @@ impl System for Fake {
                 "1920x1200@60.00Hz".into(),
                 "1440x900@60.00Hz".into(),
             ],
+            mirror_of: None,
         }]
     }
     // Settings > Assistants & Automation and Restore: a helper seen once, a few changes, restore points.
@@ -624,20 +645,10 @@ impl System for Fake {
             space: space.into(),
             created: created.into(),
         };
+        // bootctl's shapes (A/B slots), as `wol_core::update::be` lists them (QA-SET-30).
         vec![
-            be("default", true, "2026-10-01 09:12", "9.8G"),
-            be(
-                "wol-before-update-1792514400",
-                false,
-                "2026-10-20 18:40",
-                "412M",
-            ),
-            be(
-                "wol-before-update-1791789780",
-                false,
-                "2026-10-12 08:03",
-                "380M",
-            ),
+            be("wolos-a", true, "2026/11/02", ""),
+            be("wolos-b", false, "2026/10/20", ""),
         ]
     }
 }
@@ -657,6 +668,7 @@ impl System for FakeDesktop {
             online: true,
             wifi: false,
             signal: None,
+            limited: false,
         }
     }
     fn brightness(&self) -> Option<u8> {
@@ -713,6 +725,9 @@ pub struct Snapshot {
     pub battery: Option<BatteryState>,
     /// Default-route interface from /proc/net/route (wired vs Wi-Fi without sysfs).
     pub route: Option<String>,
+    /// NetworkManager's connectivity (portal, limited; QA-NET-12, NET2-3), read with the slow topic.
+    #[serde(default)]
+    pub connectivity: wol_core::netinfo::Connectivity,
     pub media: Option<Media>,
     pub bt_devices: Vec<BtDevice>,
     pub keyboard: Option<u8>,
@@ -838,6 +853,12 @@ impl Inner {
             s.monitors = self.c.monitors();
             s.battery = self.c.battery();
             s.route = self.c.default_iface();
+            s.connectivity = self
+                .c
+                .host
+                .run(&wol_core::netinfo::CONNECTIVITY_ARGV)
+                .map(|t| wol_core::netinfo::parse_connectivity(&t))
+                .unwrap_or_default();
         }
         if due[3] {
             s.media = self.c.now_playing();
@@ -905,7 +926,11 @@ impl Inner {
         }
         let r = match a {
             Action::Wifi(on) => c.set_wifi(*on, &pw),
-            Action::WifiJoin(ssid, p) => c.wifi_join(ssid, p.as_deref(), &pw),
+            Action::WifiJoin {
+                ssid,
+                password,
+                hidden,
+            } => c.wifi_join_hidden(ssid, password.as_deref(), *hidden, &pw),
             Action::Bluetooth(on) => c.set_bluetooth(*on, &pw),
             Action::Brightness(p) => c.set_brightness(*p),
             Action::Volume(p) => c.set_volume(*p),
@@ -982,7 +1007,9 @@ impl Inner {
                     })
                 }
                 Action::Muted(m) => s.volume = s.volume.map(|v| Volume { muted: *m, ..v }),
-                Action::Brightness(p) => s.brightness = Some(*p),
+                Action::Brightness(p) => {
+                    s.brightness = Some((*p).clamp(wol_core::controls::BRIGHTNESS_MIN, 100))
+                }
                 Action::Wifi(on) => s.wifi_on = Some(*on),
                 Action::Bluetooth(on) => s.bluetooth = Some(*on),
                 Action::NightLight(on) => s.night = Some(*on),
@@ -1083,7 +1110,7 @@ fn may_need_password(a: &Action) -> bool {
     matches!(
         a,
         Action::Wifi(_)
-            | Action::WifiJoin(..)
+            | Action::WifiJoin { .. }
             | Action::Bluetooth(_)
             | Action::Output(_)
             | Action::UserAdd { .. }
@@ -1103,7 +1130,11 @@ fn approval_topics(req: &shared::shell::ApprovalRequest) -> [bool; TOPICS] {
     use shared::shell::ApprovalRequest as R;
     match req {
         R::Wifi { on } => topics_of(&Action::Wifi(*on)),
-        R::WifiJoin { ssid, .. } => topics_of(&Action::WifiJoin(ssid.clone(), None)),
+        R::WifiJoin { ssid, .. } => topics_of(&Action::WifiJoin {
+            ssid: ssid.clone(),
+            password: None,
+            hidden: false,
+        }),
         R::Bluetooth { on } => topics_of(&Action::Bluetooth(*on)),
         _ => [false; TOPICS],
     }
@@ -1117,7 +1148,7 @@ fn topics_of(a: &Action) -> [bool; TOPICS] {
         Action::Volume(_) | Action::Muted(_) | Action::Brightness(_) => (1, 0, 0, 0, 0),
         Action::Wifi(_) => (0, 1, 0, 0, 0),
         // A new network brings a new default route.
-        Action::WifiJoin(..) => (0, 1, 1, 0, 0),
+        Action::WifiJoin { .. } => (0, 1, 1, 0, 0),
         Action::Bluetooth(_) => (0, 0, 1, 0, 1),
         Action::BtConnect(..) => (0, 0, 0, 0, 1),
         Action::Output(_) | Action::Monitor(_) => (0, 0, 1, 0, 0),
@@ -1381,7 +1412,14 @@ impl System for CoreSystem {
             n.online = true;
             n.signal = Some(w.signal);
         }
+        // A link that NetworkManager says reaches no internet (limited) or only a sign-in page
+        // (portal) is not plainly online (NET2-3: the tray showed the wired glyph behind a portal).
+        use wol_core::netinfo::Connectivity as K;
+        n.limited = n.online && matches!(s.connectivity, K::Limited | K::Portal);
         n
+    }
+    fn connectivity(&self) -> wol_core::netinfo::Connectivity {
+        self.inner.lock().connectivity
     }
     fn brightness(&self) -> Option<u8> {
         self.inner.lock().brightness
@@ -1401,6 +1439,13 @@ impl System for CoreSystem {
                 connected: n.connected,
             })
             .collect()
+    }
+    fn wifi_enterprise(&self, ssid: &str) -> bool {
+        self.inner
+            .lock()
+            .nets
+            .iter()
+            .any(|n| n.ssid == ssid && n.security == wol_core::wifi::Security::Enterprise)
     }
     fn bluetooth(&self) -> Option<bool> {
         self.inner.lock().bluetooth

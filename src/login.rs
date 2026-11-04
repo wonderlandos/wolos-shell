@@ -18,6 +18,9 @@ pub enum Verdict {
     /// The password is right, but the account may not use the screen (not in group `seat`):
     /// wol-login starts no session (e2e D6: a black screen, a restart every 0.7 s).
     NoDisplay,
+    /// The account's encrypted home opens only with a password of typed characters
+    /// (`shared::login::REPLY_TEXT_PASSWORD`): not a wrong password, not a broken helper.
+    TextPassword,
 }
 
 impl Verdict {
@@ -30,6 +33,7 @@ impl Verdict {
                 "Your password can’t be checked: it is too long or has a character that isn’t allowed."
             }
             Verdict::NoDisplay => crate::copy::LOGIN_NO_DISPLAY,
+            Verdict::TextPassword => crate::copy::LOGIN_TEXT_PASSWORD,
         }
     }
 }
@@ -47,6 +51,7 @@ pub fn from_reply(reply: &str) -> Verdict {
         "ok" => Verdict::Ok,
         "denied" => Verdict::Denied,
         shared::login::REPLY_NO_DISPLAY => Verdict::NoDisplay,
+        shared::login::REPLY_TEXT_PASSWORD => Verdict::TextPassword,
         _ => Verdict::Error,
     }
 }
@@ -365,6 +370,20 @@ pub fn unlock_login_keyring(conn: &zbus::blocking::Connection, password: &str) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SHADOW-39 second half: wol-login's reply for a password that is not typed characters
+    /// (an encrypted home opens only with one) reaches the window as its own sentence, not the
+    /// generic "can't be checked right now" line, and it is not a wrong password (no hint count).
+    #[test]
+    fn text_password_reply_has_its_own_sentence() {
+        let v = from_reply(&format!("{}\n", shared::login::REPLY_TEXT_PASSWORD));
+        assert_eq!(v, Verdict::TextPassword);
+        assert_eq!(v.message(), crate::copy::LOGIN_TEXT_PASSWORD);
+        assert!(v.message().contains("typed characters"), "{}", v.message());
+        let n = std::cell::Cell::new(0);
+        assert!(wrong_password(&n, v, || Some("hint".into())).is_none());
+        assert_eq!(n.get(), 0);
+    }
 
     /// Audit8 stability2 #7: a wol-login that takes the request and never answers ends as an
     /// error within the wait, and one that answers still gives its verdict.

@@ -208,7 +208,8 @@ fn geometry(c: &crate::hypr::Client) -> String {
     format!("{},{} {}x{}", c.at[0], c.at[1], c.size[0], c.size[1])
 }
 
-/// Shell command handler for [`RECORD`]: show/toggle opens the toolbar in Record Entire Screen mode.
+/// Shell command handler for [`RECORD`]: show/toggle opens the toolbar in Record Entire Screen mode,
+/// or stops the recording that runs (`capture::record_ask`).
 pub type Handler = Rc<dyn Fn(&crate::protocol::Command) -> bool>;
 
 /// The toolbar surface (bottom centre) and its thumbnail surface (bottom right), plus the
@@ -228,7 +229,15 @@ pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
             if c.target != RECORD {
                 return false;
             }
-            let show = crate::protocol::apply(c.verb, win.is_visible());
+            let pid = capture::record_pid_file(&crate::kit::runtime_dir());
+            let show = match capture::record_ask(pid.exists(), c.verb, win.is_visible()) {
+                capture::RecordAsk::Stop => {
+                    win.set_visible(false);
+                    crate::kit::spawn(&capture::STOP_ARGV.map(String::from));
+                    return true;
+                }
+                capture::RecordAsk::Toolbar(show) => show,
+            };
             if show {
                 bar.select(Mode::RecordScreen);
             }
@@ -275,6 +284,8 @@ pub fn build(app: &gtk::Application) -> (gtk::Window, Handler) {
             };
             tw.set_child(Some(&thumbnail(&t, &p)));
             tw.set_visible(true);
+            // The script was quiet (the thumbnail is the banner): keep the notice and name the folder.
+            crate::kit::spawn(&capture::saved_notice_argv(&p));
             let id = shown.get().wrapping_add(1);
             shown.set(id);
             glib::timeout_add_seconds_local_once(THUMB_SECS, move || {

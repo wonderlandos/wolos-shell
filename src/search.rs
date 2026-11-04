@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Search ranking (port from IaraOS). Titles are lowercased once at index time.
 
+/// Shortest query that may match as a subsequence (`stg` finds Settings; `ls` finds nothing by it).
+pub const SUBSEQUENCE_FROM: usize = 3;
+
 /// 4 prefix, 3 word start, 2 substring, 1 subsequence, 0 none. Both inputs already lowercase.
 pub fn rank(title: &str, q: &str) -> u8 {
     if q.is_empty() {
@@ -14,6 +17,11 @@ pub fn rank(title: &str, q: &str) -> u8 {
     }
     if title.contains(q) {
         return 2;
+    }
+    // A subsequence match is for a typed-out abbreviation: two letters match half the index
+    // ("ls" found Hardware Locality, Modules, Displays, Lock Screen, ...; QA-LN-5).
+    if q.chars().count() < SUBSEQUENCE_FROM {
+        return 0;
     }
     let mut qc = q.chars().peekable();
     for c in title.chars() {
@@ -60,6 +68,21 @@ impl Item {
     }
 
     fn rank(&self, q: &str) -> u8 {
+        let r = self.rank_one(q);
+        if r >= 2 {
+            return r;
+        }
+        // Several words, in any order ("dark mode", "mode dark", "time zone"): every word must
+        // match on its own, as a prefix, a word start or a substring, of the title or the search
+        // words (QA-LN-4: only the whole text was tried, as one prefix).
+        let words: Vec<&str> = q.split_whitespace().collect();
+        if words.len() > 1 && words.iter().all(|w| self.rank_one(w) >= 2) {
+            return 2;
+        }
+        r
+    }
+
+    fn rank_one(&self, q: &str) -> u8 {
         let r = rank(&self.lower, q);
         if r < 2 && q.len() >= WORDS_FROM && self.words.contains(&format!(" {q}")) {
             return 2;
@@ -278,6 +301,56 @@ mod tests {
         ] {
             assert_eq!(calc(q).as_deref(), want, "{q}");
         }
+    }
+
+    /// QA-LN-4: 'dark mode', 'mode dark' and 'time zone' found nothing while 'dark' found Appearance.
+    #[test]
+    fn multiword_any_order() {
+        let items = [
+            Item::new("Appearance", "", "", vec![]).with_words("theme dark light mode"),
+            Item::new("Date & Time", "", "", vec![]).with_words("clock timezone zone"),
+            Item::new("Network", "", "", vec![]),
+        ];
+        let first = |q| search(&items, q, 1).first().map(|i| i.title.as_str());
+        assert_eq!(first("dark mode"), Some("Appearance"));
+        assert_eq!(first("mode dark"), Some("Appearance"));
+        assert_eq!(first("time zone"), Some("Date & Time"));
+        assert_eq!(
+            first("dark zone"),
+            None,
+            "every word has to match the same item"
+        );
+        assert_eq!(first("dark xyz"), None);
+    }
+
+    /// QA-LN-5: a one- or two-letter query is a prefix, a word start or a substring, never a
+    /// subsequence ('ls' listed lstopo, Modules, Displays, Lock Screen, ...); three letters still
+    /// find 'Settings' by 'stg'.
+    #[test]
+    fn short_query_no_subsequence() {
+        assert_eq!(
+            rank("hardware locality lstopo", "ls"),
+            3,
+            "a word start is still a hit"
+        );
+        assert_eq!(rank("modules", "ls"), 0);
+        assert_eq!(rank("lock screen", "ls"), 0);
+        assert_eq!(rank("displays", "ds"), 0);
+        assert_eq!(rank("settings", "stg"), 1);
+        let items = [
+            "Modules",
+            "Displays",
+            "Lock Screen",
+            "Login Items",
+            "Effects & Looks",
+            "Users & Groups",
+        ]
+        .map(|t| Item::new(t, "", "", vec![]));
+        assert!(search(&items, "ls", 8).is_empty());
+        assert!(
+            !search(&items, "sgs", 8).is_empty(),
+            "three letters keep the abbreviation"
+        );
     }
 
     #[test]

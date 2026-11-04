@@ -667,7 +667,7 @@ impl Ui {
 fn asks_password(a: &Action) -> bool {
     !matches!(
         a,
-        Action::Wifi(_) | Action::Bluetooth(_) | Action::WifiJoin(..) | Action::BtConnect(..)
+        Action::Wifi(_) | Action::Bluetooth(_) | Action::WifiJoin { .. } | Action::BtConnect(..)
     )
 }
 
@@ -1008,12 +1008,23 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         .into_iter()
         .map(|t| {
             let tile = ToggleTile::new(t.icon(), t.label());
-            let u = ui.clone();
-            tile.button.connect_clicked(move |_| {
-                kit::spawn(&tiles::toggle_argv(t));
-                // The CLI moves the state file; look again once it had the time to.
-                let u = u.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_millis(600), move || {
+            let (u, running) = (ui.clone(), Rc::new(std::cell::Cell::new(false)));
+            tile.button.connect_clicked(move |b| {
+                if !tiles::begin_flip(&running) {
+                    return;
+                }
+                b.set_sensitive(false);
+                let (u, b, running) = (u.clone(), b.clone(), running.clone());
+                let argv = tiles::toggle_argv(t);
+                glib::spawn_future_local(async move {
+                    // The CLI moves the state file: read again once it ended, not after a guess.
+                    let _ = gtk::gio::spawn_blocking(move || {
+                        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+                        wol_core::system::run_with_timeout(&a, std::time::Duration::from_secs(10))
+                    })
+                    .await;
+                    running.set(false);
+                    b.set_sensitive(true);
                     if let Some(f) = u.resync.borrow().clone() {
                         f()
                     }
@@ -1465,7 +1476,11 @@ mod tests {
         for a in [
             Action::Wifi(false),
             Action::Bluetooth(true),
-            Action::WifiJoin("Home".into(), None),
+            Action::WifiJoin {
+                ssid: "Home".into(),
+                password: None,
+                hidden: false,
+            },
         ] {
             for e in [ActionError::NeedsAuth, ActionError::Denied] {
                 let p = Pend {

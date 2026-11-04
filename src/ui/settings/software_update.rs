@@ -211,9 +211,20 @@ fn automatic(e: &Rc<Env>, into: &gtk::Box) {
     let (m, e) = (e.machine(), e.clone());
     later(
         &holder,
-        move || m.auto_updates(),
-        move |into, (download, apps)| automatic_rows(&e, into, download, apps),
+        move || {
+            let (download, apps) = m.auto_updates();
+            let file = m.auto_update_file();
+            let metered = wol_core::update::auto::metered_allowed(file.as_deref());
+            (download, apps, metered)
+        },
+        move |into, (download, apps, metered)| automatic_rows(&e, into, download, apps, metered),
     );
+}
+
+/// "Download on metered connections" is shown under a download switch that is there and on,
+/// while automatic updates are on: it only says when the download may run.
+pub fn metered_shown(can_download: bool, main_on: bool, download_on: bool) -> bool {
+    can_download && main_on && download_on
 }
 
 /// What the main switch (now `on`) asks of an option: `Some(on)` when the option is shown
@@ -227,7 +238,7 @@ fn drive(on: bool, usable: bool, active: bool, idle: bool) -> Option<bool> {
 /// reason under the section, when it fails (the Authenticate sheet cancelled, wol-admind refused,
 /// the user timer could not be changed); the main switch follows them. Without the
 /// `auto-update` verb in this build the download option is not shown.
-fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool) {
+fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool, metered: bool) {
     let status = status_label();
     let can_download = admin("auto-update", &["on"]).is_some();
     let download = download && can_download;
@@ -235,6 +246,16 @@ fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
         w::pending_toggle(download, move |on, done| {
             match admin("auto-update", &[if on { "on" } else { "off" }]) {
+                Some(a) => ctx.act_switch(a, &st, done),
+                None => done(false),
+            }
+        })
+    };
+    // `auto-update metered on|off`: the timer also downloads on a metered connection (B6).
+    let met = {
+        let (ctx, st) = (e.ctx.clone(), status.clone());
+        w::pending_toggle(metered, move |on, done| {
+            match admin("auto-update", &["metered", if on { "on" } else { "off" }]) {
                 Some(a) => ctx.act_switch(a, &st, done),
                 None => done(false),
             }
@@ -273,14 +294,32 @@ fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool) {
         "In the background. You choose when to install.",
         &dl,
     );
+    let met_row = form::row(
+        "Download on metered connections",
+        crate::copy::settings::AUTO_METERED_HINT,
+        &met,
+    );
     let ap_row = form::row("Install app updates", "Flathub apps, once a day.", &ap);
     dl_row.set_visible(can_download && main.is_active());
+    met_row.set_visible(metered_shown(
+        can_download,
+        main.is_active(),
+        dl.is_active(),
+    ));
     ap_row.set_visible(main.is_active());
     {
+        let (main, met_row) = (main.clone(), met_row.clone());
+        dl.connect_active_notify(move |d| {
+            met_row.set_visible(metered_shown(can_download, main.is_active(), d.is_active()));
+        });
+    }
+    {
         let (dl, ap, dl_row, ap_row) = (dl.clone(), ap.clone(), dl_row.clone(), ap_row.clone());
+        let met_row = met_row.clone();
         main.connect_active_notify(move |m| {
             let on = m.is_active();
             dl_row.set_visible(can_download && on);
+            met_row.set_visible(metered_shown(can_download, on, dl.is_active()));
             ap_row.set_visible(on);
             // Only an option that is idle and differs is driven: one that waits for its change
             // would run a second one on top of the first (audit6 S6-3).
@@ -318,6 +357,7 @@ fn automatic_rows(e: &Rc<Env>, into: &gtk::Box, download: bool, apps: bool) {
                 &main,
             ),
             dl_row,
+            met_row,
             ap_row,
         ],
     ));
@@ -523,6 +563,16 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B6 follow-up: the metered option sits under the download switch: shown only while the
+    /// download is there and on and automatic updates are on.
+    #[test]
+    fn metered_option_follows_the_download_switch() {
+        assert!(metered_shown(true, true, true));
+        assert!(!metered_shown(true, true, false), "download off");
+        assert!(!metered_shown(true, false, true), "automatic updates off");
+        assert!(!metered_shown(false, true, true), "no auto-update verb");
+    }
 
     #[test]
     fn flathub_updates_join_the_list() {

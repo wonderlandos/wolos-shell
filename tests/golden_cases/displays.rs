@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Settings > Displays beyond the two-display render (settings.rs): the empty state, a computer
-//! without hyprsunset, and the Keep / Revert countdown a changed mode waits for (QA-DESIGN-28,
+//! without hyprsunset, and the Keep / Undo countdown a changed mode waits for (QA-DESIGN-28,
 //! QA-SET-23, QA-LIVE-13).
 use super::{Case, find_type, pump};
 use gtk::prelude::*;
@@ -159,7 +159,7 @@ fn keep_sheet(root: &gtk::Widget) -> Option<gtk::Revealer> {
         .and_downcast::<gtk::Revealer>()
 }
 
-/// QA-LIVE-13: a new resolution asks "Keep these display settings?"; Revert puts the display back
+/// QA-LIVE-13: a new resolution asks "Keep these display settings?"; Undo puts the display back
 /// with the rule it ran with and Keep leaves it. A new arrangement alone asks nothing.
 fn a_changed_mode_waits_for_keep() {
     let sys = Rigged::new(laptop(), Some(false));
@@ -189,7 +189,7 @@ fn a_changed_mode_waits_for_keep() {
             .find(|b| b.label().as_deref() == Some(label))
             .unwrap_or_else(|| panic!("button {label}"))
     };
-    go("Revert").emit_clicked();
+    go("Undo").emit_clicked();
     pump(200);
     assert!(!sheet.reveals_child(), "the sheet goes");
     {
@@ -221,6 +221,7 @@ fn two() -> Vec<Monitor> {
         refresh: 60.0,
         scale: 1.0,
         modes: vec!["1920x1080@60.00Hz".into(), "1280x720@60.00Hz".into()],
+        mirror_of: None,
     });
     v
 }
@@ -253,7 +254,7 @@ fn smaller(p: &gtk::Widget) {
 }
 
 /// QA-LIVE-13 (review D1, D2): the mode is live at once but displays.lua is written only on Keep,
-/// in one entry with every change made meanwhile (here an arrangement); Revert writes nothing.
+/// in one entry with every change made meanwhile (here an arrangement); Undo writes nothing.
 fn nothing_is_written_before_keep() {
     let sys = Rigged::new(two(), Some(false));
     let seen = sys.seen.clone();
@@ -278,7 +279,7 @@ fn nothing_is_written_before_keep() {
     assert!(text.contains("1920x1200"), "{text}");
     assert!(text.contains("DP-1") && text.contains("0x800"), "{text}");
     assert!(text.contains("position = \"0x0\""), "main pinned: {text}");
-    // Revert: both displays go back, the file stays as it was.
+    // Undo: both displays go back, the file stays as it was.
     let _ = std::fs::remove_file(&f);
     let (a, p) = open(Rigged::new(two(), Some(false)));
     let root: gtk::Widget = a.root.clone().upcast();
@@ -286,7 +287,7 @@ fn nothing_is_written_before_keep() {
     pump(100);
     drop_downs(&p)[6].set_selected(4);
     pump(100);
-    click(&root, "Revert");
+    click(&root, "Undo");
     pump(200);
     assert!(!f.exists(), "Revert writes nothing");
     let _ = seen;

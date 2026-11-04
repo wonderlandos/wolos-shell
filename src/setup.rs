@@ -322,29 +322,11 @@ pub const THEMES: [(&str, &str); 3] = [
     ("graphite", "Slate"),
 ];
 
-/// Account name: lowercase ASCII letters and digits of the full name, accents folded,
-/// starting with a letter, at most 32.
+/// Account name suggested for a full name: the one rule of Settings > Users > Add User too
+/// (`wol_core::settings::users::derive_name`: the whole name, transliterated, at most 32;
+/// QA-LIVE3-24: Setup made `maracosta`, Add User `tomas`).
 pub fn account_name(full: &str) -> String {
-    let fold = |c: char| -> Option<char> {
-        let c = c.to_lowercase().next()?;
-        let base = match c {
-            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => 'a',
-            'ç' => 'c',
-            'è' | 'é' | 'ê' | 'ë' => 'e',
-            'ì' | 'í' | 'î' | 'ï' => 'i',
-            'ñ' => 'n',
-            'ò' | 'ó' | 'ô' | 'õ' | 'ö' => 'o',
-            'ù' | 'ú' | 'û' | 'ü' => 'u',
-            'ý' | 'ÿ' => 'y',
-            c => c,
-        };
-        (base.is_ascii_lowercase() || base.is_ascii_digit()).then_some(base)
-    };
-    full.chars()
-        .filter_map(fold)
-        .skip_while(|c| c.is_ascii_digit())
-        .take(32)
-        .collect()
+    wol_core::settings::users::derive_name(full)
 }
 
 /// Account card fields (problems are shown under the one they concern).
@@ -663,7 +645,10 @@ impl Flow {
                 None,
                 format!("“{ssid}” didn’t accept that password. Check it and try again."),
             ),
-            (Job::JoinWifi { ssid, .. }, Verdict::Error | Verdict::Unusable | Verdict::NoDisplay) => Next::Stay(
+            (
+                Job::JoinWifi { ssid, .. },
+                Verdict::Error | Verdict::Unusable | Verdict::NoDisplay | Verdict::TextPassword,
+            ) => Next::Stay(
                 None,
                 format!("“{ssid}” didn’t answer. Try again, or choose Not Now and join later."),
             ),
@@ -675,7 +660,10 @@ impl Flow {
                 None,
                 "That account name can’t be used. Press Back and choose another one.".into(),
             ),
-            (Job::CreateAccount(_), Verdict::Error | Verdict::Unusable | Verdict::NoDisplay) => Next::Stay(
+            (
+                Job::CreateAccount(_),
+                Verdict::Error | Verdict::Unusable | Verdict::NoDisplay | Verdict::TextPassword,
+            ) => Next::Stay(
                 None,
                 "Your account couldn’t be created just now. Press Continue to try again.".into(),
             ),

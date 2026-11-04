@@ -5,7 +5,7 @@ use crate::kit::{
     surface::{Keyboard, Layer, Spec},
     widgets as w,
 };
-use gtk::{gdk, glib, prelude::*};
+use gtk::{gdk, gio, glib, prelude::*};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -421,10 +421,129 @@ impl Confirm {
         if let Some(win) = self.view.root().and_downcast::<gtk::Window>() {
             win.set_visible(false);
         }
-        if let Some(argv) = crate::clipboard::session_command(self.action.get()) {
-            kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        end_session(self.action.get());
+    }
+}
+
+/// Wait between two looks at the windows still open.
+const CLOSE_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// Longest wait for the open apps to answer a close request (a "Save changes?" sheet is an
+/// answer: the window stays, and Restart / Shut Down / Log Out wait for the person).
+pub const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+/// A second Restart / Shut Down / Log Out this soon after one that found windows still open
+/// goes ahead (the way out when an app never answers).
+pub const FORCE_WITHIN: std::time::Duration = std::time::Duration::from_secs(120);
+
+thread_local! {
+    /// When the last session end stopped for open windows.
+    static HELD: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+}
+
+/// One request that asks every window to close (`closewindow`: the app's own close, so a
+/// document asks to be saved). None without windows (QA-LIVE1-22: Shut Down with 8 apps open and
+/// an unsaved note took the machine off in 12 s, asking nothing).
+pub fn close_requests(clients: &[crate::hypr::Client]) -> Option<String> {
+    let steps: Vec<crate::hypr::Dispatch> = clients
+        .iter()
+        .map(|c| crate::hypr::Dispatch::CloseWindow(format!("address:{}", c.address)))
+        .collect();
+    crate::hypr::batch(&steps)
+}
+
+/// Whether the session ends now: nothing is open any more, or this is the second try.
+pub fn session_may_end(open_left: usize, forced: bool) -> bool {
+    open_left == 0 || forced
+}
+
+/// The banner when the session stays: who is still open and what the person can do.
+pub fn held_notice(action: &str, names: &[String]) -> Vec<String> {
+    let what = match action {
+        "restart" => "Restart",
+        "logout" => "Log Out",
+        _ => "Shut Down",
+    };
+    let mut apps = names.to_vec();
+    apps.sort();
+    apps.dedup();
+    let body = format!(
+        "{} still open. Save your work, then choose {what} again; choosing it twice does not wait.",
+        apps.join(", ")
+    );
+    ["notify-send", "-a", "Session", "-u", "critical"]
+        .iter()
+        .map(|s| s.to_string())
+        .chain([format!("{what} is waiting for your apps"), body])
+        .collect()
+}
+
+/// Saves the window set (the autosave is every 60 s; QA-FILES-5), then asks every window to close,
+/// off the UI thread, and waits up to [`CLOSE_WAIT`] for them to go. The names of those still
+/// open. No compositor answer = nothing to wait for.
+fn close_open_windows() -> Vec<String> {
+    crate::sessions::save_now();
+    let Some(clients) = crate::hypr::read_clients() else {
+        return Vec::new();
+    };
+    let Some(req) = close_requests(&clients) else {
+        return Vec::new();
+    };
+    let _ = crate::hypr::request(&req);
+    let t0 = std::time::Instant::now();
+    loop {
+        std::thread::sleep(CLOSE_POLL);
+        let left = crate::hypr::read_clients().unwrap_or_default();
+        if left.is_empty() || t0.elapsed() >= CLOSE_WAIT {
+            return left.into_iter().map(|c| c.class).collect();
         }
     }
+}
+
+/// Runs a session action. Restart, Shut Down and Log Out ask the open apps to close first and
+/// go on only when they have (or on the second try); Lock and Sleep end nothing.
+pub fn end_session(action: &'static str) {
+    let Some(argv) = crate::clipboard::session_command(action) else {
+        return;
+    };
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    if !crate::clipboard::ends_apps(action) {
+        return kit::spawn(&argv);
+    }
+    let forced = HELD.get().is_some_and(|t| t.elapsed() < FORCE_WITHIN);
+    glib::spawn_future_local(async move {
+        let left = if forced {
+            Vec::new()
+        } else {
+            gio::spawn_blocking(close_open_windows)
+                .await
+                .unwrap_or_default()
+        };
+        // (A second try saved on the first; the set is not saved again over a half-closed one.)
+        if session_may_end(left.len(), forced) {
+            HELD.set(None);
+            kit::spawn(&argv);
+        } else {
+            HELD.set(Some(std::time::Instant::now()));
+            kit::spawn(&held_notice(action, &left));
+        }
+    });
+}
+
+/// The session panel's buttons: icon, label, action ([`crate::clipboard::session_command`]).
+const SESSION_ITEMS: [(&str, &str, &str); 5] = [
+    ("system-lock-screen-symbolic", "Lock", "lock"),
+    ("weather-clear-night-symbolic", "Sleep", "sleep"),
+    ("system-reboot-symbolic", "Restart", "restart"),
+    ("system-shutdown-symbolic", "Shut Down", "shutdown"),
+    ("system-log-out-symbolic", "Log Out", "logout"),
+];
+
+/// The buttons on this kind of system: live (`apps::LIVE_MARK`) has no Lock, the live account
+/// has no password to unlock with (QA-FDAY-7, as the WolOS menu).
+pub fn session_items(live: bool) -> Vec<(&'static str, &'static str, &'static str)> {
+    SESSION_ITEMS
+        .into_iter()
+        .filter(|i| !(live && i.2 == "lock"))
+        .collect()
 }
 
 /// The session menu: Lock, Sleep, Restart, Shut Down, Log Out, and the confirm view the last
@@ -440,13 +559,7 @@ impl SessionMenu {
         let root = w::glass_panel(w::S2);
         let row = w::hbox(w::S2);
         let confirm = Confirm::new(&row);
-        for (icon, label, action) in [
-            ("system-lock-screen-symbolic", "Lock", "lock"),
-            ("weather-clear-night-symbolic", "Sleep", "sleep"),
-            ("system-reboot-symbolic", "Restart", "restart"),
-            ("system-shutdown-symbolic", "Shut Down", "shutdown"),
-            ("system-log-out-symbolic", "Log Out", "logout"),
-        ] {
+        for (icon, label, action) in session_items(crate::apps::is_live()) {
             let b = w::vbox(w::S1);
             let i = w::icon(icon, w::ICON_M);
             i.set_halign(gtk::Align::Center);
@@ -463,9 +576,7 @@ impl SessionMenu {
                 if let Some(win) = b.root().and_downcast::<gtk::Window>() {
                     win.set_visible(false);
                 }
-                if let Some(argv) = crate::clipboard::session_command(action) {
-                    kit::spawn(&argv.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-                }
+                end_session(action);
             });
             row.append(&btn);
         }
@@ -504,13 +615,20 @@ thread_local! {
 }
 
 /// The question a `wol shell show <target>` opens the session panel on: `session-logout` ->
-/// `logout`, `session-shutdown` -> `shutdown` (the WolOS menu's Log Out… and Shut Down…).
+/// `logout`, `session-restart` -> `restart`, `session-shutdown` -> `shutdown` (the WolOS menu's
+/// Log Out…, Restart… and Shut Down…).
 pub fn session_action(target: &str) -> Option<&'static str> {
     Some(match target {
         "session-logout" => "logout",
+        "session-restart" => "restart",
         "session-shutdown" => "shutdown",
         _ => return None,
     })
+}
+
+/// The session panel is asking Log Out / Restart / Shut Down right now (its countdown runs).
+pub fn session_sheet_up() -> bool {
+    SESSION.with_borrow(|s| s.as_ref().is_some_and(|m| m.confirm.view.is_visible()))
 }
 
 /// The session panel asks `action`'s question (countdown running); nothing without a panel.
@@ -544,8 +662,9 @@ mod tests {
         use super::session_action;
         assert_eq!(session_action("session-logout"), Some("logout"));
         assert_eq!(session_action("session-shutdown"), Some("shutdown"));
+        assert_eq!(session_action("session-restart"), Some("restart"));
         assert_eq!(session_action("session"), None, "the plain panel");
-        for t in ["session-logout", "session-shutdown"] {
+        for t in ["session-logout", "session-restart", "session-shutdown"] {
             assert!(
                 shared::shell::PANELS.contains(&t),
                 "{t}: the wol CLI rejects it"
@@ -557,6 +676,127 @@ mod tests {
             );
             assert!(crate::clipboard::session_command(action).is_some());
         }
+    }
+
+    /// QA-FDAY-7: the live session panel offers no Lock (nothing unlocks the live account).
+    #[test]
+    fn live_session_panel_has_no_lock() {
+        let actions = |live| {
+            super::session_items(live)
+                .iter()
+                .map(|i| i.2)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            actions(false),
+            ["lock", "sleep", "restart", "shutdown", "logout"]
+        );
+        assert_eq!(actions(true), ["sleep", "restart", "shutdown", "logout"]);
+    }
+
+    /// QA-FILES-5: Log Out ran `hyprctl dispatch exit` alone, every app died and the window set
+    /// was never saved (ADR 0032 promises a save at logout; the autosave is every 60 s). Log
+    /// Out, Restart and Shut Down save first (bounded), before any window is asked to close.
+    #[test]
+    fn logout_saves_sessions_first() {
+        let src = include_str!("panels.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap_or(src.len())];
+        let job = &code[code.find("fn close_open_windows").unwrap()..];
+        let (save, close) = (
+            job.find("crate::sessions::save_now()").expect("saves"),
+            job.find("close_requests(&clients)").expect("closes"),
+        );
+        assert!(
+            save < close,
+            "the set is saved before any window is asked to close"
+        );
+        let end = &code[code.find("pub fn end_session").unwrap()..];
+        assert!(
+            end.contains("close_open_windows"),
+            "every ending action goes through it"
+        );
+        assert_eq!(
+            crate::sessions::save_argv().join(" "),
+            "wol sessions save",
+            "the one command the autosave runs"
+        );
+        assert_eq!(
+            crate::sessions::SAVE_AT_END,
+            10,
+            "a hung save never holds the logout"
+        );
+        for (a, then) in [
+            ("restart", "wol power restart"),
+            ("shutdown", "wol power shutdown"),
+            ("logout", "hyprctl dispatch exit"),
+        ] {
+            assert!(crate::clipboard::ends_apps(a), "{a}");
+            assert!(
+                crate::clipboard::session_command(a)
+                    .unwrap()
+                    .join(" ")
+                    .ends_with(then),
+                "{a}"
+            );
+        }
+        assert!(!crate::clipboard::ends_apps("sleep"), "sleep ends no app");
+    }
+
+    /// QA-LIVE-32: a click outside cancelled the Log Out question silently (it worked on the
+    /// third try). While the sheet asks, a click outside or another app in front leaves the
+    /// session panel; Esc closes every panel still.
+    #[test]
+    fn logout_sheet_outside_click_keeps_countdown() {
+        use crate::ui::transient::{PANELS, panels_to_close};
+        assert!(!panels_to_close(true).contains(&"session"));
+        assert_eq!(panels_to_close(true).len(), PANELS.len() - 1);
+        assert_eq!(
+            panels_to_close(false),
+            PANELS,
+            "no question up: it closes like the others"
+        );
+        let src = include_str!("transient.rs");
+        let esc = &src[src.find("pub fn close_on_escape").unwrap()..];
+        let esc = &esc[..esc.find("\n}\n").unwrap()];
+        assert!(
+            esc.contains("hide(panels, PANELS)"),
+            "Esc ends the question: {esc}"
+        );
+    }
+
+    /// QA-LIVE1-22: every window gets a close request before the machine goes; a window that
+    /// stays (a save sheet) holds the session until a second try.
+    #[test]
+    fn close_request_sent_to_every_window_before_poweroff() {
+        use crate::hypr::Client;
+        let cs = [
+            Client::new("0x1", "foot", "a"),
+            Client::new("0x2", "wol-files", "b"),
+        ];
+        let req = super::close_requests(&cs).unwrap();
+        assert_eq!(
+            req,
+            "[[BATCH]]dispatch closewindow address:0x1;dispatch closewindow address:0x2"
+        );
+        assert_eq!(super::close_requests(&[]), None);
+        assert!(super::session_may_end(0, false));
+        assert!(!super::session_may_end(1, false), "a save sheet holds it");
+        assert!(super::session_may_end(1, true), "the second try goes");
+        for (a, yes) in [
+            ("restart", true),
+            ("shutdown", true),
+            ("logout", true),
+            ("sleep", false),
+            ("lock", false),
+        ] {
+            assert_eq!(crate::clipboard::ends_apps(a), yes, "{a}");
+        }
+        let n = super::held_notice("shutdown", &["foot".into(), "foot".into(), "gedit".into()]);
+        assert_eq!(n[n.len() - 2], "Shut Down is waiting for your apps");
+        assert!(
+            n[n.len() - 1].starts_with("foot, gedit still open."),
+            "{n:?}"
+        );
     }
 
     /// Audit2 A2-15: About ignored everything but Esc and its close light. (The clipboard half

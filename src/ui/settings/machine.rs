@@ -49,6 +49,40 @@ pub trait Machine: Send + Sync {
     fn ntp(&self) -> Option<bool>;
     fn net(&self) -> NetInfo;
     fn known_networks(&self) -> Vec<String>;
+    /// Saved Wi-Fi networks (their SSIDs), or None when they could not be read: no Wi-Fi device,
+    /// NetworkManager not answering (QA-SHADOW-55: "none saved" and "could not read" differed).
+    fn known_networks_read(&self) -> Option<Vec<String>> {
+        Some(self.known_networks())
+    }
+    /// NetworkManager's connectivity (one read of its cached state; NET2-3).
+    fn connectivity(&self) -> wol_core::netinfo::Connectivity {
+        wol_core::netinfo::Connectivity::Unknown
+    }
+    /// Ask NetworkManager to scan now (Look Again, QA-NET-16). Slow: off the UI thread.
+    fn wifi_rescan(&self) {}
+    /// Leave the network on `iface` (Disconnect, QA-NET-17); the profile stays.
+    fn wifi_disconnect(&self, _iface: &str) -> bool {
+        false
+    }
+    /// The Wi-Fi hotspot is on (NET2-2); None without Wi-Fi.
+    fn hotspot(&self) -> Option<bool> {
+        None
+    }
+    /// Turn the hotspot on with (name, password), or off with None.
+    fn set_hotspot(
+        &self,
+        _on: Option<(String, String)>,
+    ) -> Result<(), wol_core::controls::ControlError> {
+        Err(wol_core::controls::ControlError::Unavailable)
+    }
+    /// `wol_core::update::auto::FILE` as it is now (download and metered lines); None unread.
+    fn auto_update_file(&self) -> Option<String> {
+        None
+    }
+    /// Error reports on (`wol_core::admin::REPORTS_CONF` says send=1); None unread.
+    fn reports_on(&self) -> Option<bool> {
+        None
+    }
     fn bluetooth(&self) -> BtState;
     fn printers(&self) -> Option<Vec<Printer>>;
     /// Device URIs CUPS can see (slow: probes the network).
@@ -131,12 +165,17 @@ impl Live {
     fn os(&self) -> &dyn Os {
         &*self.0
     }
-    fn wlan(&self) -> String {
+    /// The Wi-Fi interface, None when there is none (driver late, rfkill): never a guessed
+    /// "wlan0" that NetworkManager does not know (QA-SHADOW-55).
+    fn wlan(&self) -> Option<String> {
         self.net()
             .interfaces
             .into_iter()
             .find(|i| i.kind == IfKind::WiFi)
-            .map_or_else(|| "wlan0".into(), |i| i.name)
+            .map(|i| i.name)
+    }
+    fn controls(&self) -> wol_core::controls::Controls {
+        wol_core::controls::Controls::new(self.0.clone())
     }
 }
 
@@ -181,7 +220,43 @@ impl Machine for Live {
         wol_core::netinfo::read(self.os())
     }
     fn known_networks(&self) -> Vec<String> {
-        wol_core::netinfo::known_networks(self.os(), &self.wlan())
+        self.known_networks_read().unwrap_or_default()
+    }
+    fn known_networks_read(&self) -> Option<Vec<String>> {
+        self.wlan()?;
+        wol_core::netinfo::known_ssids(self.os())
+    }
+    fn connectivity(&self) -> wol_core::netinfo::Connectivity {
+        self.os()
+            .run(&wol_core::netinfo::CONNECTIVITY_ARGV)
+            .map(|t| wol_core::netinfo::parse_connectivity(&t))
+            .unwrap_or_default()
+    }
+    fn wifi_rescan(&self) {
+        let _ = self.os().run_slow(&["nmcli", "dev", "wifi", "rescan"]);
+    }
+    fn wifi_disconnect(&self, iface: &str) -> bool {
+        self.controls().wifi_disconnect(iface).is_ok()
+    }
+    fn hotspot(&self) -> Option<bool> {
+        self.controls().hotspot()
+    }
+    fn set_hotspot(
+        &self,
+        on: Option<(String, String)>,
+    ) -> Result<(), wol_core::controls::ControlError> {
+        self.controls()
+            .set_hotspot(on.as_ref().map(|(n, p)| (n.as_str(), p.as_str())))
+    }
+    fn auto_update_file(&self) -> Option<String> {
+        self.os().read_text(wol_core::update::auto::FILE)
+    }
+    fn reports_on(&self) -> Option<bool> {
+        Some(
+            self.os()
+                .read_text(wol_core::admin::REPORTS_CONF)
+                .is_some_and(|t| t.lines().any(|l| l.trim() == "send=1")),
+        )
     }
     fn bluetooth(&self) -> BtState {
         wol_core::bluetooth::read(self.os())
@@ -415,6 +490,7 @@ impl Machine for Demo {
                     mac: "a4:c3:f0:12:7b:9e".into(),
                     ipv4: vec!["192.168.1.24/24".into()],
                     ipv6: vec!["2001:db8::24/64".into()],
+                    dns: vec!["192.168.1.1".into(), "9.9.9.9".into()],
                 },
                 Interface {
                     name: "em0".into(),
@@ -427,10 +503,22 @@ impl Machine for Demo {
             dns: vec!["192.168.1.1".into(), "9.9.9.9".into()],
             search: vec!["home.arpa".into()],
             gateway: Some("192.168.1.1".into()),
+            route_dev: Some("wlan0".into()),
+            connectivity: wol_core::netinfo::Connectivity::Full,
+            metered: false,
         }
     }
     fn known_networks(&self) -> Vec<String> {
         vec!["Wonderland".into(), "Mad Hatter Café".into()]
+    }
+    fn hotspot(&self) -> Option<bool> {
+        Some(false)
+    }
+    fn auto_update_file(&self) -> Option<String> {
+        Some("download=on\nmetered=off\n".into())
+    }
+    fn reports_on(&self) -> Option<bool> {
+        Some(false)
     }
     fn bluetooth(&self) -> BtState {
         let d = |a: &str, n: &str, kind, connected| BtDevice {
@@ -862,6 +950,32 @@ pub(crate) use demo_but_hardware;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SHADOW-55: no Wi-Fi interface (driver late, rfkill) reads as "could not read", never as
+    /// "no saved networks"; with one, the saved SSIDs, and an empty list is a real empty list.
+    #[test]
+    fn no_wlan_interface_distinct() {
+        use std::sync::Arc;
+        use wol_core::system::fake::FakeHost;
+        let h = Arc::new(FakeHost::linux());
+        h.command(
+            "nmcli -t -f UUID,TYPE connection show",
+            "1111-aa:802-11-wireless\n",
+        )
+        .command(
+            "nmcli -g 802-11-wireless.ssid connection show uuid 1111-aa",
+            "Home\n",
+        );
+        let live = Live(h.clone());
+        assert_eq!(live.known_networks_read(), None, "no Wi-Fi interface");
+        h.command(
+            "ip -j addr",
+            r#"[{"ifname":"wlp2s0","operstate":"DOWN","address":"aa:bb:cc:dd:ee:ff","addr_info":[]}]"#,
+        );
+        assert_eq!(live.known_networks_read(), Some(vec!["Home".to_string()]));
+        h.command("nmcli -t -f UUID,TYPE connection show", "");
+        assert_eq!(live.known_networks_read(), Some(vec![]), "none saved");
+    }
 
     #[test]
     fn kernel_label() {

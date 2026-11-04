@@ -21,7 +21,36 @@ fn kind_label(i: &Interface) -> (&'static str, &'static str) {
     match i.kind {
         IfKind::WiFi => ("network-wireless-symbolic", "Wi-Fi"),
         IfKind::Ethernet => ("network-wired-symbolic", "Ethernet"),
+        IfKind::Vpn => ("network-vpn-symbolic", "VPN"),
         IfKind::Other => ("network-wired-symbolic", "Connection"),
+    }
+}
+
+/// The DNS servers shown under `i`: its own (NetworkManager per device), else the computer's
+/// list only under the link that carries the default route. A VPN's resolver was shown under
+/// Ethernet next to the LAN's (QA-NET-28, RC-03: one global fact in a per-link place).
+pub(crate) fn dns_for<'a>(net: &'a NetInfo, i: &'a Interface) -> &'a [String] {
+    if !i.dns.is_empty() {
+        &i.dns
+    } else if net.route_dev.as_deref() == Some(i.name.as_str()) || net.route_dev.is_none() {
+        &net.dns
+    } else {
+        &[]
+    }
+}
+
+/// The router is the default route's: shown under the link that carries it only.
+pub(crate) fn carries_route(net: &NetInfo, i: &Interface) -> bool {
+    net.route_dev.as_deref().is_none_or(|d| d == i.name)
+}
+
+/// The connection row's subtitle: limited and portal said so (QA-NET-12, NET2-3).
+pub(crate) fn link_state(net: &NetInfo, i: &Interface, on: bool) -> &'static str {
+    match (on, carries_route(net, i)) {
+        (false, _) => "Not connected",
+        (true, true) if net.portal() => crate::copy::settings::NETWORK_PORTAL,
+        (true, true) if net.limited() => crate::copy::settings::NETWORK_LIMITED,
+        (true, _) => "Connected",
     }
 }
 
@@ -40,9 +69,9 @@ struct Snap {
 /// kernel has no table (`security::firewall_running`, QA-NET-2).
 pub(crate) fn firewall_sentence(on: bool, running: Option<bool>) -> &'static str {
     if on && running == Some(false) {
-        "On at startup, but not running now."
+        crate::copy::settings::FIREWALL_STOPPED
     } else {
-        "Blocks connections from other computers that you did not start."
+        crate::copy::settings::FIREWALL_ON
     }
 }
 
@@ -87,7 +116,7 @@ fn render(e: &Rc<Env>, p: &gtk::Box, snap: Snap, status: &gtk::Label) {
             w::list_row(
                 icon,
                 &format!("{kind} ({})", i.name),
-                if on { "Connected" } else { "Not connected" },
+                link_state(&net, i, on),
                 None,
             )
             .upcast(),
@@ -100,11 +129,12 @@ fn render(e: &Rc<Env>, p: &gtk::Box, snap: Snap, status: &gtk::Label) {
                     rows.push(info("Subnet mask", &mask));
                 }
             }
-            if let Some(g) = &net.gateway {
+            if let Some(g) = net.gateway.as_ref().filter(|_| carries_route(&net, i)) {
                 rows.push(info("Router", g));
             }
-            if !net.dns.is_empty() {
-                rows.push(info("DNS servers", &net.dns.join(", ")));
+            let dns = dns_for(&net, i);
+            if !dns.is_empty() {
+                rows.push(info("DNS servers", &dns.join(", ")));
             }
             if !net.search.is_empty() {
                 rows.push(info("Search domains", &net.search.join(", ")));
@@ -237,9 +267,40 @@ mod tests {
         );
     }
 
+    /// QA-NET-28: an active WireGuard tunnel is a VPN that is connected, with its own DNS; the
+    /// LAN's resolvers and router stay under the link that carries them.
+    #[test]
+    fn wireguard_is_a_connected_vpn_with_its_dns() {
+        let wg = Interface {
+            name: "qa-wg0".into(),
+            kind: IfKind::Vpn,
+            up: true,
+            ipv4: vec!["10.77.0.2/32".into()],
+            dns: vec!["10.77.0.1".into()],
+            ..Default::default()
+        };
+        let mut net = eth(true);
+        net.interfaces.push(wg.clone());
+        net.dns = vec!["10.77.0.1".into(), "10.0.2.3".into()];
+        net.gateway = Some("10.0.2.2".into());
+        net.route_dev = Some("enp0s1".into());
+        assert_eq!(kind_label(&wg), ("network-vpn-symbolic", "VPN"));
+        assert!(connected(&wg));
+        assert_eq!(dns_for(&net, &wg), ["10.77.0.1"]);
+        assert!(!carries_route(&net, &wg), "the router is the LAN's");
+        assert_eq!(link_state(&net, &wg, true), "Connected");
+        let lan = net.interfaces[0].clone();
+        assert_eq!(dns_for(&net, &lan).len(), 2);
+        net.connectivity = wol_core::netinfo::Connectivity::Portal;
+        assert_eq!(
+            link_state(&net, &lan, true),
+            crate::copy::settings::NETWORK_PORTAL
+        );
+    }
+
     #[test]
     fn firewall_row_says_what_the_kernel_says() {
-        let g = "Blocks connections from other computers that you did not start.";
+        let g = crate::copy::settings::FIREWALL_ON;
         assert_eq!(firewall_sentence(true, Some(true)), g);
         assert_eq!(firewall_sentence(true, None), g);
         assert_eq!(
@@ -249,7 +310,7 @@ mod tests {
         );
         assert_eq!(
             firewall_sentence(true, Some(false)),
-            "On at startup, but not running now."
+            crate::copy::settings::FIREWALL_STOPPED
         );
     }
 

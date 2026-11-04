@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Wi-Fi: the radio, the network in use, known networks and the ones in range; secured networks ask
-//! for their password in the Join sheet. Joining goes through wol-admind (wpa_supplicant.conf).
+//! Wi-Fi: the radio, the network in use (with Disconnect), saved networks and every one in range
+//! (Look Again scans), a hidden network by name; secured networks ask for their password in the
+//! Join sheet. Joining runs nmcli as the person (NetworkManager's polkit rules), docs/modules/wifi.md.
 use super::*;
 use crate::kit::controls::DeviceRow;
 use crate::system::WifiNetwork;
@@ -47,6 +48,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     // Saved networks and the Wi-Fi device, read off the UI thread; read again after a join or a
     // Forget (QA-SET-11: Known/Other never changed until Settings restarted).
     let saved: Rc<RefCell<Vec<String>>> = Rc::default();
+    // None: the saved networks could not be read (no Wi-Fi device yet, NetworkManager silent).
+    let saved_read: Rc<std::cell::Cell<bool>> = Rc::new(std::cell::Cell::new(true));
     let iface: Rc<RefCell<String>> = Rc::new(RefCell::new("wlan0".into()));
     let nets: Rc<RefCell<Vec<WifiNetwork>>> = Rc::default();
     let reread: Rc<RefCell<Option<Rc<dyn Fn()>>>> = Rc::default();
@@ -82,12 +85,13 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             join.clone(),
             e.clone(),
         );
-        let (saved, iface, nets, st, again) = (
+        let (saved, iface, nets, st, again, saved_read) = (
             saved.clone(),
             iface.clone(),
             nets.clone(),
             status.clone(),
             after_join.clone(),
+            saved_read.clone(),
         );
         Rc::new(move || {
             let (nets, saved) = (nets.borrow().clone(), saved.borrow().clone());
@@ -106,8 +110,15 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 );
                 // A saved network joins with what it has: no password sheet again.
                 let (n, join, known) = (n.clone(), join.clone(), saved.contains(&n.ssid));
+                let (enterprise, st) = (e.ctx.sys.wifi_enterprise(&n.ssid), st.clone());
                 r.button.connect_clicked(move |_| {
-                    if !n.connected {
+                    if n.connected {
+                        return;
+                    }
+                    if enterprise && !known {
+                        // QA-NET-9: a password field that can never work is not offered.
+                        say(&st, crate::copy::settings::WIFI_ENTERPRISE);
+                    } else {
                         join(n.ssid.clone(), asks_password(n.secure, known));
                     }
                 });
@@ -123,7 +134,30 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                     let e = e.clone();
                     move |_| e.open("Network")
                 });
-                current.append(&w::section("", &[row(n), details.upcast()]));
+                // QA-NET-17: leave the network without turning Wi-Fi off; it stays saved.
+                let leave = {
+                    let (m, st, again, iface) =
+                        (e.machine(), st.clone(), again.clone(), iface.clone());
+                    w::button("Disconnect", w::Kind::Default, move || {
+                        let (m, st, again, dev) =
+                            (m.clone(), st.clone(), again.clone(), iface.borrow().clone());
+                        off_thread(
+                            move || m.wifi_disconnect(&dev),
+                            move |ok| {
+                                if ok {
+                                    again()
+                                } else {
+                                    say(&st, crate::copy::settings::WIFI_DISCONNECT_FAILED)
+                                }
+                            },
+                        );
+                    })
+                };
+                let leave_row = w::list_row("", "This Network", "", Some(leave.upcast_ref()));
+                current.append(&w::section(
+                    "",
+                    &[row(n), details.upcast(), leave_row.upcast()],
+                ));
             }
             // Saved networks in range are listed once, under Saved Networks with Join and
             // Forget; without the Forget verb they keep their plain rows here.
@@ -136,19 +170,40 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             if !mine.is_empty() {
                 known.append(&w::section("Known Networks", &mine));
             }
-            let rest: Vec<gtk::Widget> = nets
-                .iter()
-                .filter(|n| !n.connected && !saved.contains(&n.ssid))
-                .take(12)
-                .map(row)
-                .collect();
+            // QA-NET-15: every network in range (the page scrolls), never a silent cut at 12.
+            let mut rest: Vec<gtk::Widget> =
+                other_networks(&nets, &saved).iter().map(row).collect();
             if rest.is_empty() {
-                others.append(&w::section(
-                    "Other Networks",
-                    &[w::list_row("", "No other networks in range", "", None).upcast()],
+                rest.push(w::list_row("", "No other networks in range", "", None).upcast());
+            }
+            // QA-NET-16: ask NetworkManager for a fresh scan now.
+            let look = {
+                let m = e.machine();
+                w::button("Look Again", w::Kind::Default, move || {
+                    let m = m.clone();
+                    off_thread(move || m.wifi_rescan(), |()| {});
+                })
+            };
+            rest.push(w::list_row("", "Scan for Networks", "", Some(look.upcast_ref())).upcast());
+            // QA-NET-10: a network that hides its name, joined by name.
+            let hidden = DeviceRow::new("view-more-symbolic", "Other Network…", "", false, None);
+            {
+                let join = join.clone();
+                hidden
+                    .button
+                    .connect_clicked(move |_| join(String::new(), true));
+            }
+            rest.push(hidden.button.upcast());
+            others.append(&w::section("Other Networks", &rest));
+            // QA-SHADOW-55: "could not read" is not "none saved".
+            if !saved_read.get() {
+                remembered.append(&w::section(
+                    "Saved Networks",
+                    &[
+                        w::list_row("", crate::copy::settings::WIFI_SAVED_UNREAD, "", None)
+                            .upcast(),
+                    ],
                 ));
-            } else {
-                others.append(&w::section("Other Networks", &rest));
             }
             // Every saved network, in range or not, with Forget (manual: control-center,
             // settings; QA-SET-11).
@@ -215,10 +270,12 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         let (fill, saved, iface, m) = (fill.clone(), saved.clone(), iface.clone(), e.machine());
         *reread.borrow_mut() = Some(Rc::new(move || {
             let (fill, saved, iface, m) = (fill.clone(), saved.clone(), iface.clone(), m.clone());
+            let saved_read = saved_read.clone();
             off_thread(
-                move || (m.known_networks(), wifi_iface(&m.net())),
+                move || (m.known_networks_read(), wifi_iface(&m.net())),
                 move |(known, dev)| {
-                    *saved.borrow_mut() = known;
+                    saved_read.set(known.is_some());
+                    *saved.borrow_mut() = known.unwrap_or_default();
                     if let Some(d) = dev {
                         *iface.borrow_mut() = d;
                     }
@@ -260,6 +317,14 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p
 }
 
+/// The networks under Other Networks: in range, not in use, not saved. All of them (QA-NET-15).
+pub(crate) fn other_networks(nets: &[WifiNetwork], saved: &[String]) -> Vec<WifiNetwork> {
+    nets.iter()
+        .filter(|n| !n.connected && !saved.contains(&n.ssid))
+        .cloned()
+        .collect()
+}
+
 /// A secured network asks for its password only when it is not saved (QA-SET-11).
 pub(crate) fn asks_password(secure: bool, saved: bool) -> bool {
     secure && !saved
@@ -284,64 +349,136 @@ fn join_sheet(e: &Rc<Env>, status: &gtk::Label, joined: Rc<dyn Fn()>) -> Rc<dyn 
     let sheet = e.sheets.join.clone();
     let title = w::label("", "title");
     title.set_wrap(true);
+    // Only for Other Network (a hidden network): its name.
+    let name = w::text_field("Network name");
+    name.set_visible(false);
     let pw = w::password_field("Password");
+    let note = w::label("", "assistant-status");
+    note.add_css_class("problem");
+    note.set_wrap(true);
+    note.set_visible(false);
     let body = w::vbox(w::S3);
     body.append(&title);
+    body.append(&name);
     body.append(&pw);
+    body.append(&note);
     let caps = w::caps_lock_note();
     caps.set_halign(gtk::Align::Start);
     body.append(&caps);
     let buttons = w::hbox(w::S2);
     buttons.append(&w::spacer());
     let ssid: Rc<RefCell<String>> = Default::default();
+    let hidden: Rc<std::cell::Cell<bool>> = Default::default();
+    // QA-SET-16: one join at a time; a second click waits for the first's answer.
+    let busy: Rc<std::cell::Cell<bool>> = Default::default();
     {
         let r = sheet.clone();
         buttons.append(&w::button("Cancel", w::Kind::Default, move || {
             r.set_reveal_child(false)
         }));
     }
-    let join: Rc<dyn Fn(String, Option<String>)> = {
-        let (ctx, st) = (e.ctx.clone(), status.clone());
-        Rc::new(move |id: String, pass: Option<String>| {
-            say(&st, &format!("Joining “{id}”…"));
-            let st = st.clone();
-            let (id2, joined) = (id.clone(), joined.clone());
+    let reopen: Rc<RefCell<Option<Rc<dyn Fn(String, String)>>>> = Default::default();
+    let join: Rc<dyn Fn(String, Option<String>, bool)> = {
+        let (ctx, st, busy, reopen) = (e.ctx.clone(), status.clone(), busy.clone(), reopen.clone());
+        Rc::new(move |id: String, pass: Option<String>, hidden: bool| {
+            if busy.replace(true) {
+                return;
+            }
+            say(&st, &crate::copy::wifi_joining(&id));
+            let (st, busy, reopen) = (st.clone(), busy.clone(), reopen.clone());
+            let (id2, joined, secured) = (id.clone(), joined.clone(), pass.is_some());
             ctx.act(
-                Action::WifiJoin(id, pass),
-                Rc::new(move |r| match r {
-                    Ok(()) => {
-                        say(&st, &format!("Connected to “{id2}”."));
-                        joined()
+                Action::WifiJoin {
+                    ssid: id,
+                    password: pass,
+                    hidden,
+                },
+                Rc::new(move |r| {
+                    busy.set(false);
+                    match r {
+                        Ok(()) => {
+                            say(&st, &crate::copy::settings::wifi_connected(&id2));
+                            joined()
+                        }
+                        Err(e) => {
+                            let why = crate::copy::wifi_join(e, &id2);
+                            say(&st, &why);
+                            // QA-SET-16: a refused password asks again, with the reason.
+                            if e == ActionError::WrongPassword && secured && !hidden {
+                                let f = reopen.borrow().clone();
+                                if let Some(f) = f {
+                                    f(id2.clone(), why)
+                                }
+                            }
+                        }
                     }
-                    Err(e) => say(&st, &crate::copy::wifi_join(e, &id2)),
                 }),
             );
         })
     };
     {
-        let (r, pwc, id, join) = (sheet.clone(), pw.clone(), ssid.clone(), join.clone());
+        let (r, pwc, id, join, namec, hid) = (
+            sheet.clone(),
+            pw.clone(),
+            ssid.clone(),
+            join.clone(),
+            name.clone(),
+            hidden.clone(),
+        );
         let go = Rc::new(move || {
             let pass = pwc.text().to_string();
+            let hidden = hid.get();
+            let net = if hidden {
+                namec.text().trim().to_string()
+            } else {
+                id.borrow().clone()
+            };
+            if net.is_empty() {
+                return;
+            }
             pwc.set_text("");
             r.set_reveal_child(false);
-            join(id.borrow().clone(), Some(pass));
+            // A hidden network may be open: no password then.
+            let pass = (!hidden || !pass.is_empty()).then_some(pass);
+            join(net, pass, hidden);
         });
         let g = go.clone();
         pw.connect_activate(move |_| g());
+        let g = go.clone();
+        name.connect_activate(move |_| g());
         buttons.append(&w::button("Join", w::Kind::Primary, move || go()));
     }
     body.append(&buttons);
     sheet_body(&sheet, &body);
-    Rc::new(move |name: String, secure: bool| {
-        if secure {
-            *ssid.borrow_mut() = name.clone();
-            title.set_label(&format!("Enter the password for “{name}”"));
+    let why_note = note.clone();
+    let open: Rc<dyn Fn(String, bool)> = Rc::new(move |net: String, secure: bool| {
+        note.set_visible(false);
+        // An empty name: Other Network (hidden), asked for by name.
+        hidden.set(net.is_empty());
+        name.set_visible(net.is_empty());
+        if net.is_empty() {
+            name.set_text("");
+            title.set_label("Join Other Network");
+            sheet.set_reveal_child(true);
+            name.grab_focus();
+        } else if secure {
+            *ssid.borrow_mut() = net.clone();
+            title.set_label(&format!("Enter the password for “{net}”"));
             sheet.set_reveal_child(true);
             pw.grab_focus();
         } else {
-            join(name, None);
+            join(net, None, false);
         }
-    })
+    });
+    {
+        let open = open.clone();
+        *reopen.borrow_mut() = Some(Rc::new(move |net: String, why: String| {
+            open(net, true);
+            why_note.set_label(&why);
+            why_note.set_visible(true);
+        }));
+    }
+    open
 }
 
 #[cfg(test)]
@@ -368,6 +505,38 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(wifi_iface(&n).as_deref(), Some("wlp2s0"));
+    }
+
+    /// QA-NET-15: with 20 networks in range Other Networks lists all 20 (it was cut at 12, the
+    /// weakest unreachable); the one in use and the saved ones are listed elsewhere.
+    #[test]
+    fn wifi_20_networks() {
+        let nets: Vec<WifiNetwork> = (0..20)
+            .map(|i| WifiNetwork {
+                ssid: format!("Net {i}"),
+                signal: 95 - i as u8,
+                secure: i % 2 == 0,
+                connected: i == 0,
+            })
+            .collect();
+        let saved = vec!["Net 1".to_string()];
+        let v = other_networks(&nets, &saved);
+        assert_eq!(v.len(), 18);
+        assert_eq!(
+            v.last().unwrap().ssid,
+            "Net 19",
+            "the weakest is listed too"
+        );
+        let src = include_str!("wifi.rs");
+        let code = src.split("#[cfg(test)]").next().unwrap();
+        assert!(!code.contains(".take(12)"));
+    }
+
+    /// QA-NET-21 / NET2-2: "hotspot" leads to the page that has it (General > Sharing > Internet
+    /// Sharing), not to Wi-Fi, which has no hotspot control.
+    #[test]
+    fn hotspot_search_finds_sharing() {
+        assert_eq!(super::super::search("hotspot"), ["General"]);
     }
 
     /// QA-HUNT-10 / QA-SET-9: the radio switch flipped on a click and showed or hid the lists

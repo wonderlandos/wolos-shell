@@ -690,17 +690,26 @@ pub fn open_uri(uri: &str) {
     }
 }
 
-/// Launches an installed app by desktop entry id (`org.gnome.Calendar` or `org.gnome.Calendar.desktop`).
+/// The desktop file ids an app id may be: the id as given, then with `.desktop` added. A Flatpak
+/// whose app id ends in `.desktop` (`org.telegram.desktop`, file `org.telegram.desktop.desktop`)
+/// is told apart from a file id only by trying both (A4's find: launch_app took any id ending in
+/// `.desktop` for a file id and found no app).
+pub fn desktop_id_candidates(id: &str) -> Vec<String> {
+    let mut v = vec![id.to_string()];
+    v.push(format!("{id}.desktop"));
+    v
+}
+
+/// Launches an installed app by desktop entry id (`org.gnome.Calendar`, `org.gnome.Calendar.desktop`
+/// or `org.telegram.desktop`, whose file is `org.telegram.desktop.desktop`).
 pub fn launch_app(id: &str) {
-    let id = if id.ends_with(".desktop") {
-        id.to_string()
-    } else {
-        format!("{id}.desktop")
-    };
-    let Some(a) = gtk::gio::AppInfo::all()
-        .into_iter()
-        .find(|a| a.id().is_some_and(|i| i == id.as_str()))
-    else {
+    let all = gtk::gio::AppInfo::all();
+    let found = desktop_id_candidates(id).into_iter().find_map(|c| {
+        all.iter()
+            .find(|a| a.id().is_some_and(|i| i == c.as_str()))
+            .map(|a| (c, a.clone()))
+    });
+    let Some((id, a)) = found else {
         eprintln!("wol: no app {id}");
         return;
     };
@@ -745,6 +754,23 @@ mod tests {
         assert!(
             got.iter().any(|e| e == "STEAM_FORCE_DESKTOPUI_SCALING=2"),
             "{got:?}"
+        );
+    }
+
+    /// A4's find: `org.telegram.desktop` is an app id whose file is `org.telegram.desktop.desktop`.
+    #[test]
+    fn launch_app_tries_the_id_as_given_then_with_the_suffix() {
+        assert_eq!(
+            desktop_id_candidates("org.telegram.desktop"),
+            ["org.telegram.desktop", "org.telegram.desktop.desktop"]
+        );
+        assert_eq!(
+            desktop_id_candidates("org.gnome.Calendar.desktop")[0],
+            "org.gnome.Calendar.desktop"
+        );
+        assert_eq!(
+            desktop_id_candidates("org.gnome.Calendar")[1],
+            "org.gnome.Calendar.desktop"
         );
     }
 }

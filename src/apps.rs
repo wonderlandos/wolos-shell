@@ -88,6 +88,20 @@ pub const PINS: &[Pin] = &[
     },
 ];
 
+/// The names a person knows a pinned app by besides its WolOS name: the program and the app id's
+/// last part (`Files` is Nautilus, `Browser` is Helium, `Mail` is Geary). Lowercase search words
+/// (QA-LN-20: Helium, Geary and Nautilus found nothing).
+pub fn product_words(p: &Pin) -> String {
+    let prog = p.exec.first().map(|x| program(x)).unwrap_or_default();
+    let tail = p.id.rsplit('.').next().unwrap_or_default();
+    let mut v = vec![prog.to_lowercase()];
+    if !tail.eq_ignore_ascii_case(prog) {
+        v.push(tail.to_lowercase());
+    }
+    v.retain(|w| !w.is_empty() && w != &p.name.to_lowercase());
+    v.join(" ")
+}
+
 /// Marks the live system; the installer leaves it behind.
 pub const LIVE_MARK: &str = "/etc/wolos-live";
 
@@ -108,7 +122,14 @@ pub fn pins(live: bool) -> Vec<Pin> {
 /// The dock here (the system doesn't change kind while it runs).
 pub fn here() -> &'static [Pin] {
     static HERE: std::sync::OnceLock<Vec<Pin>> = std::sync::OnceLock::new();
-    HERE.get_or_init(|| pins(std::path::Path::new(LIVE_MARK).exists()))
+    HERE.get_or_init(|| pins(is_live()))
+}
+
+/// This is the live system ([`LIVE_MARK`]); read once, the system doesn't change kind while it
+/// runs.
+pub fn is_live() -> bool {
+    static LIVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *LIVE.get_or_init(|| std::path::Path::new(LIVE_MARK).exists())
 }
 
 fn program(exec0: &str) -> &str {
@@ -137,7 +158,7 @@ fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
 /// An entry whose windows have a class of their own (`StartupWMClass`, a web app running the
 /// browser) is its own app, never the pin of the program it runs.
 pub fn pin_for_entry<'a>(e: &Entry, pins: &'a [Pin]) -> Option<&'a Pin> {
-    let id = e.id.trim_end_matches(".desktop");
+    let id = desktop_stem(&e.id);
     let prog = e.exec.first().map(|x| program(x));
     pins.iter().find(|p| {
         let own_class =
@@ -147,10 +168,15 @@ pub fn pin_for_entry<'a>(e: &Entry, pins: &'a [Pin]) -> Option<&'a Pin> {
     })
 }
 
+/// A desktop id without its one `.desktop` suffix: `org.telegram.desktop.desktop` is the app
+/// `org.telegram.desktop` (`trim_end_matches` took both and named the window by its class).
+pub fn desktop_stem(id: &str) -> &str {
+    id.strip_suffix(".desktop").unwrap_or(id)
+}
+
 fn entry_for<'a>(class: &str, installed: &'a [Entry]) -> Option<&'a Entry> {
     installed.iter().find(|e| {
-        e.id.trim_end_matches(".desktop")
-            .eq_ignore_ascii_case(class)
+        desktop_stem(&e.id).eq_ignore_ascii_case(class)
             || (!e.wm_class.is_empty() && e.wm_class.eq_ignore_ascii_case(class))
             || e.exec
                 .first()
@@ -172,7 +198,42 @@ pub fn frontmost_name(class: &str, title: &str, pins: &[Pin], installed: &[Entry
     if class.is_empty() {
         title.into()
     } else {
+        humanised_class(class)
+    }
+}
+
+/// A window class nothing installed names, as words: the reverse-DNS prefix and a trailing
+/// `desktop`/`app` go, `-` and `_` become spaces, each word is capitalised
+/// (`org.telegram.desktop` -> `Telegram`, `gcr-prompter` -> `Gcr Prompter`; QA-LIVE1-14). A class
+/// with no word left stays as it is.
+pub fn humanised_class(class: &str) -> String {
+    const PREFIX: [&str; 8] = ["org", "com", "io", "net", "de", "fr", "dev", "app"];
+    const SUFFIX: [&str; 3] = ["desktop", "app", "gtk"];
+    let mut parts: Vec<&str> = class.split('.').filter(|p| !p.is_empty()).collect();
+    if parts.len() > 1 {
+        while parts.len() > 1 && SUFFIX.contains(&parts[parts.len() - 1].to_lowercase().as_str()) {
+            parts.pop();
+        }
+        while parts.len() > 1 && PREFIX.contains(&parts[0].to_lowercase().as_str()) {
+            parts.remove(0);
+        }
+    }
+    // Several parts left (`gnome.Calendar`): the app is the last one.
+    let name = parts.last().copied().unwrap_or(class);
+    let words: Vec<String> = name
+        .split(['-', '_', ' '])
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next()
+                .map(|f| f.to_uppercase().chain(c).collect())
+                .unwrap_or_default()
+        })
+        .collect();
+    if words.is_empty() {
         class.into()
+    } else {
+        words.join(" ")
     }
 }
 
@@ -203,6 +264,58 @@ mod tests {
         );
     }
 
+    /// Live-1 M7: Telegram (Flatpak, desktop id `org.telegram.desktop.desktop`, window class
+    /// `org.telegram.desktop`) read "org.telegram.desktop" in the menu bar.
+    #[test]
+    fn an_app_id_ending_in_desktop_is_named() {
+        let tg = Entry {
+            id: "org.telegram.desktop.desktop".into(),
+            name: "Telegram".into(),
+            exec: vec!["/usr/bin/flatpak".into(), "run".into()],
+            icon: "org.telegram.desktop".into(),
+            wm_class: String::new(),
+        };
+        let installed = [tg];
+        assert_eq!(
+            frontmost_name("org.telegram.desktop", "Telegram", PINS, &installed),
+            "Telegram"
+        );
+        assert_eq!(
+            icon_for("org.telegram.desktop", PINS, &installed),
+            "org.telegram.desktop"
+        );
+        assert_eq!(desktop_stem("vlc.desktop"), "vlc");
+        assert_eq!(desktop_stem("vlc"), "vlc");
+    }
+
+    /// QA-LIVE1-14: the menu bar names an app by its desktop entry, else by words, never by its
+    /// raw reverse-DNS class.
+    #[test]
+    fn app_name_from_desktop_id() {
+        let entry = |id: &str, name: &str| Entry {
+            id: id.into(),
+            name: name.into(),
+            exec: vec!["/usr/bin/x".into()],
+            icon: String::new(),
+            wm_class: String::new(),
+        };
+        let installed = [
+            entry("org.telegram.desktop.desktop", "Telegram"),
+            entry("org.gnome.eog.desktop", "Eye of GNOME"),
+        ];
+        for (class, want) in [
+            ("org.telegram.desktop", "Telegram"),
+            ("org.gnome.eog", "Eye of GNOME"),
+            // No entry names these: words, not the id.
+            ("gcr-prompter", "Gcr Prompter"),
+            ("org.gnome.Calendar", "Calendar"),
+            ("io.github.some_app", "Some App"),
+            ("Org", "Org"),
+        ] {
+            assert_eq!(frontmost_name(class, "", &[], &installed), want, "{class}");
+        }
+    }
+
     #[test]
     fn settings_window_is_named_and_marked_running() {
         // Live: the menu bar read "org.wolos.settings" (pin id was "wol-settings", not the app id).
@@ -230,7 +343,7 @@ mod tests {
             ("org.gnome.Calculator", "x", "Calculator"),
             ("gnome-calculator", "", "Calculator"),
             ("", "xterm", "xterm"),
-            ("weird", "T", "weird"),
+            ("weird", "T", "Weird"), // words, not the raw class (QA-LIVE1-14)
         ] {
             assert_eq!(frontmost_name(c, t, PINS, &installed), w, "{c}");
         }

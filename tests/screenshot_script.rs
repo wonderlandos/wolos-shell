@@ -295,3 +295,80 @@ fn record_state_lives_in_the_runtime_dir() {
     assert!(!pidf.exists());
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// Runs `script` (full, quiet) `n` times in the same second into one folder; the folder's file
+/// names and the recent-files list afterwards.
+fn shoot_many(script: &str, n: usize, tag: &str) -> (Vec<String>, String) {
+    let tmp = std::env::temp_dir().join(format!("wol-shot-many-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let bin = tmp.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    stub(&bin, "grim", r#"for a; do f=$a; done; printf png > "$f""#);
+    stub(&bin, "wl-copy", "cat >/dev/null");
+    stub(&bin, "notify-send", "exit 0");
+    // One second for every run: the stamp is the only thing that could tell them apart.
+    stub(
+        &bin,
+        "date",
+        r#"case "$*" in *%Y-%m-%d\ at*) echo '2026-11-04 at 09.00.00' ;; *) /bin/date "$@" ;; esac"#,
+    );
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    for _ in 0..n {
+        let out = std::process::Command::new("sh")
+            .args([script, "full", "--dir"])
+            .arg(tmp.join("shots"))
+            .env("PATH", &path)
+            .env("HOME", &tmp)
+            .env("XDG_DATA_HOME", tmp.join("data"))
+            .env("WOL_SCREENSHOT_QUIET", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let mut names: Vec<String> = std::fs::read_dir(tmp.join("shots"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let recent = std::fs::read_to_string(tmp.join("data/recently-used.xbel")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&tmp);
+    (names, recent)
+}
+
+/// QA-LN-9: four captures in one second made three files (grim overwrites a name).
+#[test]
+fn unique_names_same_second() {
+    let (names, _) = shoot_many(SCRIPT, 4, "names");
+    assert_eq!(
+        names,
+        [
+            "Screenshot 2026-11-04 at 09.00.00 (2).png",
+            "Screenshot 2026-11-04 at 09.00.00 (3).png",
+            "Screenshot 2026-11-04 at 09.00.00 (4).png",
+            "Screenshot 2026-11-04 at 09.00.00.png",
+        ]
+    );
+}
+
+/// QA-LIVE1-46: Files > Recent said "No Recent Files" right after a screenshot: the saved
+/// picture is in the recent list (GTK's recently-used.xbel), once per capture, a well-formed file.
+#[test]
+fn a_saved_screenshot_is_a_recent_file() {
+    let (_, recent) = shoot_many(SCRIPT, 2, "recent");
+    assert!(recent.starts_with("<?xml"), "{recent}");
+    assert!(recent.trim_end().ends_with("</xbel>"), "{recent}");
+    assert_eq!(recent.matches("<bookmark ").count(), 2, "{recent}");
+    assert!(
+        recent.contains("shots/Screenshot%202026-11-04%20at%2009.00.00.png\""),
+        "the URI escapes the spaces: {recent}"
+    );
+    assert!(recent.contains("type=\"image/png\""), "{recent}");
+}

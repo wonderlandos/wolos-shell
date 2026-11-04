@@ -159,6 +159,7 @@ impl System for TwoDisplays {
                 "2560x1440@60.00Hz".into(),
                 "1920x1080@60.00Hz".into(),
             ],
+            mirror_of: None,
         });
         v
     }

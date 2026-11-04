@@ -416,6 +416,60 @@ pub fn still_connected(
         .collect()
 }
 
+/// The size a `monitor =` rule (`NAME,WxH@R,POS,SCALE`) gives its display; None for a rule
+/// without a mode (`preferred`, a mirror of another output's size).
+pub fn rule_geometry(rule: &str) -> Option<Geometry> {
+    let parts: Vec<&str> = rule.split(',').map(str::trim).collect();
+    let (width, height, _) = wol_core::controls::parse_mode(parts.get(1)?)?;
+    let scale = parts
+        .get(3)
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(1.0);
+    Some(Geometry {
+        width,
+        height,
+        scale,
+    })
+}
+
+/// The main display `main` went from `old` to `new` (mode or scale): the rules that move every
+/// display placed next to it (Right, Below: the place `saved` says, measured from `old`) to that
+/// place for `new`, each as (rule in force, moved rule). A position measured from the old size
+/// would leave a gap or an overlap (QA-GFX-19 follow-up). Hand-placed, `auto` and mirrored
+/// displays are left alone; the last rule for a display is the one in force.
+pub fn follow_main(
+    saved: &[String],
+    main: &str,
+    old: Geometry,
+    new: Geometry,
+) -> Vec<(String, String)> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = Vec::new();
+    for r in saved.iter().rev() {
+        let name = r.split(',').next().map(str::trim).unwrap_or_default();
+        if name.is_empty() || name == main || seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        let Some(this) = rule_geometry(r) else {
+            continue;
+        };
+        let place = place_of(r, old, this);
+        let (Some(from), Some((x, y))) = (position(place, old, this), position(place, new, this))
+        else {
+            continue;
+        };
+        if from == (x, y) {
+            continue;
+        }
+        let mut parts: Vec<String> = r.split(',').map(|p| p.trim().to_string()).collect();
+        parts[2] = format!("{x}x{y}");
+        out.push((r.clone(), parts.join(",")));
+    }
+    out.reverse();
+    out
+}
+
 /// The place a rule already says (from displays.lua, `prefs::monitor_rules`), so the menu opens on it.
 pub fn place_of(rule: &str, main: Geometry, this: Geometry) -> Place {
     let parts: Vec<&str> = rule.split(',').map(str::trim).collect();
@@ -527,6 +581,35 @@ mod settings_tests {
             Place::Auto
         );
         assert_eq!(place_of("garbage", LAPTOP, TV), Place::Auto);
+    }
+
+    /// QA-GFX-19 follow-up: the main display goes from 2560x1600@2 to 1920x1080@1; the TV saved
+    /// Right of it (1280x0) moves to 1920x0, the one Below (0x800) to 0x1080; one placed by hand
+    /// and one on `auto` stay as they are, and an older rule for the TV does not count.
+    #[test]
+    fn displays_next_to_the_main_one_follow_its_new_size() {
+        let saved = [
+            "HDMI-A-1,1920x1080@60.00,9x9,1".to_string(),
+            "HDMI-A-1,1920x1080@60.00,1280x0,1".to_string(),
+            "DP-1,1920x1080@60.00,0x800,1".to_string(),
+            "DP-2,1920x1080@60.00,4000x77,1".to_string(),
+            "DP-3,1920x1080@60.00,auto,1".to_string(),
+            "eDP-1,2560x1600@60.00,0x0,2".to_string(),
+        ];
+        assert_eq!(
+            follow_main(&saved, "eDP-1", LAPTOP, TV),
+            [
+                (
+                    saved[1].clone(),
+                    "HDMI-A-1,1920x1080@60.00,1920x0,1".to_string()
+                ),
+                (
+                    saved[2].clone(),
+                    "DP-1,1920x1080@60.00,0x1080,1".to_string()
+                )
+            ]
+        );
+        assert!(follow_main(&saved, "eDP-1", LAPTOP, LAPTOP).is_empty());
     }
 
     fn mon(name: &str) -> wol_core::controls::Monitor {

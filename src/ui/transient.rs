@@ -347,9 +347,25 @@ pub fn close_apps() {
     });
 }
 
-/// Hides every visible transient panel window.
+/// The panels a click outside, or another app in front, closes. The session panel stays while it
+/// asks Log Out / Restart / Shut Down with its countdown: the click that opened it from the WolOS
+/// menu, or any click after, used to cancel the question silently (QA-LIVE-32: it worked on the
+/// third try). Esc and Cancel still end it.
+pub fn panels_to_close(session_sheet_up: bool) -> Vec<&'static str> {
+    PANELS
+        .iter()
+        .copied()
+        .filter(|p| !(session_sheet_up && *p == "session"))
+        .collect()
+}
+
+/// Hides every visible transient panel window, but the session panel while it asks.
 pub fn close_panels(panels: &super::Panels) {
-    let open: Vec<gtk::Window> = PANELS
+    hide(panels, &panels_to_close(super::panels::session_sheet_up()));
+}
+
+fn hide(panels: &super::Panels, names: &[&str]) {
+    let open: Vec<gtk::Window> = names
         .iter()
         .filter_map(|p| panels.borrow().get(p).cloned())
         .collect();
@@ -369,7 +385,8 @@ pub const ALSO_ESC: &[&str] = &["overview", "force-quit"];
 
 /// `hide transient`: [`close_all`] and [`ALSO_ESC`].
 pub fn close_on_escape(panels: &super::Panels) {
-    close_all(panels);
+    hide(panels, PANELS);
+    EXTRA.with(|e| e.borrow().clone()).iter().for_each(|f| f());
     let also: Vec<gtk::Window> = ALSO_ESC
         .iter()
         .filter_map(|p| panels.borrow().get(p).cloned())

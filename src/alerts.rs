@@ -27,6 +27,28 @@ pub enum Notice {
     Restart(String, String),
     /// Notify; a click on it opens Settings > Software Update (`software_update::OPEN`).
     Updates(String, String),
+    /// A sign-in page holds the network (a café, a hotel): summary, body; Open shows the page
+    /// ([`PORTAL_URL`]).
+    Portal(String, String),
+}
+
+/// The plain-http address NetworkManager probes: a captive portal intercepts it and answers with
+/// its sign-in page, so opening it in the browser lands there (QA-NET2-3).
+pub const PORTAL_URL: &str = "http://ping.archlinux.org/nm-check.txt";
+
+/// The notice for a change of connectivity: once per portal, when the network turns to a sign-in
+/// page, never again while it stays one.
+pub fn portal(
+    prev: wol_core::netinfo::Connectivity,
+    now: wol_core::netinfo::Connectivity,
+) -> Option<Notice> {
+    use wol_core::netinfo::Connectivity::Portal;
+    (now == Portal && prev != Portal).then(|| {
+        Notice::Portal(
+            crate::copy::settings::PORTAL_TITLE.into(),
+            crate::copy::settings::PORTAL_BODY.into(),
+        )
+    })
 }
 
 /// File (under `$XDG_STATE_HOME`) holding the `checked` time of the update check already told
@@ -66,9 +88,16 @@ pub struct Alerts {
     online_shown: Option<u64>,
     /// Newest stopped file already shown (its `when`).
     malware_shown: u64,
+    /// The connectivity of the last poll ([`portal`] tells on a change to a sign-in page).
+    connectivity: wol_core::netinfo::Connectivity,
 }
 
 impl Alerts {
+    /// One connectivity reading per poll: the sign-in notice once per portal.
+    pub fn connectivity(&mut self, now: wol_core::netinfo::Connectivity) -> Option<Notice> {
+        portal(std::mem::replace(&mut self.connectivity, now), now)
+    }
+
     /// One battery reading: a notice at each level once per discharge.
     pub fn battery(&mut self, b: Option<Battery>) -> Option<Notice> {
         let b = b?;
@@ -289,9 +318,10 @@ pub fn notices(a: &mut Alerts, r: Reads) -> Vec<Notice> {
 /// Menu bar poll hook: battery every time (a reading already in hand), the rest read in
 /// `gio::spawn_blocking`: `df` hung the menu bar, dock and panels for its 2 s timeout on a
 /// stale network mount (audit4 S3-6). The GTK thread only applies the result.
-pub fn poll(b: Option<Battery>) {
-    let (battery, due) = STATE.with_borrow_mut(|a| (a.battery(b), a.disk_due()));
-    if let Some(n) = battery {
+pub fn poll(b: Option<Battery>, connectivity: wol_core::netinfo::Connectivity) {
+    let (battery, portal, due) =
+        STATE.with_borrow_mut(|a| (a.battery(b), a.connectivity(connectivity), a.disk_due()));
+    for n in battery.into_iter().chain(portal) {
         act(n);
     }
     gtk::glib::spawn_future_local(async move {
@@ -363,6 +393,15 @@ pub(crate) fn updates_argv(summary: String, body: String) -> Vec<String> {
     argv
 }
 
+/// The command of the sign-in banner: `notify-send` waits for the click on Open and then opens
+/// [`PORTAL_URL`] in the browser.
+pub(crate) fn portal_argv(summary: String, body: String) -> Vec<String> {
+    let script = "[ \"$(notify-send -a WolOS -w -A open=Open \"$1\" \"$2\")\" = open ] && exec xdg-open \"$3\"";
+    let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
+    argv.extend([summary, body, PORTAL_URL.to_string()]);
+    argv
+}
+
 fn act(n: Notice) {
     let notify = |s: &str, body: &str, critical: bool| {
         let mut argv = vec!["notify-send".to_string(), "-a".into(), "WolOS".into()];
@@ -383,6 +422,7 @@ fn act(n: Notice) {
             crate::kit::spawn(&["sh".into(), "-c".into(), script, "sh".into(), s, body]);
         }
         Notice::Updates(s, body) => crate::kit::spawn(&updates_argv(s, body)),
+        Notice::Portal(s, body) => crate::kit::spawn(&portal_argv(s, body)),
         Notice::Malware(s, body, path) => {
             // Open Anyway is a deliberate step in Settings; a notification only offers the safe one.
             let script = "case \"$(notify-send -a WolOS -u critical -w -A trash='Move to Trash' -A details=Details \"$1\" \"$2\")\" in \
@@ -407,6 +447,26 @@ fn act(n: Notice) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-NET2-3: the sign-in notice comes once, when the network turns to a portal.
+    #[test]
+    fn portal_notice_once() {
+        use wol_core::netinfo::Connectivity::{Full, Limited, Portal};
+        assert!(matches!(portal(Full, Portal), Some(Notice::Portal(..))));
+        assert_eq!(portal(Portal, Portal), None);
+        assert_eq!(portal(Portal, Full), None);
+        assert_eq!(portal(Full, Limited), None);
+        // Through the poll's state: told on the change, quiet while it stays, told again at the
+        // next portal.
+        let mut a = Alerts::default();
+        assert!(a.connectivity(Portal).is_some());
+        assert!(a.connectivity(Portal).is_none());
+        assert!(a.connectivity(Full).is_none());
+        assert!(a.connectivity(Portal).is_some());
+        let argv = portal_argv("T".into(), "B".into());
+        assert_eq!(argv.last().map(String::as_str), Some(PORTAL_URL));
+        assert!(argv[2].contains("-A open=Open") && argv[2].contains("xdg-open"));
+    }
 
     #[test]
     fn each_stopped_file_is_told_once_and_nothing_otherwise() {
@@ -510,7 +570,12 @@ mod tests {
             seen.push(match a.battery(bat(p, s)) {
                 Some(Notice::Show(_, body, critical)) => format!("{p}:show:{critical}:{body}"),
                 Some(Notice::Sleep(..)) => format!("{p}:sleep"),
-                Some(Notice::Restart(..) | Notice::Malware(..) | Notice::Updates(..)) => {
+                Some(
+                    Notice::Restart(..)
+                    | Notice::Malware(..)
+                    | Notice::Updates(..)
+                    | Notice::Portal(..),
+                ) => {
                     unreachable!()
                 }
                 None => format!("{p}:-"),

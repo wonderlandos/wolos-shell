@@ -508,9 +508,22 @@ fn startup_screen(panel: &w::UserPanel) -> (gtk::Widget, Rc<Entrance>) {
     (screen(&b), entrance)
 }
 
+/// wol-login's sentence for a session that ended early (`controller::login::NOTICE_FILE`, root,
+/// 0644, one sentence; it removes the file itself). Read once per greeter start, never polled.
+pub const LOGIN_NOTICE: &str = "/run/wol-login-notice";
+
+/// The notice as shown: first line, trimmed, at most 300 chars; None for absent/empty.
+pub fn login_notice(text: Option<String>) -> Option<String> {
+    let t = text?;
+    let line = t.lines().next().unwrap_or_default().trim();
+    (!line.is_empty()).then(|| line.chars().take(300).collect())
+}
+
 /// Login window: user tiles, then the picked user's password pill; power row at the foot.
 pub struct Login {
     pub root: gtk::Widget,
+    /// The stack of screens, with the notice above it.
+    middle: gtk::Box,
     pub stack: gtk::Stack,
     pub panel: Rc<w::UserPanel>,
     pub back: gtk::Button,
@@ -572,9 +585,13 @@ impl Login {
         let footer = w::vbox(w::S2);
         footer.append(&foot);
         footer.append(&refused);
-        let root = screen(&body(&stack, Some(footer.upcast_ref())));
+        // Above the accounts: why a session ended early ([`Login::set_notice`]).
+        let middle = w::vbox(w::S4);
+        middle.append(&stack);
+        let root = screen(&body(&middle, Some(footer.upcast_ref())));
         let l = Rc::new(Login {
             root,
+            middle,
             stack,
             panel,
             back,
@@ -613,6 +630,15 @@ impl Login {
             }
         }
         l
+    }
+
+    /// A session that ended early says why, once, above the accounts (QA-LIVE-33/DATA-3);
+    /// `notice` is [`login_notice`]'s answer. The greeter reads the file off the UI thread.
+    pub fn set_notice(&self, notice: Option<String>) {
+        let Some(n) = notice else { return };
+        let note = w::centered(&n, "lock-caption");
+        note.set_wrap(true);
+        self.middle.prepend(&note);
     }
 
     /// Shows `user`'s password pill, titled with `shown` (full name).
@@ -686,6 +712,13 @@ pub fn user_name(passwd: &str) -> String {
     user_name_from(crate::envv::var("USER"), shared::sys::euid(), passwd)
 }
 
+/// The account the lock screen is for: the one that owns the session (`$USER`, else its uid in
+/// `passwd`), never the list of accounts the login window offers (QA-LIVE3-35: decided, a lock
+/// screen unlocks one session).
+pub fn lock_owner(env: Option<String>, uid: u32, passwd: &str) -> String {
+    user_name_from(env, uid, passwd)
+}
+
 fn user_name_from(env: Option<String>, uid: u32, passwd: &str) -> String {
     env.filter(|u| !u.is_empty())
         .or_else(|| {
@@ -733,10 +766,114 @@ fn wire<C: FnOnce(String) -> Verdict + Send + 'static>(
     });
 }
 
+/// The keyring daemon's own unlock: it reads the password on stdin.
+pub const KEYRING_UNLOCK: [&str; 2] = ["gnome-keyring-daemon", "--unlock"];
+/// Longest the unlock may take before it is given up (the lock screen is gone by then anyway).
+const KEYRING_UNLOCK_SECS: u64 = 10;
+/// Wait between two looks at the unlock process.
+const KEYRING_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Runs `program --unlock` with `password` and a newline on its stdin; true when it exited 0. The
+/// password goes on stdin only (never in an argument, never in the environment).
+pub fn run_keyring_unlock(program: &str, args: &[&str], password: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false; // No gnome-keyring: nothing to unlock.
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = writeln!(stdin, "{password}");
+    }
+    let t0 = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return st.success(),
+            Ok(None) if t0.elapsed().as_secs() < KEYRING_UNLOCK_SECS => {
+                std::thread::sleep(KEYRING_POLL)
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+/// After a good unlock: the login keyring opens with the password just checked (QA-LIVE1-2 and
+/// A2's hand-over: a keyring the lock screen found locked made the next Browser/Store call ask for
+/// a password the person never chose). At boot the session bus call (nobody had typed a password
+/// yet), else, and after a lock, the daemon's own `--unlock`.
+fn unlock_keyring(password: &str, startup: bool) {
+    if startup {
+        let r = zbus::blocking::Connection::session()
+            .and_then(|c| login::unlock_login_keyring(&c, password));
+        match r {
+            Ok(()) => return,
+            Err(e) => eprintln!("wol-lock: login keyring: {e}"),
+        }
+    }
+    let [prog, arg] = KEYRING_UNLOCK;
+    if !run_keyring_unlock(prog, &[arg], password) {
+        crate::diag::say!(
+            "wol-lock: the login keyring was not unlocked (no daemon, or already open)"
+        );
+    }
+}
+
+/// A lock screen on the live system (`apps::LIVE_MARK`) is refused: the live account's password
+/// is locked, so nothing could ever unlock it and the only way out was the power button
+/// (QA-FDAY-7). Every way in ends here: the menu, Ctrl+Super+Q, the sleep hook, `loginctl
+/// lock-session`. `--startup` is the login window of an installed system, never live.
+pub fn refuses_lock(live: bool, startup: bool) -> bool {
+    live && !startup
+}
+
+/// Exit code of a lock screen on a compositor without ext-session-lock (EX_UNAVAILABLE): the
+/// supervisor does not start it again (QA-FILES-13).
+pub const LOCK_UNSUPPORTED: i32 = 69;
+
+/// The exit code when the compositor cannot lock the session; None when it can.
+pub fn no_lock_exit(supported: bool) -> Option<i32> {
+    (!supported).then_some(LOCK_UNSUPPORTED)
+}
+
+/// logind's `SetLockedHint` on this session: bus name, object, interface, method.
+pub const LOCKED_HINT: [&str; 4] = [
+    "org.freedesktop.login1",
+    "/org/freedesktop/login1/session/auto",
+    "org.freedesktop.login1.Session",
+    "SetLockedHint",
+];
+
+/// Tells logind the session is (not) locked, so wold and the doctor can see a session whose lock
+/// screen died (QA-LIVE-41). A failure is said and never stops the lock.
+fn set_locked_hint(on: bool) {
+    let [name, path, iface, method] = LOCKED_HINT;
+    let r = zbus::blocking::Connection::system().and_then(|c| {
+        c.call_method(Some(name), path, Some(iface), method, &(on,))
+            .map(|_| ())
+    });
+    if let Err(e) = r {
+        eprintln!("wol-lock: logind locked hint {on}: {e}");
+    }
+}
+
 /// `wol-lock [--startup]`: a supervisor that keeps a lock screen up until one reports a real
 /// unlock (ADR 0012). A crashed lock screen leaves the session locked (ext-session-lock) and the next
 /// one takes it over (`misc:allow_session_lock_restore`). Nothing here ever unlocks.
 pub fn run_lock() -> glib::ExitCode {
+    let startup = std::env::args().any(|a| a == login::STARTUP);
+    if refuses_lock(crate::apps::is_live(), startup) {
+        crate::diag::say!("wol-lock: the live session has no password to unlock with; not locking");
+        return glib::ExitCode::SUCCESS;
+    }
     if crate::envv::is_set(login::LOCK_UI_ENV) {
         let startup = std::env::args().any(|a| a == login::STARTUP);
         return run_lock_screen(startup);
@@ -770,6 +907,12 @@ pub fn run_lock() -> glib::ExitCode {
         let unlocked = out
             .as_ref()
             .is_ok_and(|o| login::reported_unlock(&o.stdout));
+        if out
+            .as_ref()
+            .is_ok_and(|o| o.status.code() == Some(LOCK_UNSUPPORTED))
+        {
+            return glib::ExitCode::FAILURE;
+        }
         match login::lock_exit(unlocked, socket.exists(), attempt) {
             login::LockExit::Done => {
                 return if unlocked {
@@ -844,18 +987,13 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
                 entrance.leave_then(move || {
                     unlock();
                     println!("{}", login::UNLOCKED);
-                    if !startup {
-                        app2.quit();
-                        return;
-                    }
+                    // The login keyring opens with the password just typed: at boot (nobody typed
+                    // one yet) and after any lock (the daemon may have restarted, B2).
                     let app3 = app2.clone();
                     glib::spawn_future_local(async move {
                         let _ = gtk::gio::spawn_blocking(move || {
-                            let r = zbus::blocking::Connection::session()
-                                .and_then(|c| login::unlock_login_keyring(&c, &password));
-                            if let Err(e) = r {
-                                eprintln!("wol-lock: login keyring: {e}");
-                            }
+                            set_locked_hint(false);
+                            unlock_keyring(&password, startup);
                         })
                         .await;
                         app3.quit();
@@ -884,10 +1022,22 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
 #[cfg(feature = "layer-shell")]
 fn lock_surface(app: &gtk::Application, win: &gtk::ApplicationWindow) -> Rc<dyn Fn()> {
     use gtk::gdk;
-    if !gtk4_session_lock::is_supported() {
-        win.fullscreen();
-        win.present();
-        return Rc::new(|| {});
+    if let Some(code) = no_lock_exit(gtk4_session_lock::is_supported()) {
+        // A plain fullscreen window is not a lock (any window or key can move past it): say so,
+        // and leave the session unlocked rather than pretend (QA-FILES-13).
+        let line =
+            "wol-lock: this compositor has no session lock (ext-session-lock-v1): NOT locked";
+        eprintln!("{line}");
+        crate::kit::spawn(&[
+            "logger".into(),
+            "-t".into(),
+            "wol-lock".into(),
+            "-p".into(),
+            "user.err".into(),
+            "--".into(),
+            line.into(),
+        ]);
+        std::process::exit(code);
     }
     let lock = gtk4_session_lock::Instance::new();
     let (app, first) = (app.clone(), win.clone());
@@ -912,6 +1062,8 @@ fn lock_surface(app: &gtk::Application, win: &gtk::ApplicationWindow) -> Rc<dyn 
         eprintln!("wol-lock: the session lock could not start");
         std::process::exit(1);
     }
+    // Off the UI thread (a bus connect): the lock is up whatever logind says.
+    std::thread::spawn(|| set_locked_hint(true));
     Rc::new(move || lock.unlock())
 }
 
@@ -933,6 +1085,15 @@ pub fn run_login() -> glib::ExitCode {
         let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
         let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
         let l = Login::new(&login_accounts(&passwd, &shells));
+        {
+            let l = l.clone();
+            glib::spawn_future_local(async move {
+                let text = gtk::gio::spawn_blocking(|| std::fs::read_to_string(LOGIN_NOTICE).ok())
+                    .await
+                    .unwrap_or_default();
+                l.set_notice(login_notice(text));
+            });
+        }
         // Fades in from the compositor's black, and out to black for the session (ADR 0012).
         let shown = reveal::Reveal::new(&l.root, true);
         win.set_child(Some(&shown.root));
@@ -971,6 +1132,109 @@ pub fn run_login() -> glib::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A good unlock hands the password to the keyring daemon on stdin, once, and nowhere else.
+    #[test]
+    fn keyring_unlock_takes_the_password_on_stdin() {
+        let dir = std::env::temp_dir().join(format!("wol-lock-kr-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (out, args) = (dir.join("stdin"), dir.join("args"));
+        let script = dir.join("gnome-keyring-daemon");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\ncat > {}\necho \"$@\" > {}\n",
+                out.display(),
+                args.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let [_, arg] = KEYRING_UNLOCK;
+        assert!(run_keyring_unlock(
+            script.to_str().unwrap(),
+            &[arg],
+            "s3cret pass"
+        ));
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), "s3cret pass\n");
+        assert_eq!(std::fs::read_to_string(&args).unwrap().trim(), "--unlock");
+        assert!(!run_keyring_unlock(
+            "/nonexistent/gnome-keyring-daemon",
+            &[arg],
+            "x"
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// QA-FILES-13: a compositor without a session lock gets no lock screen and no respawn loop.
+    #[test]
+    fn fallback_exits_nonzero() {
+        assert_eq!(no_lock_exit(false), Some(69));
+        assert_eq!(no_lock_exit(true), None);
+        assert_eq!(LOCK_UNSUPPORTED, 69);
+    }
+
+    /// QA-LIVE-41: the lock tells logind the session is locked, and unlocked again.
+    #[test]
+    fn sets_locked_hint() {
+        assert_eq!(
+            LOCKED_HINT,
+            [
+                "org.freedesktop.login1",
+                "/org/freedesktop/login1/session/auto",
+                "org.freedesktop.login1.Session",
+                "SetLockedHint"
+            ]
+        );
+        let src = include_str!("lock.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        let (on, off) = (
+            code.find("set_locked_hint(true)").unwrap(),
+            code.find("set_locked_hint(false);").unwrap(),
+        );
+        assert!(on > 0 && off > 0, "both ends tell logind");
+    }
+
+    /// QA-LIVE-33 / DATA-3: wol-login's one sentence shows above the accounts.
+    #[test]
+    fn login_notice_is_the_first_line() {
+        assert_eq!(login_notice(None), None);
+        assert_eq!(login_notice(Some("".into())), None);
+        assert_eq!(login_notice(Some("  \n".into())), None);
+        assert_eq!(
+            login_notice(Some("Your disk is full.\nx".into())),
+            Some("Your disk is full.".into())
+        );
+        assert_eq!(
+            login_notice(Some("a".repeat(400))).unwrap().chars().count(),
+            300
+        );
+    }
+
+    /// QA-LIVE3-35: the lock screen names the session's owner, from the environment or the uid,
+    /// whatever other accounts exist.
+    #[test]
+    fn lock_owner_is_the_session_user() {
+        let pw = "root:x:0:0::/root:/bin/sh\nkim:x:1001:1001:Kim:/home/kim:/bin/sh\nbo:x:1002:1002:Bo:/home/bo:/bin/sh\n";
+        assert_eq!(lock_owner(Some("bo".into()), 1001, pw), "bo");
+        assert_eq!(lock_owner(None, 1001, pw), "kim");
+        assert_eq!(lock_owner(Some("".into()), 1002, pw), "bo");
+    }
+
+    /// QA-FDAY-7: wol-lock on the live stick locked a session nobody could unlock.
+    #[test]
+    fn live_refuses_lock() {
+        assert!(super::refuses_lock(true, false));
+        assert!(
+            !super::refuses_lock(false, false),
+            "an installed system locks"
+        );
+        assert!(
+            !super::refuses_lock(false, true),
+            "the login window of an installed system"
+        );
+    }
 
     #[test]
     fn lock_shows_the_full_name() {

@@ -27,6 +27,9 @@ pub struct Network {
     pub online: bool,
     pub wifi: bool,
     pub signal: Option<u8>,
+    /// A link, but no internet through it: NetworkManager says limited, or a sign-in page holds
+    /// it (portal; QA-NET-12, NET2-3). The glyph says so instead of a plain "connected".
+    pub limited: bool,
 }
 
 pub fn battery(b: Option<Battery>) -> Option<&'static str> {
@@ -67,6 +70,8 @@ pub fn mic(a: Audio) -> Option<&'static str> {
 
 pub fn network(n: Network) -> &'static str {
     match (n.online, n.wifi, n.signal) {
+        (true, false, _) if n.limited => "network-wired-disconnected-symbolic",
+        (true, true, _) if n.limited => "network-wireless-signal-none-symbolic",
         (false, _, _) => "network-offline-symbolic",
         (true, false, _) => "network-wired-symbolic",
         (true, true, None) => "network-wireless-symbolic",
@@ -156,6 +161,7 @@ mod tests {
             online,
             wifi,
             signal,
+            limited: false,
         };
         for (net, radio, want) in [
             (
@@ -203,10 +209,34 @@ mod tests {
                 network(Network {
                     online: o,
                     wifi: wf,
-                    signal: s
+                    signal: s,
+                    limited: false,
                 }),
                 w
             );
         }
+    }
+
+    /// NET2-3: a captive portal or a limited link never shows the plain "connected" glyph.
+    #[test]
+    fn limited_and_portal_glyphs() {
+        let n = |wifi, signal| Network {
+            online: true,
+            wifi,
+            signal,
+            limited: true,
+        };
+        assert_eq!(
+            network(n(false, None)),
+            "network-wired-disconnected-symbolic"
+        );
+        assert_eq!(
+            network(n(true, Some(90))),
+            "network-wireless-signal-none-symbolic"
+        );
+        assert_eq!(
+            menubar_network(n(true, Some(90)), Some(true)),
+            "network-wireless-signal-none-symbolic"
+        );
     }
 }

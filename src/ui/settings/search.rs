@@ -20,6 +20,8 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Known Networks",
             "Other Networks",
             "Saved Networks",
+            "This Network",
+            "Scan for Networks",
         ],
     ),
     ("Bluetooth", &["Bluetooth", "My Devices"]),
@@ -196,6 +198,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Disk encryption",
             "Startup Security",
             "Malware Check",
+            "Send error reports",
             "Full Signatures",
             "App Connections",
             "Privacy",
@@ -291,6 +294,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
         &[
             "Automatic updates",
             "Download new updates",
+            "Download on metered connections",
             "Install app updates",
             "Check Now",
         ],
@@ -313,7 +317,13 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
     ("Login Items", &["Open at Login"]),
     (
         "Sharing",
-        &["Computer name", "Remote Login", "AirPlay Receiver"],
+        &[
+            "Computer name",
+            "Remote Login",
+            "AirPlay Receiver",
+            "Internet Sharing",
+            "Password",
+        ],
     ),
     (
         "Startup Security",

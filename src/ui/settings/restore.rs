@@ -19,6 +19,7 @@ pub(crate) fn topic(what: &str) -> &str {
         "files" => "Tidied Downloads",
         "widgets" => "Widgets",
         "sound" => "Sound",
+        "language" => "Language & Region",
         other => other,
     }
 }
@@ -46,23 +47,12 @@ pub(crate) fn ago(now: u64, t: u64) -> String {
     }
 }
 
-/// The first thing in the journal is the computer being set up: the account's first theme, written
-/// by `wol theme set` from the first-boot setup (journal id 1, `by: cli`, no file before it). It
-/// is not a change the person made and Undo would only delete the file (QA-SET-R2-10).
-fn is_setup(all: &[Entry], e: &Entry) -> bool {
-    e.by == "cli"
-        && all.iter().all(|o| o.id >= e.id)
-        && !e.changes.is_empty()
-        && e.changes
-            .iter()
-            .all(|c| matches!(c, wol_core::journal::Change::File { before: None, .. }))
-}
-
-/// Changes worth listing: not undo entries themselves, not already undone, not the setup of the
-/// computer; newest first, at most `n`.
+/// Changes worth listing: not undo entries themselves, not already undone; newest first, at most
+/// `n`. The session start saves no theme (`wol theme apply`, QA-SET-63), so the first entry is a
+/// change the person made.
 pub(crate) fn listed(all: &[Entry], n: usize) -> Vec<&Entry> {
     all.iter()
-        .filter(|e| e.undoes.is_none() && !is_undone(all, e.id) && !is_setup(all, e))
+        .filter(|e| e.undoes.is_none() && !is_undone(all, e.id))
         .take(n)
         .collect()
 }
@@ -252,6 +242,8 @@ mod tests {
     #[test]
     fn changes_read_as_sentences() {
         assert_eq!(topic("theme"), "Appearance");
+        // A1 follow-up: a language change (hyprprefs::journal_topic) is named, not shown raw.
+        assert_eq!(topic("language"), "Language & Region");
         assert_eq!(actor("mcp:claude"), "Assistant “claude”");
         assert_eq!(actor("script:tidy"), "Script “tidy”");
         assert_eq!(ago(1000, 990), "Just now");
@@ -272,41 +264,6 @@ mod tests {
             ids,
             [2],
             "undo entries and undone changes are not offered again"
-        );
-    }
-
-    /// QA-SET-R2-10: the theme written while the computer was set up is not a change to undo; a
-    /// later one from the terminal still is.
-    #[test]
-    fn setup_is_not_a_change_to_undo() {
-        use wol_core::journal::Change;
-        let file = |id, by: &str, before: Option<&str>| Entry {
-            id,
-            t: id,
-            by: by.into(),
-            what: "theme".into(),
-            changes: vec![Change::File {
-                path: "wolos/theme".into(),
-                before: before.map(String::from),
-                after: Some("wol-light".into()),
-            }],
-            undoes: None,
-        };
-        let first = file(1, "cli", None);
-        let all = vec![file(2, "cli", Some("wol-light")), first.clone()];
-        assert_eq!(
-            listed(&all, 8).iter().map(|x| x.id).collect::<Vec<_>>(),
-            [2]
-        );
-        assert!(
-            listed(&[first], 8).is_empty(),
-            "nothing to undo after setup"
-        );
-        let by_settings = vec![file(1, "settings", None)];
-        assert_eq!(
-            listed(&by_settings, 8).len(),
-            1,
-            "the person's own first change"
         );
     }
 

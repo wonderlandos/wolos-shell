@@ -255,7 +255,8 @@ fn reads_fake_sysfs_tree() {
         Network {
             online: true,
             wifi: true,
-            signal: None
+            signal: None,
+            limited: false,
         }
     );
     assert_eq!(s.brightness(), None);
@@ -355,7 +356,7 @@ fn core_system_reads_snapshot_and_acts_off_thread() {
     h.command("wpctl get-volume @DEFAULT_AUDIO_SINK@", "Volume: 0.64\n")
         .command("nmcli radio wifi", "enabled\n")
         .command(
-            "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list --rescan no",
+            "nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID dev wifi list --rescan auto",
             "*:70:WPA2:Home\n :40::Cafe\n",
         )
         .command("wpctl set-volume @DEFAULT_AUDIO_SINK@ 30%", "");
@@ -535,6 +536,44 @@ fn panel_actions_update_the_snapshot() {
     );
 }
 
+/// QA-DEV-13: each device keeps the reason its own last connect failed with.
+#[test]
+fn bluetooth_connect_reasons_are_kept_per_device() {
+    use wol_core::system::fake::FakeHost;
+    let h = Arc::new(FakeHost::linux());
+    h.file("/sys/class/bluetooth/hci0/address", "00:1A:7D:DA:71:13\n")
+        .slow(
+            "bluetoothctl connect aa:bb:cc:dd:ee:01",
+            "Failed to connect: org.bluez.Error.Failed br-connection-page-timeout\n",
+        )
+        .slow(
+            "bluetoothctl connect aa:bb:cc:dd:ee:02",
+            "Failed to connect: org.bluez.Error.NotReady\n",
+        )
+        .slow(
+            "bluetoothctl connect aa:bb:cc:dd:ee:03",
+            "Connection successful\n",
+        );
+    let sys = bare(&h);
+    let go = |a: &str| sys.perform(&Action::BtConnect(a.into(), true));
+    assert_eq!(go("aa:bb:cc:dd:ee:01"), Err(ActionError::Failed));
+    assert_eq!(go("aa:bb:cc:dd:ee:02"), Err(ActionError::Failed));
+    assert_eq!(go("aa:bb:cc:dd:ee:03"), Ok(()));
+    let why = |a: &str| sys.bt_connect_reason(a);
+    assert!(why("aa:bb:cc:dd:ee:01").is_some_and(|w| w.contains("didn’t answer")));
+    assert!(why("aa:bb:cc:dd:ee:02").is_some_and(|w| w.contains("Bluetooth is off")));
+    assert_eq!(
+        why("aa:bb:cc:dd:ee:03"),
+        None,
+        "a good connect has no reason"
+    );
+    assert_eq!(go("aa:bb:cc:dd:ee:03"), Ok(()));
+    assert!(
+        why("aa:bb:cc:dd:ee:01").is_some(),
+        "another device's reason stays"
+    );
+}
+
 /// Manual: `cargo test -p shell --lib live_host -- --ignored --nocapture` prints this machine's snapshot.
 #[test]
 #[ignore]
@@ -708,7 +747,11 @@ fn admin_requests_read_only_their_topics() {
     );
     assert_eq!(
         topics_of(&admin_action(A::WifiJoin, "x")),
-        topics_of(&Action::WifiJoin("x".into(), None))
+        topics_of(&Action::WifiJoin {
+            ssid: "x".into(),
+            password: None,
+            hidden: false,
+        })
     );
 }
 
@@ -856,6 +899,7 @@ fn network_follows_the_link_not_the_snapshot() {
         signal: 70,
         secure: true,
         connected: true,
+        ..Default::default()
     }];
     // NET2-7: Wi-Fi is up, but Ethernet carries the default route.
     let n = sys.network();
@@ -893,4 +937,21 @@ fn a_tunnel_route_names_no_medium() {
     for p in ["wlan0", "enp0s2", "eth0", "wlp3s0"] {
         assert!(!is_tunnel(p), "{p}");
     }
+}
+
+/// QA-SET-53: Brightness 0 sets the dimmest backlight (1 %), and the optimistic snapshot says so
+/// at once instead of showing "0%" until the next poll.
+#[test]
+fn brightness_zero_reads_the_minimum() {
+    use wol_core::system::fake::FakeHost;
+    let h = Arc::new(FakeHost::linux());
+    h.file("/sys/class/backlight/intel/max_brightness", "100\n")
+        .file("/sys/class/backlight/intel/brightness", "40\n")
+        .command(
+            "busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetBrightness ssu backlight intel 1",
+            "",
+        );
+    let sys = bare(&h);
+    assert_eq!(sys.perform(&Action::Brightness(0)), Ok(()));
+    assert_eq!(sys.brightness(), Some(1));
 }

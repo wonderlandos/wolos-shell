@@ -282,6 +282,12 @@ fn send(ui: &Ui, src: &Src, a: AudioAction) {
     }
 }
 
+/// The input slider and its mute change something: the service answered with devices. A state
+/// with none (PipeWire down) would take the move and drop `MicVolume` silently (QA-SET-53).
+fn input_usable(state: Option<&SoundState>) -> bool {
+    state.is_some_and(|s| !s.devices.is_empty())
+}
+
 /// The default device of `kind` in what the page shows.
 fn shown_default(shown: &RefCell<Option<Snapshot>>, kind: DeviceKind) -> Option<Device> {
     shown.borrow().as_ref()?.default_of(kind).cloned()
@@ -429,7 +435,7 @@ impl SoundPage {
         self.poll();
         let snap = self.current(&*ui.sys);
         // Input changes need the service; without it the input half only shows the level.
-        let live = self.has_source() && self.state.borrow().is_some();
+        let live = self.has_source() && input_usable(self.state.borrow().as_ref());
         self.input.scale.set_sensitive(live);
         self.input.mute.set_sensitive(live);
         self.from_service.set(self.service_live());
@@ -510,6 +516,22 @@ fn fill<F: Fn() + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SET-53: with PipeWire down the service sends a state without devices; the input
+    /// slider is then insensitive instead of taking moves it drops.
+    #[test]
+    fn input_slider_needs_devices() {
+        assert!(!input_usable(None));
+        assert!(!input_usable(Some(&SoundState::default())));
+        let mic = SoundState {
+            devices: vec![Device {
+                kind: DeviceKind::Input,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(input_usable(Some(&mic)));
+    }
 
     /// QA-SET-50: a volume step changes the snapshot, not the rows.
     #[test]

@@ -56,6 +56,7 @@ impl Panel {
                 let found = h.search(&query);
                 if h.entries().is_empty() {
                     list.append(&w::label("Copied text shows up here", "secondary"));
+                    list.append(&w::label(NOT_KEPT, "secondary"));
                 } else if found.is_empty() {
                     list.append(&w::label("No matches", "secondary"));
                 }
@@ -70,6 +71,18 @@ impl Panel {
         head.append(&w::button("Clear", w::Kind::Default, move || {
             h2.borrow_mut().clear();
             r2();
+            // The system selection goes with the history (QA-LN-16): `wl-paste` gave the last text back.
+            let Some(display) = gdk::Display::default() else {
+                return;
+            };
+            let (cb, h) = (display.clipboard(), h2.clone());
+            let cb2 = cb.clone();
+            cb.read_text_async(None::<&gio::Cancellable>, move |r| {
+                let sel = r.ok().flatten();
+                if h.borrow().clear_wants_selection_empty(sel.as_deref()) {
+                    let _ = cb2.set_content(None::<&gdk::ContentProvider>);
+                }
+            });
         }));
         let r3 = draw.clone();
         search.connect_search_changed(move |_| r3());
@@ -90,6 +103,10 @@ impl Panel {
         (self.render)();
     }
 }
+
+/// What the history leaves out, said once on the empty list (QA-LN-17: an image copy was
+/// silently not listed).
+const NOT_KEPT: &str = "Passwords, card numbers, codes and images are not kept";
 
 /// One entry: the text (click copies and closes), Pin/Unpin and Remove.
 fn row(
@@ -182,9 +199,13 @@ pub fn panel(app: &gtk::Application) -> gtk::Window {
     if let Some(d) = gdk::Display::default() {
         d.clipboard().connect_changed(move |cb| {
             let p = p.clone();
+            // A copy marked as a password (password managers) is never read into the history.
+            let hinted = cb
+                .formats()
+                .contain_mime_type(clipboard::PASSWORD_HINT_MIME);
             cb.read_text_async(None::<&gio::Cancellable>, move |r| {
                 if let Ok(Some(t)) = r
-                    && p.history.borrow_mut().push(&t)
+                    && p.history.borrow_mut().push_copy(&t, hinted)
                 {
                     p.refresh();
                 }

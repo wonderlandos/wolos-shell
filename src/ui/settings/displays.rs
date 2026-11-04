@@ -151,7 +151,8 @@ impl Display {
             .unwrap_or(first);
         let scale = self.scales.get(c.scale).map_or(1.0, |s| s.1);
         let place = Place::ALL.get(c.place).copied().unwrap_or(Place::Auto);
-        let main = self.main.as_ref().map(|(n, g)| (n.as_str(), *g));
+        let main_now = self.main_now();
+        let main = main_now.as_ref().map(|(n, g)| (n.as_str(), *g));
         let rule = disp::rule(&self.monitor.name, (w, h, hz), scale, place, main)?;
         // The main display sits at 0x0 unless somebody placed it by hand: that stays.
         Some(if main.is_some_and(|(n, _)| n == self.monitor.name) {
@@ -160,6 +161,38 @@ impl Display {
         } else {
             rule
         })
+    }
+
+    /// The main display's name and size as the page shows it now (a mode it took since the page
+    /// was built included): a placement is measured from the main display as it runs.
+    fn main_now(&self) -> Option<(String, Geometry)> {
+        let (name, built) = self.main.as_ref()?;
+        let now = self.page.upgrade().and_then(|p| {
+            p.shown
+                .borrow()
+                .iter()
+                .find(|m| &m.name == name)
+                .map(geometry)
+        });
+        Some((name.clone(), now.unwrap_or(*built)))
+    }
+
+    /// This is the main display and `sent` is its new rule: the displays placed next to it, as
+    /// (rule in force, rule at the same place for the new size) (QA-GFX-19 follow-up).
+    fn followers(&self, sent: &str) -> Vec<(String, String)> {
+        let Some((main, old)) = self.main_now().filter(|(n, _)| *n == self.monitor.name) else {
+            return Vec::new();
+        };
+        let Some(new) = disp::rule_geometry(sent) else {
+            return Vec::new();
+        };
+        let mut saved = prefs::monitor_rules(&read(&config(&self.rel)).unwrap_or_default());
+        if let Some(p) = self.page.upgrade()
+            && let Some(c) = p.confirm.borrow().as_ref()
+        {
+            saved.extend(c.saves().iter().cloned());
+        }
+        disp::follow_main(&saved, &main, old, new)
     }
 
     /// The main display's pinning rule, when this display is placed next to it and the saved rules
@@ -238,7 +271,18 @@ impl Display {
             Rc::new(move |r| {
                 let Some(me) = me.upgrade() else { return };
                 let rel = me.rel.clone();
-                let rules: Vec<String> = pin.iter().cloned().chain([sent.clone()]).collect();
+                // Read before `took` moves the page to the new size.
+                let followers = if r.is_ok() {
+                    me.followers(&sent)
+                } else {
+                    Vec::new()
+                };
+                let rules: Vec<String> = pin
+                    .iter()
+                    .cloned()
+                    .chain([sent.clone()])
+                    .chain(followers.iter().map(|f| f.1.clone()))
+                    .collect();
                 // Held changes are written on Keep: a session that ends before that must not bring
                 // the new mode back at the next login.
                 let done = settle(r, || {
@@ -260,6 +304,12 @@ impl Display {
                         );
                         if let Some(page) = me.page.upgrade() {
                             page.took(&me.monitor.name, &sent);
+                            // The displays next to the main one move with its new size.
+                            for (_, moved) in &followers {
+                                me.ctx.act(Action::Monitor(moved.clone()), Rc::new(|_| {}));
+                                let name = moved.split(',').next().unwrap_or_default();
+                                page.took(name, moved);
+                            }
                             if let Some(h) = &hold {
                                 page.hold(
                                     disp::Undo {
@@ -269,6 +319,17 @@ impl Display {
                                     h.restart,
                                     rules,
                                 );
+                                for (before, moved) in &followers {
+                                    let name = moved.split(',').next().unwrap_or_default();
+                                    page.hold(
+                                        disp::Undo {
+                                            name: name.to_string(),
+                                            rule: before.clone(),
+                                        },
+                                        false,
+                                        Vec::new(),
+                                    );
+                                }
                             }
                         }
                     }
@@ -524,7 +585,7 @@ impl Page {
     /// came or went or runs another mode (a change this page took is already in `shown`).
     fn follow(self: &Rc<Self>) {
         if self.confirm.borrow().is_some() {
-            // Mid-countdown the sections stay as they are; Keep or Revert builds them again.
+            // Mid-countdown the sections stay as they are; Keep or Undo builds them again.
             return;
         }
         if disp::monitors_changed(&self.shown.borrow(), &self.displays()) {
@@ -560,7 +621,7 @@ impl Page {
                     p.keep();
                 }
             });
-            let revert = w::button("Revert", w::Kind::Default, move || {
+            let revert = w::button("Undo", w::Kind::Default, move || {
                 if let Some(p) = revert_me.upgrade() {
                     p.revert();
                 }

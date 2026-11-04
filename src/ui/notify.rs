@@ -533,6 +533,16 @@ impl<T> Center<T> {
     }
 }
 
+/// The Notification Center's surface: under the bar at the right, as tall as its cards
+/// ([`CENTER_MAX_HEIGHT`] at most), never down to the Dock for one card (QA-DESIGN-21).
+pub const CENTER_SPEC: Spec = Spec::panel(
+    "wol-panel-notifications",
+    [true, false, false, true],
+    Keyboard::OnDemand,
+);
+/// Tallest the card list grows before it scrolls (px).
+pub const CENTER_MAX_HEIGHT: i32 = 560;
+
 /// The Notification Center's content: title, Clear, and the list `rows` fills (no golden yet).
 /// `on_clear` runs after Clear (the held banners go too, audit5 S6-1).
 pub fn center_panel(
@@ -555,7 +565,8 @@ pub fn center_panel(
     g.append(
         &gtk::ScrolledWindow::builder()
             .child(&list)
-            .vexpand(true)
+            .propagate_natural_height(true)
+            .max_content_height(CENTER_MAX_HEIGHT)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build(),
     );
@@ -973,23 +984,8 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
             }
         }
     };
-    let center = super::window(
-        app,
-        "panel",
-        Spec::panel(
-            "wol-panel-notifications",
-            [true, true, false, true],
-            Keyboard::OnDemand,
-        ),
-    );
-    crate::kit::surface::survive_output_loss(
-        &center,
-        Spec::panel(
-            "wol-panel-notifications",
-            [true, true, false, true],
-            Keyboard::OnDemand,
-        ),
-    );
+    let center = super::window(app, "panel", CENTER_SPEC);
+    crate::kit::surface::survive_output_loss(&center, CENTER_SPEC);
     center.add_css_class("notifications");
     center.set_child(Some(&g));
     // Esc closes Notification Center, like every other panel.
@@ -1321,6 +1317,16 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-DESIGN-21 second half: the center is anchored top and right only, so its height is
+    /// its content's, and the list scrolls past [`CENTER_MAX_HEIGHT`].
+    #[test]
+    fn notification_center_is_as_tall_as_its_cards() {
+        let [top, bottom, left, right] = CENTER_SPEC.anchor;
+        assert_eq!((top, bottom, left, right), (true, false, false, true));
+        assert!(CENTER_MAX_HEIGHT > 0);
+    }
+
     fn n(critical: bool, t: i32) -> Note {
         Note {
             id: 1,

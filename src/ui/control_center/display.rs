@@ -176,6 +176,9 @@ impl DisplayPage {
             .set_subtitle(if night == Some(true) { "On" } else { "Off" });
 
         let monitors = s.monitors();
+        // The compositor says what mirrors what: after a reload, an unplug or a rule written
+        // elsewhere the page follows it, not what it asked last (QA-SET-47).
+        *self.mirrored.borrow_mut() = mirrored_now(&monitors);
         let state = (monitors.clone(), self.mirrored.borrow().clone());
         if self.shown.borrow().as_ref() == Some(&state) {
             return;
@@ -230,6 +233,14 @@ fn toggle_mirror(
     ui.act_then(Action::Monitor(rule), move |ok| {
         mirror_answered(&m, &n, !on, ok);
     });
+}
+
+/// The display that mirrors another one now, as the compositor lists it (`mirrorOf`).
+pub(super) fn mirrored_now(monitors: &[Monitor]) -> Option<String> {
+    monitors
+        .iter()
+        .find(|m| m.mirror_of.is_some())
+        .map(|m| m.name.clone())
 }
 
 /// The compositor answered the mirror rule for `name` (`turn_on` = what was asked): only a
@@ -301,6 +312,19 @@ mod tests {
         );
         mirror_answered(&st, "HDMI-A-1", false, true);
         assert_eq!(*st.borrow(), None);
+    }
+
+    /// QA-SET-47 stale-after-reload: what the page lights is what the compositor reports, so a
+    /// mirror ended by a reload or an unplug is not shown as "Mirroring" any more.
+    #[test]
+    fn mirrored_follows_the_compositor() {
+        let mut tv = m("HDMI-A-1", "LG");
+        let list = [m("eDP-1", "Built-in Display"), tv.clone()];
+        assert_eq!(mirrored_now(&list), None);
+        tv.mirror_of = Some("eDP-1".into());
+        let list = [m("eDP-1", "Built-in Display"), tv];
+        assert_eq!(mirrored_now(&list).as_deref(), Some("HDMI-A-1"));
+        assert_eq!(mirrored_now(&[]), None);
     }
 
     #[test]

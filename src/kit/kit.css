@@ -55,6 +55,8 @@ window.wallpaper { background: linear-gradient(160deg, #1b1446, #0b2a5c 55%, #04
 /* ---- Menu bar: 28px translucent strip ---- */
 .menubar-strip { min-height: 28px; background: var(--bar-fill); padding: 0 8px; }
 .menubar-strip label, .menubar-strip image { color: var(--bar-text); }
+/* The recording item (screen recording runs) stays red on the bar. */
+.menubar-strip image.tone-danger { color: var(--danger); }
 .menubar-strip image { -gtk-icon-size: 16px; }
 /* A display without the focus: its menu bar steps back. */
 .menubar-strip.inactive > * { opacity: 0.5; }

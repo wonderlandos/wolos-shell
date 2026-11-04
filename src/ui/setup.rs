@@ -512,6 +512,7 @@ impl Setup {
                         online: true,
                         wifi: true,
                         signal: Some(n.signal),
+                        limited: false,
                     })
                     .into(),
                 ),

@@ -5,58 +5,18 @@
 use super::*;
 
 /// Longest account name `useradd` takes.
-pub const ACCOUNT_MAX: usize = 32;
+pub const ACCOUNT_MAX: usize = wol_core::settings::users::NAME_MAX;
 
-/// Latin letters with marks and ligatures as plain ASCII ("Ñandú" -> "nandu"). Other scripts
-/// give nothing: the person types the account name (QA-FILES-16: only ASCII was kept, so
-/// "Ñandú Álvarez" became `and`).
-fn ascii_of(c: char) -> &'static str {
-    match c {
-        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => "a",
-        'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => "c",
-        'ď' | 'đ' | 'ð' => "d",
-        'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
-        'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
-        'ĥ' | 'ħ' => "h",
-        'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
-        'ĵ' => "j",
-        'ķ' => "k",
-        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
-        'ñ' | 'ń' | 'ņ' | 'ň' => "n",
-        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => "o",
-        'ŕ' | 'ŗ' | 'ř' => "r",
-        'ś' | 'ŝ' | 'ş' | 'š' | 'ș' => "s",
-        'ţ' | 'ť' | 'ŧ' | 'ț' => "t",
-        'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => "u",
-        'ŵ' => "w",
-        'ý' | 'ÿ' | 'ŷ' => "y",
-        'ź' | 'ż' | 'ž' => "z",
-        'ß' => "ss",
-        'æ' => "ae",
-        'œ' => "oe",
-        'þ' => "th",
-        _ => "",
-    }
-}
-
-/// The first word of `full` in account-name letters, before the length cut.
+/// `full` in account-name letters, before the length cut (core's one rule).
 fn account_letters(full: &str) -> String {
-    let first = full.split_whitespace().next().unwrap_or("");
-    let mut s = String::new();
-    for c in first.to_lowercase().chars() {
-        if c.is_ascii_lowercase() || c.is_ascii_digit() {
-            s.push(c)
-        } else {
-            s.push_str(ascii_of(c))
-        }
-    }
-    s.trim_start_matches(|c: char| c.is_ascii_digit())
-        .to_string()
+    wol_core::settings::users::derive_letters(full)
 }
 
-/// "Alice Liddell" -> "alice", "Ñandú Álvarez" -> "nandu"; at most [`ACCOUNT_MAX`] letters.
+/// "Alice Liddell" -> "aliceliddell", "Ñandú Álvarez" -> "nandualvarez"; at most [`ACCOUNT_MAX`]
+/// letters. The Setup Assistant suggests the same (`wol_core::settings::users::derive_name`,
+/// QA-LIVE3-24: Add User made `tomas`, Setup `maracosta`).
 pub fn account_name(full: &str) -> String {
-    account_letters(full).chars().take(ACCOUNT_MAX).collect()
+    wol_core::settings::users::derive_name(full)
 }
 
 /// The note under the account name when [`account_name`] could not use the full name as it
@@ -261,7 +221,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let pass = w::password_field("Password");
     let verify = w::password_field("Verify");
     let admin = w::toggle(false, |_| {});
-    // Says why the account name is not simply the first name (cut at 32, other script).
+    // Says why the account name is not simply the full name (cut at 32, other script).
     let hint = w::label("", "secondary");
     hint.set_wrap(true);
     hint.set_xalign(0.0);
@@ -410,14 +370,40 @@ pub fn password_problem(password: &str, verify: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    /// QA-LIVE3-24: the Setup Assistant and Add User suggest the same account name for the same
+    /// full name (Setup made `maracosta`, Add User `tomas`).
+    #[test]
+    fn derive_name_same_in_installer_and_adduser() {
+        for full in [
+            "Mara Costa",
+            "Tomás Reis",
+            "Alice Liddell",
+            "Ñandú Álvarez",
+            "Weißmüller",
+            "42 Wonder",
+            "李",
+        ] {
+            assert_eq!(
+                crate::setup::account_name(full),
+                account_name(full),
+                "{full}"
+            );
+            assert_eq!(
+                account_name(full),
+                wol_core::settings::users::derive_name(full),
+                "{full}"
+            );
+        }
+    }
+
     #[test]
     fn account_names_from_full_names() {
         for (full, want) in [
-            ("Alice Liddell", "alice"),
-            ("Mad Hatter", "mad"),
+            ("Alice Liddell", "aliceliddell"),
+            ("Mad Hatter", "madhatter"),
             ("  Dinah ", "dinah"),
             ("José", "jose"),
-            ("42 Wonder", ""),
+            ("42 Wonder", "wonder"),
         ] {
             assert_eq!(account_name(full), want, "{full}");
         }
@@ -426,8 +412,8 @@ mod tests {
     /// QA-FILES-16: "Ñandú Álvarez" auto-filled the account name `and`.
     #[test]
     fn account_name_transliterates() {
-        assert_eq!(account_name("Ñandú Álvarez"), "nandu");
-        assert_eq!(account_name("Søren Ærø"), "soren");
+        assert_eq!(account_name("Ñandú Álvarez"), "nandualvarez");
+        assert_eq!(account_name("Søren Ærø"), "sorenaero");
         assert_eq!(account_name("Weißmüller"), "weissmuller");
         assert_eq!(account_name("Łukasz"), "lukasz");
         assert_eq!(

@@ -19,11 +19,20 @@ fn friendly(what: &str, s: &str) {
 /// accepts only the Wi-Fi password [`RIGHT_WIFI`].
 fn machine(reply: Option<AdminReply>) -> (Arc<FakeHost>, CoreSystem) {
     let h = Arc::new(FakeHost::linux());
+    // NetworkManager makes the profile for a password join (NET2-1), then brings it up.
+    h.slow(
+        "nmcli connection add type wifi con-name Home ifname * ssid Home wifi-sec.key-mgmt wpa-psk",
+        "",
+    );
     let c = Controls {
         host: h.clone(),
         stdin: Arc::new(|argv, input| {
             (argv[0] != "nmcli" || input.trim_end().ends_with(&format!(":{RIGHT_WIFI}")))
                 .then(String::new)
+                .ok_or_else(|| {
+                    "Error: Connection activation failed: Secrets were required, but not provided."
+                        .to_string()
+                })
         }),
         admin: Arc::new(move |_, _| reply),
         wlan: "wlan0".into(),
@@ -86,7 +95,13 @@ fn j1_setup_asks_at_most_five_questions() {
 #[test]
 fn j2_wrong_wifi_password_says_so() {
     let (_h, sys) = machine(Some(AdminReply::Ok));
-    let join = |p: &str| sys.perform(&Action::WifiJoin("Home".into(), Some(p.into())));
+    let join = |p: &str| {
+        sys.perform(&Action::WifiJoin {
+            ssid: "Home".into(),
+            password: Some(p.into()),
+            hidden: false,
+        })
+    };
     let e = join("password1").unwrap_err();
     assert_eq!(e, ActionError::WrongPassword);
     let said = copy::wifi_join(e, "Home");

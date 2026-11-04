@@ -85,7 +85,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Wi-Fi",
             "network-wireless-symbolic",
-            "Wi-Fi wireless network internet join password hotspot",
+            "Wi-Fi wireless network internet join password hidden disconnect",
         ),
         pane(
             "Bluetooth",
@@ -116,7 +116,8 @@ pub const SIDEBAR: [&[Pane]; 6] = [
             "emblem-system-symbolic",
             concat!(
                 "about version software update storage disk date time zone clock language region locale ",
-                "login items startup sharing computer name remote ssh terminal shell bash fish nu pwsh"
+                "login items startup sharing computer name remote ssh terminal shell bash fish nu pwsh ",
+                "hotspot tethering internet sharing airplay"
             ),
         ),
         pane(
@@ -1670,13 +1671,15 @@ impl Desk {
         if *self.cur.borrow() == before {
             return;
         }
+        // The topic the save is journaled under (a language-only change is `language`).
+        let what = wol_core::hyprprefs::journal_topic(&before, &self.get());
         let (st, me, failed) = (status.clone(), self.clone(), RefCell::new(Some(failed)));
         self.ctx.act(
             Action::Desktop(Box::new(self.get())),
             Rc::new(move |r| {
                 say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
                 if r.is_ok() {
-                    changed_latest("desktop");
+                    changed_latest(what);
                 } else {
                     me.reload();
                     if let Some(f) = failed.borrow_mut().take() {
@@ -1694,14 +1697,16 @@ impl Desk {
         f: impl FnOnce(&mut wol_core::hyprprefs::DesktopPrefs),
         done: Box<dyn FnOnce(bool)>,
     ) {
+        let before = self.get();
         f(&mut self.cur.borrow_mut());
+        let what = wol_core::hyprprefs::journal_topic(&before, &self.get());
         let (st, me, done) = (status.clone(), self.clone(), RefCell::new(Some(done)));
         self.ctx.act(
             Action::Desktop(Box::new(self.get())),
             Rc::new(move |r| {
                 say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
                 if r.is_ok() {
-                    changed_latest("desktop");
+                    changed_latest(what);
                 } else {
                     me.reload();
                 }

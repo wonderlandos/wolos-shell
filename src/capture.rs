@@ -59,6 +59,55 @@ pub struct Options {
     pub delay: u32,
 }
 
+/// wol-screenshot's recorder pid file in `$XDG_RUNTIME_DIR` ("<pid> <file>"): there while a screen
+/// recording runs, whoever started it (the toolbar, the Record tile, a hotkey).
+pub const RECORD_PID: &str = "wol-record.pid";
+
+/// The pid file of this session's recording.
+pub fn record_pid_file(runtime: &str) -> std::path::PathBuf {
+    std::path::Path::new(runtime).join(RECORD_PID)
+}
+
+/// Ends the running recording (saves the file, says where).
+pub const STOP_ARGV: [&str; 2] = ["wol-screenshot", "stop"];
+
+/// What `wol shell show|toggle|hide screen-record` (the Record tile) does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordAsk {
+    /// A recording runs: the tile stops it (live-1 H4: it offered a second Record instead).
+    Stop,
+    /// The toolbar in Record mode shows (true) or hides.
+    Toolbar(bool),
+}
+
+pub fn record_ask(recording: bool, verb: crate::protocol::Verb, visible: bool) -> RecordAsk {
+    use crate::protocol::Verb;
+    if recording && verb != Verb::Hide {
+        return RecordAsk::Stop;
+    }
+    RecordAsk::Toolbar(crate::protocol::apply(verb, visible))
+}
+
+/// The banner that keeps a toolbar capture in Notification Center and names where it went
+/// (QA-LIVE1-45: the thumbnail alone said nothing of the folder, and no notice stayed). Same words
+/// and image hint as wol-screenshot's own banner for the hotkeys.
+pub fn saved_notice_argv(saved: &std::path::Path) -> Vec<String> {
+    let folder = saved
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    ["notify-send", "-a", "Screenshot", "-i", "wolos-photos"]
+        .iter()
+        .map(|s| s.to_string())
+        .chain([
+            "-h".into(),
+            format!("string:image-path:{}", saved.display()),
+            format!("Screenshot saved to {folder}"),
+        ])
+        .collect()
+}
+
 /// Wait between hiding the toolbar and capturing, so the compositor has drawn a frame without it.
 pub const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
 
@@ -248,6 +297,56 @@ pub fn markup_path(original: &std::path::Path) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-LIVE1-45: the notice a toolbar capture leaves names its folder and carries the picture.
+    #[test]
+    fn saved_notice_names_folder() {
+        let p = std::path::Path::new("/home/alice/Desktop/Screenshot 2026-11-04 at 09.00.00.png");
+        let a = saved_notice_argv(p);
+        assert_eq!(a[0], "notify-send");
+        assert_eq!(a.last().unwrap(), "Screenshot saved to Desktop");
+        assert!(
+            a.contains(&format!("string:image-path:{}", p.display())),
+            "{a:?}"
+        );
+        let pics = std::path::Path::new("/home/alice/Pictures/Screenshots/x.png");
+        assert_eq!(
+            saved_notice_argv(pics).last().unwrap(),
+            "Screenshot saved to Screenshots"
+        );
+    }
+
+    /// Live-1 H4: a running recording had no way to stop from the UI. The shell follows the
+    /// script's own pid file and stops through the script's own `stop`.
+    #[test]
+    fn record_tile_toggles_stop() {
+        let script = include_str!("../../../desktop/overlay/usr/bin/wol-screenshot");
+        assert!(
+            script.contains(&format!("pidf=${{run:+\"$run/{RECORD_PID}\"}}")),
+            "the pid file the shell watches is the one the script writes"
+        );
+        assert!(script.contains("|stop)"), "the script has `stop`");
+        assert_eq!(STOP_ARGV, ["wol-screenshot", "stop"]);
+        assert_eq!(
+            record_pid_file("/run/user/1000"),
+            std::path::Path::new("/run/user/1000/wol-record.pid")
+        );
+        use crate::protocol::Verb;
+        assert_eq!(record_ask(true, Verb::Show, false), RecordAsk::Stop);
+        assert_eq!(record_ask(true, Verb::Toggle, false), RecordAsk::Stop);
+        assert_eq!(
+            record_ask(true, Verb::Hide, true),
+            RecordAsk::Toolbar(false)
+        );
+        assert_eq!(
+            record_ask(false, Verb::Show, false),
+            RecordAsk::Toolbar(true)
+        );
+        assert_eq!(
+            record_ask(false, Verb::Toggle, true),
+            RecordAsk::Toolbar(false)
+        );
+    }
 
     /// Screenshots land on the Desktop, as on a Mac and as ⇧⌘3 does (wol-screenshot).
     #[test]

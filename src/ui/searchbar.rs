@@ -30,14 +30,19 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
         .collect();
     for p in crate::apps::here() {
         if !v.iter().any(|i| i.title == p.name) {
-            v.push(Item::new(
-                p.name,
-                "Application",
-                p.icon,
-                p.exec.iter().map(|s| s.to_string()).collect(),
-            ));
+            // Found by the real name too: Helium, Geary, Nautilus (QA-LN-20).
+            v.push(
+                Item::new(
+                    p.name,
+                    "Application",
+                    p.icon,
+                    p.exec.iter().map(|s| s.to_string()).collect(),
+                )
+                .with_words(&crate::apps::product_words(p)),
+            );
         }
     }
+    v.extend(actions(crate::apps::is_live()));
     // Every Settings page under the name Settings opens; a pane's search words find it too.
     let open = |t: &str| vec!["wol-settings".into(), t.into()];
     for p in crate::ui::settings::SIDEBAR.iter().flat_map(|g| g.iter()) {
@@ -46,6 +51,95 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
     for t in crate::ui::settings::SUBPAGES {
         v.push(Item::new(t, SETTINGS, "wolos-settings", open(t)));
     }
+    v
+}
+
+/// The keyboard mode Search's surface is created with. Hyprland 0.56 hands the keyboard to a layer
+/// surface only on a change from `none` to `exclusive`; created Exclusive, a click on the menu bar's
+/// Search icon over a focused app left the keystrokes with the window underneath, and the second
+/// click closed it again (QA-LIVE1-11). Created with none, then switched on once it is on screen,
+/// it is the same change `^F2` makes for the menu bar.
+pub const FIRST_KEYBOARD: Keyboard = Keyboard::None;
+/// Wait after the first frame before the keyboard is taken, so the compositor has seen the surface
+/// without it.
+const KEYBOARD_AFTER_MS: u64 = 30;
+
+fn take_keyboard_when_mapped(win: &gtk::ApplicationWindow) {
+    win.connect_map(|w| {
+        let w = w.clone();
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(KEYBOARD_AFTER_MS),
+            move || {
+                crate::kit::surface::set_keyboard(&w, Keyboard::Exclusive);
+            },
+        );
+    });
+}
+
+/// Kind shown on a system action.
+pub const ACTION: &str = "Action";
+
+/// System actions Search offers by name (QA-LN-18: 'lock', 'shut down', 'log out', 'sleep' and
+/// 'screenshot' gave Settings pages or nothing). Each runs the command the menu runs; the three
+/// that end the session open its question first. Live has no Lock (nothing unlocks it).
+pub fn actions(live: bool) -> Vec<Item> {
+    let row = |title: &str, words: &str, icon: &str, argv: &[&str]| {
+        Item::new(
+            title,
+            ACTION,
+            icon,
+            argv.iter().map(|s| s.to_string()).collect(),
+        )
+        .with_words(words)
+    };
+    let show = |t: &'static str| ["wol", "shell", "show", t];
+    let mut v = Vec::new();
+    if !live {
+        v.push(row(
+            "Lock Screen",
+            "lock",
+            "system-lock-screen-symbolic",
+            &["wol-lock"],
+        ));
+    }
+    v.extend([
+        row(
+            "Sleep",
+            "suspend",
+            "weather-clear-night-symbolic",
+            &["wol", "power", "sleep"],
+        ),
+        row(
+            "Restart",
+            "reboot",
+            "system-reboot-symbolic",
+            &show("session-restart"),
+        ),
+        row(
+            "Shut Down",
+            "power off poweroff",
+            "system-shutdown-symbolic",
+            &show("session-shutdown"),
+        ),
+        row(
+            "Log Out",
+            "logout sign out",
+            "system-log-out-symbolic",
+            &show("session-logout"),
+        ),
+        row(
+            "Take Screenshot",
+            "screenshot capture screen grab",
+            "wolos-photos",
+            &show("screenshot"),
+        ),
+        row(
+            "Record Screen",
+            "screen recording record video",
+            "media-record-symbolic",
+            &show("screen-record"),
+        ),
+    ]);
     v
 }
 
@@ -157,12 +251,14 @@ pub fn run() -> glib::ExitCode {
     super::run_panel_app(
         "org.wolos.search",
         "searchbar",
+        // No keyboard at first, Exclusive once mapped ([`take_keyboard_when_mapped`]).
         Spec::panel(
             "wol-panel-searchbar",
             [true, false, false, false],
-            Keyboard::Exclusive,
+            FIRST_KEYBOARD,
         ),
         |win, _| {
+            take_keyboard_when_mapped(win);
             let items: Rc<RefCell<Vec<Item>>> = Default::default();
             let names: Rc<RefCell<files::Index>> = Default::default();
             let (c, render) = content(
@@ -288,8 +384,11 @@ pub fn content(
                 {
                     // The pointer moves the selection: Return opens what is lit.
                     let (shown, sel) = (shown.clone(), sel.clone());
+                    // `motion`, not `enter`: a row rebuilt under a resting pointer gets an enter
+                    // but no motion, so Return keeps opening the top hit (QA-LN-2: 'ls' + Return
+                    // opened the row under the pointer).
                     let motion = gtk::EventControllerMotion::new();
-                    motion.connect_enter(move |_, _, _| {
+                    motion.connect_motion(move |_, _, _| {
                         let Ok(s) = shown.try_borrow() else { return };
                         if let Some(n) = hover_select(sel.get(), i, s.len()) {
                             if let Some((o, _)) = s.get(sel.get()) {
@@ -459,6 +558,97 @@ mod tests {
         assert_eq!(items[0].title, "A note \u{2014} Today \u{b7} notes");
         assert_eq!(items[0].kind, PROVIDED);
         assert_eq!(items[0].exec, [OPEN_ROW, "7", "k"]);
+    }
+
+    /// QA-LN-18: 'lock', 'shut down', 'log out', 'sleep', 'screenshot' find the action, first.
+    #[test]
+    fn actions_indexed() {
+        let idx = index(vec![]);
+        let top = |q: &str| {
+            search::search(&idx, q, 1)
+                .first()
+                .map(|i| (i.title.clone(), i.kind))
+        };
+        assert_eq!(top("shut down"), Some(("Shut Down".into(), ACTION)));
+        assert_eq!(top("sleep"), Some(("Sleep".into(), ACTION)));
+        assert_eq!(top("log out"), Some(("Log Out".into(), ACTION)));
+        assert_eq!(top("restart"), Some(("Restart".into(), ACTION)));
+        assert_eq!(top("screenshot"), Some(("Take Screenshot".into(), ACTION)));
+        let by = |t: &str| {
+            actions(false)
+                .into_iter()
+                .find(|i| i.title == t)
+                .unwrap()
+                .exec
+        };
+        assert_eq!(
+            by("Shut Down"),
+            ["wol", "shell", "show", "session-shutdown"]
+        );
+        assert_eq!(
+            by("Take Screenshot"),
+            ["wol", "shell", "show", "screenshot"]
+        );
+        // Every shell target an action opens is one the wol CLI accepts.
+        for a in actions(false)
+            .iter()
+            .filter(|a| a.exec.get(2).is_some_and(|v| v == "show"))
+        {
+            assert!(
+                shared::shell::PANELS.contains(&a.exec[3].as_str()),
+                "{:?}",
+                a.exec
+            );
+        }
+        // Live has no Lock Screen action (nothing unlocks the live account).
+        assert!(actions(false).iter().any(|a| a.title == "Lock Screen"));
+        assert!(!actions(true).iter().any(|a| a.title == "Lock Screen"));
+    }
+
+    /// QA-LN-20: the real names of the pinned apps find them.
+    #[test]
+    fn index_has_generic_and_product_names() {
+        let idx = index(vec![]);
+        let top = |q: &str| search::search(&idx, q, 1).first().map(|i| i.title.clone());
+        assert_eq!(top("helium").as_deref(), Some("Browser"));
+        assert_eq!(top("geary").as_deref(), Some("Mail"));
+        assert_eq!(top("nautilus").as_deref(), Some("Files"));
+        assert_eq!(top("amberol").as_deref(), Some("Music"));
+        assert_eq!(top("shotwell").as_deref(), Some("Photos"));
+        assert_eq!(top("gnote").as_deref(), Some("Notes"));
+        assert_eq!(
+            top("browser").as_deref(),
+            Some("Browser"),
+            "the WolOS name still finds it"
+        );
+    }
+
+    /// QA-LN-2: 'ls' + Return opened the row under a resting pointer. Rows are rebuilt on every
+    /// keystroke; GTK sends `enter` to the new row under the pointer, which lit it. Only real pointer
+    /// motion moves the selection now, so Return opens the top hit.
+    #[test]
+    fn return_takes_top_hit_with_resting_pointer() {
+        let src = include_str!("searchbar.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert!(
+            code.contains("motion.connect_motion("),
+            "hover follows motion"
+        );
+        assert!(
+            !code.contains(concat!("motion.connect_", "enter(")),
+            "an enter alone lights nothing"
+        );
+        // The first row is the selected one after every rebuild.
+        assert!(code.contains("if i == 0 {\n                    b.add_css_class(\"selected\")"));
+    }
+
+    /// QA-LIVE1-11: Search starts without the keyboard and takes it once mapped (the change
+    /// Hyprland acts on).
+    #[test]
+    fn search_takes_keyboard_after_map() {
+        assert_eq!(FIRST_KEYBOARD, Keyboard::None);
+        let src = include_str!("searchbar.rs");
+        assert!(src.contains("set_keyboard(&w, Keyboard::Exclusive)"));
     }
 
     #[test]

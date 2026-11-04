@@ -241,6 +241,14 @@ struct Facts {
     /// Installed apps (names and icons of the grants), read with the rest off the UI thread
     /// (QA-SET-45: `load_all` ran on the GTK thread).
     entries: Vec<crate::desktop::Entry>,
+    /// Error reports are sent (`Machine::reports_on`); None unread.
+    reports: Option<bool>,
+}
+
+/// The Error Reports switch and where it starts: shown when the state was read and this build
+/// has the `reports` verb (wol-admind writes reports.conf and the timer follows it).
+fn reports_switch(on: Option<bool>, verb: bool) -> Option<bool> {
+    on.filter(|_| verb)
 }
 
 /// What a grant for one peer app or one device allows.
@@ -288,7 +296,15 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
             .into_iter()
             .map(|(path, granted)| {
                 let (name, icon) = app_of(entries, path);
-                consent_row(e, status, (&icon, &name), what, (path.as_str(), granted), cap, can_change)
+                consent_row(
+                    e,
+                    status,
+                    (&icon, &name),
+                    what,
+                    (path.as_str(), granted),
+                    cap,
+                    can_change,
+                )
             })
             .collect();
         if !rows.is_empty() {
@@ -301,7 +317,15 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
         .filter_map(|(path, cap)| Some((path, cap, scoped(entries, cap)?)))
         .map(|(path, cap, what)| {
             let (name, icon) = app_of(entries, path);
-            consent_row(e, status, (&icon, &name), &what, (path.as_str(), true), cap, can_change)
+            consent_row(
+                e,
+                status,
+                (&icon, &name),
+                &what,
+                (path.as_str(), true),
+                cap,
+                can_change,
+            )
         })
         .collect();
     if !peers.is_empty() {
@@ -389,6 +413,21 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
                 },
             ));
         }
+    }
+    if let Some(on) = reports_switch(f.reports, admin("reports", &[]).is_some()) {
+        let (ctx, st) = (e.ctx.clone(), status.clone());
+        into.append(&w::section(
+            "",
+            &[form::pending_toggle_row(
+                "Send error reports",
+                crate::copy::settings::REPORTS_HINT,
+                on,
+                move |v, done| match admin("reports", &[if v { "on" } else { "off" }]) {
+                    Some(a) => ctx.act_switch(a, &st, done),
+                    None => done(false),
+                },
+            )],
+        ));
     }
     let helpers = form::nav_row(
         "wolos-assistant-symbolic",
@@ -531,6 +570,7 @@ fn load(e: &Rc<Env>, body: &gtk::Box, status: &gtk::Label) {
             encrypted: m.storage().and_then(|s| s.encrypted),
             boot: m.boot(),
             entries: crate::desktop::load_all(),
+            reports: m.reports_on(),
         },
         move |into, f| render(&e2, into, f, &st, &reload),
     );
@@ -539,6 +579,21 @@ fn load(e: &Rc<Env>, body: &gtk::Box, status: &gtk::Label) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// B6 follow-up: the Error Reports switch is drawn from what reports.conf says, and only
+    /// where the `reports` verb exists.
+    #[test]
+    fn reports_switch_reads_the_saved_choice() {
+        assert_eq!(reports_switch(Some(true), true), Some(true));
+        assert_eq!(reports_switch(Some(false), true), Some(false));
+        assert_eq!(reports_switch(None, true), None, "unread: no switch");
+        assert_eq!(
+            reports_switch(Some(true), false),
+            None,
+            "no verb: no switch"
+        );
+        assert!(shared::admin::AdminAction::parse("reports").is_some());
+    }
 
     /// MANUAL 0.12.0: "Notifications are off for hello. Turn them on in System Settings > Privacy
     /// & Security", and that pane had no switch for hello. An app that asked has its row, off;

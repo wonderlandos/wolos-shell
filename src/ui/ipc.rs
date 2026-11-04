@@ -112,6 +112,7 @@ pub fn shell_socket(
 ) {
     // Saved config files apply on their own (the verb `reload` stays the explicit way).
     watch_prefs();
+    logind_lock();
     let handlers = Rc::new(handlers);
     let path = protocol::socket_path(&crate::kit::runtime_dir());
     let _ = std::fs::remove_file(&path);
@@ -243,6 +244,82 @@ pub fn shell_socket(
                 }
             });
         }
+    });
+}
+
+/// logind's session bus names (`loginctl lock-session` sends `Lock` to the session object).
+const LOGIND: &str = "org.freedesktop.login1";
+const LOGIND_MANAGER: &str = "org.freedesktop.login1.Manager";
+const LOGIND_SESSION: &str = "org.freedesktop.login1.Session";
+/// Longest wait for logind's answer to `GetSession`.
+const LOGIND_TIMEOUT_MS: i32 = 5000;
+
+/// What `Lock` on this session runs: the lock screen unless one is up
+/// (`wol_core::power::policy::LOCK_CMD`, the same as hypridle and the sleep hook).
+pub fn logind_lock_argv() -> [&'static str; 3] {
+    ["sh", "-c", wol_core::power::policy::LOCK_CMD]
+}
+
+/// The session id `GetSession` is asked for: `$XDG_SESSION_ID` when the session has one, else
+/// `auto` (logind picks the caller's session, or its user's display session).
+pub fn logind_session_id(env: Option<&str>) -> String {
+    env.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("auto")
+        .to_string()
+}
+
+thread_local! {
+    /// The `Lock` subscription: lives as long as the shell.
+    static LOGIND_SUB: std::cell::RefCell<Option<gio::SignalSubscription>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// `loginctl lock-session` (logind's `Lock` signal on this session) starts the lock screen
+/// (QA-DESIGN-37: it did nothing; only hypridle listened, when it ran at all). The shell runs
+/// for the whole session under its supervisor, so the lock does not hang on hypridle. On the
+/// live system wol-lock refuses (`ui::lock::refuses_lock`).
+fn logind_lock() {
+    glib::spawn_future_local(async {
+        let Ok(conn) = gio::bus_get_future(gio::BusType::System).await else {
+            return crate::diag::say!(
+                "wol-shell: no system bus: loginctl lock-session not followed"
+            );
+        };
+        let id = logind_session_id(crate::envv::var("XDG_SESSION_ID").as_deref());
+        let reply = conn
+            .call_future(
+                Some(LOGIND),
+                "/org/freedesktop/login1",
+                LOGIND_MANAGER,
+                "GetSession",
+                Some(&(id.as_str(),).to_variant()),
+                glib::VariantTy::new("(o)").ok(),
+                gio::DBusCallFlags::NONE,
+                LOGIND_TIMEOUT_MS,
+            )
+            .await;
+        let path = match reply {
+            Ok(v) => v.child_value(0).str().map(String::from).unwrap_or_default(),
+            Err(e) => {
+                return crate::diag::say!(
+                    "wol-shell: logind session '{id}': {e}; loginctl lock-session not followed"
+                );
+            }
+        };
+        let sub = conn.subscribe_to_signal(
+            Some(LOGIND),
+            Some(LOGIND_SESSION),
+            Some("Lock"),
+            Some(&path),
+            None,
+            gio::DBusSignalFlags::NONE,
+            |_| {
+                let argv: Vec<String> = logind_lock_argv().iter().map(|s| s.to_string()).collect();
+                crate::kit::spawn(&argv);
+            },
+        );
+        LOGIND_SUB.set(Some(sub));
     });
 }
 
@@ -678,8 +755,12 @@ fn run(
         let mic = cmd.target == "osd-mic";
         glib::spawn_future_local(async move {
             let _ = done.recv().await;
-            let (icon, level) = osd_view(mic, sys.audio());
-            osd.show(icon, level);
+            after_audio_read(
+                mic,
+                sys.audio(),
+                |icon, level| osd.show(icon, level),
+                super::menubar::refresh_now,
+            );
         });
         return;
     }
@@ -916,6 +997,19 @@ pub fn osd_view(mic: bool, a: crate::status::Audio) -> (&'static str, u8) {
     (icon, level)
 }
 
+/// `show osd|osd-mic` read the sink and the source: the OSD shows the new level, and the menu
+/// bar's speaker follows from the same read (QA-DEV-11: it waited 1-3 s for the 5 s poll).
+pub fn after_audio_read(
+    mic: bool,
+    a: crate::status::Audio,
+    show: impl FnOnce(&'static str, u8),
+    bars: impl FnOnce(),
+) {
+    let (icon, level) = osd_view(mic, a);
+    show(icon, level);
+    bars();
+}
+
 /// One event line.
 async fn handle(line: &str, dock: &Rc<Dock>, panels: &Panels, show: &Show) {
     if super::transient::feed(line) {
@@ -964,9 +1058,15 @@ async fn handle(line: &str, dock: &Rc<Dock>, panels: &Panels, show: &Show) {
             let _ = gio::spawn_blocking(hypr::ensure_key_forwarding).await;
             crate::hypr::config_reloaded();
         }
-        Some(hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. }) => {
+        Some(ev @ (hypr::Event::OpenWindow { .. } | hypr::Event::CloseWindow { .. })) => {
+            let closed = matches!(ev, hypr::Event::CloseWindow { .. });
             let clients = gio::spawn_blocking(hypr::clients).await.unwrap_or_default();
             dock.set_running(&hypr::running_classes(&clients));
+            // The last window went (a signal can end an app before any `activewindow` event):
+            // the bar names the desktop again (QA-LN-6: "Terminal  Window" with 0 clients).
+            if closed && let Some((c, t)) = super::menubar::app_when_no_client(&clients) {
+                show(&c, &t);
+            }
         }
         _ => {}
     }
@@ -976,6 +1076,41 @@ async fn handle(line: &str, dock: &Rc<Dock>, panels: &Panels, show: &Show) {
 mod tests {
     use super::*;
     use shared::shell::{Approval, ApprovalRequest};
+
+    /// QA-DEV-11: the mute key's OSD showed muted while the menu bar's speaker lagged until the
+    /// next poll. The read behind the OSD refreshes the bars too, after the OSD shows.
+    #[test]
+    fn osd_refresh_ticks_menubar_icon() {
+        let order = std::cell::RefCell::new(Vec::new());
+        let muted = crate::status::Audio {
+            volume: Some(40),
+            muted: true,
+            ..Default::default()
+        };
+        after_audio_read(
+            false,
+            muted,
+            |icon, _| order.borrow_mut().push(icon.to_string()),
+            || order.borrow_mut().push("bars".into()),
+        );
+        assert_eq!(
+            *order.borrow(),
+            [crate::status::volume(muted).to_string(), "bars".into()]
+        );
+    }
+
+    /// QA-DESIGN-37: logind's `Lock` runs the one lock command (never a second lock screen),
+    /// for this session's id or logind's `auto`.
+    #[test]
+    fn logind_lock_runs_the_lock_command() {
+        let [sh, c, cmd] = logind_lock_argv();
+        assert_eq!((sh, c), ("sh", "-c"));
+        assert_eq!(cmd, wol_core::power::policy::LOCK_CMD);
+        assert!(cmd.starts_with("pgrep "), "no second lock screen");
+        assert_eq!(logind_session_id(Some("3")), "3");
+        assert_eq!(logind_session_id(Some(" ")), "auto");
+        assert_eq!(logind_session_id(None), "auto");
+    }
 
     /// Audit5 S9-3: the mic-mute key shows the microphone, muted, not the speaker level.
     #[test]

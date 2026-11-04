@@ -78,11 +78,12 @@ impl Join {
     }
 }
 
-/// A hidden network needs its name; a password, when given (always for a secured network), has
-/// the 8 to 63 characters WPA accepts.
+/// A hidden network needs its name; a password, when given (always for a secured network), is
+/// one WPA accepts: 8 to 63 characters, or the 64 hex digits of the key itself (QA-NET-18; one
+/// rule, `wol_core::wifi::validate`).
 fn join_ready(other: bool, name: &str, password: &str) -> bool {
     let len = password.chars().count();
-    let fits = (8..=63).contains(&len);
+    let fits = len > 0 && wol_core::wifi::validate("x", Some(password)).is_none();
     if other {
         !name.trim().is_empty() && (len == 0 || fits)
     } else {
@@ -103,11 +104,19 @@ fn link(p: &DetailPage, argv: &'static [&'static str]) {
 
 /// Joins `ssid`, with progress and the outcome on the Wi-Fi page; a refused password reopens the
 /// sheet.
-fn join(ui: &Rc<Ui>, page: &DetailPage, j: &Join, ssid: String, password: Option<String>) {
+/// `hidden`: joined from Other Network, so NetworkManager asks for it by name (QA-NET-10).
+fn join(
+    ui: &Rc<Ui>,
+    page: &DetailPage,
+    j: &Join,
+    ssid: String,
+    password: Option<String>,
+    hidden: bool,
+) {
     page.set_status(&copy::wifi_joining(&ssid), true);
     let (p, j) = (page.clone(), j.clone());
     let secured = password.is_some();
-    ui.act_with(Action::WifiJoin(ssid.clone(), password), move |r| match r {
+    ui.act_with(join_action(&ssid, password, hidden), move |r| match r {
         Ok(()) => p.set_status("", false),
         Err(e) => {
             p.set_status(&copy::wifi_join(e, &ssid), false);
@@ -116,6 +125,16 @@ fn join(ui: &Rc<Ui>, page: &DetailPage, j: &Join, ssid: String, password: Option
             }
         }
     });
+}
+
+/// The join the sheet sends: from Other Network (`hidden`) NetworkManager asks for the network by
+/// name (`802-11-wireless.hidden yes`); a listed network is joined as it announces itself.
+pub(super) fn join_action(ssid: &str, password: Option<String>, hidden: bool) -> Action {
+    Action::WifiJoin {
+        ssid: ssid.to_string(),
+        password,
+        hidden,
+    }
 }
 
 fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
@@ -156,18 +175,16 @@ fn join_sheet(ui: &Rc<Ui>, page: &DetailPage) -> Join {
     let go = {
         let (u, p, j) = (ui.clone(), page.clone(), j.clone());
         Rc::new(move || {
-            let ssid = j
-                .ssid
-                .borrow()
-                .clone()
-                .unwrap_or_else(|| j.name.text().trim().to_string());
+            let picked = j.ssid.borrow().clone();
+            let hidden = picked.is_none();
+            let ssid = picked.unwrap_or_else(|| j.name.text().trim().to_string());
             if !j.join.is_sensitive() {
                 return;
             }
             let pw = j.password.text().to_string();
             j.password.set_text("");
             j.sheet.set_reveal_child(false);
-            join(&u, &p, &j, ssid, (!pw.is_empty()).then_some(pw));
+            join(&u, &p, &j, ssid, (!pw.is_empty()).then_some(pw), hidden);
         })
     };
     {
@@ -285,11 +302,21 @@ impl Pages {
         let nets = s.wifi_networks();
         let shape = wifi_shape(&nets, s.wifi_enabled() == Some(true));
         if self.nets.borrow().as_ref() != Some(&shape) {
-            let mut rows: Vec<gtk::Widget> = nets
-                .iter()
-                .take(MAX_NETWORKS)
-                .map(|n| self.network_row(ui, n))
-                .collect();
+            let (shown, more) = listed(&nets);
+            let mut rows: Vec<gtk::Widget> =
+                shown.iter().map(|n| self.network_row(ui, n)).collect();
+            // QA-NET-15: never a silent cut; the rest are one click away in Settings.
+            if more > 0 {
+                let r = DeviceRow::new(
+                    "view-more-symbolic",
+                    &crate::copy::settings::wifi_more_networks(more),
+                    "",
+                    false,
+                    None,
+                );
+                r.button.connect_clicked(move |b| launch(b, WIFI_SETTINGS));
+                rows.push(r.button.upcast());
+            }
             if s.wifi_enabled() == Some(true) {
                 let other = DeviceRow::new("view-more-symbolic", "Other Network…", "", false, None);
                 let j = self.join.clone();
@@ -327,13 +354,13 @@ impl Pages {
                         } else {
                             "Connecting…"
                         });
-                        let (r3, u2) = (r2.clone(), u.clone());
+                        let (r3, u2, addr2) = (r2.clone(), u.clone(), addr.clone());
                         u.act_then(Action::BtConnect(addr.clone(), !on), move |ok| {
                             let before = if on { "Connected" } else { "" };
                             let sub = match (ok, on) {
                                 (true, true) => "",
                                 (true, false) => "Connected",
-                                (false, _) => u2.sys.bt_connect_reason().unwrap_or(before),
+                                (false, _) => u2.sys.bt_connect_reason(&addr2).unwrap_or(before),
                             };
                             r3.set_subtitle(sub);
                         });
@@ -363,11 +390,18 @@ impl Pages {
             n.secure.then_some("system-lock-screen-symbolic"),
         );
         let (n, u, j, p) = (n.clone(), ui.clone(), self.join.clone(), self.wifi.clone());
+        let enterprise = ui.sys.wifi_enterprise(&n.ssid);
         r.button.connect_clicked(move |_| {
-            if n.secure && !n.connected {
+            if n.connected {
+                return;
+            }
+            if enterprise {
+                // QA-NET-9: no password field that can never work.
+                p.set_status(crate::copy::settings::WIFI_ENTERPRISE, false);
+            } else if n.secure {
                 j.open(Some(&n.ssid));
-            } else if !n.connected {
-                join(&u, &p, &j, n.ssid.clone(), None);
+            } else {
+                join(&u, &p, &j, n.ssid.clone(), None, false);
             }
         });
         r.button.upcast()
@@ -378,6 +412,13 @@ impl Pages {
 /// the Other Network row follows. A signal that wobbles inside its bucket keeps the rows, and
 /// with them the keyboard focus (QA-SET-50).
 pub(super) type WifiShape = (Vec<(String, &'static str, bool, bool)>, bool);
+
+/// The networks the page lists and how many more there are (shown as one "n more" row that opens
+/// Settings > Wi-Fi; QA-NET-15).
+pub(super) fn listed(nets: &[WifiNetwork]) -> (&[WifiNetwork], usize) {
+    let n = nets.len().min(MAX_NETWORKS);
+    (&nets[..n], nets.len() - n)
+}
 
 pub(super) fn wifi_shape(nets: &[WifiNetwork], other: bool) -> WifiShape {
     (
@@ -398,7 +439,8 @@ pub(super) fn wifi_shape(nets: &[WifiNetwork], other: bool) -> WifiShape {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_ready, wifi_shape};
+    use super::{MAX_NETWORKS, join_action, join_ready, listed, wifi_shape};
+    use crate::system::Action;
     use crate::system::WifiNetwork;
 
     /// QA-SET-50: the rows were rebuilt whenever any signal changed by one point; the person
@@ -424,6 +466,45 @@ mod tests {
         assert_ne!(a, wifi_shape(&[n(5, false)], true), "the icon changes");
     }
 
+    /// QA-NET-15: 20 networks in range: the page lists MAX_NETWORKS and says how many more,
+    /// never cutting the rest silently.
+    #[test]
+    fn twenty_networks_say_how_many_more() {
+        let nets: Vec<WifiNetwork> = (0..20)
+            .map(|i| WifiNetwork {
+                ssid: format!("Net {i}"),
+                signal: 90 - i as u8,
+                secure: true,
+                connected: false,
+            })
+            .collect();
+        let (shown, more) = listed(&nets);
+        assert_eq!((shown.len(), more), (MAX_NETWORKS, 20 - MAX_NETWORKS));
+        assert_eq!(listed(&nets[..3]).1, 0);
+        assert!(crate::copy::settings::wifi_more_networks(12).contains("12"));
+    }
+
+    /// QA-NET-10: Other Network sends `hidden`, a listed network does not; and the sheet's go
+    /// path passes "no SSID picked" as hidden.
+    #[test]
+    fn other_network_joins_hidden() {
+        assert_eq!(
+            join_action("Attic", Some("password1".into()), true),
+            Action::WifiJoin {
+                ssid: "Attic".into(),
+                password: Some("password1".into()),
+                hidden: true
+            }
+        );
+        assert!(matches!(
+            join_action("Home", None, false),
+            Action::WifiJoin { hidden: false, .. }
+        ));
+        let src = include_str!("pages.rs");
+        let code = src.split("#[cfg(test)]").next().unwrap();
+        assert!(code.contains("let hidden = picked.is_none();"));
+    }
+
     #[test]
     fn join_waits_for_what_can_be_sent() {
         for (other, name, pw, ready) in [
@@ -431,6 +512,7 @@ mod tests {
             (false, "", "short", false),
             (false, "", "curiouser", true),
             (false, "", &"x".repeat(64), false),
+            (false, "", &"a".repeat(64), true),
             (true, "", "", false),
             (true, "  ", "curiouser", false),
             (true, "Cafe", "", true),

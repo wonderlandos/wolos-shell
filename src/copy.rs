@@ -942,6 +942,9 @@ pub const DESKTOP_BUSY: &str = "The desktop is busy. Try again.";
 /// The password is right, but the account may not use the screen (not in group `seat`).
 pub const LOGIN_NO_DISPLAY: &str =
     "This account can’t use the screen yet. Ask an administrator to add it to the seat group.";
+/// The encrypted home opens only with a password of typed characters (QA-SHADOW-39; the window's
+/// form of controller::login::TEXT_PASSWORD_SENTENCE, within RU-001's 140 characters).
+pub const LOGIN_TEXT_PASSWORD: &str = "Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks after this computer.";
 /// Login window with no account that can sign in (audit4 S3-7): (title, hint).
 pub const LOGIN_NO_ACCOUNTS: (&str, &str) = (
     "No Accounts",
