@@ -849,7 +849,7 @@ pub fn keyboard(win: &gtk::ApplicationWindow, root: &gtk::Box) -> Rc<dyn Fn(bool
 fn refresh(bar: &Bar, sys: &dyn crate::system::System) {
     let audio = sys.audio();
     let mut s = bar.seen.borrow_mut();
-    let n = status::menubar_network(sys.network(), sys.wifi_enabled());
+    let n = status::menubar_glyph(sys.network(), sys.wifi_enabled(), sys.airplane());
     if s.0.set(n) {
         bar.network.set_icon_name(Some(n));
     }

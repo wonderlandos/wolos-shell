@@ -82,6 +82,19 @@ pub fn network(n: Network) -> &'static str {
     }
 }
 
+/// The menu bar's glyph while airplane mode is on (NET-3): every radio is off.
+pub const AIRPLANE_GLYPH: &str = "airplane-mode-symbolic";
+
+/// Menu bar network glyph with airplane mode: the plane while it is on and no wired link carries
+/// the traffic (a cable still works in airplane mode), else [`menubar_network`].
+pub fn menubar_glyph(n: Network, wifi_on: Option<bool>, airplane: Option<bool>) -> &'static str {
+    if airplane == Some(true) && (!n.online || n.wifi) {
+        AIRPLANE_GLYPH
+    } else {
+        menubar_network(n, wifi_on)
+    }
+}
+
 /// Menu bar network glyph: [`network`], except the struck-through Wi-Fi glyph while the radio is
 /// off (`wifi_on`, None = no Wi-Fi) and no wired link is up.
 pub fn menubar_network(n: Network, wifi_on: Option<bool>) -> &'static str {
@@ -184,6 +197,26 @@ mod tests {
         ] {
             assert_eq!(menubar_network(net, radio), want, "{net:?} {radio:?}");
         }
+    }
+
+    /// NET-21 airplane: the plane in the menu bar while every radio is off; a cable still shows.
+    #[test]
+    fn menubar_shows_the_plane_in_airplane_mode() {
+        let off = Network::default();
+        let wired = Network {
+            online: true,
+            ..Default::default()
+        };
+        assert_eq!(menubar_glyph(off, Some(false), Some(true)), AIRPLANE_GLYPH);
+        assert_eq!(
+            menubar_glyph(wired, Some(false), Some(true)),
+            "network-wired-symbolic"
+        );
+        assert_eq!(
+            menubar_glyph(off, Some(false), Some(false)),
+            "network-wireless-offline-symbolic"
+        );
+        assert_eq!(menubar_glyph(off, None, None), "network-offline-symbolic");
     }
 
     #[test]

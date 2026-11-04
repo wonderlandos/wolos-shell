@@ -29,9 +29,11 @@ mod control_center;
 mod datetime;
 mod desktop_dock;
 mod displays;
+mod dns_over_tls;
 mod effects;
 mod general;
 mod hardware;
+mod ip_settings;
 mod keyboard;
 mod language;
 mod lock;
@@ -41,9 +43,11 @@ mod malware;
 mod memory_saver;
 mod modules;
 mod network;
+mod network_vpn;
 mod notifications;
 mod printers;
 mod privacy;
+mod proxy;
 mod restore;
 mod search;
 mod sharing;
@@ -58,7 +62,7 @@ mod widgets;
 mod wifi;
 
 pub use accounts::{account_hint, account_name, password_problem};
-pub use machine::{Demo, DemoEdge, Kernel, Live, Machine, Sharing};
+pub use machine::{Demo, DemoEdge, Kernel, Live, Machine, NetSettings, Sharing, VpnChange};
 pub use malware::{full_section as malware_full_section, section as malware_section};
 pub use search::{Hit, hits};
 pub use shortcuts::KEY_LEGEND;
@@ -95,7 +99,10 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Network",
             "network-wired-symbolic",
-            "ethernet ip address router dns gateway mac firewall",
+            concat!(
+                "ethernet ip address router dns gateway mac firewall static manual dhcp subnet ",
+                "vpn wireguard openvpn proxy pac socks tls encrypted airplane flight mode radios"
+            ),
         ),
     ],
     &[
@@ -254,7 +261,7 @@ pub const PAGES: [&str; 25] = [
 ];
 
 /// Pages without a sidebar row, reached from a pane (`wol-settings "Storage"` works too).
-pub const SUBPAGES: [&str; 9] = [
+pub const SUBPAGES: [&str; 12] = [
     shortcuts::TITLE,
     startup_security::TITLE,
     "About",
@@ -264,6 +271,9 @@ pub const SUBPAGES: [&str; 9] = [
     "Language & Region",
     "Login Items",
     "Sharing",
+    ip_settings::TITLE,
+    proxy::TITLE,
+    dns_over_tls::TITLE,
 ];
 
 /// Older page names (links, scripts) -> today's.
@@ -1205,6 +1215,9 @@ fn build_page(env: &Rc<Env>, name: &str) -> Option<Build> {
         "Language & Region" => Box::new(move || language::page(&e).upcast()),
         "Login Items" => Box::new(move || login_items::page(&e).upcast()),
         "Sharing" => Box::new(move || sharing::page(&e).upcast()),
+        ip_settings::TITLE => Box::new(move || ip_settings::page(&e).upcast()),
+        proxy::TITLE => Box::new(move || proxy::page(&e).upcast()),
+        dns_over_tls::TITLE => Box::new(move || dns_over_tls::page(&e).upcast()),
         _ => return None,
     };
     Some(b)

@@ -19,6 +19,8 @@ pub enum Action {
         hidden: bool,
     },
     Bluetooth(bool),
+    /// Airplane mode (NET-3): every radio off, then back to the ones that were on.
+    Airplane(bool),
     Brightness(u8),
     Volume(u8),
     Muted(bool),
@@ -105,6 +107,10 @@ pub trait System: Send + Sync {
     }
     fn set_bluetooth(&self, _on: bool) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
+    }
+    /// Airplane mode (rfkill); None on a computer with no radio (the tile and the switch hide).
+    fn airplane(&self) -> Option<bool> {
+        None
     }
     fn set_brightness(&self, _percent: u8) -> Result<(), ActionError> {
         Err(ActionError::Unavailable)
@@ -232,6 +238,7 @@ pub trait System: Send + Sync {
             Action::Wifi(on) => self.set_wifi(*on),
             Action::WifiJoin { ssid, password, .. } => self.wifi_join(ssid, password.as_deref()),
             Action::Bluetooth(on) => self.set_bluetooth(*on),
+            Action::Airplane(_) => Err(ActionError::Unavailable),
             Action::Brightness(p) => self.set_brightness(*p),
             Action::Volume(p) => self.set_volume(*p),
             Action::Muted(m) => self.set_muted(*m),
@@ -720,6 +727,9 @@ pub struct Snapshot {
     pub outputs: Vec<Output>,
     pub brightness: Option<u8>,
     pub bluetooth: Option<bool>,
+    /// Airplane mode (NET-3), read with the slow topic; None without a radio.
+    #[serde(default)]
+    pub airplane: Option<bool>,
     pub monitors: Vec<Monitor>,
     pub night: Option<bool>,
     pub battery: Option<BatteryState>,
@@ -850,6 +860,9 @@ impl Inner {
         if due[2] {
             s.outputs = self.c.outputs();
             s.bluetooth = self.c.bluetooth();
+            s.airplane = self
+                .c
+                .airplane(read_airplane_file(&*self.c.host).as_deref());
             s.monitors = self.c.monitors();
             s.battery = self.c.battery();
             s.route = self.c.default_iface();
@@ -932,6 +945,7 @@ impl Inner {
                 hidden,
             } => c.wifi_join_hidden(ssid, password.as_deref(), *hidden, &pw),
             Action::Bluetooth(on) => c.set_bluetooth(*on, &pw),
+            Action::Airplane(on) => set_airplane(c, *on),
             Action::Brightness(p) => c.set_brightness(*p),
             Action::Volume(p) => c.set_volume(*p),
             Action::Muted(m) => c.set_muted(*m),
@@ -1012,6 +1026,13 @@ impl Inner {
                 }
                 Action::Wifi(on) => s.wifi_on = Some(*on),
                 Action::Bluetooth(on) => s.bluetooth = Some(*on),
+                Action::Airplane(on) => {
+                    s.airplane = Some(*on);
+                    if *on {
+                        s.wifi_on = s.wifi_on.map(|_| false);
+                        s.bluetooth = s.bluetooth.map(|_| false);
+                    }
+                }
                 Action::NightLight(on) => s.night = Some(*on),
                 Action::KeyboardBrightness(p) => s.keyboard = Some(*p),
                 Action::Power(m) => s.low_power = Some(*m == PowerMode::LowPower),
@@ -1045,6 +1066,36 @@ impl Inner {
         }
         r.map_err(ActionError::from)
     }
+}
+
+/// `$XDG_STATE_HOME/wolos/airplane`: the radios that were on before airplane mode.
+fn airplane_path() -> std::path::PathBuf {
+    wol_core::journal::state_home().join(wol_core::netconf::AIRPLANE_FILE)
+}
+
+fn read_airplane_file(host: &dyn wol_core::system::Host) -> Option<String> {
+    host.read_text(&airplane_path().to_string_lossy())
+}
+
+/// Airplane mode through `wol_core::controls`, which answers the list to keep (or None: the
+/// list goes); the file is the person's own.
+fn set_airplane(
+    c: &wol_core::controls::Controls,
+    on: bool,
+) -> Result<(), wol_core::controls::ControlError> {
+    let path = airplane_path();
+    let keep = c.set_airplane(on, read_airplane_file(&*c.host).as_deref())?;
+    let saved = match keep {
+        Some(text) => path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, text)),
+        None => match std::fs::remove_file(&path) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        },
+    };
+    saved.map_err(|_| wol_core::controls::ControlError::Failed)
 }
 
 /// A package change through wopkg when wopkg holds its consent grant
@@ -1150,6 +1201,8 @@ fn topics_of(a: &Action) -> [bool; TOPICS] {
         // A new network brings a new default route.
         Action::WifiJoin { .. } => (0, 1, 1, 0, 0),
         Action::Bluetooth(_) => (0, 0, 1, 0, 1),
+        // Every radio: Wi-Fi, Bluetooth (slow topic) and its devices.
+        Action::Airplane(_) => (0, 1, 1, 0, 1),
         Action::BtConnect(..) => (0, 0, 0, 0, 1),
         Action::Output(_) | Action::Monitor(_) => (0, 0, 1, 0, 0),
         Action::MediaToggle | Action::MediaNext | Action::MediaPrevious => (0, 0, 0, 1, 0),
@@ -1223,7 +1276,9 @@ fn admin_topics(a: shared::admin::AdminAction) -> [bool; TOPICS] {
         | A::PkgInstallFile
         | A::SystemRollback
         | A::SystemChannel
-        | A::Reports => (0, 0, 0, 0, 0),
+        | A::Reports
+        | A::Proxy
+        | A::DnsOverTls => (0, 0, 0, 0, 0),
     };
     [audio, wifi, slow, media, panel].map(|t| t == 1)
 }
@@ -1448,6 +1503,9 @@ impl System for CoreSystem {
     }
     fn bluetooth(&self) -> Option<bool> {
         self.inner.lock().bluetooth
+    }
+    fn airplane(&self) -> Option<bool> {
+        self.inner.lock().airplane
     }
     fn outputs(&self) -> Vec<String> {
         self.output_devices().into_iter().map(|o| o.name).collect()

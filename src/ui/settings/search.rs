@@ -11,7 +11,7 @@ use super::trackpad::rows as tp;
 
 /// Row titles per page (sidebar panes and subpages), as the page shows them; panes that name
 /// their titles (`rows` modules) are read from there, so the two cannot drift.
-pub(super) const ROWS: [(&str, &[&str]); 34] = [
+pub(super) const ROWS: [(&str, &[&str]); 37] = [
     (
         "Wi-Fi",
         &[
@@ -36,8 +36,31 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "IPv6 address",
             "Hardware address",
             "Firewall",
+            "Airplane Mode",
+            "IP settings",
+            "VPN",
+            "VPN password",
+            "Add VPN",
+            "Proxy",
+            "DNS over TLS",
         ],
     ),
+    (
+        "IP Settings",
+        &["Configure IPv4", "Address", "Router", "DNS servers"],
+    ),
+    (
+        "Proxy",
+        &[
+            "Proxy",
+            "Configuration address",
+            "Web proxy (HTTP)",
+            "Secure web proxy (HTTPS)",
+            "SOCKS proxy",
+            "Don’t use the proxy for",
+        ],
+    ),
+    ("DNS over TLS", &["DNS over TLS", "DNS servers"]),
     (
         "Notifications",
         &["Do Not Disturb", "Focus", "Notification Center", "Turn off"],
@@ -349,6 +372,7 @@ pub(super) fn parent(page: &str) -> &str {
         | "Login Items" | "Sharing" => "General",
         "Keyboard Shortcuts" => "Keyboard",
         "Startup Security" => "Privacy & Security",
+        "IP Settings" | "Proxy" | "DNS over TLS" => "Network",
         p => p,
     }
 }
@@ -571,8 +595,21 @@ mod tests {
     }
 
     /// The page each pane file renders (for the row index below).
-    const FILES: [(&str, &str, &str); 30] = [
+    const FILES: [(&str, &str, &str); 35] = [
         ("wifi.rs", "Wi-Fi", include_str!("wifi.rs")),
+        ("network.rs", "Network", include_str!("network.rs")),
+        ("network_vpn.rs", "Network", include_str!("network_vpn.rs")),
+        (
+            "ip_settings.rs",
+            "IP Settings",
+            include_str!("ip_settings.rs"),
+        ),
+        ("proxy.rs", "Proxy", include_str!("proxy.rs")),
+        (
+            "dns_over_tls.rs",
+            "DNS over TLS",
+            include_str!("dns_over_tls.rs"),
+        ),
         (
             "notifications.rs",
             "Notifications",
