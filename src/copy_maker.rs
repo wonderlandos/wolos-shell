@@ -28,13 +28,30 @@ pub const NEW_ABOUT: &str =
 
 /// Saved, and the check and the preview follow.
 pub const SAVED: &str = "Saved. The preview shows the new version.";
+/// Saved, but the check found a problem: the desktop keeps the last version whose manifest read
+/// (or leaves a failing script out) until it is fixed (QA-PLUG-64).
+pub const SAVED_WITH_PROBLEM: &str = "Saved, but the plugin has a problem. Until you fix what the list shows, your desktop doesn’t show this version.";
+/// Leaving the editor (closing the window, opening another plugin) with edits not saved
+/// (QA-PLUG-9): the sheet's question, what it means, and its two buttons (Cancel first).
+pub const UNSAVED_TITLE: &str = "Discard your changes?";
+pub const UNSAVED_DETAIL: &str =
+    "Your edits to this plugin aren’t saved. Keep editing to save them first.";
+pub const KEEP_EDITING: &str = "Keep Editing";
+pub const DISCARD_CHANGES: &str = "Discard Changes";
+/// Create Plugin with no kind ticked (it used to make a menu bar item and a card in silence).
+pub const PICK_A_KIND: &str = "Pick at least one thing the plugin adds, then create it.";
 /// The file could not be written.
 pub const NOT_SAVED: &str =
     "The file couldn’t be saved. Check that the folder is yours, then try again.";
+/// The disk is full (QA-PLUG-77): saving cannot work until room is made.
+pub const NOT_SAVED_FULL: &str =
+    "The file couldn’t be saved because the disk is full. Free some space, then save again.";
 /// The check found nothing.
 pub const NO_PROBLEMS: &str = "No problems found. The plugin loads as it is.";
-/// Unsaved edits are not checked yet.
-pub const UNSAVED: &str = "Save to check your changes and see them in the preview.";
+/// Edits not saved yet: the problems list already checks them as you type (QA-PLUG-32); the
+/// preview follows the saved files.
+pub const UNSAVED: &str =
+    "Not saved yet. The list checks what you type; save to see it in the preview.";
 
 // ---- Preview ----
 
@@ -53,10 +70,28 @@ pub const PREVIEW_NO_WEB: &str = "Nothing is read from the web in the preview.";
 
 // ---- Package and share ----
 
-/// The package was written next to the folder.
-pub const PACKED: &str = "The package is ready. Share it to send it to the Store.";
+/// The package was written: where (QA-PLUG-11), and that Share only shows the steps (it sends
+/// nothing, QA-PLUG-76).
+pub fn packed(file: &std::path::Path) -> String {
+    format!(
+        "The package is ready: {}. Share shows how to ask for it in the Store.",
+        file.display()
+    )
+}
 /// The package could not be made (a problem, or the packer is missing).
 pub const NOT_PACKED: &str = "The package couldn’t be made. Press Check and fix what it lists.";
+/// The package could not be made, and the packer said why (`reason`, one sentence of its own);
+/// without one, [`NOT_PACKED`].
+pub fn not_packed(reason: &str) -> String {
+    let r = reason.trim().trim_end_matches('.');
+    if r.is_empty() {
+        NOT_PACKED.to_owned()
+    } else {
+        format!("The package couldn’t be made: {r}.")
+    }
+}
+/// Share while the plugin still has the author or one-line summary it started with.
+pub const SHARE_FILL_IN: &str = "Fill in the author and what the plugin does in plugin.toml first, then save, create the package and share it again.";
 /// Create Package while the editor has unsaved edits.
 pub const SAVE_FIRST: &str = "Save your changes first. The package is made from the saved files.";
 /// Share before a package exists.
@@ -140,7 +175,7 @@ pub const THEME_FILTER: &str = "Themes";
 pub const APPEARANCE_ROW: &str = "Change colors with sliders and keep all text readable.";
 
 /// Every sentence above (for the lint test).
-pub const ALL: [&str; 30] = [
+pub const ALL: [&str; 34] = [
     START,
     NOT_A_PLUGIN,
     NOT_READ,
@@ -157,7 +192,11 @@ pub const ALL: [&str; 30] = [
     PREVIEW_EMPTY,
     PREVIEW_NO_RUN,
     PREVIEW_NO_WEB,
-    PACKED,
+    SAVED_WITH_PROBLEM,
+    UNSAVED_DETAIL,
+    PICK_A_KIND,
+    NOT_SAVED_FULL,
+    SHARE_FILL_IN,
     NOT_PACKED,
     PACK_FIRST,
     SAVE_FIRST,
@@ -181,9 +220,11 @@ pub const INDEX_REPO: &str = "wonderlandos/wolos-plugins";
 pub fn publish_steps(file: &str, id: &str, version: &str, entry: &str) -> String {
     format!(
         "1. Put {file} where anyone can download it, such as a release of your own repository, \
-and set \"url\" below to that address.\n\
-2. Add this entry to index.json in a fork of {INDEX_REPO}:\n\n{entry}\n\n\
-3. Open the request from your fork:\n\n\
+and replace the \"url\" below with that address.\n\
+2. On GitHub, fork {INDEX_REPO}, clone your fork, and add this entry to index.json in it:\n\n{entry}\n\n\
+3. Commit and push the change from your clone, then open the request. The `gh` tool comes with \
+the Developer module (wol modules install dev); without it, open the request on github.com instead:\n\n\
+git switch -c add-{id} && git commit -am \"Add {id} {version}\" && git push -u origin HEAD\n\
 gh pr create --repo {INDEX_REPO} --title \"Add {id} {version}\" --body \"sha256 of {file} is in the entry.\"\n"
     )
 }
@@ -205,5 +246,16 @@ mod tests {
         assert!(s.contains("{\"id\": \"a.b\"}"));
         assert!(s.contains("gh pr create --repo wonderlandos/wolos-plugins"));
         assert!(s.contains("Add a.b 0.1"));
+        // QA-PLUG-54/75: the real steps (fork, clone, commit, push) and where gh comes from.
+        for w in [
+            "fork",
+            "clone",
+            "git commit",
+            "git push",
+            "wol modules install dev",
+        ] {
+            assert!(s.contains(w), "{w}: {s}");
+        }
+        assert!(!s.contains("example.com"));
     }
 }

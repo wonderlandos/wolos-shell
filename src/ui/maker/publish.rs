@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Plugin Maker Create Package and Share (ADR 0031 "Plugin Maker / Theme Studio"): Create Package
-//! runs `wol plugin pack` (the `.wolplug` format of `wol_core::package`, written next to the
-//! folder), and Share shows the plugin index request as text: the index entry with the
+//! runs `wol plugin pack` (the `.wolplug` format of `wol_core::package`, written to Downloads
+//! (or the home folder)), and Share shows the plugin index request as text: the index entry with the
 //! package's SHA-256 and size, and the command that opens the pull request.
 //!
 //! Invariant: the app writes nothing to the network. The person copies the steps and runs them;
@@ -25,17 +25,25 @@ pub struct Packed {
     pub manifest: Manifest,
 }
 
-/// `wol plugin pack <dir> --yes --json`: the CLI's own pack, replacing an older package of the
-/// same version next to the folder (the person asked for a new one).
-pub fn pack_argv(dir: &Path) -> Vec<String> {
+/// `wol plugin pack <dir> <out> --yes --json`: the CLI's own pack, into the folder `out`
+/// (QA-PLUG-11: the person's Downloads, not the hidden plugin folder), replacing an older package
+/// of the same version there (the person asked for a new one).
+pub fn pack_argv(dir: &Path, out: &Path) -> Vec<String> {
     vec![
         "wol".into(),
         "plugin".into(),
         "pack".into(),
         dir.display().to_string(),
+        out.display().to_string(),
         "--yes".into(),
         "--json".into(),
     ]
+}
+
+/// Where Create Package puts the file: `Downloads` in `home` when it is there, else `home`.
+pub fn pack_out(home: &Path) -> PathBuf {
+    let d = home.join("Downloads");
+    if d.is_dir() { d } else { home.to_path_buf() }
 }
 
 /// The package path from `wol plugin pack --json` (`{"file": ...}`).
@@ -44,17 +52,94 @@ pub fn packed_file(out: &str) -> Option<PathBuf> {
     v.get("file")?.as_str().map(PathBuf::from)
 }
 
-/// Create Package: packs `dir` with the CLI, then hashes the file. Blocks (up to
-/// [`PACK_TIMEOUT`]): run it off the GTK thread. The error is the sentence.
-pub fn pack(dir: &Path) -> Result<Packed, &'static str> {
-    let manifest = cp::check(dir, false).manifest.ok_or(copy::NOT_PACKED)?;
-    let argv = pack_argv(dir);
-    let refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let out = wol_core::system::run_with_timeout(&refs, PACK_TIMEOUT).ok_or(copy::NOT_PACKED)?;
-    let file = packed_file(&out).ok_or(copy::NOT_PACKED)?;
-    let sha256 = wol_core::package::sha256_file(&file).map_err(|_| copy::NOT_PACKED)?;
+/// Stdout of `argv` when it exits 0 within `timeout`; else the CLI's own reason (its
+/// `wol: ...` line without the prefix), or "" when it did not run or said nothing.
+fn run_pack(argv: &[String], timeout: Duration) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let (file, args) = argv.split_first().ok_or_else(String::new)?;
+    let mut child = Command::new(file)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| String::new())?;
+    // Both pipes are read on their own threads (a full pipe would stop the child), at most
+    // PACK_OUT_MAX bytes each: the CLI's answer is a few lines.
+    let read = |name: &str, r: Option<Box<dyn Read + Send>>| {
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                let mut b = Vec::new();
+                if let Some(r) = r {
+                    let _ = r.take(PACK_OUT_MAX).read_to_end(&mut b);
+                }
+                String::from_utf8_lossy(&b).into_owned()
+            })
+    };
+    let (Ok(out), Ok(err)) = (
+        read("pack-out", child.stdout.take().map(|s| Box::new(s) as _)),
+        read("pack-err", child.stderr.take().map(|s| Box::new(s) as _)),
+    ) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(String::new());
+    };
+    let until = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) if std::time::Instant::now() < until => {
+                std::thread::park_timeout(PACK_POLL);
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(String::new());
+            }
+        }
+    };
+    let (out, err) = (
+        out.join().unwrap_or_default(),
+        err.join().unwrap_or_default(),
+    );
+    if status.success() {
+        Ok(out)
+    } else {
+        Err(reason_of(&err))
+    }
+}
+
+/// The most of the CLI's output that is read.
+const PACK_OUT_MAX: u64 = 64 * 1024;
+/// How often a running pack is looked at.
+const PACK_POLL: Duration = Duration::from_millis(50);
+
+/// The CLI's reason from its stderr: the first `wol: ...` line, prefix and trailing dot kept
+/// out so it reads inside the sentence; "" when there is none.
+pub fn reason_of(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find_map(|l| l.strip_prefix("wol: "))
+        .unwrap_or("")
+        .trim()
+        .to_owned()
+}
+
+/// Create Package: packs `dir` with the CLI into `out`, then hashes the file. Blocks (up to
+/// [`PACK_TIMEOUT`]): run it off the GTK thread. The error is the sentence, with the CLI's reason
+/// when it gave one (QA-PLUG-55: it was always "Press Check").
+pub fn pack(dir: &Path, out: &Path) -> Result<Packed, String> {
+    let manifest = cp::check(dir, false)
+        .manifest
+        .ok_or_else(|| copy::NOT_PACKED.to_owned())?;
+    let argv = pack_argv(dir, out);
+    let text = run_pack(&argv, PACK_TIMEOUT).map_err(|why| copy::not_packed(&why))?;
+    let file = packed_file(&text).ok_or_else(|| copy::NOT_PACKED.to_owned())?;
+    let sha256 = wol_core::package::sha256_file(&file).map_err(|_| copy::NOT_PACKED.to_owned())?;
     let size = std::fs::metadata(&file)
-        .map_err(|_| copy::NOT_PACKED)?
+        .map_err(|_| copy::NOT_PACKED.to_owned())?
         .len();
     Ok(Packed {
         file,
@@ -83,9 +168,20 @@ pub fn entry(p: &Packed) -> wopkg::index::plugins::Entry {
         kinds: m.kinds().iter().map(|k| k.id().to_owned()).collect(),
         permissions: m.permissions.iter().map(|x| x.id().to_owned()).collect(),
         min_wolos: m.min_wolos.clone(),
-        url: format!("https://example.com/{name}"),
+        // Not an address that works: the person must put theirs (QA-PLUG-54).
+        url: format!("https://REPLACE-WITH-YOUR-ADDRESS.invalid/{name}"),
         sha256: p.sha256.clone(),
         size: p.size,
+    }
+}
+
+/// What a plugin still has from the scaffold that the index would not take (QA-PLUG-75): no
+/// author, or the starting one-line summary. The sentence to show instead of the Share sheet.
+pub fn scaffold_leftover(m: &Manifest) -> Option<&'static str> {
+    if m.author.trim().is_empty() || m.description.trim() == cp::SCAFFOLD_SUMMARY {
+        Some(copy::SHARE_FILL_IN)
+    } else {
+        None
     }
 }
 
@@ -109,12 +205,16 @@ mod tests {
     #[test]
     fn the_pack_is_the_cli_verb_on_the_folder() {
         assert_eq!(
-            pack_argv(Path::new("/home/a/p/alice.demo")),
+            pack_argv(
+                Path::new("/home/a/p/alice.demo"),
+                Path::new("/home/a/Downloads")
+            ),
             [
                 "wol",
                 "plugin",
                 "pack",
                 "/home/a/p/alice.demo",
+                "/home/a/Downloads",
                 "--yes",
                 "--json"
             ]
@@ -126,6 +226,63 @@ mod tests {
             Some(PathBuf::from("/home/a/p/alice.demo-0.1.wolplug"))
         );
         assert_eq!(packed_file("not json"), None);
+    }
+
+    /// QA-PLUG-11: the package goes to Downloads when the person has one, else home.
+    #[test]
+    fn the_package_goes_where_the_person_looks() {
+        let home = std::env::temp_dir().join(format!("wol-pack-out-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(pack_out(&home), home);
+        std::fs::create_dir_all(home.join("Downloads")).unwrap();
+        assert_eq!(pack_out(&home), home.join("Downloads"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// QA-PLUG-55: a failed pack keeps the CLI's reason in the sentence; nothing to quote keeps
+    /// the old advice.
+    #[test]
+    fn a_failed_pack_says_why() {
+        assert_eq!(
+            reason_of("noise\nwol: alice.demo has a problem: bar.lua is missing.\n"),
+            "alice.demo has a problem: bar.lua is missing."
+        );
+        assert_eq!(reason_of("no prefix\n"), "");
+        let t = copy::not_packed("zstd is missing, so the plugin cannot be packed.");
+        assert!(t.contains("zstd is missing"), "{t}");
+        assert_eq!(copy::not_packed(""), copy::NOT_PACKED);
+        let dir = std::env::temp_dir().join(format!("wol-pack-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Not a plugin folder: refused before the CLI runs, with the generic sentence.
+        assert_eq!(pack(&dir, &dir).unwrap_err(), copy::NOT_PACKED);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// QA-PLUG-75: Share is refused while author or summary are the scaffold's; the entry's
+    /// address is a placeholder nobody could mistake for a working one (QA-PLUG-54).
+    #[test]
+    fn share_refuses_scaffold_summary() {
+        let files = cp::scaffold("alice.demo", "Demo", &[Kind::Menubar]).unwrap();
+        let mut m = shared::plugins::parse(&files[0].1).unwrap();
+        assert_eq!(scaffold_leftover(&m), Some(copy::SHARE_FILL_IN));
+        m.author = "Alice".into();
+        assert_eq!(
+            scaffold_leftover(&m),
+            Some(copy::SHARE_FILL_IN),
+            "summary still the scaffold's"
+        );
+        m.description = "Shows the weather.".into();
+        assert_eq!(scaffold_leftover(&m), None);
+        let p = Packed {
+            file: PathBuf::from("/x/alice.demo-0.1.wolplug"),
+            sha256: "ab".repeat(32),
+            size: 1,
+            manifest: m,
+        };
+        assert!(entry(&p).url.contains("REPLACE"), "{}", entry(&p).url);
+        assert!(!steps(&p).contains("example.com"));
     }
 
     #[test]

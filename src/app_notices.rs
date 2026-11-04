@@ -67,6 +67,31 @@ pub fn notify_of(e: &Event, uid: u32) -> Option<(u32, Notify)> {
     ))
 }
 
+/// One notice of the shell itself (a plugin turned off): a plain Notify to the session's
+/// notification server (the shell's own banners), not through wold. Blocks: call it off the GTK
+/// thread.
+pub fn post_own(summary: &str, body: &str) -> zbus::Result<()> {
+    let conn = zbus::blocking::Connection::session()?;
+    let hints: HashMap<&str, zbus::zvariant::Value> = HashMap::new();
+    conn.call_method(
+        Some(NAME),
+        PATH,
+        Some(NAME),
+        "Notify",
+        &(
+            "WolOS",
+            0u32,
+            "",
+            summary,
+            body,
+            Vec::<String>::new(),
+            hints,
+            -1i32,
+        ),
+    )
+    .map(|_| ())
+}
+
 /// Presses kept for a banner whose Notify reply has not come back yet (other apps' banners
 /// land here too and fall off).
 const EARLY_KEPT: usize = 8;

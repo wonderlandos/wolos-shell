@@ -842,3 +842,295 @@ fn two_calls_read_the_disk_once_until_a_plugin_changes() {
     .unwrap();
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// QA-PLUG-5 / QA-PLUG-67: a `[[dock]]` tile that runs a `wol` verb launches it as the plugin's
+/// helper (`env WOL_HELPER=<id> wol ...`), like toggles and hotkeys, so the helper policy, the
+/// approval sheet and the audit log apply; other programs run unchanged.
+#[test]
+fn dock_spawn_has_helper() {
+    let m = manifest(
+        "user.dk",
+        "[[dock]]\nid = \"dark\"\nname = \"Dark\"\nicon = \"x\"\nexec = [\"wol\", \"appearance\", \"set\", \"dark\"]\n",
+    );
+    let paths = setup("dockhelper", &[("user.dk", &m, &[])]);
+    let h = host(&paths, BAR_KINDS, Rc::new(Fake::default()));
+    let tiles = h.dock_tiles();
+    assert_eq!(tiles.len(), 1, "a wol verb needs no run grant");
+    assert_eq!(
+        tiles[0].argv(),
+        [
+            "env",
+            "WOL_HELPER=user.dk",
+            "wol",
+            "appearance",
+            "set",
+            "dark"
+        ]
+    );
+    let foot = DockTile {
+        plugin: "user.dk".into(),
+        id: "t".into(),
+        name: "T".into(),
+        icon: "x".into(),
+        exec: vec!["foot".into()],
+    };
+    assert_eq!(foot.argv(), ["foot"]);
+    // The one builder, used by every launcher of a plugin command.
+    let src = include_str!("../ui/plugins.rs");
+    assert!(
+        !src.contains("format!(\"WOL_HELPER="),
+        "build helper argv with shared::plugins::helper_argv"
+    );
+    assert!(
+        src.contains("let argv = t.argv();"),
+        "dock_tile spawns argv()"
+    );
+}
+
+/// QA-PLUG-63 / QA-PLUG-17: a plugin turned off after three failures says so: the notice goes
+/// through the shell's own notification server (wold refuses the shell, which holds no
+/// notifications grant), the reason is kept for `wol plugin list`, and its `[[webapp]]` launchers
+/// leave the app list with it.
+#[test]
+fn three_strikes_posts_notice() {
+    let bad = manifest(
+        "test.crash",
+        "[[menubar]]\nid = \"bar\"\nscript = \"bar.lua\"\nside = \"left\"\n\
+         [[webapp]]\nid = \"web\"\nname = \"Crash Web\"\nurl = \"https://example.com/\"\nicon = \"web-browser-symbolic\"\nprofile = \"shared\"\n",
+    );
+    let paths = setup(
+        "strikes",
+        &[(
+            "test.crash",
+            &bad,
+            &[(
+                "bar.lua",
+                "return wol.menubar { render = function() error('boom') end }",
+            )],
+        )],
+    );
+    let data = paths
+        .data_home()
+        .expect("the user plugin folder names the data folder");
+    let p = cp::load_all(&paths.dirs)
+        .into_iter()
+        .find(|p| p.id == "test.crash")
+        .unwrap();
+    let m = p.manifest.clone().unwrap();
+    cp::sync_webapps(&data, "test.crash", Some((&m, &p.dir))).unwrap();
+    let launchers = || {
+        std::fs::read_dir(data.join("applications"))
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| {
+                        std::fs::read_to_string(e.path())
+                            .is_ok_and(|t| t.contains("X-WolOS-Plugin=test.crash"))
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    assert_eq!(launchers(), 1);
+    let mut h = host(&paths, BAR_KINDS, Rc::new(Fake::default()));
+    for _ in 0..3 {
+        let _ = h.render(Kind::Menubar, "test.crash", "bar");
+    }
+    let toasts = h.take_toasts();
+    assert_eq!(toasts.len(), 1, "{toasts:?}");
+    assert_eq!(
+        cp::turned_off(&paths.state_home, "test.crash").as_deref(),
+        Some(toasts[0].as_str()),
+        "the reason is kept for wol plugin list"
+    );
+    assert_eq!(launchers(), 0, "its web apps went with it");
+    // The notice is the shell's own: not wold's plugin path (Live.notify), which refuses the shell.
+    let src = include_str!("../ui/plugins.rs");
+    let toast = &src[src.find("pub fn toast(").unwrap()..];
+    let toast = &toast[..toast.find("\n}\n").unwrap()];
+    assert!(!toast.contains("Live.notify"), "{toast}");
+    assert!(toast.contains("crate::app_notices::post_own("), "{toast}");
+    assert!(
+        !toast.contains("let _ ="),
+        "a failed notice is logged, not dropped"
+    );
+}
+
+/// QA-PLUG-64: a Save that breaks the manifest of a plugin that is on keeps its last working
+/// version on the bar (and says so once); a fixed manifest is used again.
+#[test]
+fn keeps_last_good_snapshot() {
+    let good = manifest(
+        "test.edit",
+        "[[menubar]]\nid = \"bar\"\nscript = \"bar.lua\"\nside = \"left\"\n",
+    );
+    let paths = setup(
+        "lastgood",
+        &[(
+            "test.edit",
+            &good,
+            &[(
+                "bar.lua",
+                "return wol.menubar { render = function() return wol.label { 'hi' } end }",
+            )],
+        )],
+    );
+    let mut h = host(&paths, BAR_KINDS, Rc::new(Fake::default()));
+    assert!(h.has(Kind::Menubar, "test.edit", "bar"));
+    let dir = paths.dirs[0].0.join("test.edit");
+    // Maker on line 7: ` EDITED` typed after the description.
+    let broken = good.replacen("description = \"t\"", "description = \"t\" EDITED", 1);
+    std::fs::write(dir.join("plugin.toml"), &broken).unwrap();
+    assert!(
+        cp::load_all(&paths.dirs)
+            .iter()
+            .any(|p| p.id == "test.edit" && p.manifest.is_err())
+    );
+    h.apply(read_snapshot(&paths, BAR_KINDS));
+    assert!(
+        h.has(Kind::Menubar, "test.edit", "bar"),
+        "the bar item stays"
+    );
+    assert!(h.render(Kind::Menubar, "test.edit", "bar").unwrap().is_ok());
+    let toasts = h.take_toasts();
+    assert_eq!(toasts.len(), 1, "{toasts:?}");
+    assert!(toasts[0].contains("last working version"), "{toasts:?}");
+    // Another reload while still broken: kept, told once.
+    h.apply(read_snapshot(&paths, BAR_KINDS));
+    assert!(h.has(Kind::Menubar, "test.edit", "bar"));
+    assert!(h.take_toasts().is_empty());
+    // Fixed: the new manifest is used (its entry renamed).
+    std::fs::write(
+        dir.join("plugin.toml"),
+        good.replace("id = \"bar\"", "id = \"bar2\""),
+    )
+    .unwrap();
+    h.apply(read_snapshot(&paths, BAR_KINDS));
+    assert!(h.has(Kind::Menubar, "test.edit", "bar2"));
+    assert!(!h.has(Kind::Menubar, "test.edit", "bar"));
+}
+
+/// QA-PLUG-12: a site the person has not allowed is refused with the command that allows it (the
+/// text pointed at a "Settings > Plugins" with no such control).
+#[test]
+fn http_refusal_names_the_allow_command() {
+    let t = crate::copy::plugin_host_not_allowed("bob.weather", "api.example.com");
+    assert!(
+        t.contains("wol plugin allow-host bob.weather api.example.com"),
+        "{t}"
+    );
+    assert!(!t.contains("Settings"), "{t}");
+    assert!(
+        crate::copy::lint(&t).is_empty(),
+        "{:?}",
+        crate::copy::lint(&t)
+    );
+    let shell = include_str!("../ui/plugins.rs");
+    assert!(shell.contains("crate::copy::plugin_host_not_allowed(plugin, &host)"));
+    assert!(!shell.contains("(Settings > Plugins)"));
+}
+
+/// QA-PLUG-12 / QA-PLUG-63: no sentence of the plugin host points at a "Settings > Plugins" that
+/// does not exist (plugins are turned on and allowed in App Store > Plugins).
+#[test]
+fn no_sentence_points_at_a_settings_plugins_pane() {
+    assert!(
+        NOT_ALLOWED_TO_RUN.contains("App Store > Plugins"),
+        "{NOT_ALLOWED_TO_RUN}"
+    );
+    for (file, src) in [
+        ("ui/plugins.rs", include_str!("../ui/plugins.rs")),
+        ("copy.rs", include_str!("../copy.rs")),
+        (
+            "ui/store_plugins.rs",
+            include_str!("../ui/store_plugins.rs"),
+        ),
+    ] {
+        let hits: Vec<&str> = src
+            .lines()
+            .filter(|l| l.contains("Settings > Plugins") && !l.trim_start().starts_with("//"))
+            .collect();
+        assert!(hits.is_empty(), "{file}: {hits:?}");
+    }
+    assert!(
+        !crate::copy::lint(NOT_ALLOWED_TO_RUN)
+            .iter()
+            .any(|p| p.contains("path"))
+    );
+}
+
+/// QA-PLUG-74: a failing item keeps the plugin's name when a reload leaves the snapshot without
+/// its manifest (the id was shown instead).
+#[test]
+fn failing_item_keeps_name() {
+    let m = manifest(
+        "test.crashy",
+        "[[menubar]]\nid = \"bar\"\nscript = \"bar.lua\"\nside = \"left\"\n",
+    )
+    .replace("name = \"test.crashy\"", "name = \"Crashy\"");
+    let paths = setup(
+        "keepname",
+        &[(
+            "test.crashy",
+            &m,
+            &[(
+                "bar.lua",
+                "return wol.menubar { render = function() error('boom') end }",
+            )],
+        )],
+    );
+    let mut h = host(&paths, BAR_KINDS, Rc::new(Fake::default()));
+    let name = h.name("test.crashy");
+    assert_eq!(name, "Crashy");
+    // The folder goes (a failed reload, a half-done move): no manifest in the snapshot now.
+    std::fs::remove_dir_all(paths.dirs[0].0.join("test.crashy")).unwrap();
+    h.apply(read_snapshot(&paths, BAR_KINDS));
+    assert_eq!(h.name("test.crashy"), name);
+    assert_eq!(h.name("never.seen"), "never.seen");
+}
+
+/// QA-PLUG-4 standard: every kind the manifest offers (`wol plugin new`, Plugin Maker, `check`
+/// passes it) has a part of the desktop that applies it; one with none is planned
+/// (`Kind::PLANNED`: `check` refuses it, `new` does not offer it). `[[panel]]` and `[[search]]`
+/// were offered and checked while nothing hosted them.
+#[test]
+fn every_offered_kind_has_a_host() {
+    let shell = include_str!("../ui/plugins.rs");
+    let cc = include_str!("../ui/control_center/tiles.rs");
+    let packs = include_str!("../../../core/src/theme/packs.rs");
+    let cli = include_str!("../../../controller/src/plugin.rs");
+    // (kind, file that hosts it, a line of the host).
+    let hosted: [(Kind, &str, &str); 9] = [
+        (
+            Kind::Menubar,
+            shell,
+            "pub const BAR_KINDS: &[Kind] = &[Kind::Menubar];",
+        ),
+        (
+            Kind::Widget,
+            shell,
+            "pub const DESKTOP_KINDS: &[Kind] = &[Kind::Widget];",
+        ),
+        (
+            Kind::Ipc,
+            shell,
+            "pub const IPC_KINDS: &[Kind] = &[Kind::Ipc];",
+        ),
+        (Kind::Dock, shell, "pub fn dock_tiles(&self)"),
+        (Kind::Tile, cc, "TileSource"),
+        (Kind::Toggle, shell, "fn toggle_job("),
+        (Kind::Hotkey, shell, "pub fn shortcuts("),
+        (Kind::Webapp, cli, "cp::sync_webapps("),
+        (Kind::Theme, packs, "m.theme.push("),
+    ];
+    for (k, src, line) in hosted {
+        assert!(src.contains(line), "{k:?}: its host is gone ({line})");
+    }
+    let mut offered: Vec<Kind> = Kind::ALL.into_iter().filter(|k| !k.is_planned()).collect();
+    let mut have: Vec<Kind> = hosted.iter().map(|h| h.0).collect();
+    offered.sort_by_key(|k| k.id());
+    have.sort_by_key(|k| k.id());
+    assert_eq!(
+        offered, have,
+        "a kind offered with no host must be in Kind::PLANNED"
+    );
+}
