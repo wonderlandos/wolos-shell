@@ -828,7 +828,8 @@ impl AppWindow {
         }
     }
 
-    /// Small-caps dim header in the sidebar (not selectable).
+    /// Small-caps dim header in the sidebar (not selectable; the arrow keys pass it, hunt 1 B1:
+    /// [`Self::sidebar_search`]'s cursor handler skips rows whose child is a `source-section`).
     pub fn source_section(&self, title: &str) {
         let r = gtk::ListBoxRow::builder()
             .child(&label(&title.to_uppercase(), "source-section"))
@@ -1760,6 +1761,59 @@ impl AppWindow {
             .build();
         r.add_css_class("sidebar-search");
         self.sidebar.prepend(&r);
+        // The arrow keys go from page row to page row: a header row is passed, and Up from the
+        // first page row lands in the field, not on the ringed row around it where typing did
+        // nothing (QA-HUNT-12). The rows stay focusable (RU-048); the cursor skips them here.
+        let (field, search) = (s.downgrade(), r.downgrade());
+        let is_header =
+            |r: &gtk::ListBoxRow| r.child().is_some_and(|c| c.has_css_class("source-section"));
+        self.sidebar
+            .connect_move_cursor(move |list, _, count, _, _| {
+                let (Some(field), Some(search)) = (field.upgrade(), search.upgrade()) else {
+                    return;
+                };
+                let Some(at) = list.focus_child().and_downcast::<gtk::ListBoxRow>() else {
+                    return;
+                };
+                if count == 0 {
+                    return;
+                }
+                let shown = |i: i32| {
+                    list.row_at_index(i)
+                        .filter(|r| r.is_visible() && r.is_child_visible())
+                };
+                let next = if count < 0 {
+                    (0..at.index()).rev().find_map(shown)
+                } else {
+                    (at.index() + 1..i32::MAX)
+                        .map_while(|i| list.row_at_index(i).map(|_| i))
+                        .find_map(shown)
+                };
+                let Some(next) = next else { return };
+                // Past the headers to the next page row, or into the field.
+                let target = if is_header(&next) {
+                    let i = next.index();
+                    if count < 0 {
+                        (0..i).rev().find_map(shown)
+                    } else {
+                        (i + 1..i32::MAX)
+                            .map_while(|j| list.row_at_index(j).map(|_| j))
+                            .find_map(shown)
+                    }
+                } else {
+                    Some(next.clone())
+                };
+                match target {
+                    Some(t) if t == search => {
+                        field.grab_focus();
+                    }
+                    Some(t) if is_header(&next) => {
+                        t.grab_focus();
+                    }
+                    _ => return,
+                }
+                list.stop_signal_emission_by_name("move-cursor");
+            });
         // Narrow: Return shows what the search opened (typing keeps the field on screen).
         let show = self.show_sidebar.clone();
         s.connect_activate(move |_| show(false));

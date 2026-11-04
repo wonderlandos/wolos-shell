@@ -71,30 +71,43 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
         let at = MODES.iter().position(|m| m.0 == p.mode).unwrap_or(0);
         let names: Vec<&str> = MODES.iter().map(|m| m.1).collect();
-        let picker = w::dropdown(&names, at as u32);
-        let (row, line) = form::status_row("", "Energy Mode", mode_line(p.mode), &picker);
-        picker.connect_selected_notify(move |d| {
-            let Some((mode, _)) = MODES.get(d.selected() as usize) else {
-                return;
+        // The line under the menu says what the mode does once wol-admind set it; a refused or
+        // cancelled change puts the menu back (QA-SET-19: both showed the new mode at once).
+        let line_slot: Rc<RefCell<Option<gtk::Label>>> = Rc::default();
+        let ls = line_slot.clone();
+        let picker = form::pending_picker(&names, at, move |i, done| {
+            let Some((mode, _)) = MODES.get(i) else {
+                return done(false);
             };
-            line.set_label(mode_line(*mode));
-            if let Some(a) = admin("power-mode", &[mode.name()]) {
-                ctx.act_say(a, &st)
-            }
+            let Some(a) = admin("power-mode", &[mode.name()]) else {
+                return done(false);
+            };
+            let (ls, mode) = (ls.clone(), *mode);
+            ctx.act_switch(
+                a,
+                &st,
+                Box::new(move |ok| {
+                    if ok && let Some(l) = ls.borrow().as_ref() {
+                        l.set_label(mode_line(mode));
+                    }
+                    done(ok)
+                }),
+            )
         });
+        let (row, line) = form::status_row("", "Energy Mode", mode_line(p.mode), &picker);
+        *line_slot.borrow_mut() = Some(line);
         energy.push(row);
     }
     if let (Some(lid), Some(_)) = (f.lid, admin("lid", &[])) {
         let (ctx, st) = (e.ctx.clone(), status.clone());
-        energy.push(form::picker_row(
+        energy.push(form::pending_picker_row(
             "When the lid is closed",
             "",
             &["Sleep", "Keep running"],
             usize::from(lid == Lid::Nothing),
-            move |i| {
-                if let Some(a) = admin("lid", &[if i == 0 { "sleep" } else { "nothing" }]) {
-                    ctx.act_say(a, &st)
-                }
+            move |i, done| match admin("lid", &[if i == 0 { "sleep" } else { "nothing" }]) {
+                Some(a) => ctx.act_switch(a, &st, done),
+                None => done(false),
             },
         ));
     }

@@ -71,24 +71,41 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label) {
         into.append(&w::section("", &[info(rows::ZONE, &zone_label(&f.zone))]));
         return;
     }
-    let labels: Vec<String> = f.zones.iter().map(|z| zone_label(z)).collect();
+    let (zones, at) = zone_choices(&f.zones, &f.zone);
+    let labels: Vec<String> = zones.iter().map(|z| zone_label(z)).collect();
     let names: Vec<&str> = labels.iter().map(String::as_str).collect();
-    let at = f.zones.iter().position(|z| *z == f.zone).unwrap_or(0);
-    let (ctx, st, zones) = (e.ctx.clone(), status.clone(), f.zones.clone());
+    let (ctx, st) = (e.ctx.clone(), status.clone());
+    // Waits for wol-admind: a refused or cancelled zone goes back to the one in effect
+    // (QA-SET-29: the menu kept it).
     into.append(&w::section(
         "",
-        &[form::search_picker_row(
+        &[form::row(
             rows::ZONE,
             "Type a city to find it.",
-            &names,
-            at,
-            move |i| {
-                if let Some(a) = zones.get(i).and_then(|z| admin("timezone", &[z])) {
-                    ctx.act_say(a, &st)
+            &form::pending_search_picker(&names, at, move |i, done| {
+                match zones.get(i).and_then(|z| admin("timezone", &[z])) {
+                    Some(a) => ctx.act_switch(a, &st, done),
+                    None => done(false),
                 }
-            },
+            }),
         )],
     ));
+}
+
+/// The zones the menu offers and the one it opens on: the zone in effect is always one of them
+/// (UTC or an old name like `US/Pacific` is not in the city list, and the menu opened on
+/// "Abidjan", the first city, QA-SET-29).
+fn zone_choices(zones: &[String], zone: &str) -> (Vec<String>, usize) {
+    let mut v = zones.to_vec();
+    let at = match v.iter().position(|z| z == zone) {
+        Some(i) => i,
+        None if zone.is_empty() => 0,
+        None => {
+            v.insert(0, zone.to_string());
+            0
+        }
+    };
+    (v, at)
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -113,6 +130,17 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SET-29: a machine on UTC opened the time-zone menu on "Abidjan".
+    #[test]
+    fn zone_in_effect_is_offered() {
+        let cities = vec!["Africa/Abidjan".to_string(), "Europe/Lisbon".to_string()];
+        let (v, at) = zone_choices(&cities, "UTC");
+        assert_eq!(v[at], "UTC");
+        assert_eq!(v.len(), 3);
+        let (v, at) = zone_choices(&cities, "Europe/Lisbon");
+        assert_eq!((v.len(), v[at].as_str()), (2, "Europe/Lisbon"));
+    }
 
     #[test]
     fn clock_line_reads_like_a_sentence() {

@@ -381,9 +381,110 @@ pub fn install_low_space(bytes: u64) -> String {
     )
 }
 
+/// Under a control whose change got no answer in time (it went back).
+pub const NO_ANSWER: &str = "WolOS didn’t answer in time, so nothing changed. Try again.";
+
+/// Users & Groups: the button on each account row, and the sheet's own.
+pub const CHANGE_PASSWORD_MENU: &str = "Change Password…";
+pub const CHANGE_PASSWORD: &str = "Change Password";
+/// Assistants & Automation: takes back a helper's Always Allow.
+pub const ASK_AGAIN: &str = "Ask Again";
+
+/// Settings > Hardware row subtitles in Settings words, never `wol hw` text (QA-SET-13).
+pub const HW_DRIVER_OFF: &str = "Its driver is installed but not turned on. Fix turns it on.";
+pub const HW_NEEDS_DRIVER: &str = "Needs a driver. Fix installs it.";
+pub const HW_NEEDS_FIRMWARE: &str = "Needs firmware. Fix installs it.";
+pub const HW_DRIVER_DIDNT_START: &str = "Its driver didn’t start. Restarting may help.";
+
+/// Recording a shortcut while WolOS shortcuts could not pause (QA-SET-45).
+pub const SHORTCUTS_NOT_PAUSED: &str =
+    "WolOS shortcuts are still on, so keys that already do something may do it while you record.";
+
+/// Modules > Remove: the packages went, the user-side steps did not all finish.
+pub const MODULES_REMOVE_NOT_DONE: &str = "The module was removed, but some of its settings are still here. Run “wol modules remove” in Terminal to finish.";
+
+/// Users & Groups when /etc/passwd or /etc/shells can't be read (QA-SHADOW-10).
+pub const USERS_UNREADABLE: &str = "WolOS couldn’t read the list of accounts on this computer.";
+
+/// The Undo toast for changes on several topics: "2 changes" (QA-HUNT-16).
+pub fn changes(n: usize) -> String {
+    match n {
+        1 => "1 change".into(),
+        n => format!("{n} changes"),
+    }
+}
+
+/// After the toast's Undo of `total` changes, `done` of them reverted; `why` = the first error.
+pub fn undone(done: usize, total: usize, why: Option<&str>) -> String {
+    match (done, why) {
+        (1, None) if total == 1 => "Change undone".into(),
+        (_, None) => format!("{done} changes undone"),
+        (0, Some(w)) => w.to_string(),
+        (d, Some(w)) => format!("{d} of {total} changes undone. {w}"),
+    }
+}
+
+/// Under the account name when the full name gave more than 32 letters (QA-DESIGN-31).
+pub const ACCOUNT_NAME_CUT: &str = "Account names have up to 32 letters, so this one is cut.";
+/// Under the account name when the full name has no Latin letters (QA-FILES-16).
+pub const ACCOUNT_NAME_TYPE: &str =
+    "Type an account name: lowercase letters and digits, like “mei”.";
+/// Status line while Add User waits, maybe for the Authenticate sheet (QA-FILES-17).
+pub fn user_creating(name: &str) -> String {
+    format!("Creating “{name}”. Approve it with an administrator’s password if asked.")
+}
+/// Add User: the full name is longer than wol-admind takes.
+pub fn full_name_too_long(max: usize) -> String {
+    format!("Full names have up to {max} characters.")
+}
+/// Change Password sheet: what else changes.
+pub const PASSWORD_DISK_TOO: &str =
+    "If this account unlocks the disk at startup, the disk’s password changes too.";
+/// Status line while Change Password waits.
+pub fn password_changing(name: &str) -> String {
+    format!("Changing the password of “{name}”…")
+}
+/// Status line after Change Password worked.
+pub fn password_changed(name: &str) -> String {
+    format!("The password of “{name}” changed.")
+}
+
+/// Tooltip of Forget on a saved Wi-Fi network.
+pub fn wifi_forget_hint(ssid: &str) -> String {
+    format!("This computer stops joining “{ssid}” and forgets its password.")
+}
+
+/// Under the computer name when the typed one can't be a host name (Sharing).
+pub const HOSTNAME_RULE: &str = "Use lowercase letters, digits and hyphens, up to 63 characters.";
+
+/// Malware: Move to Trash did not work (the file stays stopped).
+pub const MALWARE_TRASH_FAILED: &str = "It couldn’t be moved to the Trash. Try again.";
+/// Malware: Open Anyway did not work (the file stays stopped).
+pub const MALWARE_ALLOW_FAILED: &str = "It’s still stopped: WolOS couldn’t allow it. Try again.";
+
+/// Tooltip of Ask Again on an Always Allowed helper (Assistants & Automation).
+pub fn helper_ask_again(helper: &str) -> String {
+    format!("{helper} asks for your approval again next time.")
+}
+
+/// Under greyed consent switches when this build's wol-admind has no `consent` verb (QA-SET-39).
+pub const PRIVACY_GRANTS_READ_ONLY: &str =
+    "These permissions can’t be changed from Settings on this computer yet.";
+
+/// A Lock Screen timeout that is not one of the menu's choices (written by hand): "17 minutes",
+/// "90 seconds" (QA-SET-4: any odd value read "5 minutes").
+pub fn idle_after(secs: u32) -> String {
+    match secs {
+        60 => "1 minute".into(),
+        s if s % 60 == 0 => format!("{} minutes", s / 60),
+        1 => "1 second".into(),
+        s => format!("{s} seconds"),
+    }
+}
+
 /// Every [`ActionError`], for the lint. [`action`] matches exhaustively, so a new variant needs a
 /// sentence before it compiles; list it here too.
-pub const ACTION_ERRORS: [ActionError; 8] = [
+pub const ACTION_ERRORS: [ActionError; 9] = [
     ActionError::Unavailable,
     ActionError::NeedsAuth,
     ActionError::Denied,
@@ -392,6 +493,7 @@ pub const ACTION_ERRORS: [ActionError; 8] = [
     ActionError::Failed,
     ActionError::WrongPassword,
     ActionError::Refused,
+    ActionError::Cancelled,
 ];
 
 /// Any change that did not happen.
@@ -409,6 +511,9 @@ pub fn action(e: ActionError) -> &'static str {
         ActionError::Refused => {
             "WolOS didn’t allow this change, so no password was asked for. Allow it in Privacy & Security, then try again."
         }
+        // Cancel on the Authenticate sheet: no password was typed, so none is blamed (hunt 1 E1).
+        // Status lines under a control stay quiet instead (its switch flips back).
+        ActionError::Cancelled => "The change wasn’t made.",
     }
 }
 
@@ -434,7 +539,7 @@ pub fn approval_via_wol(what: &str) -> String {
     format!("A program using wol wants to {what}.")
 }
 
-/// Joining the Wi-Fi network `name`. Denied = the administrator sheet was cancelled.
+/// Joining the Wi-Fi network `name`. Cancelled (or Denied) = the administrator sheet was closed.
 pub fn wifi_join(e: ActionError, name: &str) -> String {
     match e {
         ActionError::WrongPassword => {
@@ -443,7 +548,7 @@ pub fn wifi_join(e: ActionError, name: &str) -> String {
         ActionError::Invalid => {
             "Wi-Fi passwords have 8 to 63 characters. Check it and try again.".into()
         }
-        ActionError::Denied | ActionError::NeedsAuth => {
+        ActionError::Denied | ActionError::NeedsAuth | ActionError::Cancelled => {
             format!("Not joined. Joining “{name}” needs an administrator’s password.")
         }
         ActionError::NotAdmin => format!("Only an administrator can join “{name}”."),
@@ -462,7 +567,7 @@ pub fn wifi_joining(name: &str) -> String {
 /// Why `name` is still installed after Remove.
 pub fn remove(e: ActionError, name: &str) -> String {
     match e {
-        ActionError::Denied | ActionError::NeedsAuth => {
+        ActionError::Denied | ActionError::NeedsAuth | ActionError::Cancelled => {
             format!("{name} wasn’t removed. Removing apps needs an administrator’s password.")
         }
         ActionError::NotAdmin => format!("Only an administrator can remove {name}."),
@@ -480,7 +585,7 @@ pub fn remove(e: ActionError, name: &str) -> String {
 
 pub fn install(e: ActionError, name: &str) -> String {
     match e {
-        ActionError::Denied | ActionError::NeedsAuth => {
+        ActionError::Denied | ActionError::NeedsAuth | ActionError::Cancelled => {
             format!("{name} wasn’t installed. Installing apps needs an administrator’s password.")
         }
         ActionError::NotAdmin => {
@@ -543,8 +648,10 @@ pub fn updates_available(n: usize) -> String {
 /// Installing updates.
 pub fn update(e: ActionError) -> &'static str {
     match e {
+        // No cause is claimed: this is the sentence for a failure wol-admind gave no words for.
+        // The cause is in the journal (`wol-admind`), not guessed to be the network (live-4 F1).
         ActionError::Invalid | ActionError::Failed | ActionError::WrongPassword => {
-            "The update didn’t finish. Check that you’re online, then try again."
+            "The update didn’t finish. Try again in a few minutes."
         }
         e => action(e),
     }
@@ -625,7 +732,10 @@ pub const BATTERY_SLEEP: (&str, &str) = (
 pub fn disk_full(free: &str) -> (String, String) {
     (
         "Your Disk Is Almost Full".into(),
-        format!("Only {free} left. Empty the Trash or remove files you don’t need."),
+        // The Trash is rarely the big one: Settings > Storage names what is (QA-ACC-23).
+        format!(
+            "Only {free} left. Empty the Trash, or see what uses the space in Settings > Storage."
+        ),
     )
 }
 
@@ -1048,6 +1158,26 @@ mod tests {
             assert!(!s.to_lowercase().contains("incorrect"), "{s}");
         }
         assert_ne!(action(ActionError::Refused), action(ActionError::Denied));
+    }
+
+    /// Hunt 1 E1: Cancel on the Authenticate sheet said "Incorrect password. Try again." No
+    /// sentence for a cancelled change mentions a wrong password.
+    #[test]
+    fn a_cancel_never_says_the_password_was_wrong() {
+        let e = ActionError::Cancelled;
+        for s in [
+            action(e).to_string(),
+            update(e).to_string(),
+            wifi_join(e, "Home"),
+            install(e, "Firefox"),
+            remove(e, "Firefox"),
+        ] {
+            assert!(lint(&s).is_empty(), "{s}: {:?}", lint(&s));
+            let l = s.to_lowercase();
+            assert!(!l.contains("incorrect") && !l.contains("try again"), "{s}");
+        }
+        assert_ne!(action(e), action(ActionError::Denied));
+        assert!(ACTION_ERRORS.contains(&e), "the lint list has it");
     }
 
     /// R2A-19: the Dock, Desktop & Dock and widget sentences pass the lint.

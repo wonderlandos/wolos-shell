@@ -35,7 +35,7 @@ const NOT_ON_SCREEN: [&str; 9] = [
 ];
 
 /// Sentence literals outside copy.rs, per file. Only shrinks.
-const BASELINE: [(&str, usize); 47] = [
+const BASELINE: [(&str, usize); 45] = [
     ("app_session.rs", 13),
     ("login.rs", 1),
     ("packages.rs", 22),
@@ -50,7 +50,6 @@ const BASELINE: [(&str, usize); 47] = [
     ("ui/settings/appearance.rs", 1),
     ("ui/settings/assistants.rs", 3),
     ("ui/settings/battery.rs", 3),
-    ("ui/settings/bluetooth.rs", 3),
     ("ui/settings/control_center.rs", 1),
     ("ui/settings/datetime.rs", 2),
     ("ui/settings/effects.rs", 9),
@@ -60,17 +59,16 @@ const BASELINE: [(&str, usize); 47] = [
     ("ui/settings/language.rs", 2),
     ("ui/settings/lock.rs", 1),
     ("ui/settings/login_items.rs", 1),
-    ("ui/settings/machine.rs", 2),
     ("ui/settings/memory_saver.rs", 2),
     ("ui/settings/mod.rs", 1),
     ("ui/settings/network.rs", 1),
     ("ui/settings/notifications.rs", 2),
     ("ui/settings/printers.rs", 5),
-    ("ui/settings/privacy.rs", 33),
+    ("ui/settings/privacy.rs", 31),
     ("ui/settings/restore.rs", 3),
-    ("ui/settings/sharing.rs", 3),
+    ("ui/settings/sharing.rs", 2),
     ("ui/settings/shortcuts.rs", 3),
-    ("ui/settings/software_update.rs", 9),
+    ("ui/settings/software_update.rs", 8),
     ("ui/settings/storage.rs", 2),
     ("ui/settings/trackpad.rs", 4),
     ("ui/settings/wallpaper.rs", 2),

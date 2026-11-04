@@ -57,7 +57,7 @@ mod wallpaper;
 mod widgets;
 mod wifi;
 
-pub use accounts::{account_name, password_problem};
+pub use accounts::{account_hint, account_name, password_problem};
 pub use machine::{Demo, DemoEdge, Kernel, Live, Machine, Sharing};
 pub use malware::{full_section as malware_full_section, section as malware_section};
 pub use search::{Hit, hits};
@@ -95,7 +95,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Network",
             "network-wired-symbolic",
-            "ethernet ip address router dns gateway mac",
+            "ethernet ip address router dns gateway mac firewall",
         ),
     ],
     &[
@@ -174,7 +174,7 @@ pub const SIDEBAR: [&[Pane]; 6] = [
         pane(
             "Privacy & Security",
             "security-high-symbolic",
-            "permissions screen recording firewall consent privacy secure boot startup security tpm",
+            "permissions screen recording consent privacy secure boot startup security tpm",
         ),
         pane(
             "Users & Groups",
@@ -322,7 +322,13 @@ pub fn run() -> glib::ExitCode {
         present(app, requested_page(&args).map(str::to_owned));
         glib::ExitCode::SUCCESS
     });
-    app.run()
+    let code = app.run();
+    // The window and the Undo toast's hook hold GTK objects in thread-locals: left to the
+    // thread-local destructors they were unreffed during exit, after GTK's own state was gone,
+    // and every close aborted with a core dump (QA-LIVE3-5). Dropped here, on the GTK thread.
+    WINDOW.with_borrow_mut(|w| w.take());
+    CHANGED.with(|c| c.borrow_mut().take());
+    code
 }
 
 /// Shows the Settings window on `page` (built on the first call; host facts read off the UI
@@ -384,12 +390,30 @@ pub struct Host {
     pub machine: Arc<dyn Machine>,
     /// Shells installed for this person that new terminal windows can open in (General).
     pub terminal_shells: Vec<&'static str>,
+    /// `users` was read: false when /etc/passwd or /etc/shells could not be, so Users & Groups
+    /// says so instead of showing an empty list (QA-SHADOW-10).
+    pub users_known: bool,
+}
+
+/// Login accounts from the two files, None when either could not be read.
+pub(crate) fn login_users(passwd: Option<&str>, shells: Option<&str>) -> Option<Vec<String>> {
+    Some(crate::login::users(passwd?, shells?))
+}
+
+/// The Users card's only row when no account is listed: none besides you, or unreadable.
+pub(crate) fn no_users_line(users_known: bool) -> &'static str {
+    if users_known {
+        "No other accounts"
+    } else {
+        crate::copy::USERS_UNREADABLE
+    }
 }
 
 impl Host {
     pub fn read() -> Self {
-        let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
-        let shells = std::fs::read_to_string("/etc/shells").unwrap_or_default();
+        let passwd = std::fs::read_to_string("/etc/passwd").ok();
+        let shells = std::fs::read_to_string("/etc/shells").ok();
+        let users = login_users(passwd.as_deref(), shells.as_deref());
         let info = wol_core::system::info::SystemInfo::read(&wol_core::system::PosixHost);
         Host {
             hostname: std::fs::read_to_string("/etc/hostname")
@@ -400,7 +424,8 @@ impl Host {
                 .unwrap_or_default()
                 .trim()
                 .to_string(),
-            users: crate::login::users(&passwd, &shells),
+            users_known: users.is_some(),
+            users: users.unwrap_or_default(),
             os: info.kernel,
             base: info.base,
             processor: info.processor,
@@ -426,6 +451,7 @@ impl Host {
             machine: Arc::new(Demo),
             // The base image's shells (the Console module adds the others).
             terminal_shells: wol_core::terminal_shell::ids().take(2).collect(),
+            users_known: true,
         }
     }
 }
@@ -565,6 +591,24 @@ fn off_thread<T: Send + 'static>(
     });
 }
 
+/// Pops up the menu `items` from `anchor`; the popover goes once it closes. A new `w::menu`
+/// per click, never unparented, piled up popovers on the button and gave GTK criticals when a
+/// pick rebuilt the row under an open one (QA-SET-25).
+fn popup(anchor: &impl IsA<gtk::Widget>, items: Vec<w::MenuItem>) {
+    let m = w::menu(items);
+    m.set_parent(anchor);
+    m.connect_closed(|m| {
+        let m = m.clone();
+        // After the picked item's action ran (it may rebuild the row under the menu).
+        glib::idle_add_local_once(move || {
+            if m.parent().is_some() {
+                m.unparent();
+            }
+        });
+    });
+    m.popup();
+}
+
 fn clear(b: &gtk::Box) {
     while let Some(c) = b.first_child() {
         b.remove(&c);
@@ -597,117 +641,49 @@ pub(crate) struct Waiting {
     status: Option<gtk::Label>,
 }
 
-/// After this many wrong passwords in a row the sheet stops asking: every waiting change fails
-/// and its control flips back (QA 0.12.0 bug 4: the sheet looped forever).
-const MAX_REFUSALS: u32 = 3;
+/// A change with no answer after this long ends as failed and its control goes back.
+const ANSWER_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long `a` may go unanswered: [`ANSWER_WITHIN`], or as long as wol-admind may take for
+/// the request (`wol_core::admin::reply_secs`); None for installs and updates, which take as
+/// long as their download (their status line keeps saying what happens).
+pub(crate) fn answer_within(a: &Action) -> Option<std::time::Duration> {
+    match a {
+        Action::PkgUpgrade
+        | Action::PkgInstall(_)
+        | Action::PkgRemove(_)
+        | Action::FlatpakInstall(_)
+        | Action::FlatpakRemove(_)
+        | Action::BootEnvironment(_) => None,
+        Action::Admin(r) => Some(ANSWER_WITHIN.max(std::time::Duration::from_secs(
+            u64::from(wol_core::admin::reply_secs(r)) + 5,
+        ))),
+        _ => Some(ANSWER_WITHIN),
+    }
+}
+
 /// A change with no answer after this long says "Checking…" on its status line (QA 0.12.0 bug 7).
 const CHECKING_AFTER: std::time::Duration = std::time::Duration::from_millis(300);
 /// The sheet stays up (busy) at most this long after Allow: a wrong password answers within it,
 /// a long change (an install) goes on under its status line.
 const AUTH_HOLD: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// What the Authenticate sheet does with one answer.
-pub(crate) enum Next {
-    /// The change ended: its `done` gets this.
-    Finish(Waiting, Result<(), ActionError>),
-    /// It waits for the password: the sheet shows, with this sentence (may be empty).
-    Ask(&'static str),
-    /// Too many wrong passwords: every waiting change fails with `Denied`.
-    GiveUp(Vec<Waiting>),
-}
-
-/// The Authenticate sheet's bookkeeping, GTK-free (QA 0.12.0 bugs 4, 6). Every change that
-/// answered `NeedsAuth` waits here in order; one password re-runs all of them, each with its own
-/// copy (a one-shot slot went to whichever ran first); Cancel fails all of them. A single slot
-/// lost the first change and left its switch grey.
-#[derive(Default)]
-pub(crate) struct AuthQueue {
-    waiting: std::collections::VecDeque<Waiting>,
-    /// Wrong passwords in a row (one per Allow, however many changes it re-ran).
-    refusals: u32,
-    /// The Allow that was last counted as a wrong password.
-    counted: u32,
-    /// Allows so far: numbers the retries.
-    attempt: u32,
-    /// Retries sent with a typed password and not answered yet.
-    checking: usize,
-    /// The Allow whose wrong password ended the sheet: its later answers fail at once too.
-    gave_up: u32,
-}
-
-impl AuthQueue {
-    /// A change was sent; `retry` = the Allow it carries the password of.
-    pub(crate) fn sent(&mut self, retry: Option<u32>) {
-        if retry.is_some() {
-            self.checking += 1;
-        }
-    }
-    /// The answer `r` to `w` (sent with the password of Allow `retry`, if any).
-    pub(crate) fn answered(
-        &mut self,
-        w: Waiting,
-        r: Result<(), ActionError>,
-        retry: Option<u32>,
-    ) -> Next {
-        if retry.is_some() {
-            self.checking = self.checking.saturating_sub(1);
-        }
-        match r {
-            Err(ActionError::NeedsAuth | ActionError::Denied)
-                if retry.is_some() && retry == Some(self.gave_up) =>
-            {
-                Next::Finish(w, Err(ActionError::Denied))
-            }
-            Err(e @ (ActionError::NeedsAuth | ActionError::Denied)) => {
-                if let Some(n) = retry
-                    && n != self.counted
-                {
-                    self.counted = n;
-                    self.refusals += 1;
-                }
-                self.waiting.push_back(w);
-                if self.refusals >= MAX_REFUSALS {
-                    self.refusals = 0;
-                    self.gave_up = retry.unwrap_or_default();
-                    return Next::GiveUp(self.waiting.drain(..).collect());
-                }
-                Next::Ask(if retry.is_some() || e == ActionError::Denied {
-                    ActionError::Denied.message()
-                } else {
-                    ""
-                })
-            }
-            r => {
-                if retry.is_some() && r.is_ok() {
-                    self.refusals = 0;
-                }
-                Next::Finish(w, r)
-            }
-        }
-    }
-    /// Allow: every waiting change, in order, and the number of this Allow.
-    pub(crate) fn allow(&mut self) -> (Vec<Waiting>, u32) {
-        self.attempt = self.attempt.wrapping_add(1).max(1);
-        (self.waiting.drain(..).collect(), self.attempt)
-    }
-    /// Cancel: every waiting change (each fails with `Denied`).
-    pub(crate) fn cancel(&mut self) -> Vec<Waiting> {
-        self.refusals = 0;
-        self.waiting.drain(..).collect()
-    }
-    pub(crate) fn len(&self) -> usize {
-        self.waiting.len()
-    }
-    pub(crate) fn checking(&self) -> usize {
-        self.checking
-    }
-}
+/// The Authenticate sheet's queue, shared with the Control Center (`src/auth_queue.rs`).
+pub(crate) type AuthQueue = crate::auth_queue::AuthQueue<Waiting>;
+/// What the sheet does with one answer.
+pub(crate) type Next = crate::auth_queue::Next<Waiting>;
 
 /// Shared page state: the System, the Authenticate sheet and an inline status line per action.
 pub(crate) struct Ctx {
     pub(crate) sys: Rc<dyn System>,
     auth: w::AuthSheet,
     queue: RefCell<AuthQueue>,
+    /// "Checking…" under the toolbar for a change with no status line of its own ([`Self::act`]
+    /// callers: Printers, Hardware, Startup Security…), which showed nothing while wol-admind
+    /// worked (hunt 1 C2).
+    checking: gtk::Revealer,
+    /// Such changes past [`CHECKING_AFTER`] with no answer yet.
+    late: Cell<usize>,
 }
 
 impl Ctx {
@@ -717,6 +693,8 @@ impl Ctx {
             sys,
             auth: w::authenticate_sheet(who),
             queue: Default::default(),
+            checking: w::sheet(&w::label(crate::copy::CHECKING, "secondary")),
+            late: Cell::new(0),
         });
         let c = ctx.clone();
         ctx.auth.allow.connect_clicked(move |_| c.allow());
@@ -726,8 +704,45 @@ impl Ctx {
         ctx.auth.cancel.connect_clicked(move |_| c.cancel());
         ctx
     }
-    pub(crate) fn place(&self, aw: &w::AppWindow) {
+    pub(crate) fn place(self: &Rc<Self>, aw: &w::AppWindow) {
+        w::toolbar_place(aw, &self.checking);
         w::toolbar_place(aw, &self.auth.revealer);
+        // The Authenticate sheet is modal: while it is up the sidebar, the page and the toolbar
+        // take no input (QA-LIVE-8: a click behind it navigated while the sheet stayed), and Esc
+        // is Cancel wherever the focus is.
+        let behind: Vec<glib::WeakRef<gtk::Widget>> = [
+            w::content_overlay(aw).child(),
+            Some(aw.actions.clone().upcast()),
+            Some(aw.sidebar_toggle.clone().upcast()),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|x| x.downgrade())
+        .collect();
+        self.auth.revealer.connect_reveal_child_notify(move |r| {
+            for x in behind.iter().filter_map(|x| x.upgrade()) {
+                x.set_sensitive(!r.reveals_child());
+            }
+        });
+        let key = gtk::EventControllerKey::new();
+        key.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let c = Rc::downgrade(self);
+        key.connect_key_pressed(move |_, k, _, _| match c.upgrade() {
+            Some(c) if k == gtk::gdk::Key::Escape && c.auth.revealer.reveals_child() => {
+                c.cancel();
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Proceed,
+        });
+        aw.root.add_controller(key);
+    }
+    /// The shared "Checking…" shows while a change without a status line is late, unless the
+    /// Authenticate sheet is up (it has its own spinner).
+    fn show_checking(&self) {
+        let on = self.late.get() > 0 && !self.auth.revealer.reveals_child();
+        if self.checking.reveals_child() != on {
+            self.checking.set_reveal_child(on);
+        }
     }
     /// Says why the password is wanted; returns what the sheet said before.
     pub(crate) fn set_why(&self, why: &str) -> String {
@@ -746,19 +761,9 @@ impl Ctx {
             None,
         );
     }
-    /// `a`, then its one-sentence error (if any) on `status`.
-    pub(crate) fn act_say(self: &Rc<Self>, a: Action, status: &gtk::Label) {
-        let st = status.clone();
-        self.run(
-            Waiting {
-                a,
-                done: Rc::new(move |r| say(&st, r.err().map_or("", |e| e.message()))),
-                status: Some(status.clone()),
-            },
-            None,
-        );
-    }
-    /// [`Self::act_say`] for a switch: `done(ok)` lets it settle or flip back.
+    /// `a`, then its one-sentence error (if any) on `status`, and `done(ok)` so the control that
+    /// sent it settles or goes back (RC-01). There is no fire-and-forget form: `act_say` left
+    /// switches and menus showing a change that never happened (QA-SET-9/19/29/37/39).
     pub(crate) fn act_switch(
         self: &Rc<Self>,
         a: Action,
@@ -770,7 +775,7 @@ impl Ctx {
             Waiting {
                 a,
                 done: Rc::new(move |r| {
-                    say(&st, r.as_ref().err().map_or("", |e| e.message()));
+                    say(&st, error_line(r));
                     if let Some(d) = done.borrow_mut().take() {
                         d(r.is_ok())
                     }
@@ -782,12 +787,19 @@ impl Ctx {
     }
     /// Sends `w` (with the password of Allow number `pw.1`, if any) and handles its answer.
     fn run(self: &Rc<Self>, w: Waiting, pw: Option<(Rc<str>, u32)>) {
+        // A new change starts with a clean line: an old "Incorrect password" stayed under the
+        // page for the rest of the session (QA-SET-R2-07).
+        if let (None, Some(st)) = (&pw, &w.status) {
+            say(st, "");
+        }
         let rx = self
             .sys
             .spawn_with(w.a.clone(), pw.as_ref().map(|(p, _)| &**p));
         let retry = pw.map(|(_, n)| n);
         self.queue.borrow_mut().sent(retry);
         let answered = Rc::new(Cell::new(false));
+        // Counted in `late` once CHECKING_AFTER passed unanswered (no status line only).
+        let late = Rc::new(Cell::new(false));
         if let Some(st) = w.status.clone() {
             let answered = answered.clone();
             glib::timeout_add_local_once(CHECKING_AFTER, move || {
@@ -795,11 +807,33 @@ impl Ctx {
                     say(&st, crate::copy::CHECKING);
                 }
             });
+        } else {
+            let (answered, late, c) = (answered.clone(), late.clone(), Rc::downgrade(self));
+            glib::timeout_add_local_once(CHECKING_AFTER, move || {
+                let Some(c) = c.upgrade() else { return };
+                if !answered.get() {
+                    late.set(true);
+                    c.late.set(c.late.get() + 1);
+                    c.show_checking();
+                }
+            });
         }
-        let c = self.clone();
+        let (c, within) = (self.clone(), answer_within(&w.a));
         glib::spawn_future_local(async move {
-            let Ok(r) = rx.recv().await else { return };
+            // A closed channel (the worker died) and a change with no answer in time end as
+            // failed: the control goes back and the line says so (a dead wol-admind left it grey
+            // with "Checking…" for good).
+            let (r, silent) = match within {
+                Some(t) => match glib::future_with_timeout(t, rx.recv()).await {
+                    Ok(r) => (r.unwrap_or(Err(ActionError::Failed)), false),
+                    Err(_) => (Err(ActionError::Failed), true),
+                },
+                None => (rx.recv().await.unwrap_or(Err(ActionError::Failed)), false),
+            };
             answered.set(true);
+            if late.get() {
+                c.late.set(c.late.get().saturating_sub(1));
+            }
             if let Some(st) = &w.status {
                 if st.text() == crate::copy::CHECKING {
                     say(st, "");
@@ -810,9 +844,15 @@ impl Ctx {
                     say(st, ActionError::Denied.message());
                 }
             }
+            let status = w.status.clone();
             let next = c.queue.borrow_mut().answered(w, r, retry);
             match next {
-                Next::Finish(w, r) => (w.done)(r),
+                Next::Finish(w, r) => {
+                    (w.done)(r);
+                    if let (true, Some(st)) = (silent, &status) {
+                        say(st, crate::copy::NO_ANSWER);
+                    }
+                }
                 Next::Ask(message) => c.ask(message),
                 Next::GiveUp(all) => {
                     c.auth.revealer.set_reveal_child(false);
@@ -822,6 +862,7 @@ impl Ctx {
                 }
             }
             c.settle();
+            c.show_checking();
         });
     }
     /// Shows the sheet for the waiting changes.
@@ -836,6 +877,7 @@ impl Ctx {
         if !self.auth.revealer.reveals_child() {
             self.auth.revealer.set_reveal_child(true);
         }
+        self.show_checking();
         if self.queue.borrow().checking() == 0 {
             self.auth.field.grab_focus();
         }
@@ -882,15 +924,175 @@ impl Ctx {
                 c.auth.allow.set_sensitive(true);
                 c.auth.field.set_sensitive(true);
                 c.auth.revealer.set_reveal_child(false);
+                c.show_checking();
             }
         });
     }
     fn cancel(&self) {
         let all = self.queue.borrow_mut().cancel();
         self.auth.revealer.set_reveal_child(false);
-        for w in all {
-            (w.done)(Err(ActionError::Denied));
-        }
+        cancelled(all);
+        self.show_checking();
+    }
+}
+
+/// Cancel on the Authenticate sheet: every waiting change ends as `Cancelled`, never `Denied`
+/// (whose sentence is "Incorrect password", hunt 1 E1); switches flip back.
+fn cancelled(all: Vec<Waiting>) {
+    for w in all {
+        (w.done)(Err(ActionError::Cancelled));
+    }
+}
+
+/// The status line under a control after its change: empty when it worked or was cancelled
+/// (the person chose that; a switch flips back), else the error's one sentence.
+pub(crate) fn error_line(r: Result<(), ActionError>) -> &'static str {
+    match r {
+        Ok(()) | Err(ActionError::Cancelled) => "",
+        Err(e) => e.message(),
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+
+    /// A change that never answers ends after a deadline; installs wait for their download.
+    #[test]
+    fn every_change_but_installs_has_a_deadline() {
+        assert_eq!(answer_within(&Action::Wifi(true)), Some(ANSWER_WITHIN));
+        assert_eq!(answer_within(&Action::PkgInstall("vim".into())), None);
+        let a = admin("remote-login", &["on"]).unwrap();
+        assert!(answer_within(&a).unwrap() >= ANSWER_WITHIN);
+        assert!(crate::copy::lint(crate::copy::NO_ANSWER).is_empty());
+    }
+
+    /// QA-SET-1: Settings > `dark` > Return opens Appearance; clearing the field went back to
+    /// General, the pane shown before the search.
+    #[test]
+    fn clearing_query_keeps_opened_pane() {
+        let mut before = None;
+        assert_eq!(
+            after_query("dark", Some("General"), &mut before),
+            Nav::Results
+        );
+        assert_eq!(
+            after_query("dark", Some(RESULTS), &mut before),
+            Nav::Results
+        );
+        // Return (or a hit) opened Appearance; the field is cleared there.
+        assert_eq!(after_query("", Some("Appearance"), &mut before), Nav::Stay);
+        assert_eq!(before, None);
+        // Cleared while the hits show: back where the search began.
+        assert_eq!(
+            after_query("so", Some("Wallpaper"), &mut before),
+            Nav::Results
+        );
+        assert_eq!(
+            after_query("", Some(RESULTS), &mut before),
+            Nav::Back("Wallpaper".into())
+        );
+    }
+
+    /// QA-HUNT-16: a Sound change and a Wallpaper change 3 s later showed "Wallpaper changed ·
+    /// Undo", and Undo reverted both.
+    #[test]
+    fn undo_burst_counts_changes() {
+        let b = |v: &[(u64, &str)]| -> Vec<(u64, String)> {
+            v.iter().map(|(i, w)| (*i, w.to_string())).collect()
+        };
+        assert_eq!(
+            burst_line(&b(&[(1, "wallpaper")])),
+            changed_line("wallpaper")
+        );
+        assert_eq!(
+            burst_line(&b(&[(1, "effects"), (2, "effects"), (3, "effects")])),
+            changed_line("effects"),
+            "one topic, a drag of many saves"
+        );
+        assert_eq!(
+            burst_line(&b(&[(1, "sound"), (2, "wallpaper")])),
+            "2 changes"
+        );
+        assert_eq!(
+            burst_line(&b(&[
+                (1, "sound"),
+                (2, "wallpaper"),
+                (3, "sound"),
+                (4, "wallpaper")
+            ])),
+            "2 changes",
+            "distinct changes, not journal entries"
+        );
+    }
+
+    /// QA-SET-5: Undo of a burst stopped at the first failing id; "Change undone" was a literal.
+    #[test]
+    fn undo_burst_tries_every_change() {
+        let mut tried = Vec::new();
+        let said = undo_all(&[3, 2, 1], |id| {
+            tried.push(id);
+            if id == 2 {
+                Err("It was changed since.".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(tried, [3, 2, 1], "every one tried");
+        assert_eq!(said, "2 of 3 changes undone. It was changed since.");
+        assert_eq!(undo_all(&[1], |_| Ok(())), "Change undone");
+        assert_eq!(undo_all(&[2, 1], |_| Ok(())), "2 changes undone");
+        assert_eq!(undo_all(&[1], |_| Err("Nope.".into())), "Nope.");
+        // Toast lines, not error sentences: no lint (they start with a count).
+        assert!(!said.contains("Change undone"));
+    }
+
+    /// QA-SHADOW-10: /etc/passwd unreadable gave an empty Users card with no word.
+    #[test]
+    fn users_page_unreadable_passwd_says_so() {
+        let shells = "/bin/zsh\n";
+        let passwd = "alice:x:1000:1000:Alice:/home/alice:/bin/zsh\n";
+        assert_eq!(login_users(None, Some(shells)), None);
+        assert_eq!(login_users(Some(passwd), None), None);
+        assert_eq!(
+            login_users(Some(passwd), Some(shells)),
+            Some(crate::login::users(passwd, shells))
+        );
+        assert_eq!(no_users_line(false), crate::copy::USERS_UNREADABLE);
+        assert_eq!(no_users_line(true), "No other accounts");
+        assert!(crate::copy::lint(crate::copy::USERS_UNREADABLE).is_empty());
+    }
+
+    /// Hunt 1 E1: Cancel on the Authenticate sheet ended every waiting change as `Denied`, and
+    /// its status line said "Incorrect password. Try again." with no password typed.
+    #[test]
+    fn cancel_ends_every_waiting_change_quietly() {
+        let log: Rc<RefCell<Vec<Result<(), ActionError>>>> = Rc::default();
+        let all = ["remote", "airplay"]
+            .map(|_| {
+                let log = log.clone();
+                Waiting {
+                    a: Action::Wifi(true),
+                    done: Rc::new(move |r| log.borrow_mut().push(r)),
+                    status: None,
+                }
+            })
+            .into();
+        cancelled(all);
+        assert_eq!(*log.borrow(), [Err(ActionError::Cancelled); 2]);
+        assert_eq!(error_line(Err(ActionError::Cancelled)), "");
+        assert_eq!(error_line(Ok(())), "");
+        // The other answers keep their sentence; only a wrong password names the password.
+        assert_eq!(
+            error_line(Err(ActionError::NotAdmin)),
+            ActionError::NotAdmin.message()
+        );
+        assert!(
+            !ActionError::Cancelled
+                .message()
+                .to_lowercase()
+                .contains("password")
+        );
     }
 }
 
@@ -920,6 +1122,9 @@ pub(crate) struct Env {
     pub(crate) shortcut_group: Cell<Option<wol_core::shortcuts::Group>>,
     /// Builds the open pages again from the saved files (after an undo or an outside change).
     refresh: RefCell<Option<Rc<dyn Fn()>>>,
+    /// The computer's name after a rename in Sharing: `host` is read once at start, and About
+    /// kept the old name (QA-SET-12).
+    renamed: RefCell<Option<String>>,
 }
 
 impl Env {
@@ -928,6 +1133,18 @@ impl Env {
     }
     pub(crate) fn machine(&self) -> Arc<dyn Machine> {
         self.host.machine.clone()
+    }
+    /// The computer's name now (after a rename in this window, that one).
+    pub(crate) fn hostname(&self) -> String {
+        self.renamed
+            .borrow()
+            .clone()
+            .unwrap_or_else(|| self.host.hostname.clone())
+    }
+    /// Sharing renamed the computer: pages built from now on, and the open ones, show `name`.
+    pub(crate) fn set_hostname(&self, name: &str) {
+        *self.renamed.borrow_mut() = Some(name.to_string());
+        self.refresh();
     }
     /// Shows page `name` (subpage links, back buttons).
     pub(crate) fn open(&self, name: &str) {
@@ -1013,6 +1230,7 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
     let sheets = Sheets {
         join: w::toolbar_sheet(&aw, &w::vbox(0)),
         user: w::toolbar_sheet(&aw, &w::vbox(0)),
+        password: w::toolbar_sheet(&aw, &w::vbox(0)),
     };
     // Added last: the Authenticate sheet sits above the others.
     ctx.place(&aw);
@@ -1047,6 +1265,7 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
         open,
         shortcut_group: Cell::new(None),
         refresh: RefCell::default(),
+        renamed: RefCell::default(),
     });
 
     let field = aw.sidebar_search("Search");
@@ -1167,17 +1386,13 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
             else {
                 return;
             };
-            if text.trim().is_empty() {
-                if let Some(back) = before.borrow_mut().take() {
-                    env.open(&back);
-                }
-                return;
-            }
             let showing = stack.visible_child_name().map(|n| n.to_string());
-            if showing.as_deref() != Some(RESULTS) {
-                *before.borrow_mut() = showing;
+            match after_query(&text, showing.as_deref(), &mut before.borrow_mut()) {
+                Nav::Back(page) => return env.open(&page),
+                Nav::Stay => return,
+                Nav::Results => {}
             }
-            fill_results(&env, &body, &text);
+            fill_results(&env, &body, search::capped(&text));
             // No sidebar row stays selected under the hits (a selected row would show its page).
             if let Some(side) = side.upgrade() {
                 side.unselect_all();
@@ -1187,7 +1402,16 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
     };
     {
         let f = on_query.clone();
-        field.connect_search_changed(move |s| f(&s.text()));
+        field.connect_search_changed(move |s| {
+            // A pasted page of text is cut to what a search can use (QA-LIVE-10).
+            let t = s.text();
+            if t.len() > search::capped(&t).len() {
+                return s.set_text(search::capped(&t));
+            }
+            f(&t)
+        });
+        // Esc clears the field wherever the text came from (it only stopped the search).
+        field.connect_stop_search(|s| s.set_text(""));
     }
     {
         let env = env.clone();
@@ -1202,6 +1426,33 @@ fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, O
 
 /// The hidden page that lists search hits.
 const RESULTS: &str = "Search Results";
+
+/// Where the content goes after the search text changed.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Nav {
+    /// Show the hits.
+    Results,
+    /// The field was cleared on the hits: back to the page shown before the search.
+    Back(String),
+    /// The field was cleared after a hit was opened: that page stays (QA-SET-1: clearing the
+    /// field after Return jumped back to the pre-search pane).
+    Stay,
+}
+
+/// The search's navigation: `showing` is the page on screen, `before` the one to go back to.
+pub(crate) fn after_query(text: &str, showing: Option<&str>, before: &mut Option<String>) -> Nav {
+    if text.trim().is_empty() {
+        let back = before.take();
+        return match back {
+            Some(b) if showing == Some(RESULTS) => Nav::Back(b),
+            _ => Nav::Stay,
+        };
+    }
+    if showing != Some(RESULTS) {
+        *before = showing.map(String::from);
+    }
+    Nav::Results
+}
 
 /// Search hits for `query`, grouped by page: each opens its page (the row's page for a row hit).
 fn fill_results(env: &Rc<Env>, body: &gtk::Box, query: &str) {
@@ -1257,7 +1508,8 @@ fn icon_of(page: &str) -> &'static str {
 /// the toast was up (a slider drag is many saves), newest first, then refreshes the pages.
 fn undo_toast(aw: &w::AppWindow, env: &Rc<Env>) {
     let toast = kit::toast::Toast::new(aw);
-    let burst: Rc<RefCell<Vec<u64>>> = Rc::default();
+    // The changes made while the toast is up: (journal id, what).
+    let burst: Rc<RefCell<Vec<(u64, String)>>> = Rc::default();
     let rebuild = Rc::downgrade(env);
     let sys = env.sys().clone();
     let hook: ChangeHook = {
@@ -1267,23 +1519,24 @@ fn undo_toast(aw: &w::AppWindow, env: &Rc<Env>) {
             if !t.revealer.reveals_child() {
                 burst.borrow_mut().clear();
             }
-            if !burst.borrow().contains(&id) {
-                burst.borrow_mut().push(id);
+            if !burst.borrow().iter().any(|b| b.0 == id) {
+                burst.borrow_mut().push((id, what.to_string()));
             }
+            let line = burst_line(&burst.borrow());
             let (sys, burst, rebuild, toast) = (
                 sys.clone(),
                 burst.clone(),
                 rebuild.clone(),
                 Rc::downgrade(&t),
             );
-            t.show(&changed_line(what), "Undo", move || {
-                let ids: Vec<u64> = burst.borrow_mut().drain(..).rev().collect();
-                let failed = ids.into_iter().find_map(|id| sys.undo(Some(id)).err());
+            t.show(&line, "Undo", move || {
+                let ids: Vec<u64> = burst.borrow_mut().drain(..).rev().map(|b| b.0).collect();
+                let said = undo_all(&ids, |id| sys.undo(Some(id)).map(drop));
                 if let Some(env) = rebuild.upgrade() {
                     env.refresh();
                 }
                 if let Some(t) = toast.upgrade() {
-                    t.show(failed.as_deref().unwrap_or("Change undone"), "", || {});
+                    t.show(&said, "", || {});
                 }
             });
         })
@@ -1300,6 +1553,41 @@ fn undo_toast(aw: &w::AppWindow, env: &Rc<Env>) {
 /// "Wallpaper changed", "Keyboard shortcuts changed".
 fn changed_line(what: &str) -> String {
     format!("{} changed", restore::topic(what))
+}
+
+/// The toast's line for the changes Undo would revert: one topic names it ("Wallpaper changed",
+/// however many saves a drag made); several say how many (QA-HUNT-16: "Wallpaper changed ·
+/// Undo" also reverted a Sound change).
+pub(crate) fn burst_line(burst: &[(u64, String)]) -> String {
+    // Distinct changes: a drag that saved twenty times is one change.
+    let mut topics: Vec<&str> = Vec::new();
+    for b in burst {
+        let t = restore::topic(&b.1);
+        if !topics.contains(&t) {
+            topics.push(t);
+        }
+    }
+    match (topics.len(), burst.last()) {
+        (_, None) => String::new(),
+        (1, Some(last)) => changed_line(&last.1),
+        (n, Some(_)) => crate::copy::changes(n),
+    }
+}
+
+/// Undoes every id (newest first), each one even after another failed (QA-SET-5: it stopped at
+/// the first error and reverted nothing after it); the sentence says how it went.
+pub(crate) fn undo_all(ids: &[u64], mut undo: impl FnMut(u64) -> Result<(), String>) -> String {
+    let mut first_err = None;
+    let mut done = 0;
+    for id in ids {
+        match undo(*id) {
+            Ok(()) => done += 1,
+            Err(e) => {
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    crate::copy::undone(done, ids.len(), first_err.as_deref())
 }
 
 /// Sidebar row `title` shows `label` with `icon` (Battery on desktops).
@@ -1341,10 +1629,12 @@ pub fn windows_section(
         sheets: Sheets {
             join: w::toolbar_sheet(&aw, &w::vbox(0)),
             user: w::toolbar_sheet(&aw, &w::vbox(0)),
+            password: w::toolbar_sheet(&aw, &w::vbox(0)),
         },
         open: Rc::new(|_| {}),
         shortcut_group: Cell::new(None),
         refresh: RefCell::default(),
+        renamed: RefCell::default(),
     });
     desktop_dock::windows(&env)
 }
@@ -1492,15 +1782,28 @@ impl Keys {
     fn reload(&self) {
         *self.over.borrow_mut() = wol_core::hyprprefs::load_overrides(&config(""));
     }
-    /// WolOS shortcuts pause while one is being recorded.
-    pub(crate) fn capture(&self, on: bool) {
-        self.ctx.act(Action::ShortcutCapture(on), Rc::new(|_| {}));
+    /// WolOS shortcuts pause while one is being recorded; when they could not pause, `status`
+    /// says that the keys may still run what they do now (QA-SET-45: the result was dropped).
+    pub(crate) fn capture(&self, on: bool, status: &gtk::Label) {
+        let st = status.clone();
+        self.ctx.act(
+            Action::ShortcutCapture(on),
+            Rc::new(move |r| {
+                if on && r.is_err() {
+                    say(&st, crate::copy::SHORTCUTS_NOT_PAUSED)
+                } else if !on && st.text() == crate::copy::SHORTCUTS_NOT_PAUSED {
+                    say(&st, "")
+                }
+            }),
+        );
     }
 }
 
 struct Sheets {
     join: gtk::Revealer,
     user: gtk::Revealer,
+    /// Users & Groups > Change Password.
+    password: gtk::Revealer,
 }
 
 /// Replace a toolbar sheet's body.
@@ -1521,12 +1824,6 @@ fn row_sub(title: &str, subtitle: &str, control: &impl IsA<gtk::Widget>) -> gtk:
 
 fn info(title: &str, value: &str) -> gtk::Widget {
     form::info_row(title, value)
-}
-
-fn dropdown(options: &[&str], selected: usize, changed: impl Fn(usize) + 'static) -> gtk::DropDown {
-    let d = w::dropdown(options, selected as u32);
-    d.connect_selected_notify(move |d| changed(d.selected() as usize));
-    d
 }
 
 /// Shell prefs file (shell.json), written then announced to the running shell (`reload`).
@@ -1683,15 +1980,14 @@ mod tests {
         let [a, b] = toggles();
         send(&mut q, &sys, waiting(a, "remote", &log), None);
         send(&mut q, &sys, waiting(b, "airplay", &log), None);
-        for w in q.cancel() {
-            (w.done)(Err(ActionError::Denied));
-        }
+        // What Ctx::cancel does with them (QA-HUNT-1: Cancelled, never Denied).
+        cancelled(q.cancel());
         assert_eq!(q.len(), 0);
         assert_eq!(
             *log.borrow(),
             [
-                ("remote", Err(ActionError::Denied)),
-                ("airplay", Err(ActionError::Denied))
+                ("remote", Err(ActionError::Cancelled)),
+                ("airplay", Err(ActionError::Cancelled))
             ]
         );
     }
@@ -1794,7 +2090,7 @@ mod tests {
             ("time zone", "General"),
             ("pwsh", "General"),
             ("tile", "Desktop & Dock"),
-            ("firewall", "Privacy & Security"),
+            ("firewall", "Network"),
             ("UNDO", "Restore"),
             ("driver", "Hardware"),
         ] {

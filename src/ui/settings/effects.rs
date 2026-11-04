@@ -365,11 +365,16 @@ impl Fx {
             .unwrap_or(1);
         let names: Vec<&str> = ANGLES.iter().map(|a| a.1).collect();
         let f = Rc::downgrade(fx);
-        let angle = form::picker_row("Gradient direction", "", &names, angle_at, move |i| {
-            if let Some(f) = f.upgrade() {
-                f.change(|l| l.border_angle = ANGLES[i].0)
-            }
-        });
+        let angle = form::pending_picker_row(
+            "Gradient direction",
+            "",
+            &names,
+            angle_at,
+            move |i, done| match f.upgrade() {
+                Some(f) => f.change_switch(|l| l.border_angle = ANGLES[i].0, done),
+                None => done(false),
+            },
+        );
         angle.set_visible(l.border_colors.len() > 1);
         let f = Rc::downgrade(fx);
         let inactive =

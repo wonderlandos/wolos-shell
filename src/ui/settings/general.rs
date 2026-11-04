@@ -84,29 +84,23 @@ fn terminal_shell(e: &Rc<Env>, p: &gtk::Box) {
     let at = |id: &str, list: &[&str]| list.iter().position(|s| *s == id).unwrap_or(0);
     let note = w::footnote(crate::copy::settings::GENERAL_TERMINAL_SHELL_NOT_SAVED);
     note.set_visible(false);
-    // The menu, so a failed save can put it back to the saved shell.
-    let menu = Rc::new(glib::WeakRef::<gtk::DropDown>::new());
-    let (list, sv, n, m) = (shells.clone(), saved.clone(), note.clone(), menu.clone());
-    let picker = form::picker_row(
+    // Waits for the save: a failed one puts the menu back on the saved shell.
+    let (list, sv, n) = (shells.clone(), saved.clone(), note.clone());
+    let picker = form::pending_picker_row(
         "Shell in the terminal",
         crate::copy::settings::GENERAL_TERMINAL_SHELL,
         &shells,
         at(saved.get(), &shells),
-        move |i| {
+        move |i, done| {
             let id = list[i];
-            if id == sv.get() {
-                return;
-            }
             let ok = save_journaled("terminal shell", ts::FILE, Some(&ts::render(id))).is_ok();
             n.set_visible(!ok);
             if ok {
                 sv.set(id);
-            } else if let Some(m) = m.upgrade() {
-                m.set_selected(u32::try_from(at(sv.get(), &list)).unwrap_or_default());
             }
+            done(ok)
         },
     );
-    menu.set(control_in::<gtk::DropDown>(&picker).as_ref());
     p.append(&w::section("", &[picker]));
     p.append(&note);
 }

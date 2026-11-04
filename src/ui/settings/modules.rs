@@ -179,16 +179,38 @@ fn module_row(
         Offer::Ready => {
             let line = w::hbox(w::S2);
             line.append(&w::label("Ready", "secondary"));
-            let (ctx, st2, pkg, r) = (e.ctx.clone(), st.clone(), s.package.clone(), reload.clone());
+            let (ctx, st2, s2, r) = (e.ctx.clone(), st.clone(), s.clone(), reload.clone());
             let remove: w::MenuItem = (
                 "Remove",
                 Box::new(move || {
-                    let (st3, r) = (st2.clone(), r.clone());
-                    ctx.act(
-                        Action::PkgRemove(pkg.clone()),
-                        Rc::new(move |res| {
-                            say(&st3, res.as_ref().err().map_or("", |e| e.message()));
-                            r();
+                    let (st3, r, id) = (st2.clone(), r.clone(), s2.id.clone());
+                    // The backend and the meta package through wol-admind (the Authenticate
+                    // sheet asks), then `wol modules remove` for the rest: enablement, recipes,
+                    // flatpaks (QA-SET-42: only the meta package went, a 3.3 GB backend stayed).
+                    remove_all(
+                        &ctx,
+                        remove_packages(&s2),
+                        &st3.clone(),
+                        Rc::new(move |ok| {
+                            if !ok {
+                                return r();
+                            }
+                            let (st4, r) = (st3.clone(), r.clone());
+                            let id = id.clone();
+                            off_thread(
+                                move || undo_user_side(&id),
+                                move |ok| {
+                                    say(
+                                        &st4,
+                                        if ok {
+                                            ""
+                                        } else {
+                                            crate::copy::MODULES_REMOVE_NOT_DONE
+                                        },
+                                    );
+                                    r();
+                                },
+                            );
                         }),
                     );
                 }),
@@ -243,6 +265,48 @@ fn install_packages(s: &Status) -> Vec<String> {
         .collect()
 }
 
+/// What Remove asks wol-admind to remove, in order: the record's backend package for this
+/// machine (installed with the module by Install), then the meta package. The reverse of
+/// [`install_packages`], as `wol modules remove` does it.
+fn remove_packages(s: &Status) -> Vec<String> {
+    s.backend
+        .iter()
+        .filter(|_| s.installed)
+        .chain(std::iter::once(&s.package))
+        .cloned()
+        .collect()
+}
+
+/// `PkgRemove` of each of `pkgs` in turn, stopping at the first that fails.
+fn remove_all(ctx: &Rc<Ctx>, mut pkgs: Vec<String>, st: &gtk::Label, done: Rc<dyn Fn(bool)>) {
+    if pkgs.is_empty() {
+        return done(true);
+    }
+    let first = pkgs.remove(0);
+    let (ctx2, st2) = (ctx.clone(), st.clone());
+    ctx.act(
+        Action::PkgRemove(first),
+        Rc::new(move |res| {
+            say(&st2, error_line(res));
+            if res.is_ok() {
+                remove_all(&ctx2, pkgs.clone(), &st2, done.clone());
+            } else {
+                done(false);
+            }
+        }),
+    );
+}
+
+/// `wol modules remove <id>` once the packages are gone: it undoes the user-side steps
+/// (enablement record, recipes, flatpaks) and finds nothing left to ask wol-admind for.
+fn undo_user_side(id: &str) -> bool {
+    if !wol_core::modules::valid_id(id) {
+        return false;
+    }
+    let limit = std::time::Duration::from_secs(600);
+    wol_core::system::run_with_timeout(&["wol", "modules", "remove", id], limit).is_some()
+}
+
 /// `PkgInstall` of each of `pkgs` in turn through wol-admind, stopping at the first that fails;
 /// the error text goes to the status line and `done` gets whether all installed.
 fn install_all(ctx: &Rc<Ctx>, mut pkgs: Vec<String>, st: &gtk::Label, done: Rc<dyn Fn(bool)>) {
@@ -255,7 +319,7 @@ fn install_all(ctx: &Rc<Ctx>, mut pkgs: Vec<String>, st: &gtk::Label, done: Rc<d
     ctx.act(
         Action::PkgInstall(first),
         Rc::new(move |res| {
-            say(&st2, res.as_ref().err().map_or("", |e| e.message()));
+            say(&st2, error_line(res));
             if res.is_ok() {
                 install_all(&ctx2, pkgs.clone(), &st2, done.clone());
             } else {
@@ -334,7 +398,7 @@ fn media_row(
         ctx.act(
             Action::PkgInstall(pkg.clone()),
             Rc::new(move |res| {
-                say(&st3, res.as_ref().err().map_or("", |e| e.message()));
+                say(&st3, error_line(res));
                 if let Some(ended) = ended.borrow_mut().take() {
                     ended();
                     r();
@@ -481,6 +545,27 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SET-42: Remove removed only the meta package; the backend (ollama-cuda, 3.3 GB) stayed.
+    #[test]
+    fn remove_plans_backends() {
+        let s = Status {
+            id: "ai-local".into(),
+            package: "wolos-module-ai-local".into(),
+            installed: true,
+            backend: Some("ollama-cuda".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            remove_packages(&s),
+            ["ollama-cuda", "wolos-module-ai-local"]
+        );
+        let plain = Status {
+            backend: None,
+            ..s.clone()
+        };
+        assert_eq!(remove_packages(&plain), ["wolos-module-ai-local"]);
+    }
 
     fn st(installed: bool, enabled: bool, pending: bool, needs_enable: bool) -> Status {
         Status {

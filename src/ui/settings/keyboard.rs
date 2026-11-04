@@ -128,9 +128,7 @@ fn sources(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
                         (*name, act)
                     })
                     .collect();
-                let m = w::menu(items);
-                m.set_parent(b);
-                m.popup();
+                popup(b, items);
             });
             rows.push(form::row("", "", &add));
         }

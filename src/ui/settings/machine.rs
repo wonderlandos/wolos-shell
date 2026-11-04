@@ -796,6 +796,46 @@ impl Machine for DemoEdge {
     }
 }
 
+/// Test machines that differ from [`Demo`] in their hardware: every other required [`Machine`]
+/// fact from Demo.
+#[cfg(test)]
+macro_rules! demo_but_hardware {
+    () => {
+        $crate::ui::settings::machine::demo_but_hardware!(@
+            storage -> Option<wol_core::storage::Storage>,
+            battery -> Option<wol_core::power::BatteryInfo>,
+            profile -> Option<wol_core::power::Profile>,
+            lid -> Option<wol_core::power::Lid>,
+            zones -> Vec<String>,
+            zone -> String,
+            ntp -> Option<bool>,
+            net -> wol_core::netinfo::NetInfo,
+            known_networks -> Vec<String>,
+            bluetooth -> wol_core::bluetooth::BtState,
+            printers -> Option<Vec<wol_core::printers::Printer>>,
+            discover_printers -> Vec<String>,
+            sharing -> $crate::ui::settings::Sharing,
+            consent -> Vec<(String, String)>,
+            flatpak_apps -> Vec<wol_core::flatpak::App>,
+            kernel -> $crate::ui::settings::Kernel,
+            power -> Option<wol_core::power::policy::Status>,
+            security -> Option<wol_core::security::Status>,
+            updates -> Option<wol_core::update::check::Updates>,
+            passwd -> String,
+            auto_updates -> (bool, bool),
+        );
+    };
+    (@ $($f:ident -> $t:ty),* $(,)?) => {
+        $(
+            fn $f(&self) -> $t {
+                $crate::ui::settings::Machine::$f(&$crate::ui::settings::Demo)
+            }
+        )*
+    };
+}
+#[cfg(test)]
+pub(crate) use demo_but_hardware;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -891,43 +931,3 @@ mod tests {
         assert_eq!(reader.missing_packages, ["linux-firmware-realtek"]);
     }
 }
-
-/// Test machines that differ from [`Demo`] in their hardware: every other required [`Machine`]
-/// fact from Demo.
-#[cfg(test)]
-macro_rules! demo_but_hardware {
-    () => {
-        $crate::ui::settings::machine::demo_but_hardware!(@
-            storage -> Option<wol_core::storage::Storage>,
-            battery -> Option<wol_core::power::BatteryInfo>,
-            profile -> Option<wol_core::power::Profile>,
-            lid -> Option<wol_core::power::Lid>,
-            zones -> Vec<String>,
-            zone -> String,
-            ntp -> Option<bool>,
-            net -> wol_core::netinfo::NetInfo,
-            known_networks -> Vec<String>,
-            bluetooth -> wol_core::bluetooth::BtState,
-            printers -> Option<Vec<wol_core::printers::Printer>>,
-            discover_printers -> Vec<String>,
-            sharing -> $crate::ui::settings::Sharing,
-            consent -> Vec<(String, String)>,
-            flatpak_apps -> Vec<wol_core::flatpak::App>,
-            kernel -> $crate::ui::settings::Kernel,
-            power -> Option<wol_core::power::policy::Status>,
-            security -> Option<wol_core::security::Status>,
-            updates -> Option<wol_core::update::check::Updates>,
-            passwd -> String,
-            auto_updates -> (bool, bool),
-        );
-    };
-    (@ $($f:ident -> $t:ty),* $(,)?) => {
-        $(
-            fn $f(&self) -> $t {
-                $crate::ui::settings::Machine::$f(&$crate::ui::settings::Demo)
-            }
-        )*
-    };
-}
-#[cfg(test)]
-pub(crate) use demo_but_hardware;

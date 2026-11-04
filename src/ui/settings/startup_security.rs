@@ -85,7 +85,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, facts: (Option<Status>, bool), status: &
             ctx.act(
                 a.clone(),
                 Rc::new(move |r| {
-                    say(&st, r.as_ref().err().map_or("", |e| e.message()));
+                    say(&st, error_line(r));
                     shown.set_visible(r.is_ok());
                     b.set_sensitive(r.is_err());
                     if r.is_ok() {

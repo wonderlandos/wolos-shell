@@ -91,6 +91,85 @@ pub fn search_picker_row(
     changed: impl Fn(usize) + 'static,
 ) -> gtk::Widget {
     let d = w::dropdown(options, selected as u32);
+    searchable(&d);
+    d.connect_selected_notify(move |d| changed(d.selected() as usize));
+    row(title, subtitle, &d)
+}
+
+/// A pop-up menu for a change that takes time or can fail (an admin action, a save): `run(index,
+/// done)` starts it; the menu waits (insensitive) until `done(ok)`, and a failed or cancelled
+/// change puts the confirmed choice back without calling `run` again (RC-01: a plain picker kept
+/// a choice the host refused, and its put-back re-fired the handler, QA-SET-19/28/29).
+///
+/// ```ignore
+/// form::pending_picker(&["Sleep", "Keep running"], 0, move |i, done| ctx.act_switch(a(i), &st, done))
+/// ```
+pub fn pending_picker(
+    options: &[&str],
+    selected: usize,
+    run: impl Fn(usize, Box<dyn FnOnce(bool)>) + 'static,
+) -> gtk::DropDown {
+    let d = w::dropdown(options, selected as u32);
+    pend_on(&d, selected, run);
+    d
+}
+
+/// [`pending_picker`] with a search field on top (time zones).
+pub fn pending_search_picker(
+    options: &[&str],
+    selected: usize,
+    run: impl Fn(usize, Box<dyn FnOnce(bool)>) + 'static,
+) -> gtk::DropDown {
+    let d = w::dropdown(options, selected as u32);
+    searchable(&d);
+    pend_on(&d, selected, run);
+    d
+}
+
+/// [`picker_row`] for a change that can fail ([`pending_picker`]).
+pub fn pending_picker_row(
+    title: &str,
+    subtitle: &str,
+    options: &[&str],
+    selected: usize,
+    run: impl Fn(usize, Box<dyn FnOnce(bool)>) + 'static,
+) -> gtk::Widget {
+    row(title, subtitle, &pending_picker(options, selected, run))
+}
+
+/// The confirmed choice of a pending menu and its handler: a pick sends `run`, the answer keeps it
+/// or puts the confirmed one back (that put-back is not a pick).
+fn pend_on(
+    d: &gtk::DropDown,
+    selected: usize,
+    run: impl Fn(usize, Box<dyn FnOnce(bool)>) + 'static,
+) {
+    let confirmed = Rc::new(Cell::new(selected as u32));
+    d.connect_selected_notify(move |d| {
+        let want = d.selected();
+        if want == confirmed.get() || want == gtk::INVALID_LIST_POSITION {
+            return;
+        }
+        d.set_sensitive(false);
+        let (d2, c2) = (d.downgrade(), confirmed.clone());
+        run(
+            want as usize,
+            Box::new(move |ok| {
+                if ok {
+                    c2.set(want);
+                }
+                if let Some(d) = d2.upgrade() {
+                    if !ok {
+                        d.set_selected(c2.get());
+                    }
+                    d.set_sensitive(true);
+                }
+            }),
+        );
+    });
+}
+
+fn searchable(d: &gtk::DropDown) {
     d.set_enable_search(true);
     d.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
     d.set_expression(Some(gtk::PropertyExpression::new(
@@ -98,8 +177,6 @@ pub fn search_picker_row(
         None::<gtk::Expression>,
         "string",
     )));
-    d.connect_selected_notify(move |d| changed(d.selected() as usize));
-    row(title, subtitle, &d)
 }
 
 /// Two to four mutually exclusive choices shown at once (Light / Dark / Auto).
@@ -238,6 +315,82 @@ pub fn entry_row(
     row(title, "", &e)
 }
 
+/// [`entry_row`] for a commit that can fail or be cancelled (computer name): `committed(text,
+/// done)`; on `done(false)` the field forgets the attempt, so Return commits the same text again
+/// (QA-SET-12: after a cancelled sheet Return did nothing), and the field waits meanwhile.
+pub fn pending_entry_row(
+    title: &str,
+    text: &str,
+    placeholder: &str,
+    committed: impl Fn(String, Box<dyn FnOnce(bool)>) + 'static,
+) -> gtk::Widget {
+    let e = w::text_field(placeholder);
+    e.set_text(text);
+    e.set_width_chars(w::VALUE_CHARS);
+    let state = Rc::new(RefCell::new(EntryCommit {
+        saved: text.to_string(),
+        ..Default::default()
+    }));
+    let committed = Rc::new(committed);
+    let fire = {
+        let (state, committed) = (state.clone(), committed.clone());
+        move |e: &gtk::Entry, explicit: bool| {
+            let t = e.text().to_string();
+            if !state.borrow().commits(&t, explicit) {
+                return;
+            }
+            state.borrow_mut().sending = Some(t.clone());
+            e.set_sensitive(false);
+            let (state, e2) = (state.clone(), e.downgrade());
+            committed(
+                t.clone(),
+                Box::new(move |ok| {
+                    state.borrow_mut().answered(&t, ok);
+                    if let Some(e) = e2.upgrade() {
+                        e.set_sensitive(true);
+                    }
+                }),
+            );
+        }
+    };
+    let f2 = fire.clone();
+    e.connect_activate(move |e| f2(e, true));
+    let focus = gtk::EventControllerFocus::new();
+    let e2 = e.clone();
+    focus.connect_leave(move |_| fire(&e2, false));
+    e.add_controller(focus);
+    row(title, "", &e)
+}
+
+/// What a [`pending_entry_row`] knows about its text: the last confirmed, the one on its way,
+/// and the last one that was cancelled or failed.
+#[derive(Default)]
+struct EntryCommit {
+    saved: String,
+    sending: Option<String>,
+    refused: Option<String>,
+}
+
+impl EntryCommit {
+    /// Whether `text` goes out: never twice at once, never what is saved; Return (`explicit`)
+    /// sends a refused text again, leaving the field does not (a Cancel was asked again on every
+    /// focus change).
+    fn commits(&self, text: &str, explicit: bool) -> bool {
+        self.saved != text
+            && self.sending.as_deref() != Some(text)
+            && (explicit || self.refused.as_deref() != Some(text))
+    }
+    fn answered(&mut self, text: &str, ok: bool) {
+        self.sending = None;
+        if ok {
+            self.saved = text.to_string();
+            self.refused = None;
+        } else {
+            self.refused = Some(text.to_string());
+        }
+    }
+}
+
 /// Calls `f` once input settles: each call re-arms; only the last one in `ms` runs.
 fn settle<T: 'static>(ms: u64, f: impl Fn(T) + 'static) -> impl Fn(T) {
     let turn = Rc::new(Cell::new(0u64));
@@ -368,6 +521,25 @@ pub fn permission_row(
         app,
         detail,
         Some(w::toggle(granted, changed).upcast_ref()),
+    );
+    r.prepend(&w::app_icon(app_icon, ICON_ROW));
+    r.upcast()
+}
+
+/// [`permission_row`] for a grant the host must confirm (a Flatpak override, a consent): the
+/// switch waits for `run(on, done)` and flips back on Cancel or failure (QA-SET-37, QA-SET-39).
+pub fn pending_permission_row(
+    app_icon: &str,
+    app: &str,
+    detail: &str,
+    granted: bool,
+    run: impl Fn(bool, Box<dyn FnOnce(bool)>) + 'static,
+) -> gtk::Widget {
+    let r = w::list_row(
+        "",
+        app,
+        detail,
+        Some(w::pending_toggle(granted, run).upcast_ref()),
     );
     r.prepend(&w::app_icon(app_icon, ICON_ROW));
     r.upcast()
@@ -653,4 +825,31 @@ pub fn subpage(title: &str, back: impl Fn() + 'static) -> gtk::Box {
     head.append(&w::label(title, "large-title"));
     p.append(&head);
     p
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// QA-SET-12 and review: after Cancel Return sends the name again (it did nothing), but
+    /// leaving the field does not ask again.
+    #[test]
+    fn entry_commit_after_cancel() {
+        let mut c = EntryCommit {
+            saved: "old".into(),
+            ..Default::default()
+        };
+        assert!(!c.commits("old", true), "nothing changed");
+        assert!(c.commits("new", false));
+        c.sending = Some("new".into());
+        assert!(!c.commits("new", true), "already on its way");
+        c.answered("new", false);
+        assert!(
+            !c.commits("new", false),
+            "focus leaving after Cancel: quiet"
+        );
+        assert!(c.commits("new", true), "Return: again");
+        c.answered("new", true);
+        assert!(!c.commits("new", true), "saved");
+    }
 }

@@ -77,7 +77,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, printers: Option<Vec<Printer>>, status: 
                         a,
                         Rc::new(move |r| match r {
                             Ok(()) => load(&env2, &h2, &st2),
-                            Err(x) => say(&st2, x.message()),
+                            Err(x) => say(&st2, error_line(Err(x))),
                         }),
                     );
                 });
@@ -169,16 +169,14 @@ fn render(e: &Rc<Env>, into: &gtk::Box, printers: Option<Vec<Printer>>, status: 
                                         say(&st2, "");
                                         load(&env2, &h2, &st2)
                                     }
-                                    Err(x) => say(&st2, x.message()),
+                                    Err(x) => say(&st2, error_line(Err(x))),
                                 }),
                             );
                         });
                         (name.as_str(), f)
                     })
                     .collect();
-                let m = w::menu(items);
-                m.set_parent(&b);
-                m.popup();
+                popup(&b, items);
             },
         );
     });

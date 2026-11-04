@@ -19,6 +19,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Network Details",
             "Known Networks",
             "Other Networks",
+            "Saved Networks",
         ],
     ),
     ("Bluetooth", &["Bluetooth", "My Devices"]),
@@ -32,6 +33,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Search domains",
             "IPv6 address",
             "Hardware address",
+            "Firewall",
         ],
     ),
     (
@@ -70,11 +72,21 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Storage",
             "Login Items",
             "Sharing",
+            "Shell in the terminal",
         ],
     ),
     (
         "Appearance",
-        &["Light", "Dark", "Auto", "Accent color", "Themes"],
+        &[
+            "Light",
+            "Dark",
+            "Auto",
+            "Accent color",
+            "Themes",
+            "Wallpaper",
+            "Theme from your wallpaper",
+            "Make a theme",
+        ],
     ),
     (
         "Accessibility",
@@ -84,6 +96,8 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Reduce motion",
             "Pointer size",
             "Zoom",
+            "Display",
+            "Pointer and Zoom",
         ],
     ),
     (
@@ -95,6 +109,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
         &[
             dd::MAGNIFY,
             dd::AUTOHIDE,
+            dd::POSITION,
             dd::SIZE,
             dd::DELAY,
             dd::BATTERY,
@@ -104,6 +119,9 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             dd::GAPS,
             dd::SHORTCUTS,
             dd::FLOATING,
+            "Dock",
+            "Menu Bar",
+            "Windows",
         ],
     ),
     (
@@ -116,7 +134,7 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Night Shift",
         ],
     ),
-    ("Wallpaper", &["Dynamic", "Your Photo"]),
+    ("Wallpaper", &["Dynamic", "Your Photo", "Your own photo"]),
     (
         "Effects & Looks",
         &[
@@ -137,6 +155,12 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Import a Look",
             "Export This Look",
             "Restore Defaults",
+            "Windows",
+            "Glass",
+            "Borders",
+            "Depth",
+            "Motion",
+            "Looks",
         ],
     ),
     (
@@ -153,6 +177,9 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "When the lid is closed",
             "Memory Saver",
             "App Nap",
+            "Energy",
+            "Save Memory For",
+            "Memory",
         ],
     ),
     (
@@ -165,18 +192,32 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Screen Recording",
             "Remote Control",
             "Clipboard History",
-            "Firewall",
             "System protections",
             "Disk encryption",
             "Startup Security",
             "Malware Check",
             "Full Signatures",
             "App Connections",
+            "Privacy",
+            "Security",
+            "Screen sharing",
+            "Display",
+            "Flatpak app",
+            "Full Signature Database",
+            "Malware",
         ],
     ),
     (
         "Users & Groups",
-        &["Users", "Add User", "Full name", "Account name", "Password"],
+        &[
+            "Users",
+            "Add User",
+            "Full name",
+            "Account name",
+            "Password",
+            "Allow this user to administer this computer",
+            "Change Password…",
+        ],
     ),
     (
         "Keyboard",
@@ -195,6 +236,8 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             tp::SECONDARY,
             tp::NATURAL,
             tp::WHILE_TYPING,
+            "Trackpad",
+            "Mouse",
         ],
     ),
     (
@@ -210,11 +253,19 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Helpers Seen",
             "Always Allowed",
             "Connect a Helper",
+            "AI assistants",
+            "Scripts and Terminal",
         ],
     ),
     (
         "Modules",
-        &["Installed", "Available", "Finish Setup", "Install"],
+        &[
+            "Installed",
+            "Available",
+            "Finish Setup",
+            "Install",
+            "Could Not Be Added",
+        ],
     ),
     ("Restore", &["Recent Changes", "Restore Points", "Undo"]),
     (
@@ -230,6 +281,9 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Memory",
             "Startup disk",
             "Kernel",
+            "Battery",
+            "System",
+            "Software",
         ],
     ),
     (
@@ -248,9 +302,10 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Available",
             "Encryption",
             "Kept for restore points",
+            "Restore points",
         ],
     ),
-    ("Date & Time", &[dt::AUTOMATIC, dt::ZONE]),
+    ("Date & Time", &[dt::AUTOMATIC, dt::ZONE, "Date and time"]),
     (
         "Language & Region",
         &["Preferred language", "Input Sources"],
@@ -271,6 +326,8 @@ pub(super) const ROWS: [(&str, &[&str]); 34] = [
             "Sealed system",
             "Finish Secure Boot setup",
             "Attested gaming mode",
+            "Release",
+            "Gaming",
         ],
     ),
 ];
@@ -286,6 +343,30 @@ pub(super) fn parent(page: &str) -> &str {
     }
 }
 
+/// Rows panes build from their own tables (one title, written once): Control Center's tiles and
+/// modules, the kinds of app permission in Privacy & Security (QA-SET-43: "screenshot" found
+/// the pane but not its row, a Privacy kind found nothing).
+fn data_rows() -> [(&'static str, Vec<&'static str>); 2] {
+    [
+        (
+            "Control Center",
+            super::control_center::ALWAYS
+                .iter()
+                .map(|a| a.1)
+                .chain(
+                    wol_core::prefs::ControlCenterPrefs::MODULES
+                        .iter()
+                        .map(|m| m.1),
+                )
+                .collect(),
+        ),
+        (
+            "Privacy & Security",
+            super::privacy::KINDS.iter().map(|k| k.1).collect(),
+        ),
+    ]
+}
+
 /// One search result: the page to open and the row that matched (None: the page itself).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Hit {
@@ -293,8 +374,20 @@ pub struct Hit {
     pub row: Option<&'static str>,
 }
 
+/// Characters of a query that count: no row title is longer; a pasted page of text (5 kB) hid
+/// every pane and left Esc unable to clear it (QA-LIVE-10).
+pub const QUERY_MAX: usize = 64;
+
+/// `q` cut to [`QUERY_MAX`] characters (on a character boundary).
+pub fn capped(q: &str) -> &str {
+    q.char_indices().nth(QUERY_MAX).map_or(q, |(i, _)| &q[..i])
+}
+
 fn words(q: &str) -> Vec<String> {
-    q.split_whitespace().map(str::to_lowercase).collect()
+    capped(q)
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect()
 }
 
 /// Every word of `q` is in `hay`, with or without its hyphens (`wifi` finds `Wi-Fi`).
@@ -321,9 +414,16 @@ pub fn hits(query: &str) -> Vec<Hit> {
             row: None,
         })
         .collect();
-    for (page, rows) in ROWS {
-        for r in rows {
-            if *r != page && all_in(&format!("{r} {page}"), &q) {
+    for (page, rows) in ROWS
+        .iter()
+        .map(|(p, r)| (*p, r.to_vec()))
+        .chain(data_rows())
+    {
+        for r in &rows {
+            if *r != page
+                && all_in(&format!("{r} {page}"), &q)
+                && !out.iter().any(|h| h.page == page && h.row == Some(*r))
+            {
                 out.push(Hit {
                     page,
                     row: Some(*r),
@@ -439,6 +539,185 @@ mod tests {
         assert_eq!(enter_target("refresh rate"), Some("Displays"));
     }
 
+    /// QA-LIVE-10: a 5000-character paste was searched whole.
+    #[test]
+    fn query_capped_esc_clears() {
+        let long = "é".repeat(5000);
+        assert_eq!(capped(&long).chars().count(), QUERY_MAX);
+        assert_eq!(capped("dark"), "dark");
+        let longest = ROWS
+            .iter()
+            .flat_map(|r| r.1.iter())
+            .map(|t| t.chars().count())
+            .max();
+        assert!(
+            longest.unwrap() <= QUERY_MAX,
+            "every row title fits the cap"
+        );
+        assert_eq!(hits(&format!("dark{}", " x".repeat(3000))), hits("dark x"));
+        // Esc: the field's stop-search clears it (mod.rs build).
+        let src = include_str!("mod.rs");
+        assert!(src.contains("field.connect_stop_search(|s| s.set_text(\"\"))"));
+    }
+
+    /// The page each pane file renders (for the row index below).
+    const FILES: [(&str, &str, &str); 30] = [
+        ("wifi.rs", "Wi-Fi", include_str!("wifi.rs")),
+        (
+            "notifications.rs",
+            "Notifications",
+            include_str!("notifications.rs"),
+        ),
+        ("general.rs", "General", include_str!("general.rs")),
+        ("appearance.rs", "Appearance", include_str!("appearance.rs")),
+        (
+            "accessibility.rs",
+            "Accessibility",
+            include_str!("accessibility.rs"),
+        ),
+        (
+            "control_center.rs",
+            "Control Center",
+            include_str!("control_center.rs"),
+        ),
+        (
+            "desktop_dock.rs",
+            "Desktop & Dock",
+            include_str!("desktop_dock.rs"),
+        ),
+        ("wallpaper.rs", "Wallpaper", include_str!("wallpaper.rs")),
+        ("effects.rs", "Effects & Looks", include_str!("effects.rs")),
+        ("widgets.rs", "Widgets", include_str!("widgets.rs")),
+        ("battery.rs", "Battery", include_str!("battery.rs")),
+        (
+            "memory_saver.rs",
+            "Battery",
+            include_str!("memory_saver.rs"),
+        ),
+        ("lock.rs", "Lock Screen", include_str!("lock.rs")),
+        (
+            "privacy.rs",
+            "Privacy & Security",
+            include_str!("privacy.rs"),
+        ),
+        (
+            "malware.rs",
+            "Privacy & Security",
+            include_str!("malware.rs"),
+        ),
+        ("accounts.rs", "Users & Groups", include_str!("accounts.rs")),
+        ("keyboard.rs", "Keyboard", include_str!("keyboard.rs")),
+        (
+            "trackpad.rs",
+            "Trackpad & Mouse",
+            include_str!("trackpad.rs"),
+        ),
+        ("printers.rs", "Printers", include_str!("printers.rs")),
+        ("hardware.rs", "Hardware", include_str!("hardware.rs")),
+        (
+            "assistants.rs",
+            "Assistants & Automation",
+            include_str!("assistants.rs"),
+        ),
+        ("modules.rs", "Modules", include_str!("modules.rs")),
+        (
+            "shortcuts.rs",
+            "Keyboard Shortcuts",
+            include_str!("shortcuts.rs"),
+        ),
+        ("about.rs", "About", include_str!("about.rs")),
+        ("datetime.rs", "Date & Time", include_str!("datetime.rs")),
+        (
+            "login_items.rs",
+            "Login Items",
+            include_str!("login_items.rs"),
+        ),
+        ("sharing.rs", "Sharing", include_str!("sharing.rs")),
+        (
+            "startup_security.rs",
+            "Startup Security",
+            include_str!("startup_security.rs"),
+        ),
+        ("storage.rs", "Storage", include_str!("storage.rs")),
+        ("displays.rs", "Displays", include_str!("displays.rs")),
+    ];
+
+    /// Row and section titles a pane writes as literals: `<kind>_row("Title"`, `info("Title"`,
+    /// `w::section("Title"`, `w::list_row(icon, "Title"`.
+    fn titles(code: &str) -> Vec<&str> {
+        fn lit(after: &str) -> Option<&str> {
+            let a = after.trim_start();
+            let a = a.strip_prefix('"')?;
+            let t = &a[..a.find('"')?];
+            (!t.is_empty() && !t.contains(['{', '\\'])).then_some(t)
+        }
+        let mut out = Vec::new();
+        for m in [
+            "toggle_row(",
+            "picker_row(",
+            "pending_picker_row(",
+            "entry_row(",
+            "stepper_row(",
+            "slider_row(",
+            "segmented_row(",
+            "button_row(",
+            "info(",
+            "w::section(",
+        ] {
+            for part in code.split(m).skip(1) {
+                out.extend(lit(part));
+            }
+        }
+        for part in code.split("w::list_row(").skip(1) {
+            if let Some((_, rest)) = part.split_once(',') {
+                out.extend(lit(rest));
+            }
+        }
+        out
+    }
+
+    /// QA-SET-43: rows of many panes (Privacy, Keyboard, Startup Security, Assistants, Modules)
+    /// were not in the search index; this generalises `every_displays_row_is_indexed`.
+    #[test]
+    fn every_pane_row_indexed() {
+        let mut missing = Vec::new();
+        for (file, page, src) in FILES {
+            let code = src.split("#[cfg(test)]").next().unwrap_or(src);
+            let rows = ROWS.iter().find(|r| r.0 == page).map(|r| r.1).unwrap();
+            // Empty states ("No printers yet") are not rows to find.
+            for t in titles(code).into_iter().filter(|t| !t.starts_with("No ")) {
+                if t != page && !rows.contains(&t) {
+                    missing.push(format!("{file}: {t:?} ({page})"));
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "rows not in ROWS:\n{}",
+            missing.join("\n")
+        );
+        // The tables panes build rows from.
+        for (page, rows) in data_rows() {
+            for r in rows {
+                let h = hits(r);
+                assert!(
+                    h.iter()
+                        .any(|h| h.page == page && (h.row == Some(r) || r == page)),
+                    "{page}: {r:?} not found: {h:?}"
+                );
+            }
+        }
+        assert!(
+            hits("screenshot").contains(&Hit {
+                page: "Control Center",
+                row: Some("Screenshot")
+            }),
+            "QA-SET-43 repro"
+        );
+    }
+
     #[test]
     fn panes_with_named_titles_use_them() {
         // The title is written once, in the pane's `rows` module; the page and ROWS read it.
@@ -449,6 +728,7 @@ mod tests {
                 &[
                     dd::MAGNIFY,
                     dd::AUTOHIDE,
+                    dd::POSITION,
                     dd::SIZE,
                     dd::DELAY,
                     dd::BATTERY,

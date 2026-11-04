@@ -35,17 +35,40 @@ pub(crate) fn fix_actions(d: &Device) -> Vec<Action> {
     v
 }
 
+/// The row's second line, in Settings words. `Device::hint` is the `wol hw` line ("install …: wol
+/// hw fix --yes"), terminal text that read as the subtitle on real machines (QA-SET-13): it is
+/// never shown here.
 fn subtitle(d: &Device) -> String {
+    let fixable = !fix_actions(d).is_empty();
     match d.state {
         State::Ready => d
             .driver
             .as_ref()
             .map_or("Working".into(), |u| format!("Working · driver {u}")),
-        _ if !d.hint.is_empty() => d.hint.clone(),
+        State::NeedsDriver
+            if fixable && !d.missing_klds.is_empty() && d.missing_packages.is_empty() =>
+        {
+            crate::copy::HW_DRIVER_OFF.into()
+        }
+        State::NeedsDriver if fixable => crate::copy::HW_NEEDS_DRIVER.into(),
+        State::NeedsFirmware if fixable => crate::copy::HW_NEEDS_FIRMWARE.into(),
         _ if !d.notes.is_empty() => d.notes[0].clone(),
+        State::NeedsDriver if d.driver.is_none() && d.missing_klds.is_empty() => {
+            crate::copy::HW_DRIVER_DIDNT_START.into()
+        }
         State::NeedsDriver => "Needs a driver".into(),
         State::NeedsFirmware => "Needs firmware".into(),
         State::Unsupported => "Not supported yet".into(),
+    }
+}
+
+/// The devices to show: the boot snapshot when the page opens, the live devices after a Fix
+/// (the snapshot still has the device broken, QA-SET-7).
+pub(crate) fn snapshot(m: &dyn Machine, after_fix: bool) -> HardwareSnapshot {
+    if after_fix {
+        m.hardware_live()
+    } else {
+        m.hardware()
     }
 }
 
@@ -84,7 +107,7 @@ fn device_row(e: &Rc<Env>, d: &Device, reload: &Rc<dyn Fn()>, status: &gtk::Labe
                 Err(x) => {
                     b.set_sensitive(true);
                     b.set_label("Fix");
-                    say(&st, x.message());
+                    say(&st, error_line(Err(x)));
                 }
             }),
         );
@@ -161,20 +184,20 @@ fn render(
     }
 }
 
-fn load(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label) {
+fn load(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label, after_fix: bool) {
     clear(into);
     let reload: Rc<dyn Fn()> = {
         let (e, into, st) = (e.clone(), into.downgrade(), status.clone());
         Rc::new(move || {
             if let Some(i) = into.upgrade() {
-                load(&e, &i, &st)
+                load(&e, &i, &st, true)
             }
         })
     };
     let (m, e2, st) = (e.machine(), e.clone(), status.clone());
     later(
         into,
-        move || m.hardware(),
+        move || snapshot(&*m, after_fix),
         move |into, hw| render(&e2, into, hw, &reload, &st),
     );
 }
@@ -185,13 +208,80 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&body);
     let status = status_label();
     p.append(&status);
-    load(e, &body, &status);
+    load(e, &body, &status, false);
     p
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-SET-13: a device missing a package or a module showed `wol hw`'s terminal line
+    /// ("install …: wol hw fix --yes") as its subtitle.
+    #[test]
+    fn subtitle_has_no_wol_hw() {
+        let hint = |state, klds: &[&str], pkgs: &[&str]| Device {
+            state,
+            hint: "install linux-firmware-iwlwifi: wol hw fix --yes".into(),
+            missing_klds: klds.iter().map(|s| s.to_string()).collect(),
+            missing_packages: pkgs.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        for d in [
+            hint(State::NeedsFirmware, &[], &["linux-firmware-iwlwifi"]),
+            hint(State::NeedsDriver, &[], &["broadcom-wl"]),
+            hint(State::NeedsDriver, &["coretemp"], &[]),
+            hint(State::NeedsDriver, &[], &[]),
+            hint(State::Unsupported, &[], &[]),
+        ] {
+            let s = subtitle(&d);
+            assert!(
+                !s.contains("wol") && !s.contains("--") && !s.contains(':'),
+                "{s}"
+            );
+        }
+    }
+
+    /// A machine whose boot snapshot still lists the device Fix just mended.
+    struct Stale;
+    impl Machine for Stale {
+        fn hardware(&self) -> HardwareSnapshot {
+            HardwareSnapshot {
+                devices: vec![Device {
+                    name: "Wi-Fi".into(),
+                    state: State::NeedsDriver,
+                    missing_klds: vec!["iwlwifi".into()],
+                    ..Default::default()
+                }],
+            }
+        }
+        fn hardware_live(&self) -> HardwareSnapshot {
+            HardwareSnapshot {
+                devices: vec![Device {
+                    name: "Wi-Fi".into(),
+                    state: State::Ready,
+                    ..Default::default()
+                }],
+            }
+        }
+        super::machine::demo_but_hardware!();
+    }
+
+    /// QA-SET-7: after a Fix that worked the page reloaded the boot snapshot and showed the
+    /// device still broken.
+    #[test]
+    fn after_fix_reads_live() {
+        assert_eq!(
+            snapshot(&Stale, false).problems().count(),
+            1,
+            "opened: the snapshot"
+        );
+        assert_eq!(
+            snapshot(&Stale, true).problems().count(),
+            0,
+            "after Fix: live"
+        );
+    }
 
     #[test]
     fn fix_loads_modules_then_installs_packages() {

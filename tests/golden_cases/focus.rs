@@ -85,6 +85,28 @@ pub(super) fn sidebar_arrows_go_from_group_to_group() {
             "Up from {first} lands on {last}"
         );
     }
+    // Hunt 1 B1: Up from the first page row stopped on the row around the search field (ringed,
+    // typing did nothing until Tab). The cursor passes the row; the field takes the focus.
+    let search = a.sidebar.row_at_index(0).expect("the search row");
+    assert!(search.has_css_class("sidebar-search"));
+    let entry = search.child().expect("the search field");
+    let first = a.sidebar.row_at_index(1).expect("a first page row");
+    assert!(
+        first.grab_focus(),
+        "{} takes the focus",
+        first.widget_name()
+    );
+    a.sidebar
+        .emit_move_cursor(gtk::MovementStep::DisplayLines, -1, false, false);
+    pump(50);
+    let f = focused(&win);
+    assert!(
+        f.as_ref()
+            .is_some_and(|f| f == &entry || f.is_ancestor(&entry)),
+        "Up from {} lands in the search field, not on its row: {:?}",
+        first.widget_name(),
+        f.map(|f| f.type_().name())
+    );
     win.close();
     let s = ui::settings::content_searching(
         Rc::new(shell::system::Fake),

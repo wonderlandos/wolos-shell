@@ -24,14 +24,16 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: &Status, status: &gtk::Label) {
     let more = w::vbox(w::S6);
     more.set_sensitive(s.enabled);
     let (env, st, m) = (e.clone(), status.clone(), more.clone());
-    let toggle = w::toggle(s.enabled, move |on| {
-        match env.sys().set_helpers_enabled(on) {
-            Ok(()) => {
-                m.set_sensitive(on);
-                say(&st, "");
-            }
-            Err(x) => say(&st, x.message()),
+    // Waits for the save and flips back when it fails; a saved change is offered in the Undo
+    // toast like every other journaled one (QA-SET-40).
+    let toggle = w::pending_toggle(s.enabled, move |on, done| {
+        let r = env.sys().set_helpers_enabled(on);
+        say(&st, error_line(r));
+        if r.is_ok() {
+            m.set_sensitive(on);
+            changed_latest(wol_core::journal::HELPERS);
         }
+        done(r.is_ok())
     });
     into.append(&w::section(
         "",
@@ -50,7 +52,10 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: &Status, status: &gtk::Label) {
             let (env, st, id) = (e.clone(), status.clone(), c.id.clone());
             form::pending_toggle_row(&c.label, "", c.allowed, move |on, done| {
                 let r = env.sys().set_helper_capability(&id, on);
-                say(&st, r.as_ref().err().map_or("", |x| x.message()));
+                say(&st, error_line(r));
+                if r.is_ok() {
+                    changed_latest(wol_core::journal::HELPERS);
+                }
                 done(r.is_ok())
             })
         })
@@ -73,7 +78,43 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: &Status, status: &gtk::Label) {
         more.append(&w::section("Helpers Seen", &seen));
     }
     if !s.always.is_empty() {
-        let rows: Vec<gtk::Widget> = s.always.iter().map(|g| info(&g.helper, &g.label)).collect();
+        // Each helper's Always Allow can be taken back here (QA-SET-41, manual ruby-script:95):
+        // the helper asks again next time. Same change as `wol helpers forget <helper>`.
+        let mut by: Vec<&str> = s.always.iter().map(|g| g.helper.as_str()).collect();
+        by.dedup();
+        let rows: Vec<gtk::Widget> = by
+            .into_iter()
+            .map(|helper| {
+                let what: Vec<&str> = s
+                    .always
+                    .iter()
+                    .filter(|g| g.helper == helper)
+                    .map(|g| g.label.as_str())
+                    .collect();
+                let (env, into2, st, h) =
+                    (e.clone(), into.clone(), status.clone(), helper.to_string());
+                let b = w::button(
+                    crate::copy::ASK_AGAIN,
+                    w::Kind::Default,
+                    move || match forget(&h) {
+                        Ok(()) => {
+                            say(&st, "");
+                            changed_latest(wol_core::journal::HELPERS);
+                            render(&env, &into2, &env.sys().helpers(), &st);
+                        }
+                        Err(()) => say(&st, SAVE_FAILED),
+                    },
+                );
+                b.set_tooltip_text(Some(&crate::copy::helper_ask_again(helper)));
+                w::list_row(
+                    "wolos-assistant-symbolic",
+                    helper,
+                    &what.join(" · "),
+                    Some(b.upcast_ref()),
+                )
+                .upcast()
+            })
+            .collect();
         more.append(&w::section("Always Allowed", &rows));
     }
     more.append(&w::section(
@@ -87,6 +128,17 @@ fn render(e: &Rc<Env>, into: &gtk::Box, s: &Status, status: &gtk::Label) {
         "Point an assistant that speaks MCP at the command “wol mcp”. Scripts call the same verbs as “wol”. Both are optional: WolOS never needs AI.",
     ));
     into.append(&more);
+}
+
+/// Takes back every Always Allow of `helper` (journaled, undoable: `wol helpers forget`).
+fn forget(helper: &str) -> Result<(), ()> {
+    let j = wol_core::journal::Journal::for_config(&PathBuf::from(kit::config_home()));
+    wol_core::automation::set_policy(&j, "settings", wol_core::journal::now(), |p| {
+        p.forget(helper);
+        Ok(())
+    })
+    .map(drop)
+    .map_err(drop)
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {

@@ -89,9 +89,7 @@ fn fill(holder: &gtk::Box, e: &Rc<Env>, status: &gtk::Label) {
                 (name.as_str(), act)
             })
             .collect();
-        let m = w::menu(items);
-        m.set_parent(b);
-        m.popup();
+        popup(b, items);
     });
     rows.push(form::row("", "", &add));
     holder.append(&w::section("Open at Login", &rows));

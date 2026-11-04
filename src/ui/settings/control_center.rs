@@ -4,7 +4,7 @@
 use super::*;
 
 /// Always in Control Center: (icon, name).
-const ALWAYS: [(&str, &str); 6] = [
+pub(super) const ALWAYS: [(&str, &str); 6] = [
     ("network-wireless-symbolic", "Wi-Fi"),
     ("bluetooth-active-symbolic", "Bluetooth"),
     ("weather-clear-night-symbolic", "Focus"),

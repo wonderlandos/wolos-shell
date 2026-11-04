@@ -163,8 +163,8 @@ fn shortcut_row(
     let reset = w::icon_button("view-refresh-symbolic", "Reset to the default", || {});
     reset.set_visible(changed(s));
     let pause = {
-        let k = keys.clone();
-        move |on: bool| k.capture(on)
+        let (k, st) = (keys.clone(), status.clone());
+        move |on: bool| k.capture(on, &st)
     };
     let record = {
         let (k, id, st, slot, sy, rs) = (
@@ -250,7 +250,16 @@ fn shortcut_row(
 }
 
 fn changed(s: &Shortcut) -> bool {
-    match (&s.combo, &s.default) {
+    resettable(s.group, s.combo.as_ref(), s.default.as_ref())
+}
+
+/// The shortcut differs from its default, so Reset can bring it back. A custom shortcut has no
+/// default to go back to: no Reset (QA-SET-36: it showed one that did nothing and came back).
+fn resettable(group: Group, combo: Option<&Combo>, default: Option<&Combo>) -> bool {
+    if group == Group::Custom {
+        return false;
+    }
+    match (combo, default) {
         (Some(a), Some(b)) => !a.same(b),
         (None, None) => false,
         _ => true,
@@ -339,8 +348,8 @@ fn fill_custom(
             }
         }
     };
-    let k = keys.clone();
-    let rec = form::ShortcutRecorder::new(None, move |on| k.capture(on), add);
+    let (k, pr) = (keys.clone(), problem.clone());
+    let rec = form::ShortcutRecorder::new(None, move |on| k.capture(on, &pr), add);
     rows.push(form::row("Name", "", &name));
     rows.push(form::row("Command", "", &command));
     rows.push(form::row(
@@ -354,7 +363,7 @@ fn fill_custom(
 
 #[cfg(test)]
 mod tests {
-    use super::row_names;
+    use super::*;
 
     #[test]
     fn a_second_key_for_the_same_action_is_its_alternate() {
@@ -363,5 +372,18 @@ mod tests {
             got,
             ["Overview", "Overview (alternate)", "Move left a space"]
         );
+    }
+
+    /// QA-SET-36: every custom shortcut showed a Reset button that did nothing.
+    #[test]
+    fn custom_shortcuts_have_no_reset() {
+        let (t, st) = (Combo::parse("SUPER", "T"), Combo::parse("SUPER SHIFT", "T"));
+        assert!(t.is_some() && st.is_some());
+        assert!(
+            !resettable(Group::Custom, st.as_ref(), None),
+            "visible_resets == 0"
+        );
+        assert!(resettable(Group::System, st.as_ref(), t.as_ref()));
+        assert!(!resettable(Group::System, t.as_ref(), t.as_ref()));
     }
 }

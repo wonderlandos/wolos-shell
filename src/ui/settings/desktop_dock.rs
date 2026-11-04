@@ -19,6 +19,66 @@ pub(super) mod rows {
     pub const GAPS: &str = "Space between windows";
     pub const SHORTCUTS: &str = "Tiling shortcuts";
     pub const FLOATING: &str = "Keep Floating";
+    pub const POSITION: &str = "Position on screen";
+}
+
+/// The edges the Dock may take: every edge but the bar's (`Layout::validate`).
+pub(crate) fn dock_edges(bar: shared::layout::Edge) -> Vec<shared::layout::Edge> {
+    use shared::layout::Edge;
+    [Edge::Left, Edge::Bottom, Edge::Right, Edge::Top]
+        .into_iter()
+        .filter(|e| *e != bar)
+        .collect()
+}
+
+fn edge_name(e: shared::layout::Edge) -> &'static str {
+    use shared::layout::Edge;
+    match e {
+        Edge::Left => "Left",
+        Edge::Bottom => "Bottom",
+        Edge::Right => "Right",
+        Edge::Top => "Top",
+    }
+}
+
+/// `shell.json` with the Dock on `edge`, the prefs and the rest of the layout kept (the Dock
+/// items follow it: their order stays, the shell lays them out along the new edge).
+pub(crate) fn with_dock_edge(
+    old: Option<&str>,
+    edge: shared::layout::Edge,
+) -> Result<String, String> {
+    let mut l = prefs::layout(old);
+    l.dock = Some(edge);
+    prefs::with_layout(old, &l)
+}
+
+/// The Dock's position row (manual dock.md, changelog 0.12.0; QA-SET-26): which edge the Dock sits
+/// on. Waits for the save; a failed one puts the menu back.
+fn position_row(status: &gtk::Label) -> Option<gtk::Widget> {
+    let text = read(&config(prefs::SHELL_FILE));
+    let l = prefs::layout(text.as_deref());
+    let at_edge = l.dock?;
+    let edges = dock_edges(l.bar);
+    let names: Vec<&str> = edges.iter().map(|e| edge_name(*e)).collect();
+    let at = edges.iter().position(|e| *e == at_edge).unwrap_or(0);
+    let st = status.clone();
+    Some(form::pending_picker_row(
+        rows::POSITION,
+        "",
+        &names,
+        at,
+        move |i, done| {
+            let old = read(&config(prefs::SHELL_FILE));
+            let ok = with_dock_edge(old.as_deref(), edges[i])
+                .ok()
+                .is_some_and(|t| save_journaled("shell", prefs::SHELL_FILE, Some(&t)).is_ok());
+            if ok {
+                reload_shell();
+            }
+            say(&st, if ok { "" } else { SAVE_FAILED });
+            done(ok)
+        },
+    ))
 }
 
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
@@ -49,29 +109,28 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             ),
         ],
     ));
-    p.append(&w::section(
-        "",
-        &[
-            dock_slider(
-                rows::SIZE,
-                (f64::from(TILE_SIZE.0), f64::from(TILE_SIZE.1), 4.0),
-                ("Small", "Large"),
-                &cur,
-                &status,
-                |p| f64::from(p.tile_size()),
-                |p, v| p.dock_tile_size = v as u32,
-            ),
-            dock_slider(
-                rows::DELAY,
-                (0.0, f64::from(AUTOHIDE_DELAY_MAX_MS), 100.0),
-                ("None", "Long"),
-                &cur,
-                &status,
-                |p| f64::from(p.autohide_delay_ms()),
-                |p, v| p.dock_autohide_delay_ms = v as u32,
-            ),
-        ],
-    ));
+    let mut placement: Vec<gtk::Widget> = position_row(&status).into_iter().collect();
+    placement.extend([
+        dock_slider(
+            rows::SIZE,
+            (f64::from(TILE_SIZE.0), f64::from(TILE_SIZE.1), 4.0),
+            ("Small", "Large"),
+            &cur,
+            &status,
+            |p| f64::from(p.tile_size()),
+            |p, v| p.dock_tile_size = v as u32,
+        ),
+        dock_slider(
+            rows::DELAY,
+            (0.0, f64::from(AUTOHIDE_DELAY_MAX_MS), 100.0),
+            ("None", "Long"),
+            &cur,
+            &status,
+            |p| f64::from(p.autohide_delay_ms()),
+            |p, v| p.dock_autohide_delay_ms = v as u32,
+        ),
+    ]);
+    p.append(&w::section("", &placement));
     p.append(&w::section(
         "Menu Bar",
         &[
@@ -100,7 +159,9 @@ fn dock_slider(
     set: fn(&mut ShellPrefs, f64),
 ) -> gtk::Widget {
     let (c, st) = (cur.clone(), status.clone());
-    form::slider_row(
+    let knob = glib::WeakRef::<gtk::Scale>::new();
+    let k2 = knob.clone();
+    let row = form::slider_row(
         title,
         range,
         get(&cur.get()).clamp(range.0, range.1),
@@ -111,10 +172,16 @@ fn dock_slider(
             let ok = save_shell(p);
             if ok {
                 c.set(p);
+            } else if let Some(s) = k2.upgrade() {
+                // The knob goes back to the saved value, like every other slider here
+                // (QA-SHADOW-56: it stayed where the failed save left it).
+                s.set_value(get(&c.get()).clamp(range.0, range.1));
             }
             say(&st, if ok { "" } else { SAVE_FAILED });
         },
-    )
+    );
+    knob.set(control_in::<gtk::Scale>(&row).as_ref());
+    row
 }
 
 /// Display names for the two tiling layouts.
@@ -334,9 +401,7 @@ fn floating(desk: &Rc<Desk>, status: &gtk::Label) -> gtk::Widget {
                             })
                             .collect()
                     };
-                    let m = w::menu(items);
-                    m.set_parent(&b);
-                    m.popup();
+                    popup(&b, items);
                 },
             );
         });
@@ -375,4 +440,40 @@ fn app_name(entries: &[crate::desktop::Entry], class: &str) -> String {
         })
         .map(|e| e.name.clone())
         .unwrap_or_else(|| class.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// QA-SET-26: the manual's Dock "Position on screen" did not exist.
+    #[test]
+    fn dock_moves_to_another_edge_and_keeps_the_rest() {
+        use shared::layout::Edge;
+        assert_eq!(
+            dock_edges(Edge::Top),
+            [Edge::Left, Edge::Bottom, Edge::Right]
+        );
+        assert!(!dock_edges(Edge::Bottom).contains(&Edge::Bottom));
+        let old = prefs::keep_layout(
+            None,
+            ShellPrefs {
+                dock_magnify: false,
+                ..Default::default()
+            },
+        );
+        let new = with_dock_edge(Some(&old), Edge::Left).unwrap();
+        let l = prefs::layout(Some(&new));
+        assert_eq!(l.dock, Some(Edge::Left));
+        assert_eq!(
+            l.dock_items,
+            prefs::layout(Some(&old)).dock_items,
+            "same items, same order"
+        );
+        assert!(!ShellPrefs::parse(Some(&new)).dock_magnify, "prefs kept");
+        assert!(
+            with_dock_edge(Some(&old), Edge::Top).is_err(),
+            "not on the bar's edge"
+        );
+    }
 }

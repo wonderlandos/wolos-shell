@@ -9,6 +9,16 @@ struct Facts {
     kernel: Kernel,
     hw: HardwareSnapshot,
     storage: Option<Storage>,
+    /// os-release VERSION_ID.
+    version: Option<String>,
+}
+
+/// The version About names: the installed system's (os-release), else this build's. The shell
+/// crate's own version said 0.12.0 on a 0.12.1 system (QA-SET-R2-03).
+pub(crate) fn version_of(os: Option<&str>) -> String {
+    os.filter(|v| !v.is_empty())
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string()
 }
 
 fn device(hw: &HardwareSnapshot, k: Kind) -> Option<String> {
@@ -38,7 +48,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts) {
             s.to_string()
         }
     };
-    let mut rows = vec![info("Name", &or(&h.hostname))];
+    let mut rows = vec![info("Name", &or(&e.hostname()))];
     if !h.processor.is_empty() {
         rows.push(info("Processor", &h.processor));
     }
@@ -65,7 +75,10 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts) {
     into.append(&w::section(
         "Software",
         &[
-            info("System", &format!("WolOS {}", env!("CARGO_PKG_VERSION"))),
+            info(
+                "System",
+                &format!("WolOS {}", version_of(f.version.as_deref())),
+            ),
             info("Kernel", &f.kernel.label()),
         ],
     ));
@@ -82,10 +95,8 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&mark);
     let head = w::vbox(w::S1);
     head.append(&w::centered("WolOS", "large-title"));
-    head.append(&w::centered(
-        &format!("Version {}", env!("CARGO_PKG_VERSION")),
-        "secondary",
-    ));
+    let version = w::centered(&format!("Version {}", version_of(None)), "secondary");
+    head.append(&version);
     p.append(&head);
     let body = w::vbox(w::S6);
     p.append(&body);
@@ -97,8 +108,12 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             kernel: m.kernel(),
             hw: m.hardware(),
             storage: m.storage(),
+            version: m.os_version(),
         },
-        move |into, f| render(&e2, into, f),
+        move |into, f| {
+            version.set_label(&format!("Version {}", version_of(f.version.as_deref())));
+            render(&e2, into, f)
+        },
     );
     p
 }
@@ -107,6 +122,18 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 mod tests {
     use super::super::machine::{Device, State};
     use super::*;
+
+    /// QA-SET-R2-03: About said "Version 0.12.0" (the shell crate's) on a 0.12.1 system.
+    #[test]
+    fn version_is_the_installed_one() {
+        assert_eq!(version_of(Some("0.12.1")), "0.12.1");
+        assert_eq!(version_of(None), env!("CARGO_PKG_VERSION"));
+        assert_eq!(version_of(Some("")), env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            wol_core::base::version("NAME=WolOS\nID=wolos\nVERSION_ID=0.12.1\n").as_deref(),
+            Some("0.12.1")
+        );
+    }
 
     #[test]
     fn summary_counts_problems() {

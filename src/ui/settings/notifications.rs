@@ -32,11 +32,12 @@ pub(super) fn page(_: &Rc<Env>) -> gtk::Box {
     let status = status_label();
     let cur = focus::read();
     let now = focus::unix_now();
-    let until = form::picker_row("Turn off", "", &UNTIL, until_index(cur, now), {
+    let until = form::pending_picker_row("Turn off", "", &UNTIL, until_index(cur, now), {
         let st = status.clone();
-        move |i| {
+        move |i, done| {
             let r = focus::write(focus_for(i));
             say(&st, if r.is_ok() { "" } else { SAVE_FAILED });
+            done(r.is_ok())
         }
     });
     until.set_visible(cur.active());

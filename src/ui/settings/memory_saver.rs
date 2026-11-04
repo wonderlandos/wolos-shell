@@ -74,22 +74,29 @@ fn home() -> PathBuf {
     PathBuf::from(kit::config_home())
 }
 
-fn change(f: impl FnOnce(&mut Prefs)) -> bool {
+/// Saves the changed prefs, journaled (Undo toast, Restore) like every Settings file; a failure
+/// says so under the section (QA-SET-20: it went to stderr only).
+fn change(said: &gtk::Label, f: impl FnOnce(&mut Prefs)) -> bool {
     let mut p = ms::load(&home());
     f(&mut p);
-    let saved = ms::save(&home(), &p);
-    if let Err(e) = &saved {
-        eprintln!("wol: memory saver prefs: {e}");
-    }
-    saved.is_ok()
+    let ok = serde_json::to_string_pretty(&p)
+        .ok()
+        .is_some_and(|json| save_journaled(JOURNAL_WHAT, ms::FILE, Some(&json)).is_ok());
+    say(said, if ok { "" } else { SAVE_FAILED });
+    ok
 }
+
+/// The journal's name for these changes (as `wol history` shows it).
+pub(super) const JOURNAL_WHAT: &str = "memory saver";
 
 /// The Memory section.
 pub(super) fn section() -> gtk::Box {
     let prefs = ms::load(&home());
     let st = status();
-    let toggle = w::pending_toggle(prefs.enabled, |on, done| {
-        done(change(|p| p.enabled = on));
+    let said = status_label();
+    let s1 = said.clone();
+    let toggle = w::pending_toggle(prefs.enabled, move |on, done| {
+        done(change(&s1, |p| p.enabled = on));
     });
     let (main, line) = form::status_row(
         "",
@@ -99,8 +106,9 @@ pub(super) fn section() -> gtk::Box {
     );
     line.set_wrap(true);
     let mut rows = vec![main];
-    let nap_toggle = w::pending_toggle(prefs.nap, |on, done| {
-        done(change(|p| p.nap = on));
+    let s2 = said.clone();
+    let nap_toggle = w::pending_toggle(prefs.nap, move |on, done| {
+        done(change(&s2, |p| p.nap = on));
     });
     let (nap, nap_line) = form::status_row(
         "",
@@ -121,13 +129,13 @@ pub(super) fn section() -> gtk::Box {
                     .as_ref()
                     .map(app_line)
                     .unwrap_or_else(|| "Not open".into());
-                let id = id.clone();
+                let (id, s3) = (id.clone(), said.clone());
                 form::pending_toggle_row(
                     &app_title(&id),
                     &sub,
                     !prefs.exclude.contains(&id),
                     move |on, done| {
-                        done(change(|p| {
+                        done(change(&s3, |p| {
                             p.set_excluded(&id, !on);
                         }))
                     },
@@ -148,6 +156,7 @@ pub(super) fn section() -> gtk::Box {
     }
     let out = w::vbox(w::S6);
     out.append(&w::section("Memory", &rows));
+    out.append(&said);
     out.append(&per_app);
     out
 }
