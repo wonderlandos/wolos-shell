@@ -1851,6 +1851,9 @@ fn main() {
         std::env::set_var("WOL_FAKE_NOW", "1");
         std::env::set_var("XDG_CONFIG_HOME", &cfg);
         std::env::set_var("GTK_THEME", "Adwaita");
+        // The text scale (Settings > Accessibility > Larger text) is a gsettings key; the checks
+        // set it and read it back on a backend of their own, never the host's.
+        std::env::set_var("GSETTINGS_BACKEND", "memory");
     }
     // Any GLib/GTK warning or critical fails the case that produced it (style bugs, bad sizes).
     {
@@ -1901,6 +1904,7 @@ fn main() {
     setup_cases::drop_shelf_insets_are_even();
     regressions::effects_page_answers_after_it_is_built();
     settings_cases::checks();
+    settings_cases::larger_text_is_a_switch_and_grows_the_shell_text();
     displays_cases::checks();
     regressions::a_stalled_page_fade_settles();
     regressions::a_narrow_window_can_bring_the_sidebar_back();

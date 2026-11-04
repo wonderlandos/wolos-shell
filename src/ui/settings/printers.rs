@@ -3,7 +3,8 @@
 //! Everywhere), Set as Default and Remove (wol-admind `printer-add`, `printer-default`,
 //! `printer-remove`; the Authenticate sheet asks first).
 use super::*;
-use wol_core::printers::{Printer, queue_name};
+use crate::copy::settings as copy;
+use wol_core::printers::{Printer, unique_queue_name};
 
 /// What the pane shows now: None while a load is under way (the watch waits for it).
 type Shown = Rc<RefCell<Option<Option<Vec<Printer>>>>>;
@@ -18,7 +19,9 @@ pub(crate) fn device_name(uri: &str) -> String {
     let rest = uri.split_once("://").map_or(uri, |x| x.1);
     let host = rest.split('/').next().unwrap_or(rest);
     let name = host.split("._").next().unwrap_or(host);
-    let mut out = String::new();
+    // Bytes first, then UTF-8: "Caf%C3%A9" is two bytes of one letter (QA-SET-14: each byte used to
+    // become its own character, "CafÃ©").
+    let mut out: Vec<u8> = Vec::new();
     let b = name.as_bytes();
     let mut i = 0;
     while i < b.len() {
@@ -27,14 +30,28 @@ pub(crate) fn device_name(uri: &str) -> String {
                 .get(i + 1..i + 3)
                 .and_then(|h| u8::from_str_radix(h, 16).ok())
         {
-            out.push(char::from(v));
+            out.push(v);
             i += 3;
             continue;
         }
-        out.push(char::from(b[i]));
+        out.push(b[i]);
         i += 1;
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The queue name for each of `names`: none that `existing` queues or the earlier names of this
+/// menu already have, so two printers of one model get "_2", never the first one's queue (QA-SET-14).
+fn queue_names(names: &[&str], existing: &[String]) -> Vec<String> {
+    let mut used = existing.to_vec();
+    names
+        .iter()
+        .map(|n| {
+            let q = unique_queue_name(n, &used);
+            used.push(q.clone());
+            q
+        })
+        .collect()
 }
 
 /// "Brother_HL_L2350DW" -> "Brother HL L2350DW".
@@ -42,11 +59,48 @@ fn shown(queue: &str) -> String {
     queue.replace('_', " ")
 }
 
+/// "Default · Printing · 2 jobs · Connecting to printer.": what CUPS says now, not only the
+/// state word (QA-DEV-3: a printer that went away read "Printing" forever, with no reason).
 fn state_line(p: &Printer) -> String {
-    match (p.default, p.state.as_str()) {
-        (true, s) => format!("Default · {s}"),
-        (false, s) => s.to_string(),
+    let mut parts: Vec<String> = Vec::new();
+    if p.default {
+        parts.push("Default".into());
     }
+    parts.push(p.state.clone());
+    match p.jobs {
+        0 => {}
+        1 => parts.push("1 job".into()),
+        n => parts.push(format!("{n} jobs")),
+    }
+    if !p.message.is_empty() {
+        parts.push(p.message.clone());
+    }
+    parts.join(" · ")
+}
+
+/// Runs `argv` (a user printing command) off the UI thread, says `done` or the failure, reloads.
+fn user_job(
+    e: &Rc<Env>,
+    into: &gtk::Box,
+    status: &gtk::Label,
+    seen: &Shown,
+    argv: Vec<String>,
+    done: &'static str,
+) {
+    let (m, env, st, holder, sh) = (
+        e.machine(),
+        e.clone(),
+        status.clone(),
+        into.clone(),
+        seen.clone(),
+    );
+    off_thread(
+        move || m.printer_job(&argv),
+        move |ok| {
+            say(&st, if ok { done } else { copy::PRINTER_JOB_FAILED });
+            load(&env, &holder, &st, &sh);
+        },
+    );
 }
 
 fn load(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label, seen: &Shown) {
@@ -73,6 +127,11 @@ fn watch(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label, seen: &Shown) {
         };
         if into.root().is_none() {
             return glib::ControlFlow::Break;
+        }
+        // Read again only while on screen (QA-DEV-3); an open row menu stays open because the
+        // list is drawn again only when CUPS says something new.
+        if !into.is_mapped() {
+            return glib::ControlFlow::Continue;
         }
         let (m, e, status, seen) = (e.machine(), e.clone(), status.clone(), seen.clone());
         glib::spawn_future_local(async move {
@@ -138,6 +197,33 @@ fn render(
                 });
                 f
             };
+            if let Some(argv) = wol_core::printers::test_page_argv(&p.name) {
+                let (env, st, holder, sh) =
+                    (e.clone(), status.clone(), into.clone(), seen.clone());
+                items.push((
+                    "Print Test Page",
+                    Box::new(move || {
+                        user_job(
+                            &env,
+                            &holder,
+                            &st,
+                            &sh,
+                            argv.clone(),
+                            copy::PRINTER_TEST_SENT,
+                        )
+                    }),
+                ));
+            }
+            if p.jobs > 0
+                && let Some(argv) = wol_core::printers::cancel_argv(&p.name)
+            {
+                let (env, st, holder, sh) =
+                    (e.clone(), status.clone(), into.clone(), seen.clone());
+                items.push((
+                    "Cancel All Jobs",
+                    Box::new(move || user_job(&env, &holder, &st, &sh, argv.clone(), "")),
+                ));
+            }
             if !p.default && admin("printer-default", &[]).is_some() {
                 items.push(("Set as Default", act("printer-default")));
             }
@@ -169,24 +255,26 @@ fn render(
     if !can_add {
         return;
     }
-    let (env, st, holder, seen, taken) = (
+    let (env, st, holder, seen, taken, queues) = (
         e.clone(),
         status.clone(),
         into.clone(),
         seen.clone(),
         printers.iter().map(|p| p.uri.clone()).collect::<Vec<_>>(),
+        printers.iter().map(|p| p.name.clone()).collect::<Vec<_>>(),
     );
     let add = w::button("Add Printer…", w::Kind::Default, || {});
     add.connect_clicked(move |b| {
         b.set_sensitive(false);
         b.set_label("Looking for printers…");
-        let (m, env, st, holder, seen, taken, b) = (
+        let (m, env, st, holder, seen, taken, queues, b) = (
             env.machine(),
             env.clone(),
             st.clone(),
             holder.clone(),
             seen.clone(),
             taken.clone(),
+            queues.clone(),
             b.clone(),
         );
         off_thread(
@@ -205,15 +293,16 @@ fn render(
                         "No other printers found. Check that the printer is on and on the same network.",
                     );
                 }
+                let names: Vec<&str> = new.iter().map(|n| n.0.as_str()).collect();
                 let items: Vec<w::MenuItem> = new
                     .iter()
-                    .map(|(name, uri)| {
-                        let (env, st, holder, seen, q, uri) = (
+                    .zip(queue_names(&names, &queues))
+                    .map(|((name, uri), q)| {
+                        let (env, st, holder, seen, uri) = (
                             env.clone(),
                             st.clone(),
                             holder.clone(),
                             seen.clone(),
-                            queue_name(name),
                             uri.clone(),
                         );
                         let f: Box<dyn Fn()> = Box::new(move || {
@@ -282,13 +371,42 @@ mod tests {
             "HP Color LaserJet MFP"
         );
         assert_eq!(device_name("ipp://192.168.1.40/ipp/print"), "192.168.1.40");
+        // QA-SET-14: percent-encoded UTF-8 is decoded as bytes, and a stray byte is not a panic.
+        assert_eq!(
+            device_name("dnssd://Caf%C3%A9%20Printer._ipp._tcp.local/"),
+            "Café Printer"
+        );
+        assert_eq!(
+            device_name("dnssd://%E6%97%A5%E6%9C%AC._ipp._tcp.local/"),
+            "日本"
+        );
+        assert_eq!(
+            device_name("dnssd://Bad%FFName._ipp._tcp.local/"),
+            "Bad\u{fffd}Name"
+        );
+        assert_eq!(device_name("dnssd://100%._ipp._tcp.local/"), "100%");
         assert_eq!(shown("Brother_HL_L2350DW"), "Brother HL L2350DW");
-        let p = Printer {
+        // Two printers of one model, and one a queue of that name already has: three queues.
+        assert_eq!(
+            queue_names(
+                &["HP LaserJet", "HP LaserJet"],
+                &["HP_LaserJet".to_string()]
+            ),
+            ["HP_LaserJet_2", "HP_LaserJet_3"]
+        );
+        let mut p = Printer {
             name: "x".into(),
             uri: String::new(),
             default: true,
             state: "Idle".into(),
+            ..Default::default()
         };
         assert_eq!(state_line(&p), "Default · Idle");
+        // QA-DEV-3: what CUPS says, and the jobs waiting.
+        (p.default, p.state, p.jobs) = (false, "Printing".into(), 2);
+        p.message = "Connecting to printer.".into();
+        assert_eq!(state_line(&p), "Printing · 2 jobs · Connecting to printer.");
+        p.jobs = 1;
+        assert!(state_line(&p).contains("1 job ·"));
     }
 }

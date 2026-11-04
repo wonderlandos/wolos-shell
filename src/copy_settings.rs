@@ -20,7 +20,10 @@ pub const SOUND_AWAKE: &str = "Stops a click or a lost first second when sound s
 /// "Ignore hardware volume" subtitle.
 pub const SOUND_SOFT_VOLUME: &str = "For volume that jumps or does nothing on this output.";
 /// "Reset audio" subtitle.
-pub const SOUND_RESET_ABOUT: &str = "Forgets stored volumes and devices, then restarts sound.";
+pub const SOUND_RESET_ABOUT: &str = concat!(
+    "Forgets stored volumes, your chosen speakers and Pro Audio, then restarts sound. ",
+    "Apps that are playing or recording stop for a moment."
+);
 /// After Reset audio.
 pub const SOUND_RESET_DONE: &str = "Sound settings were reset. Devices start at their usual level.";
 /// "Copy diagnostics" put the report on the clipboard.
@@ -36,6 +39,22 @@ pub const SOUND_NOT_SAVED: &str =
     "This sound setting couldn’t be changed. Try again, or use Reset Audio below.";
 /// No microphone is connected.
 pub const SOUND_NO_INPUT: &str = "No microphone is connected.";
+/// Printers: the test page was handed to CUPS (QA-DEV-5).
+pub const PRINTER_TEST_SENT: &str = "The test page is on its way.";
+/// Printers: CUPS refused the test page or the cancel.
+pub const PRINTER_JOB_FAILED: &str = "The printer did not take it. Try again.";
+/// No speakers or headphones: no sound card, or only WirePlumber's Dummy Output (QA-DEV-6).
+pub const SOUND_NO_OUTPUT: &str = "No speakers or headphones are connected.";
+/// Accessibility > Larger text: what the switch does (QA-ACC-5).
+pub const LARGER_TEXT_ABOUT: &str =
+    "Text in WolOS and in apps that follow the system is 25% bigger.";
+/// Accessibility > Give me more time: what the choice stretches (QA-ACC-6).
+pub const TIMEOUTS_ABOUT: &str =
+    "Approval sheets, notifications and countdowns stay on screen longer.";
+/// Keyboard > Input Methods: why a Japanese, Chinese or Korean account is offered the module (QA-ACC-11).
+pub const INPUT_METHODS_ABOUT: &str = "Typing Japanese, Chinese or Korean needs input methods. Log out and back in once after installing them.";
+/// Accessibility > Zoom on a desktop that cannot zoom (no compositor to ask): the row says so (QA-ACC-9).
+pub const ZOOM_UNAVAILABLE: &str = "Zoom needs the WolOS desktop and is not available here.";
 /// A Troubleshooting switch was saved, but sound did not restart to use it.
 pub const SOUND_SAVED_LATER: &str = "Saved. It takes effect after you log out and back in.";
 
@@ -235,7 +254,7 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 61] = [
+pub const ALL: [&str; 68] = [
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -267,6 +286,13 @@ pub const ALL: [&str; 61] = [
     SOUND_PRO_NOTE,
     SOUND_NOT_SAVED,
     SOUND_NO_INPUT,
+    SOUND_NO_OUTPUT,
+    PRINTER_TEST_SENT,
+    LARGER_TEXT_ABOUT,
+    TIMEOUTS_ABOUT,
+    INPUT_METHODS_ABOUT,
+    ZOOM_UNAVAILABLE,
+    PRINTER_JOB_FAILED,
     SOUND_SAVED_LATER,
     MODULES_ABOUT,
     MODULES_NONE,

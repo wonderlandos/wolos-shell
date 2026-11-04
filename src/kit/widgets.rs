@@ -177,6 +177,10 @@ pub fn icon_button(name: &str, tooltip: &str, clicked: impl Fn() + 'static) -> g
         .child(&icon(name, ICON))
         .tooltip_text(tooltip)
         .build();
+    // A picture alone has no words: the tooltip is its name on the AT-SPI bus (QA-ACC-2).
+    if !tooltip.is_empty() {
+        b.update_property(&[gtk::accessible::Property::Label(tooltip)]);
+    }
     b.add_css_class("icon-button");
     b.connect_clicked(move |_| clicked());
     b
@@ -511,15 +515,57 @@ pub fn list_row(
     tl.set_wrap(true);
     tl.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     t.append(&tl);
-    if !subtitle.is_empty() {
-        t.append(&row_subtitle(subtitle));
+    let sub = (!subtitle.is_empty()).then(|| row_subtitle(subtitle));
+    if let Some(l) = &sub {
+        t.append(l);
     }
     row.append(&t);
     if let Some(w) = trailing {
         w.set_valign(gtk::Align::Center);
         row.append(w);
+        if !title.is_empty() {
+            name_controls(w, &tl, sub.as_ref());
+        }
     }
     row
+}
+
+/// Controls a row's title names for assistive technology: they have no text of their own.
+/// Buttons and labels carry their own words and keep them.
+fn is_nameless_control(w: &gtk::Widget) -> bool {
+    w.is::<gtk::Switch>()
+        || w.is::<gtk::Scale>()
+        || w.is::<gtk::DropDown>()
+        || w.is::<gtk::SpinButton>()
+        || w.is::<gtk::Entry>()
+        || w.is::<gtk::PasswordEntry>()
+        || w.is::<gtk::Text>()
+        || (w.is::<gtk::CheckButton>()
+            && w.downcast_ref::<gtk::CheckButton>()
+                .is_some_and(|c| c.label().is_none_or(|l| l.is_empty())))
+}
+
+/// QA-ACC-2: every switch, slider and menu of a row was nameless on the AT-SPI bus (a screen
+/// reader said "switch, off"). The row's title labels each nameless control in `within` (and
+/// the subtitle describes it), however deep the row's control box nests it.
+pub fn name_controls(within: &gtk::Widget, title: &gtk::Label, subtitle: Option<&gtk::Label>) {
+    use gtk::accessible::Relation;
+    let mut stack = vec![within.clone()];
+    while let Some(w) = stack.pop() {
+        if is_nameless_control(&w) {
+            w.update_relation(&[Relation::LabelledBy(&[title.upcast_ref()])]);
+            if let Some(d) = subtitle {
+                w.update_relation(&[Relation::DescribedBy(&[d.upcast_ref()])]);
+            }
+            // An entry's inner text, a spin button's own entry: one name is enough.
+            continue;
+        }
+        let mut c = w.first_child();
+        while let Some(x) = c {
+            c = x.next_sibling();
+            stack.push(x);
+        }
+    }
 }
 
 /// A row's secondary line: wraps at the row's width instead of widening it.

@@ -265,8 +265,13 @@ pub fn install_refusal(r: &Refusal, d: &InstallDisk) -> String {
         ),
         // Windows is hibernated (Fast Startup): its sentence says how to shut it down fully.
         Refusal::WindowsNotShutDown(_) => install_blocked(Blocked::NotShutDown).into(),
-        Refusal::WindowsUnchecked(_) => {
+        // QA-DOC-30: the BitLocker sentence was said for a Windows without BitLocker too (one
+        // that has not checked its disk since it was made smaller, or could not be read).
+        Refusal::WindowsUnchecked(id) if d.part(id).is_none_or(|p| p.bitlocker()) => {
             "BitLocker hides whether Windows shut down fully, so only Erase Disk can change this disk. Turn BitLocker off in Windows first.".into()
+        }
+        Refusal::WindowsUnchecked(_) => {
+            "Windows hasn’t checked its disk since it was made smaller. Start Windows once, then start the installer again.".into()
         }
         Refusal::NotAnEsp(id) => format!(
             "{} can’t hold the startup files. Choose another or add a new one.",
@@ -1146,6 +1151,33 @@ pub const COPY_NOT_SAVED: &str = "That copy could not be saved.";
 
 #[cfg(test)]
 mod tests {
+    /// QA-DOC-30: a Windows not checked since the shrink (or unreadable) got the BitLocker
+    /// sentence although it has no BitLocker.
+    #[test]
+    fn refusal_text_windows_unchecked_not_bitlocker() {
+        use wol_core::install::disk::{Blocked, Disk, Part};
+        use wol_core::install::layout::Refusal;
+        let win = |blocked, fstype: &str| Disk {
+            parts: vec![Part {
+                uuid: "u2".into(),
+                fstype: fstype.into(),
+                blocked: Some(blocked),
+                ..Part::default()
+            }],
+            ..Disk::default()
+        };
+        let r = Refusal::WindowsUnchecked("u2".into());
+        let plain = super::install_refusal(&r, &win(Blocked::Unreadable, "ntfs"));
+        assert!(!plain.contains("BitLocker"), "{plain}");
+        assert!(plain.contains("Start Windows once"), "{plain}");
+        for d in [
+            win(Blocked::BitLocker, "ntfs"),
+            win(Blocked::BitLocker, "BitLocker"),
+        ] {
+            assert!(super::install_refusal(&r, &d).contains("BitLocker"));
+        }
+    }
+
     /// Audit F10: a download the system refused is said as such, not as "did not finish".
     #[test]
     fn a_refused_signature_update_is_said() {

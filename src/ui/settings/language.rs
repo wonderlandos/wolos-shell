@@ -13,7 +13,7 @@ pub(crate) fn language_index(saved: Option<&str>, system: &str) -> usize {
 }
 
 /// The session's `LANG` (empty when unset).
-fn system_locale() -> String {
+pub(super) fn system_locale() -> String {
     crate::envv::var("LANG").unwrap_or_default()
 }
 

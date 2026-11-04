@@ -124,7 +124,7 @@ fn enable(id: &str) -> bool {
 
 /// Ids whose Install or Finish Setup is running from this page: one run per module, also across
 /// the reloads another row's action makes.
-type Busy = Rc<RefCell<Vec<String>>>;
+pub(super) type Busy = Rc<RefCell<Vec<String>>>;
 
 /// A row's button that runs one job at a time: while `id` runs it is off with a spinner beside
 /// it; `run` gets what to call when the job ended (the page reloads after it).
@@ -170,7 +170,7 @@ fn enable_said(ok: bool) -> &'static str {
     }
 }
 
-fn module_row(
+pub(super) fn module_row(
     e: &Rc<Env>,
     s: &Status,
     reload: &Rc<dyn Fn()>,

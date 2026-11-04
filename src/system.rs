@@ -54,6 +54,12 @@ pub enum Action {
     Zoom(bool),
     /// Kit stylesheet contrast overrides (`kit::style::CONTRAST_FILE`), every shell process.
     IncreaseContrast(bool),
+    /// Settings > Accessibility > Larger Text: gsettings `text-scaling-factor` 1.25 or 1 (QA-ACC-5);
+    /// the shell and the apps that follow the desktop's text scale restyle at once.
+    LargerText(bool),
+    /// Settings > Accessibility > Timeouts: the multiplier for every timed sheet, banner and
+    /// countdown (`kit::patience`, QA-ACC-6).
+    Timeouts(shared::patience::Patience),
     /// Settings: save desktop prefs and apply the changed compositor keywords live (`wol_core::hyprprefs`).
     Desktop(Box<wol_core::hyprprefs::DesktopPrefs>),
     /// Settings > Keyboard > Shortcuts: save overrides and rebind live.
@@ -298,6 +304,10 @@ pub struct Accessibility {
     pub reduce_motion: Option<bool>,
     pub zoom: Option<bool>,
     pub increase_contrast: bool,
+    /// The desktop's text scale is above normal (`kit::style::larger_text_on`).
+    pub larger_text: bool,
+    /// Give me more time (`kit::patience::current`).
+    pub patience: shared::patience::Patience,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -587,6 +597,8 @@ impl System for Fake {
             reduce_motion: Some(false),
             zoom: Some(false),
             increase_contrast: false,
+            larger_text: false,
+            patience: shared::patience::Patience::Normal,
         }
     }
     fn monitors(&self) -> Vec<Monitor> {
@@ -991,6 +1003,11 @@ impl Inner {
             Action::Zoom(on) => c.set_zoom(*on),
             Action::IncreaseContrast(on) => crate::kit::style::set_contrast(*on)
                 .map_err(|_| wol_core::controls::ControlError::Failed),
+            Action::LargerText(on) => crate::kit::style::set_larger_text(*on)
+                .map_err(|_| wol_core::controls::ControlError::Failed),
+            Action::Timeouts(p) => {
+                crate::kit::patience::save(*p).map_err(|_| wol_core::controls::ControlError::Failed)
+            }
             Action::Desktop(p) => wol_core::hyprprefs::apply_desktop(&*c.host, &config_home(), p)
                 .map(drop)
                 .map_err(|_| wol_core::controls::ControlError::Failed),
@@ -1038,12 +1055,12 @@ impl Inner {
                 Action::Power(m) => s.low_power = Some(*m == PowerMode::LowPower),
                 Action::ReduceMotion(on) => {
                     if let Some(a) = &mut s.a11y {
-                        a.reduce_motion = *on
+                        a.reduce_motion = Some(*on)
                     }
                 }
                 Action::Zoom(on) => {
                     if let Some(a) = &mut s.a11y {
-                        a.zoom = *on
+                        a.zoom = Some(*on)
                     }
                 }
                 Action::MediaToggle => {
@@ -1222,6 +1239,8 @@ fn topics_of(a: &Action) -> [bool; TOPICS] {
         | Action::FlatpakRemove(_)
         | Action::FlatpakOverride { .. }
         | Action::IncreaseContrast(_)
+        | Action::LargerText(_)
+        | Action::Timeouts(_)
         | Action::Desktop(_)
         | Action::Shortcuts(_)
         | Action::ShortcutCapture(_)
@@ -1426,9 +1445,11 @@ impl System for CoreSystem {
     fn accessibility(&self) -> Accessibility {
         let a = self.inner.lock().a11y;
         Accessibility {
-            reduce_motion: a.map(|a| a.reduce_motion),
-            zoom: a.map(|a| a.zoom),
+            reduce_motion: a.and_then(|a| a.reduce_motion),
+            zoom: a.and_then(|a| a.zoom),
             increase_contrast: crate::kit::style::contrast_on(),
+            larger_text: crate::kit::style::larger_text_on(),
+            patience: crate::kit::patience::current(),
         }
     }
     fn audio(&self) -> Audio {

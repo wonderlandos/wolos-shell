@@ -60,9 +60,10 @@ pub fn install(extra: &'static str) {
                 .and_then(|g| glass_override(g, looks_glass(), blur_on()))
                 .unwrap_or_default();
             if last.borrow_mut().set(format!(
-                "{}{}{glass}",
+                "{}{}{glass}@{}",
                 t.id,
-                if contrast { "+contrast" } else { "" }
+                if contrast { "+contrast" } else { "" },
+                text_scale()
             )) {
                 let mut css = theme::stylesheet(&t, extra);
                 // After the tokens and kit: the look's glass wins over the theme's.
@@ -70,7 +71,7 @@ pub fn install(extra: &'static str) {
                 if contrast {
                     css.push_str(CONTRAST_CSS);
                 }
-                provider.load_from_string(&css);
+                provider.load_from_string(&scale_text_css(&css, text_scale()));
                 if let Some(s) = gtk::Settings::default() {
                     s.set_gtk_application_prefer_dark_theme(t.variant == theme::Variant::Dark);
                 }
@@ -146,6 +147,7 @@ pub fn install(extra: &'static str) {
             std::mem::forget(m);
         }
     }
+    follow_accessibility(load.clone());
     // The user's own rules, over the kit (live: `ui::ipc::watch_prefs`); read off the GTK thread.
     let user = std::path::Path::new(&super::config_home()).join(USER_CSS_FILE);
     glib::spawn_future_local(async move {
@@ -157,6 +159,18 @@ pub fn install(extra: &'static str) {
         }
     });
     let _ = glib::MainContext::default();
+}
+
+/// The accessibility settings that restyle the shell from outside the theme: "Give me more time"
+/// (every timer in this process reads `kit::patience`) and Larger Text, the desktop's text scale
+/// (gsettings, which GTK and Qt apps follow as well): the shell restyles at once when either
+/// changes, whoever changed it.
+fn follow_accessibility(load: impl Fn() + 'static) {
+    super::patience::watch();
+    if let Some(settings) = interface_settings() {
+        settings.connect_changed(Some(TEXT_SCALE_KEY), move |_, _| load());
+        KEPT_SETTINGS.with(|k| k.borrow_mut().push(settings));
+    }
 }
 
 /// `$XDG_CONFIG_HOME/wolos/kit.css`: the user's own rules for the shell's look.
@@ -331,6 +345,103 @@ pub fn set_contrast(on: bool) -> std::io::Result<()> {
     }
 }
 
+/// The desktop's interface settings (gsettings), where the text scale lives; None on a machine
+/// without the schema (a build box).
+const INTERFACE_SCHEMA: &str = "org.gnome.desktop.interface";
+const TEXT_SCALE_KEY: &str = "text-scaling-factor";
+/// What the Larger Text switch sets: a quarter more, the step the HIG calls "Large".
+pub const LARGER_TEXT: f64 = 1.25;
+
+thread_local! {
+    /// The settings object whose change signal restyles the shell: alive as long as the process.
+    static KEPT_SETTINGS: RefCell<Vec<gio::Settings>> = const { RefCell::new(Vec::new()) };
+}
+
+fn interface_settings() -> Option<gio::Settings> {
+    let src = gio::SettingsSchemaSource::default()?;
+    let schema = src.lookup(INTERFACE_SCHEMA, true)?;
+    schema
+        .has_key(TEXT_SCALE_KEY)
+        .then(|| gio::Settings::new(INTERFACE_SCHEMA))
+}
+
+/// The text scale in force (1.0 = normal), from gsettings `text-scaling-factor`; kept between
+/// 1 and 3 (smaller text is not offered, and the kit's sizes break past 3).
+pub fn text_scale() -> f64 {
+    interface_settings()
+        .map(|s| s.double(TEXT_SCALE_KEY))
+        .filter(|v| v.is_finite())
+        .map_or(1.0, |v| v.clamp(1.0, 3.0))
+}
+
+/// Whether Larger Text is on: any scale above normal counts (the person may have set another one
+/// with a tool; the switch then turns it back to 1).
+pub fn larger_text_on() -> bool {
+    text_scale() > 1.0
+}
+
+/// Larger Text on (`text-scaling-factor` 1.25) or off (1.0). Err when gsettings cannot be written
+/// (no schema on this machine, or the key is locked down).
+pub fn set_larger_text(on: bool) -> std::io::Result<()> {
+    let s = interface_settings()
+        .ok_or_else(|| std::io::Error::other("no desktop interface settings on this machine"))?;
+    s.set_double(TEXT_SCALE_KEY, if on { LARGER_TEXT } else { 1.0 })
+        .map_err(std::io::Error::other)?;
+    gio::Settings::sync();
+    Ok(())
+}
+
+/// `css` with every `font-size` and `line-height` given in px multiplied by `factor` (rounded to
+/// a tenth of a px); a factor of 1 returns the text as it is. Larger Text (QA-ACC-5): the kit draws
+/// its type in px, which the toolkit's own text scale never reaches, so the sheet is scaled here.
+pub fn scale_text_css(css: &str, factor: f64) -> String {
+    if (factor - 1.0).abs() < 1e-6 {
+        return css.to_owned();
+    }
+    let mut out = String::with_capacity(css.len() + css.len() / 16);
+    let mut rest = css;
+    while let Some((at, key)) = ["font-size:", "line-height:"]
+        .iter()
+        .filter_map(|k| rest.find(k).map(|i| (i, *k)))
+        .min_by_key(|(i, _)| *i)
+    {
+        let head = at + key.len();
+        out.push_str(&rest[..head]);
+        rest = &rest[head..];
+        let trimmed = rest.trim_start();
+        let pad = &rest[..rest.len() - trimmed.len()];
+        let num_len = trimmed
+            .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .unwrap_or(trimmed.len());
+        let (num, tail) = trimmed.split_at(num_len);
+        match (num.parse::<f64>(), tail.strip_prefix("px")) {
+            (Ok(v), Some(after)) if !num.is_empty() => {
+                // Not `12pxfoo`: a unit ends at a non-letter.
+                if after
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+                {
+                    out.push_str(pad);
+                    out.push_str(num);
+                    rest = tail;
+                } else {
+                    let scaled = (v * factor * 10.0).round() / 10.0;
+                    out.push_str(pad);
+                    out.push_str(&format!("{scaled}px"));
+                    rest = after;
+                }
+            }
+            _ => {
+                out.push_str(pad);
+                rest = trimmed;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn active_id() -> Option<String> {
     theme::saved()
 }
@@ -435,7 +546,8 @@ pub fn apply(t: &theme::Theme, extra: &str) {
             icons(&display);
             p
         });
-        p.load_from_string(&theme::stylesheet(t, extra));
+        // Larger text applies to the fixed sheet too (goldens, previews): same rule as `install`.
+        p.load_from_string(&scale_text_css(&theme::stylesheet(t, extra), text_scale()));
     });
     if let Some(s) = gtk::Settings::default() {
         s.set_gtk_application_prefer_dark_theme(t.variant == theme::Variant::Dark);
@@ -445,6 +557,29 @@ pub fn apply(t: &theme::Theme, extra: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-ACC-5: the kit draws its type in px, so Larger Text multiplies the sizes in the sheet.
+    #[test]
+    fn larger_text_multiplies_font_sizes_and_line_heights_in_px() {
+        let css = "window { font-size: 13px; line-height: 20px; }\nlabel.x{font-size:11px;line-height:16px;color:red}";
+        assert_eq!(scale_text_css(css, 1.0), css);
+        assert_eq!(
+            scale_text_css(css, 1.25),
+            "window { font-size: 16.3px; line-height: 25px; }\nlabel.x{font-size:13.8px;line-height:20px;color:red}"
+        );
+        // Not px (unitless line height, em, a variable, min-height) and not a longer unit: untouched.
+        let other = "a { font-size: 1.2em; line-height: 1.4; min-height: 40px; } b { font-size: var(--s); line-height: 12pxx; }";
+        assert_eq!(scale_text_css(other, 2.0), other);
+        // The sizes of the shipped sheet all scale: nothing is left at the old size.
+        let kit = include_str!("kit.css");
+        let big = scale_text_css(kit, 2.0);
+        assert!(big.contains("font-size: 26px"), "13px doubled");
+        assert!(!big.contains("font-size: 13px"));
+        assert_eq!(
+            kit.matches("font-size:").count(),
+            big.matches("font-size:").count()
+        );
+    }
 
     /// QA-DESIGN-21 / LIVE-16: without compositor blur the translucent glass showed the windows
     /// behind it. The theme's 0.84 or 0.70 rises to 0.92; with blur it stays the theme's.

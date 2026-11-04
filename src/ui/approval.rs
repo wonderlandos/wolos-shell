@@ -265,7 +265,9 @@ impl Approvals {
             }
             Ok(id) => {
                 let weak = Rc::downgrade(self);
-                glib::timeout_add_seconds_local_once(APPROVAL_TIMEOUT_SECS, move || {
+                // Give me more time (QA-ACC-6): the requester's wait stretches by the same figure.
+                let secs = crate::kit::patience::current().secs(APPROVAL_TIMEOUT_SECS);
+                glib::timeout_add_seconds_local_once(secs, move || {
                     if let Some(a) = weak.upgrade() {
                         a.expire(id);
                     }

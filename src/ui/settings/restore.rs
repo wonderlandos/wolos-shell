@@ -4,6 +4,10 @@
 use super::*;
 use wol_core::journal::{Entry, is_undone};
 
+/// The journal topic of a change made in Settings > Control Center (the same `shell.json` as
+/// Desktop & Dock, so the topic is how Undo and Restore tell them apart).
+pub(crate) const CONTROL_CENTER_TOPIC: &str = "control center";
+
 /// What a change was about, in words.
 pub(crate) fn topic(what: &str) -> &str {
     match what {
@@ -11,6 +15,7 @@ pub(crate) fn topic(what: &str) -> &str {
         "wallpaper" => "Wallpaper",
         "focus" => "Focus",
         "shell" => "Desktop & Dock",
+        CONTROL_CENTER_TOPIC => "Control Center",
         "desktop" => "Desktop, windows and effects",
         "keyboard" | "shortcuts" => "Keyboard shortcuts",
         "displays" => "Displays",
@@ -244,6 +249,14 @@ mod tests {
         assert_eq!(topic("theme"), "Appearance");
         // A1 follow-up: a language change (hyprprefs::journal_topic) is named, not shown raw.
         assert_eq!(topic("language"), "Language & Region");
+        // QA-SET-66: Settings > Control Center writes shell.json under its own topic; the Undo
+        // toast says "Control Center changed", not "Desktop & Dock changed".
+        assert_eq!(topic("shell"), "Desktop & Dock");
+        assert_eq!(topic(CONTROL_CENTER_TOPIC), "Control Center");
+        assert_eq!(
+            super::super::changed_line(CONTROL_CENTER_TOPIC),
+            "Control Center changed"
+        );
         assert_eq!(actor("mcp:claude"), "Assistant “claude”");
         assert_eq!(actor("script:tidy"), "Script “tidy”");
         assert_eq!(ago(1000, 990), "Just now");

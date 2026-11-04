@@ -116,12 +116,15 @@ pub(super) const ROWS: [(&str, &[&str]); 37] = [
     (
         "Accessibility",
         &[
+            "Larger text",
             "Increase contrast",
             "Reduce transparency",
             "Reduce motion",
+            "Give me more time",
             "Pointer size",
             "Zoom",
             "Display",
+            "Timing",
             "Pointer and Zoom",
         ],
     ),
@@ -252,6 +255,7 @@ pub(super) const ROWS: [(&str, &[&str]); 37] = [
             "Delay until repeat",
             "Keyboard Shortcuts",
             "Input Sources",
+            "Input Methods",
         ],
     ),
     (

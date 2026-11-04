@@ -58,7 +58,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 let t = w::pending_toggle(on, move |on, done| {
                     let mut v = c.get();
                     v.control_center.set(key, on);
-                    let ok = save_shell(v);
+                    let ok = save_shell_as(restore::CONTROL_CENTER_TOPIC, v);
                     if ok {
                         c.set(v);
                     }

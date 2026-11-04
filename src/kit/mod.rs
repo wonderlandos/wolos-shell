@@ -10,6 +10,7 @@ pub mod fence;
 pub mod form;
 pub mod lifetime;
 pub mod motion;
+pub mod patience;
 pub mod pickers;
 pub mod reveal;
 pub mod style;

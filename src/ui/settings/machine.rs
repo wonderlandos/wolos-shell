@@ -146,6 +146,11 @@ pub trait Machine: Send + Sync {
     fn printers(&self) -> Option<Vec<Printer>>;
     /// Device URIs CUPS can see (slow: probes the network).
     fn discover_printers(&self) -> Vec<String>;
+    /// Runs a printing command as the person (`lp` test page, `cancel -a`; no admin); true when
+    /// CUPS took it (slow: call off the UI thread).
+    fn printer_job(&self, _argv: &[String]) -> bool {
+        false
+    }
     fn hardware(&self) -> HardwareSnapshot;
     /// The installed WolOS version (`/etc/os-release` VERSION_ID). None: not known here (demo
     /// machines), About shows the build's own.
@@ -369,6 +374,10 @@ impl Machine for Live {
     }
     fn printers(&self) -> Option<Vec<Printer>> {
         wol_core::printers::read(self.os())
+    }
+    fn printer_job(&self, argv: &[String]) -> bool {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        self.os().run(&a).is_some()
     }
     fn discover_printers(&self) -> Vec<String> {
         wol_core::printers::discover(self.os())
@@ -680,12 +689,15 @@ impl Machine for Demo {
                 uri: "ipp://192.168.1.40/ipp/print".into(),
                 default: true,
                 state: "Idle".into(),
+                ..Default::default()
             },
             Printer {
                 name: "Office_Laser".into(),
                 uri: "ipp://192.168.1.41/ipp/print".into(),
                 default: false,
                 state: "Stopped".into(),
+                jobs: 2,
+                ..Default::default()
             },
         ])
     }
@@ -941,6 +953,8 @@ pub struct DemoEdge {
     pub one_copy: bool,
     /// Airplane mode as the radios say (NET-3); None: no radio.
     pub airplane: Option<bool>,
+    /// The module list holds the input methods (`ime`), not installed (Keyboard offers it).
+    pub ime: bool,
 }
 
 impl Machine for DemoEdge {
@@ -1035,6 +1049,25 @@ impl Machine for DemoEdge {
         self.queued.load(std::sync::atomic::Ordering::Relaxed)
     }
     fn modules(&self) -> Option<Vec<wol_core::modules::Status>> {
+        if self.ime {
+            let mut list = Demo.modules()?;
+            list.push(wol_core::modules::Status {
+                id: "ime".into(),
+                name: "Input methods".into(),
+                summary: "Type Japanese, Chinese and Korean".into(),
+                category: String::new(),
+                size_mb: 210,
+                package: format!("{}ime", wol_core::modules::PACKAGE_PREFIX),
+                installed: false,
+                enabled: false,
+                pending: false,
+                needs_enable: false,
+                offline: false,
+                needs: Vec::new(),
+                backend: None,
+            });
+            return Some(list);
+        }
         if self.gave_up { Demo.modules() } else { None }
     }
     fn modules_gave_up(&self) -> Vec<super::modules::GaveUp> {

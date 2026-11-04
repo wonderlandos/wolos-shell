@@ -65,6 +65,30 @@ pub enum Plan<T> {
 /// the grab; the compositor gave the keyboard back to the app behind, `activewindow` fired and the shell
 /// read it as "another app in front". The plan keeps a grab alive while its panel is open.
 pub fn plan<T: PartialEq + Clone>(held: &[T], wanted: &[T]) -> Plan<T> {
+    plan_with_dead(held, &[], wanted)
+}
+
+/// [`plan`] when some `held` surfaces are `dead`: their window was destroyed or got a new
+/// `wl_surface` (a display plugged in makes layer-shell recreate the menu bars and the Dock).
+/// QA-DEV-17: `remove_surface` on a destroyed surface is a protocol error that killed wol-shell.
+/// The compositor already dropped a destroyed surface from the grab, so a dead one is only
+/// forgotten here, never named in a request; the live grab is still adjusted, never destroyed.
+pub fn plan_with_dead<T: PartialEq + Clone>(held: &[T], dead: &[T], wanted: &[T]) -> Plan<T> {
+    let alive: Vec<T> = held.iter().filter(|s| !dead.contains(s)).cloned().collect();
+    if !dead.is_empty() && !held.is_empty() && !wanted.is_empty() {
+        return Plan::Adjust {
+            add: wanted
+                .iter()
+                .filter(|s| !alive.contains(s))
+                .cloned()
+                .collect(),
+            remove: alive
+                .iter()
+                .filter(|s| !wanted.contains(s))
+                .cloned()
+                .collect(),
+        };
+    }
     if wanted.is_empty() {
         return if held.is_empty() {
             Plan::Keep
@@ -144,8 +168,9 @@ pub struct FocusGrab {
     state: RefCell<State>,
     manager: Manager,
     grab: RefCell<Option<Grab>>,
-    /// The surfaces the live grab whitelists, in order (first = keyboard).
-    held: RefCell<Vec<WlSurface>>,
+    /// The surfaces the live grab whitelists, in order (first = keyboard), with the window each
+    /// belongs to: a surface is only named in a request while its window still has it.
+    held: RefCell<Vec<(WlSurface, glib::WeakRef<gtk::Window>)>>,
     cleared: Rc<Cell<bool>>,
     on_cleared: Rc<dyn Fn()>,
 }
@@ -253,13 +278,27 @@ impl FocusGrab {
     /// The compositor then hands the keyboard to a window, which is not "another app in front"
     /// (`transient::Dismisser::expect_refocus`).
     pub fn set(&self, windows: &[gtk::Window]) -> bool {
-        let wanted: Vec<WlSurface> = windows
+        let now: Vec<(WlSurface, glib::WeakRef<gtk::Window>)> = windows
             .iter()
             .filter(|w| w.is_mapped())
-            .filter_map(|w| surface_of(&self.conn, w))
+            .filter_map(|w| Some((surface_of(&self.conn, w)?, w.downgrade())))
             .collect();
-        // A local: the borrow of `held` must end before `release` writes it.
-        let p = plan(&self.held.borrow(), &wanted);
+        let wanted: Vec<WlSurface> = now.iter().map(|(s, _)| s.clone()).collect();
+        // Locals: the borrow of `held` must end before `release` writes it.
+        let (held, dead): (Vec<WlSurface>, Vec<WlSurface>) = {
+            let h = self.held.borrow();
+            let dead = h
+                .iter()
+                .filter(|(s, w)| {
+                    w.upgrade()
+                        .and_then(|w| surface_of(&self.conn, &w))
+                        .is_none_or(|now| now != *s)
+                })
+                .map(|(s, _)| s.clone())
+                .collect();
+            (h.iter().map(|(s, _)| s.clone()).collect(), dead)
+        };
+        let p = plan_with_dead(&held, &dead, &wanted);
         let destroyed = matches!(p, Plan::Release);
         match p {
             Plan::Keep => return false,
@@ -284,7 +323,7 @@ impl FocusGrab {
                 self.grab.replace(Some(g));
             }
         }
-        *self.held.borrow_mut() = wanted;
+        *self.held.borrow_mut() = now;
         let _ = self.conn.flush();
         destroyed
     }
@@ -335,6 +374,43 @@ mod tests {
             }
         );
         assert_eq!(plan(&[9, 1, 2], &[]), Plan::<u8>::Release, "panel closed");
+    }
+
+    /// QA-DEV-17: a display plugged in while the Control Center is open: layer-shell recreated
+    /// the menu bars (1, 2 died, 3, 4 are their new surfaces). Removing a dead surface was a
+    /// protocol error that killed wol-shell; the dead are forgotten, the new ones added, and
+    /// the grab stays (destroying it would close the panel).
+    #[test]
+    fn plan_with_dead_held_surfaces_never_names_them() {
+        assert_eq!(
+            plan_with_dead(&[9, 1, 2], &[1, 2], &[9, 3, 4]),
+            Plan::Adjust {
+                add: vec![3, 4],
+                remove: vec![]
+            }
+        );
+        assert_eq!(
+            plan_with_dead(&[9, 1, 2], &[9, 1, 2], &[8, 3]),
+            Plan::Adjust {
+                add: vec![8, 3],
+                remove: vec![]
+            },
+            "everything held died: still adjusted, nothing removed"
+        );
+        assert_eq!(
+            plan_with_dead(&[9, 1, 2], &[1], &[9, 2]),
+            Plan::Adjust {
+                add: vec![],
+                remove: vec![]
+            },
+            "the same live set: only the dead one is forgotten"
+        );
+        assert_eq!(
+            plan_with_dead(&[9, 1, 2], &[1], &[]),
+            Plan::<u8>::Release,
+            "panel closed: destroying the grab names no surface"
+        );
+        assert_eq!(plan_with_dead::<u8>(&[], &[], &[9]), Plan::Recreate);
     }
 
     /// Audit3 R2A-1: another panel takes over (Control Center -> Notification Center). The live
