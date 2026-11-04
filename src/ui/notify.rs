@@ -183,6 +183,30 @@ impl Bus {
         Ok(Bus { conn, open })
     }
 
+    /// Resolves once the bus end closes this connection (QA-CRASH-2: the session bus went
+    /// away). One thread reads the connection's messages until it ends; a std thread, as
+    /// `tray.rs` does, because the shell has no stream helpers.
+    pub fn closed(&self) -> async_channel::Receiver<()> {
+        let (tx, rx) = async_channel::bounded(1);
+        let it = zbus::blocking::MessageIterator::from(zbus::blocking::Connection::from(
+            self.conn.clone(),
+        ));
+        let spawned = std::thread::Builder::new()
+            .name("notify-bus".into())
+            .spawn(move || {
+                for m in it {
+                    if m.is_err() {
+                        break;
+                    }
+                }
+                let _ = tx.send_blocking(());
+            });
+        if let Err(e) = spawned {
+            eprintln!("wol-shell: notifications: no bus watch: {e}");
+        }
+        rx
+    }
+
     /// Emits NotificationClosed once per notification; false when it was already closed.
     pub async fn close(&self, id: u32, reason: CloseReason) -> zbus::Result<bool> {
         if !take(&self.open, id) {
@@ -892,6 +916,20 @@ fn take_offer(o: &Offer, b: &gtk::Button, close: Option<Rc<dyn Fn()>>) {
     }
 }
 
+/// Wait before the first try to serve the notification name again after the bus went away; it
+/// doubles per failed try up to [`RESERVE_LONGEST`] (another server may hold the name for good).
+pub const RESERVE_GAP: std::time::Duration = std::time::Duration::from_secs(1);
+pub const RESERVE_LONGEST: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The wait after `failed` tries in a row ([`RESERVE_GAP`] doubling, at most [`RESERVE_LONGEST`]).
+pub fn reserve_gap(failed: u32) -> std::time::Duration {
+    RESERVE_GAP
+        .saturating_mul(1u32 << failed.min(5))
+        .min(RESERVE_LONGEST)
+}
+/// The journal line when the notification server lost its bus.
+pub const BUS_GONE: &str = "the session bus went away; serving again when it is back";
+
 /// Starts the D-Bus server; returns the Notification Center panel and "dismiss every banner".
 pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
     let (tx, rx) = async_channel::unbounded::<Event>();
@@ -911,20 +949,36 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
             }
         });
     }
-    let bus: Rc<std::cell::OnceCell<Bus>> = Default::default();
+    let bus: Rc<RefCell<Option<Bus>>> = Default::default();
     let b2 = bus.clone();
+    // QA-CRASH-2: when the session bus goes away the server is gone with it; it is served again
+    // on the bus that comes back (the user bus is socket-activated), [`reserve_gap`] apart.
     glib::spawn_future_local(async move {
-        match Bus::serve(None, tx).await {
-            Ok(b) => {
-                let _ = b2.set(b);
+        let mut failed = 0u32;
+        loop {
+            match Bus::serve(None, tx.clone()).await {
+                Ok(b) => {
+                    failed = 0;
+                    let closed = b.closed();
+                    b2.replace(Some(b));
+                    let _ = closed.recv().await;
+                    b2.replace(None);
+                    eprintln!("wol-shell: notifications: {BUS_GONE}");
+                }
+                Err(e) => {
+                    if failed == 0 {
+                        eprintln!("wol-shell: notifications: {e}");
+                    }
+                    failed += 1;
+                }
             }
-            Err(e) => eprintln!("wol-shell: notifications: {e}"),
+            glib::timeout_future(reserve_gap(failed)).await;
         }
     });
     let invoke = {
         let bus = bus.clone();
         move |id: u32, key: String| {
-            if let Some(b) = bus.get().cloned() {
+            if let Some(b) = bus.borrow().clone() {
                 glib::spawn_future_local(async move {
                     if let Err(e) = b.invoke(id, &key).await {
                         eprintln!("wol-shell: ActionInvoked: {e}");
@@ -934,7 +988,7 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
         }
     };
     let closed = move |id: u32, reason: CloseReason| {
-        if let Some(b) = bus.get().cloned() {
+        if let Some(b) = bus.borrow().clone() {
             glib::spawn_future_local(async move {
                 if let Err(e) = b.close(id, reason).await {
                     eprintln!("wol-shell: NotificationClosed: {e}");

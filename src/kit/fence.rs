@@ -149,3 +149,36 @@ pub fn stand_in(app: &gtk::Application, name: &str) -> gtk::Window {
     win.set_child(Some(&card(name)));
     win.upcast()
 }
+
+/// QA-CRASH-2: GIO's shared session-bus connection ends the whole process (it raises SIGTERM)
+/// when the bus goes away, because `exit-on-close` is on by default. A lost user bus then took
+/// the bar, Dock and wallpaper down with no log line, and the lock screen with them. Our surfaces
+/// are Wayland, not D-Bus, so every toolkit process keeps running without the bus instead. The
+/// journal gets one line. Call it right after the `Application` is built, before `run`.
+pub fn survive_bus_loss(app: &impl IsA<gtk::gio::Application>) {
+    app.connect_startup(|app| {
+        if let Some(c) = app.dbus_connection() {
+            keep_on_bus_loss(&c);
+        }
+    });
+}
+
+/// [`survive_bus_loss`] for one connection: no exit on close, and one journal line when the bus
+/// end closed it (a close we asked for says nothing).
+pub fn keep_on_bus_loss(c: &gtk::gio::DBusConnection) {
+    c.set_exit_on_close(false);
+    c.connect_closed(|_, remote, _| {
+        if remote {
+            let me = std::env::args()
+                .next()
+                .and_then(|a| a.rsplit('/').next().map(str::to_owned))
+                .unwrap_or_else(|| "wolos".into());
+            eprintln!("{}", bus_lost_line(&me));
+        }
+    });
+}
+
+/// The journal line for a lost session bus.
+pub fn bus_lost_line(me: &str) -> String {
+    format!("{me}: the session bus went away; keeping on without it")
+}

@@ -314,6 +314,7 @@ pub fn run() -> glib::ExitCode {
         .application_id("org.wolos.settings")
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
+    crate::kit::fence::survive_bus_loss(&app);
     app.connect_command_line(|app, cmdline| {
         let args: Vec<String> = cmdline
             .arguments()

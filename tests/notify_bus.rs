@@ -161,3 +161,36 @@ fn actions_are_invoked_then_closed() {
         assert!(!bus.invoke(id, "restart").await.unwrap());
     });
 }
+
+/// QA-CRASH-2: the server learns that its bus went away (so the shell serves the name again on
+/// the next one) instead of holding a dead connection for the rest of the session.
+#[test]
+fn the_server_sees_its_bus_go_away() {
+    let Some(mut d) = daemon() else {
+        eprintln!("skipped: no dbus-daemon");
+        return;
+    };
+    async_io::block_on(async {
+        let (tx, _rx) = async_channel::unbounded();
+        let bus = Bus::serve(Some(&d.1), tx).await.expect("serve");
+        let closed = bus.closed();
+        assert!(closed.try_recv().is_err(), "closed while the bus lives");
+        d.0.kill().unwrap();
+        d.0.wait().unwrap();
+        let t = std::time::Instant::now();
+        while closed.try_recv().is_err() {
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(5),
+                "no close seen in 5 s"
+            );
+            async_io::Timer::after(std::time::Duration::from_millis(50)).await;
+        }
+    });
+}
+
+#[test]
+fn serving_again_backs_off_to_thirty_seconds() {
+    use shell::ui::notify::reserve_gap;
+    let secs: Vec<u64> = (0..8).map(|n| reserve_gap(n).as_secs()).collect();
+    assert_eq!(secs, [1, 2, 4, 8, 16, 30, 30, 30]);
+}
