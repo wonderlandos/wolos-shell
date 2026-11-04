@@ -97,6 +97,16 @@ pub const THEME_FROM_WALLPAPER: &str =
 pub const THEME_PICTURE_UNREADABLE: &str =
     "The desktop picture couldn’t be read. Choose another in Wallpaper.";
 
+// ---- Wallpaper ----
+
+/// Under the wallpaper tiles: what follows Light and Dark, what follows the clock.
+pub const WALLPAPER_SIDES: &str = "The Moon Gate wears your theme’s colours. It and the places show day in Light and night in Dark.";
+/// Under the tiles when the Dynamic pictures are installed.
+pub const WALLPAPER_DYNAMIC: &str =
+    "Dynamic shows the day picture in daytime, dusk in the evening and night after dark.";
+/// "Your own photo" row subtitle.
+pub const WALLPAPER_OWN_PHOTO: &str = "Any picture on this computer.";
+
 // ---- Software Update ----
 
 /// Software Update > Download on metered connections: what counts as metered.
@@ -228,7 +238,7 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 60] = [
+pub const ALL: [&str; 63] = [
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -277,6 +287,9 @@ pub const ALL: [&str; 60] = [
     ACCOUNT_RESERVED,
     THEME_FROM_WALLPAPER,
     THEME_PICTURE_UNREADABLE,
+    WALLPAPER_SIDES,
+    WALLPAPER_DYNAMIC,
+    WALLPAPER_OWN_PHOTO,
     AUTO_APPS_FAILED,
     DISPLAYS_NONE,
     DISPLAYS_REVERTED,

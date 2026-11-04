@@ -8,6 +8,7 @@ pub mod controls;
 pub mod data;
 pub mod fence;
 pub mod form;
+pub mod gate;
 pub mod lifetime;
 pub mod motion;
 pub mod pickers;

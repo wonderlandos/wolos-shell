@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Wallpaper: Dynamic (day, dusk and night pictures following the clock), the shipped pictures and
-//! your own photo. The choice is one journaled line (`wolos/wallpaper`, same file as
-//! `wol wallpaper set`); the desktop follows it.
+//! Wallpaper: the Moon Gate (default; day in Light, night in Dark, in the active theme's dye), the
+//! places (Cachoeira Station and the earlier ones, when installed), Dynamic (day, dusk and night
+//! pictures following the clock) and your own photo. The page names what the desktop shows now.
+//! The choice is one journaled line (`wolos/wallpaper`, same file as `wol wallpaper set`); the
+//! desktop follows it. Previews are rendered once and cached (`form::wallpaper_thumb`).
 use super::*;
-use kit::pickers::{DYNAMIC, DYNAMIC_CHOICE, shipped_wallpaper, wallpaper_choice};
+use crate::copy::settings as copy;
+use kit::pickers::{
+    DYNAMIC, DYNAMIC_CHOICE, GATE_CHOICE, Look, PLACE_PREFIX, PLACES, gate_file, place_file,
+    shipped_wallpaper, wallpaper_choice, wallpaper_name,
+};
 
-/// Shipped pictures: (saved choice, file, name).
+/// The preview's display shape (16:9).
+const ASPECT: f64 = 16.0 / 9.0;
+
+/// Shipped Dynamic pictures: (saved choice, file, name).
 fn shipped() -> Vec<(String, PathBuf, String)> {
     DYNAMIC
         .iter()
@@ -24,6 +33,11 @@ fn shipped() -> Vec<(String, PathBuf, String)> {
             Some((f.display().to_string(), f, name))
         })
         .collect()
+}
+
+/// Day and night pictures of a choice that follows Light and Dark, when both are installed.
+fn day_night(f: impl Fn(bool) -> Option<PathBuf>) -> Option<[PathBuf; 2]> {
+    Some([f(false)?, f(true)?])
 }
 
 /// Saves `choice` (a path or `dynamic`) as one journaled change and tells the desktop.
@@ -58,21 +72,60 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
         });
         tiles.append(t);
     };
-    let strips: Vec<&std::path::Path> = pics.iter().map(|x| x.1.as_path()).collect();
-    let dynamic =
-        form::wallpaper_strips_tile(&strips, "Dynamic", saved.as_deref() == Some(DYNAMIC_CHOICE));
-    add(&dynamic, DYNAMIC_CHOICE.into());
-    let default = shipped_wallpaper(DYNAMIC[1]).map(|f| f.display().to_string());
-    for (choice, file, name) in &pics {
-        let on = match saved.as_deref() {
-            Some(s) => s == choice,
-            None => default.as_deref() == Some(choice),
+    let look = Look::current();
+    let gate = day_night(|n| gate_file(&look.theme, n, ASPECT));
+    // The default: the gate, or the dusk picture on an image without it.
+    let default = match &gate {
+        Some(_) => Some(GATE_CHOICE.to_string()),
+        None => shipped_wallpaper(DYNAMIC[1]).map(|f| f.display().to_string()),
+    };
+    let follows = |choice: &str| match saved.as_deref() {
+        Some(s) => s == choice,
+        None => default.as_deref() == Some(choice),
+    };
+    // The Moon Gate: selected when chosen, by default, and when a saved photo is gone.
+    let known = |s: &str| {
+        s == DYNAMIC_CHOICE
+            || s.starts_with(PLACE_PREFIX)
+            || pics.iter().any(|x| x.0 == s)
+            || std::path::Path::new(s).is_file()
+    };
+    let gate_on = follows(GATE_CHOICE) || saved.as_deref().is_some_and(|s| !known(s));
+    if let Some(files) = &gate {
+        let strips: Vec<&std::path::Path> = files.iter().map(|f| f.as_path()).collect();
+        add(
+            &form::wallpaper_strips_tile(&strips, "Moon Gate", gate_on),
+            GATE_CHOICE.into(),
+        );
+    }
+    for (id, name) in PLACES {
+        let Some(files) = day_night(|n| place_file(id, n, ASPECT)) else {
+            continue;
         };
-        add(&form::wallpaper_tile(Some(file), name, on), choice.clone());
+        let choice = format!("{PLACE_PREFIX}{id}");
+        let strips: Vec<&std::path::Path> = files.iter().map(|f| f.as_path()).collect();
+        add(
+            &form::wallpaper_strips_tile(&strips, name, follows(&choice)),
+            choice,
+        );
+    }
+    if !pics.is_empty() {
+        let strips: Vec<&std::path::Path> = pics.iter().map(|x| x.1.as_path()).collect();
+        add(
+            &form::wallpaper_strips_tile(&strips, "Dynamic", follows(DYNAMIC_CHOICE)),
+            DYNAMIC_CHOICE.into(),
+        );
+    }
+    for (choice, file, name) in &pics {
+        add(
+            &form::wallpaper_tile(Some(file), name, follows(choice)),
+            choice.clone(),
+        );
     }
     let own = saved
         .as_deref()
-        .filter(|s| *s != DYNAMIC_CHOICE && !pics.iter().any(|x| x.0 == *s))
+        .filter(|s| *s != DYNAMIC_CHOICE && *s != GATE_CHOICE && !s.starts_with(PLACE_PREFIX))
+        .filter(|s| !pics.iter().any(|x| x.0 == *s))
         .map(PathBuf::from)
         .filter(|f| f.is_file());
     if let Some(f) = own {
@@ -81,19 +134,27 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             f.display().to_string(),
         );
     }
+    p.append(&w::section(
+        "",
+        &[form::info_row(
+            "Now Showing",
+            &wallpaper_name(saved.as_deref(), &look, kit::now().hour),
+        )],
+    ));
     p.append(&w::section("", &[tiles.clone().upcast()]));
     if let Some(card) = tiles.parent() {
         card.add_css_class("preview-card");
     }
-    p.append(&w::footnote(
-        "Dynamic shows the day picture in daytime, dusk in the evening and night after dark.",
-    ));
+    p.append(&w::footnote(copy::WALLPAPER_SIDES));
+    if !pics.is_empty() {
+        p.append(&w::footnote(copy::WALLPAPER_DYNAMIC));
+    }
     let (st, page, env) = (status.clone(), p.downgrade(), Rc::downgrade(e));
     p.append(&w::section(
         "",
         &[form::button_row(
             "Your own photo",
-            "Any picture on this computer.",
+            copy::WALLPAPER_OWN_PHOTO,
             "Add Photo…",
             move || {
                 let (Some(page), st, env) = (page.upgrade(), st.clone(), env.clone()) else {

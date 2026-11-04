@@ -604,12 +604,7 @@ pub fn wallpaper_strips_tile(
         strips.append(&pic);
         let f = f.to_path_buf();
         glib::spawn_future_local(async move {
-            let r = gtk::gio::spawn_blocking(move || {
-                gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&f, tw * 2, -1, true)
-                    .ok()
-                    .map(|pb| gdk::Texture::for_pixbuf(&pb))
-            })
-            .await;
+            let r = gtk::gio::spawn_blocking(move || wallpaper_thumb(&f, tw * 2)).await;
             if let Ok(Some(t)) = r {
                 pic.set_paintable(Some(&t));
             }
@@ -631,6 +626,65 @@ pub fn wallpaper_strips_tile(
     t.add_css_class("preview-tile");
     t.add_css_class("wallpaper-tile");
     t
+}
+
+/// Wallpaper previews made in this process: (file, width, modified) -> texture.
+type Thumbs = std::collections::HashMap<(std::path::PathBuf, i32, u64), gdk::Texture>;
+static THUMBS: std::sync::Mutex<Option<Thumbs>> = std::sync::Mutex::new(None);
+
+/// Where a preview of `f` at `width` px is kept across processes (`$XDG_CACHE_HOME/wolos/
+/// wallpaper-previews`): named by the file, its size and time, so a changed picture gets a new one.
+pub fn thumb_cache_file(
+    f: &std::path::Path,
+    width: i32,
+    modified: u64,
+    len: u64,
+) -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (f, width, modified, len).hash(&mut h);
+    let stem = f
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    crate::widgets::cache_home()
+        .join("wolos/wallpaper-previews")
+        .join(format!("{stem}-{width}-{:016x}.png", h.finish()))
+}
+
+/// A wallpaper preview `width` px wide: rendered once (a 4k gate is ~3000 shapes) and kept in
+/// memory and on disk. Blocking: run off the GTK thread.
+pub fn wallpaper_thumb(f: &std::path::Path, width: i32) -> Option<gdk::Texture> {
+    let meta = std::fs::metadata(f).ok()?;
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let key = (f.to_path_buf(), width, modified);
+    if let Some(t) = THUMBS
+        .lock()
+        .ok()
+        .and_then(|m| m.as_ref()?.get(&key).cloned())
+    {
+        return Some(t);
+    }
+    let cached = thumb_cache_file(f, width, modified, meta.len());
+    let t = gdk::Texture::from_filename(&cached).ok().or_else(|| {
+        let pb = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(f, width, -1, true).ok()?;
+        if let Some(dir) = cached.parent() {
+            let tmp = cached.with_extension("part");
+            if std::fs::create_dir_all(dir).is_ok() && pb.savev(&tmp, "png", &[]).is_ok() {
+                let _ = std::fs::rename(&tmp, &cached);
+            }
+        }
+        Some(gdk::Texture::for_pixbuf(&pb))
+    })?;
+    if let Ok(mut m) = THUMBS.lock() {
+        m.get_or_insert_with(Default::default)
+            .insert(key, t.clone());
+    }
+    Some(t)
 }
 
 /// GDK modifier state as [`shortcuts`] bits.

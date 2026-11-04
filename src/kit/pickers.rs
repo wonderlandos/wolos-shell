@@ -68,22 +68,93 @@ impl Tokens {
     }
 }
 
-/// Shipped wallpapers: installed, else the repo's design tree (dev, tests).
-pub const WALLPAPER_DIRS: [&str; 2] = [
+/// Shipped wallpapers: installed, else the repo's design tree (dev, tests): the earlier pictures
+/// and the east set (the Moon Gate, the places).
+pub const WALLPAPER_DIRS: [&str; 3] = [
     "/usr/share/wolos/wallpapers",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers"),
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/east/wallpapers"),
 ];
 /// Day, dusk and night pictures of the Dynamic wallpaper, in that order.
 pub const DYNAMIC: [&str; 3] = ["wonderland-day", "wonderland-dusk", "wonderland-night"];
 /// Saved choice meaning "the Dynamic wallpaper".
 pub const DYNAMIC_CHOICE: &str = "dynamic";
+/// Saved choice meaning "the Moon Gate" (also the default): day in Light, night in Dark, in the
+/// active theme's dye (`themes/gate-<theme>-*`, made at image build) or the signature dye.
+pub const GATE_CHOICE: &str = "gate";
+/// Saved choice prefix of a place (`place:cachoeira`): day in Light, night in Dark.
+pub const PLACE_PREFIX: &str = "place:";
+/// The places in picker order: (id, name). Each shows when its pictures are installed.
+pub const PLACES: [(&str, &str); 4] = [
+    ("cachoeira", "Cachoeira Station"),
+    ("brasilia", "Brasília"),
+    ("estaiada", "Ponte Estaiada"),
+    ("rioniteroi", "Rio–Niterói Bridge"),
+];
+/// The themes whose gate is the signature (`wolos-gate-*`), not a generated dye.
+const SIGNATURE_THEMES: [&str; 2] = ["wol-light", "wol-dark"];
+
+/// What the Moon Gate and the places follow: the active theme and its light or dark side.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Look {
+    pub theme: String,
+    pub theme_name: String,
+    pub night: bool,
+}
+
+impl Look {
+    pub fn current() -> Look {
+        let dark = gtk::Settings::default()
+            .map(|s| s.is_gtk_application_prefer_dark_theme())
+            .unwrap_or(false);
+        let t = crate::theme::resolve(super::style::active_id().as_deref(), dark);
+        Look {
+            night: t.variant == crate::theme::Variant::Dark,
+            theme: t.id,
+            theme_name: t.name,
+        }
+    }
+}
+
+/// `day` or `night`.
+fn mode(night: bool) -> &'static str {
+    if night { "night" } else { "day" }
+}
+
+/// `16x10` for a display taller than 16:9, else `4k`.
+fn size_for(aspect: f64) -> &'static str {
+    if aspect < 1.7 { "16x10" } else { "4k" }
+}
+
+fn first_shipped(names: &[String]) -> Option<PathBuf> {
+    names.iter().find_map(|n| {
+        WALLPAPER_DIRS
+            .iter()
+            .map(|d| Path::new(d).join(n))
+            .find(|p| p.exists())
+    })
+}
 
 /// Shipped wallpaper `<name>.svg`.
 pub fn shipped_wallpaper(name: &str) -> Option<PathBuf> {
-    WALLPAPER_DIRS
-        .iter()
-        .map(|d| Path::new(d).join(format!("{name}.svg")))
-        .find(|p| p.exists())
+    first_shipped(&[format!("{name}.svg")])
+}
+
+/// The Moon Gate for `theme` (its generated dye, else the signature), day or night, for a
+/// display of `aspect` (width / height).
+pub fn gate_file(theme: &str, night: bool, aspect: f64) -> Option<PathBuf> {
+    let (m, s) = (mode(night), size_for(aspect));
+    let mut names = Vec::new();
+    if !SIGNATURE_THEMES.contains(&theme) && !theme.contains('/') {
+        names.push(format!("themes/gate-{theme}-{m}-{s}.svg"));
+    }
+    names.push(format!("wolos-gate-{m}-{s}.svg"));
+    first_shipped(&names)
+}
+
+/// A place's picture, day or night.
+pub fn place_file(id: &str, night: bool, aspect: f64) -> Option<PathBuf> {
+    first_shipped(&[format!("{id}-{}-{}.svg", mode(night), size_for(aspect))])
 }
 
 /// Dynamic wallpaper picture for a local hour: day 07–17, dusk 17–20, night otherwise.
@@ -96,7 +167,7 @@ pub fn dynamic_name(hour: u8) -> &'static str {
 }
 
 /// The saved choice (`$XDG_CONFIG_HOME/wolos/wallpaper`, also written by `wol wallpaper set`):
-/// a path, [`DYNAMIC_CHOICE`], or None for the default.
+/// a path, [`DYNAMIC_CHOICE`], [`GATE_CHOICE`], a place, or None for the default (the gate).
 pub fn wallpaper_choice() -> Option<String> {
     std::fs::read_to_string(Path::new(&super::config_home()).join(shared::theme::WALLPAPER_FILE))
         .ok()
@@ -104,19 +175,67 @@ pub fn wallpaper_choice() -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
-/// Picture the desktop shows at `hour`: the saved file when it exists, Dynamic by time of day,
-/// else the shipped default (dusk).
-pub fn wallpaper_for(choice: Option<&str>, hour: u8) -> Option<PathBuf> {
+/// The default picture: the Moon Gate, else (an image without it) the earlier dusk picture.
+fn default_wallpaper(look: &Look, aspect: f64) -> Option<PathBuf> {
+    gate_file(&look.theme, look.night, aspect).or_else(|| shipped_wallpaper(DYNAMIC[1]))
+}
+
+/// Picture the desktop shows at `hour` in `look` on a display of `aspect`: the saved file when it
+/// exists, Dynamic by time of day, the gate or a place by light and dark, else the default.
+pub fn wallpaper_for(choice: Option<&str>, hour: u8, look: &Look, aspect: f64) -> Option<PathBuf> {
     match choice {
         Some(DYNAMIC_CHOICE) => shipped_wallpaper(dynamic_name(hour)),
-        Some(p) if Path::new(p).is_file() => Some(PathBuf::from(p)),
-        _ => shipped_wallpaper(DYNAMIC[1]),
+        Some(c) if c.starts_with(PLACE_PREFIX) => {
+            place_file(&c[PLACE_PREFIX.len()..], look.night, aspect)
+                .or_else(|| default_wallpaper(look, aspect))
+        }
+        Some(p) if p != GATE_CHOICE && Path::new(p).is_file() => Some(PathBuf::from(p)),
+        _ => default_wallpaper(look, aspect),
     }
 }
 
-/// The desktop wallpaper now.
+/// The wallpaper's name as the Wallpaper page shows it: "Moon Gate, Nord, Night".
+pub fn wallpaper_name(choice: Option<&str>, look: &Look, hour: u8) -> String {
+    let side = if look.night { "Night" } else { "Day" };
+    match choice {
+        Some(DYNAMIC_CHOICE) => {
+            let n = dynamic_name(hour);
+            let part = n.rsplit('-').next().unwrap_or(n);
+            let mut c = part.chars();
+            let part: String = c
+                .next()
+                .map(|f| f.to_uppercase().chain(c).collect())
+                .unwrap_or_default();
+            format!("Dynamic, {part}")
+        }
+        Some(c) if c.starts_with(PLACE_PREFIX) => {
+            let id = &c[PLACE_PREFIX.len()..];
+            match PLACES.iter().find(|p| p.0 == id) {
+                Some((_, name)) => format!("{name}, {side}"),
+                None => format!("Moon Gate, {}, {side}", look.theme_name),
+            }
+        }
+        Some(p) if p != GATE_CHOICE && Path::new(p).is_file() => Path::new(p)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        _ => format!("Moon Gate, {}, {side}", look.theme_name),
+    }
+}
+
+/// The desktop wallpaper now, for a display of `aspect`.
+pub fn desktop_wallpaper_for(aspect: f64) -> Option<PathBuf> {
+    wallpaper_for(
+        wallpaper_choice().as_deref(),
+        super::now().hour,
+        &Look::current(),
+        aspect,
+    )
+}
+
+/// The desktop wallpaper now (a 16:9 display).
 pub fn desktop_wallpaper() -> Option<PathBuf> {
-    wallpaper_for(wallpaper_choice().as_deref(), super::now().hour)
+    desktop_wallpaper_for(16.0 / 9.0)
 }
 
 fn rgba(cr: &gtk::cairo::Context, c: Color, alpha: f64) {
@@ -678,13 +797,100 @@ mod tests {
         ] {
             assert_eq!(dynamic_name(h), want, "{h}");
         }
-        let day = wallpaper_for(Some(DYNAMIC_CHOICE), 9).unwrap();
+        let day = wallpaper_for(Some(DYNAMIC_CHOICE), 9, &look("nord", false), 1.77).unwrap();
         assert!(day.ends_with("wonderland-day.svg"), "{day:?}");
-        let missing = wallpaper_for(Some("/nonexistent.png"), 9).unwrap();
+    }
+
+    fn look(theme: &str, night: bool) -> Look {
+        Look {
+            theme: theme.into(),
+            theme_name: theme.into(),
+            night,
+        }
+    }
+
+    fn gate_shipped() -> bool {
+        shipped_wallpaper("wolos-gate-day-4k").is_some()
+    }
+
+    /// The default is the Moon Gate: day in Light, night in Dark, 16:10 on a 16:10 display; a
+    /// missing photo falls back to it.
+    #[test]
+    fn the_gate_is_the_default_and_follows_light_and_dark() {
+        if !gate_shipped() {
+            eprintln!("skip: no design/east tree");
+            return;
+        }
+        let day = wallpaper_for(None, 9, &look("wol-light", false), 1.77).unwrap();
+        assert!(day.ends_with("wolos-gate-day-4k.svg"), "{day:?}");
+        let night = wallpaper_for(Some(GATE_CHOICE), 9, &look("wol-dark", true), 1.6).unwrap();
+        assert!(night.ends_with("wolos-gate-night-16x10.svg"), "{night:?}");
+        let missing = wallpaper_for(Some("/nonexistent.png"), 9, &look("wol-dark", true), 1.77);
+        assert!(missing.unwrap().ends_with("wolos-gate-night-4k.svg"));
+    }
+
+    /// A theme's gate is its generated dye when the image made it, else the signature.
+    #[test]
+    fn a_theme_takes_its_gate_dye_when_generated() {
+        if !gate_shipped() {
+            eprintln!("skip: no design/east tree");
+            return;
+        }
+        let f = gate_file("nord", true, 1.77).unwrap();
+        let dyed = Path::new(WALLPAPER_DIRS[2]).join("themes/gate-nord-night-4k.svg");
+        if dyed.exists() {
+            assert_eq!(f, dyed);
+        } else {
+            assert!(f.ends_with("wolos-gate-night-4k.svg"), "{f:?}");
+        }
         assert!(
-            missing.ends_with("wonderland-dusk.svg"),
-            "falls back to the default"
+            gate_file("wol-dark", true, 1.77)
+                .unwrap()
+                .ends_with("wolos-gate-night-4k.svg")
         );
-        assert_eq!(wallpaper_for(None, 9), Some(missing));
+        assert!(
+            gate_file("../x", false, 1.77)
+                .unwrap()
+                .ends_with("wolos-gate-day-4k.svg")
+        );
+    }
+
+    #[test]
+    fn places_follow_light_and_dark() {
+        if place_file("cachoeira", false, 1.77).is_none() {
+            eprintln!("skip: no design/east tree");
+            return;
+        }
+        let n = wallpaper_for(Some("place:cachoeira"), 9, &look("nord", true), 1.77).unwrap();
+        assert!(n.ends_with("cachoeira-night-4k.svg"), "{n:?}");
+        let gone =
+            wallpaper_for(Some("place:holambra"), 9, &look("wol-light", false), 1.77).unwrap();
+        assert!(
+            gone.ends_with("wolos-gate-day-4k.svg"),
+            "an unknown place is the gate: {gone:?}"
+        );
+    }
+
+    #[test]
+    fn the_page_names_the_wallpaper() {
+        let l = Look {
+            theme: "nord".into(),
+            theme_name: "Nord".into(),
+            night: true,
+        };
+        assert_eq!(wallpaper_name(None, &l, 9), "Moon Gate, Nord, Night");
+        assert_eq!(
+            wallpaper_name(Some("gate"), &l, 9),
+            "Moon Gate, Nord, Night"
+        );
+        assert_eq!(
+            wallpaper_name(Some("place:cachoeira"), &l, 9),
+            "Cachoeira Station, Night"
+        );
+        assert_eq!(wallpaper_name(Some("dynamic"), &l, 18), "Dynamic, Dusk");
+        assert_eq!(
+            wallpaper_name(Some("/nonexistent.png"), &l, 9),
+            "Moon Gate, Nord, Night"
+        );
     }
 }
