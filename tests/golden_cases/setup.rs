@@ -298,6 +298,8 @@ pub fn cases() -> Vec<Case> {
             build: Box::new(|| {
                 let list = w::vbox(w::S2);
                 list.add_css_class("card-list");
+                // As tall as its rows: a card stretched to the window ends in empty card (kit::check).
+                list.set_valign(gtk::Align::Start);
                 let rows: Vec<gtk::Button> = ["Home", "Office", "Guest"]
                     .into_iter()
                     .map(|n| {
