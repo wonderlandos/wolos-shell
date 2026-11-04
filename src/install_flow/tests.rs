@@ -564,6 +564,26 @@ fn disks_say_their_device_and_kind() {
     assert_eq!(disk_detail(&sd), "500 GB · /dev/sda");
 }
 
+/// QA-LIVE1-35: a disk without a model (a virtio disk) was titled "/dev/vda" over a line that said
+/// "/dev/vda" again. The title says what kind of disk it is; the device name stays in the line
+/// under it, once.
+#[test]
+fn a_disk_without_a_model_is_not_named_twice() {
+    let mut v = dual();
+    v.model = String::new();
+    assert_eq!(v.title_text(), "Virtual disk");
+    assert_eq!(disk_detail(&v), "500 GB · /dev/vda");
+    let mut n = v.clone();
+    n.path = "/dev/nvme0n1".into();
+    assert_eq!(n.title_text(), "NVMe disk");
+    assert_eq!(disk_detail(&n), "500 GB · /dev/nvme0n1");
+    let mut sd = v.clone();
+    sd.path = "/dev/sda".into();
+    assert_eq!(sd.title_text(), "Disk");
+    // With a model the title is the model and the kind stays in the line.
+    assert_eq!(dual().title_text(), "WD Blue");
+}
+
 #[test]
 fn secure_boot_is_said_before_anything_is_written() {
     let mut f = flow(dual());

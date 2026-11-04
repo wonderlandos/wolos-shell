@@ -122,3 +122,43 @@ fn the_sliders_land_on_whole_mib_inside_their_range() {
     assert_eq!(percent_of(lo, hi, hi), 100.0);
     assert_eq!(percent_of(hi, hi, hi), 100.0);
 }
+
+/// QA-LIVE1-36: "Enter your full name." stayed red after the name was typed. Every editor of the
+/// account page re-says the typing problem (Setup's rule: what is wrong now, nothing else), so a
+/// sentence Continue showed goes with the mistake it was about.
+#[test]
+fn every_account_editor_clears_a_mended_problem() {
+    let src = include_str!("../installer.rs");
+    let at = src
+        .find("fn account(self: &Rc<Self>) -> Card {")
+        .expect("account()");
+    let body = &src[at..src[at..]
+        .find("fn secure_choice")
+        .map_or(src.len(), |e| at + e)];
+    for setter in [
+        "draft.set_full_name(&e.text());",
+        "draft.set_name(&e.text());",
+        "draft.password = e.text().to_string();",
+        "draft.verify = e.text().to_string();",
+        "set_hostname(&e.text());",
+    ] {
+        let from = body
+            .find(setter)
+            .unwrap_or_else(|| panic!("account() never does {setter}"));
+        let rest = &body[from..];
+        let upto = rest.find("});").expect("end of the handler");
+        assert!(
+            rest[..upto].contains("s.show_typing_problem();"),
+            "the handler of {setter} never re-says the typing problem"
+        );
+    }
+    // What the sentence says once the name is typed: nothing is wrong yet.
+    let mut d = crate::setup::Draft::default();
+    assert_eq!(d.typing_problem(), None);
+    d.set_full_name("Alice Liddell");
+    assert_eq!(
+        d.typing_problem(),
+        None,
+        "a typed name is not a typing problem"
+    );
+}

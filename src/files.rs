@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Search's file names: a per-user list of `$HOME` (one relative path per line, folders end
-//! in `/`), rebuilt by the shell at login and by Search when stale, searched by name in place.
+//! in `/`), rebuilt by the shell at login and every hour (`ui::searchbar::keep_file_index`) and by
+//! Search when the saved list is stale, searched by name in place.
 use crate::search::Item;
 use std::path::{Path, PathBuf};
 
