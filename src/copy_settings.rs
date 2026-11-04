@@ -112,6 +112,18 @@ pub const UPDATE_ONE_COPY: &str = "This computer has one copy of WolOS, so there
 /// Restore: the only list there can be on a computer with one copy of WolOS (QA-STORE-5).
 pub const RESTORE_ONE_COPY: &str =
     "This computer has one copy of WolOS, so there is no earlier system to go back to.";
+/// Software Update's channel row (QA-STORE-9/68): one channel in this release, shown, not chosen.
+pub const UPDATE_CHANNEL: &str = "Update channel";
+pub const UPDATE_CHANNEL_DETAIL: &str = "Tested releases, the same for every WolOS computer.";
+
+/// A channel's name as the row shows it ("stable" > "Stable").
+pub fn channel_name(c: &str) -> String {
+    let mut s = c.chars();
+    s.next()
+        .map(|f| f.to_uppercase().chain(s).collect())
+        .unwrap_or_default()
+}
+
 /// Check Now could not write what it found: the disk is full (QA-FDAY F10).
 pub const UPDATE_NO_ROOM: &str = "There is no room left on the system disk to check for updates. Free some space in Storage, then try again.";
 /// Software Update before any check ever finished (QA-FDAY-4).

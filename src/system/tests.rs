@@ -160,9 +160,9 @@ fn root_package_sheets_go_through_wol_admind() {
         (R::SystemRollback, "system-rollback ".to_owned()),
         (
             R::SystemChannel {
-                channel: "beta".into(),
+                channel: "stable".into(),
             },
-            "system-channel beta".to_owned(),
+            "system-channel stable".to_owned(),
         ),
     ] {
         sent.lock().unwrap().clear();
