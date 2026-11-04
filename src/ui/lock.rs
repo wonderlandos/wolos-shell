@@ -865,6 +865,43 @@ fn set_locked_hint(on: bool) {
     }
 }
 
+/// The user unit that supervises the lock screen (files/usr/lib/systemd/user/wol-lock.service).
+pub const LOCK_UNIT: &str = "wol-lock.service";
+
+/// A `wol-lock` started by hand (Super+L, the menu, hypridle, the sleep hook) hands the lock to
+/// [`LOCK_UNIT`]; one already running under systemd (`INVOCATION_ID`) or the boot lock does not.
+pub fn hands_off_to_unit(startup: bool, under_systemd: bool) -> bool {
+    !startup && !under_systemd
+}
+
+/// The commands that start [`LOCK_UNIT`] on this session's display: the user manager first learns
+/// the display variables of the caller (it may have started before the compositor exported them).
+pub fn lock_unit_argvs() -> [Vec<&'static str>; 2] {
+    [
+        vec![
+            "systemctl",
+            "--user",
+            "import-environment",
+            "WAYLAND_DISPLAY",
+            "HYPRLAND_INSTANCE_SIGNATURE",
+            "XDG_RUNTIME_DIR",
+        ],
+        vec!["systemctl", "--user", "start", LOCK_UNIT],
+    ]
+}
+
+/// True when the unit took the lock; false (no user manager, the unit refused) and this process
+/// supervises the lock itself, as before.
+fn start_lock_unit() -> bool {
+    lock_unit_argvs().iter().all(|a| {
+        std::process::Command::new(a[0])
+            .args(&a[1..])
+            .stdin(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    })
+}
+
 /// `wol-lock [--startup]`: a supervisor that keeps a lock screen up until one reports a real
 /// unlock (ADR 0012). A crashed lock screen leaves the session locked (ext-session-lock) and the next
 /// one takes it over (`misc:allow_session_lock_restore`). Nothing here ever unlocks.
@@ -877,6 +914,13 @@ pub fn run_lock() -> glib::ExitCode {
     if crate::envv::is_set(login::LOCK_UI_ENV) {
         let startup = std::env::args().any(|a| a == login::STARTUP);
         return run_lock_screen(startup);
+    }
+    // QA-LIVE-41: the supervisor runs as the user unit wol-lock.service, which the user manager
+    // starts again when it is killed (Restart=on-failure), so a session locked by
+    // ext-session-lock always gets its lock screen back. At boot (--startup) the compositor's
+    // --locked-cmd supervises it instead.
+    if hands_off_to_unit(startup, crate::envv::is_set("INVOCATION_ID")) && start_lock_unit() {
+        return glib::ExitCode::SUCCESS;
     }
     let ui_args = login::lock_ui_args(&std::env::args().skip(1).collect::<Vec<_>>());
     let exe = std::env::current_exe().unwrap_or_else(|_| "wol-lock".into());
@@ -911,7 +955,8 @@ pub fn run_lock() -> glib::ExitCode {
             .as_ref()
             .is_ok_and(|o| o.status.code() == Some(LOCK_UNSUPPORTED))
         {
-            return glib::ExitCode::FAILURE;
+            // wol-lock.service does not restart on this code (RestartPreventExitStatus).
+            return glib::ExitCode::from(u8::try_from(LOCK_UNSUPPORTED).unwrap_or(1));
         }
         match login::lock_exit(unlocked, socket.exists(), attempt) {
             login::LockExit::Done => {
@@ -1173,6 +1218,19 @@ mod tests {
         assert_eq!(no_lock_exit(false), Some(69));
         assert_eq!(no_lock_exit(true), None);
         assert_eq!(LOCK_UNSUPPORTED, 69);
+    }
+
+    /// QA-LIVE-41: a lock started by hand runs under wol-lock.service (restarted when killed);
+    /// the unit's own process and the boot lock supervise themselves.
+    #[test]
+    fn lock_hands_off_to_the_user_unit() {
+        assert!(hands_off_to_unit(false, false));
+        assert!(!hands_off_to_unit(false, true));
+        assert!(!hands_off_to_unit(true, false));
+        let [import, start] = lock_unit_argvs();
+        assert_eq!(import[..3], ["systemctl", "--user", "import-environment"]);
+        assert!(import.contains(&"WAYLAND_DISPLAY"));
+        assert_eq!(start, ["systemctl", "--user", "start", "wol-lock.service"]);
     }
 
     /// QA-LIVE-41: the lock tells logind the session is locked, and unlocked again.
