@@ -211,6 +211,7 @@ pub fn checks() {
     modules_offer_retry_for_what_could_not_be_added();
     startup_security_finish_setup_runs_once();
     pointer_sliders_show_the_saved_value_after_a_failed_save();
+    scroll_speed_is_lines_per_notch_from_one_to_ten();
     language_menu_shows_the_saved_language_after_a_failed_save();
     login_items_show_the_saved_list_after_a_failed_save();
     terminal_shell_choice_is_saved_or_put_back();
@@ -594,6 +595,75 @@ fn slider_shows_saved_value_after_failed_save(page_name: &str, title: &str) {
 fn pointer_sliders_show_the_saved_value_after_a_failed_save() {
     slider_shows_saved_value_after_failed_save("Accessibility", "Pointer size");
     slider_shows_saved_value_after_failed_save("Trackpad & Mouse", "Tracking speed");
+    slider_shows_saved_value_after_failed_save("Trackpad & Mouse", "Scroll speed");
+}
+
+/// [`Accepts`], and the wheel speed (lines per notch) of the last desktop prefs it was asked to save.
+#[derive(Default)]
+struct WheelSpy(Arc<std::sync::atomic::AtomicU32>);
+
+impl System for WheelSpy {
+    fn battery(&self) -> Option<Battery> {
+        Accepts.battery()
+    }
+    fn audio(&self) -> Audio {
+        Accepts.audio()
+    }
+    fn network(&self) -> Network {
+        Accepts.network()
+    }
+    fn brightness(&self) -> Option<u8> {
+        Accepts.brightness()
+    }
+    fn perform(&self, a: &Action) -> Result<(), ActionError> {
+        if let Action::Desktop(p) = a {
+            self.0
+                .store(p.scroll_lines, std::sync::atomic::Ordering::SeqCst);
+        }
+        Accepts.perform(a)
+    }
+}
+
+/// Trackpad & Mouse > Scroll speed: lines per wheel notch, 1 to 10 in whole steps, 3 as shipped
+/// (the compositor's wheel factor 1.0), in the Mouse section before Natural scrolling; moving it
+/// saves the desktop prefs with that many lines.
+fn scroll_speed_is_lines_per_notch_from_one_to_ten() {
+    let spy = WheelSpy::default();
+    let saved = spy.0.clone();
+    let (_a, p) = page(
+        Rc::new(spy),
+        &ui::settings::Host::demo(),
+        "Trackpad & Mouse",
+    );
+    let s: gtk::Scale = on_row(&p, "Scroll speed");
+    let adj = s.adjustment();
+    assert_eq!(
+        (adj.lower(), adj.upper(), adj.step_increment(), s.value()),
+        (1.0, 10.0, 1.0, 3.0),
+        "1 to 10 lines, 3 as shipped"
+    );
+    assert!(
+        says(&p, "1 line") && says(&p, "10 lines"),
+        "the ends say what the numbers are"
+    );
+    let labels: Vec<String> = all::<gtk::Label>(&p)
+        .iter()
+        .map(|l| l.label().to_string())
+        .collect();
+    let at = |t: &str| labels.iter().position(|l| l == t).unwrap_or(usize::MAX);
+    assert!(
+        at("Mouse") < at("Scroll speed")
+            && at("Scroll speed") < at("Content follows the wheel like a trackpad."),
+        "Scroll speed is a Mouse row, before Natural scrolling: {labels:?}"
+    );
+    s.set_value(7.0);
+    pump(500);
+    assert_eq!(
+        saved.load(std::sync::atomic::Ordering::SeqCst),
+        7,
+        "7 lines per notch reach the saved desktop prefs"
+    );
+    assert_eq!(s.value(), 7.0, "a saved change stays where it was put");
 }
 
 /// Desk::set_or in Language & Region: a failed save selects the saved language again and does
