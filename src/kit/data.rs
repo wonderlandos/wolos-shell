@@ -624,6 +624,29 @@ pub fn drop_mark(s: Size) -> gtk::Box {
     b
 }
 
+/// What a layer surface with nothing else to show paints: one pixel at 1/255 black, to everyone's
+/// eye nothing. GTK never attaches a buffer to a window that renders nothing: its layer surface
+/// stays unmapped, its frame clock commits it empty every 16 ms, and Hyprland answers each commit
+/// with a new `configure` and a redraw of the whole output (QA-PERF-1: four cores of compositor
+/// with one window open). One drawn pixel makes the first frame a real one, after which the
+/// surface is idle like any other (crates/shell/tests/desktop_idle.rs counts its commits).
+pub fn mark_presence(cr: &gtk::cairo::Context) {
+    cr.rectangle(0.0, 0.0, 1.0, 1.0);
+    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0 / 255.0);
+    let _ = cr.fill();
+}
+
+/// Full-size child that paints [`mark_presence`], for a layer window with no content of its own
+/// (the click-catcher under open panels).
+pub fn presence() -> gtk::DrawingArea {
+    let a = gtk::DrawingArea::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    a.set_draw_func(|_, cr, _, _| mark_presence(cr));
+    a
+}
+
 /// Transparent, full-size area that reports its size (the desktop grid follows the work area).
 pub fn size_probe(resized: impl Fn(i32, i32) + 'static) -> gtk::DrawingArea {
     let a = gtk::DrawingArea::builder()
