@@ -54,6 +54,16 @@ pub trait Machine: Send + Sync {
     /// Device URIs CUPS can see (slow: probes the network).
     fn discover_printers(&self) -> Vec<String>;
     fn hardware(&self) -> HardwareSnapshot;
+    /// The installed WolOS version (`/etc/os-release` VERSION_ID). None: not known here (demo
+    /// machines), About shows the build's own.
+    fn os_version(&self) -> Option<String> {
+        None
+    }
+    /// The devices as they are now (detects; slow), for the page after a Fix: the boot snapshot
+    /// [`Self::hardware`] reads still lists what Fix just mended (QA-SET-7).
+    fn hardware_live(&self) -> HardwareSnapshot {
+        self.hardware()
+    }
     fn sharing(&self) -> Sharing;
     /// Compositor consent grants: (app path, capability) (`wol_core::consent`).
     fn consent(&self) -> Vec<(String, String)>;
@@ -184,6 +194,12 @@ impl Machine for Live {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_else(|| wol_core::hardware::read(self.os()))
     }
+    fn hardware_live(&self) -> HardwareSnapshot {
+        wol_core::hardware::read(self.os())
+    }
+    fn os_version(&self) -> Option<String> {
+        wol_core::base::version(&self.os().read_text("/etc/os-release")?)
+    }
     fn sharing(&self) -> Sharing {
         Sharing {
             remote_login: wol_core::sharing::remote_login(self.os()),
@@ -235,8 +251,9 @@ impl Machine for Live {
     fn updates(&self) -> Option<wol_core::update::check::Updates> {
         use wol_core::update::check::{DIR, USERLAND_ARGV, Updates};
         let os = self.os();
+        let keys = wol_core::package::read_keys(std::path::Path::new(shared::package::KEYS_DIR));
         let f = |n: &str| os.read_text(&format!("{DIR}/{n}")).unwrap_or_default();
-        let u = Updates::parse(&f("checked"), &f("pkg"), &f("audit"), &f("base"))?;
+        let u = Updates::from_files(f, &keys)?;
         let userland = u.base.as_ref().and_then(|_| os.run(&USERLAND_ARGV));
         Some(u.installed(userland.as_deref()))
     }
@@ -454,62 +471,62 @@ impl Machine for Demo {
                 dev(
                     Kind::Cpu,
                     "Intel Core i5-1240P",
-                    Some("hwpstate_intel0"),
+                    Some("intel_pstate"),
                     State::Ready,
                     "",
                 ),
                 dev(
                     Kind::Gpu,
                     "Intel Iris Xe Graphics",
-                    Some("drmn0"),
+                    Some("i915"),
                     State::Ready,
                     "",
                 ),
                 dev(
                     Kind::Wifi,
                     "Intel Wi-Fi 6E AX211",
-                    Some("iwlwifi0"),
+                    Some("iwlwifi"),
                     State::Ready,
                     "",
                 ),
                 dev(
                     Kind::Bluetooth,
                     "Intel Bluetooth",
-                    Some("ubt0"),
+                    Some("btusb"),
                     State::Ready,
                     "",
                 ),
                 dev(
                     Kind::Audio,
                     "Realtek ALC287 audio",
-                    Some("hdac0"),
+                    Some("snd_hda_intel"),
                     State::Ready,
                     "",
                 ),
                 Device {
-                    missing_packages: vec!["webcamd".into()],
+                    missing_klds: vec!["uvcvideo".into()],
                     ..dev(
                         Kind::Webcam,
                         "Integrated Camera",
                         None,
                         State::NeedsDriver,
-                        "Install webcamd to use the camera.",
+                        "load uvcvideo: wol hw fix --yes",
                     )
                 },
                 Device {
-                    missing_packages: vec!["rtsx-firmware".into()],
+                    missing_packages: vec!["linux-firmware-realtek".into()],
                     ..dev(
                         Kind::CardReader,
                         "Realtek card reader",
-                        Some("rtsx0"),
+                        Some("rtsx_pci"),
                         State::NeedsFirmware,
-                        "Install its firmware to read SD cards.",
+                        "install linux-firmware-realtek: wol hw fix --yes",
                     )
                 },
                 dev(
                     Kind::Input,
                     "Synaptics touchpad",
-                    Some("iichid0"),
+                    Some("i2c_hid_acpi"),
                     State::Ready,
                     "",
                 ),
@@ -824,4 +841,93 @@ mod tests {
             assert_eq!(wol_core::consent::refusal(cap), None, "{app} {cap}");
         }
     }
+
+    /// The Hardware page the manual, the previews and the goldens show is a Linux laptop (QA-DEV-16):
+    /// kernel module names (`iwlwifi`, `btusb`, `snd_hda_intel`), the camera's `uvcvideo` to turn
+    /// on and a real firmware package, not FreeBSD's `hdac0`, `webcamd` or `rtsx-firmware`.
+    #[test]
+    fn the_demo_hardware_uses_linux_names() {
+        let hw = Demo.hardware();
+        let drivers: Vec<&str> = hw
+            .devices
+            .iter()
+            .filter_map(|d| d.driver.as_deref())
+            .collect();
+        for want in [
+            "intel_pstate",
+            "i915",
+            "iwlwifi",
+            "btusb",
+            "snd_hda_intel",
+            "rtsx_pci",
+        ] {
+            assert!(drivers.contains(&want), "{want} in {drivers:?}");
+        }
+        let text = format!("{hw:?}");
+        for freebsd in [
+            "webcamd",
+            "hdac0",
+            "rtsx-firmware",
+            "rtsx0",
+            "iichid0",
+            "hwpstate",
+            "drmn0",
+            "ubt0",
+            "iwlwifi0",
+        ] {
+            assert!(
+                !text.contains(freebsd),
+                "FreeBSD name {freebsd} in the demo hardware"
+            );
+        }
+        let cam = hw.devices.iter().find(|d| d.kind == Kind::Webcam).unwrap();
+        assert_eq!(cam.missing_klds, ["uvcvideo"]);
+        assert!(cam.missing_packages.is_empty());
+        let reader = hw
+            .devices
+            .iter()
+            .find(|d| d.kind == Kind::CardReader)
+            .unwrap();
+        assert_eq!(reader.missing_packages, ["linux-firmware-realtek"]);
+    }
 }
+
+/// Test machines that differ from [`Demo`] in their hardware: every other required [`Machine`]
+/// fact from Demo.
+#[cfg(test)]
+macro_rules! demo_but_hardware {
+    () => {
+        $crate::ui::settings::machine::demo_but_hardware!(@
+            storage -> Option<wol_core::storage::Storage>,
+            battery -> Option<wol_core::power::BatteryInfo>,
+            profile -> Option<wol_core::power::Profile>,
+            lid -> Option<wol_core::power::Lid>,
+            zones -> Vec<String>,
+            zone -> String,
+            ntp -> Option<bool>,
+            net -> wol_core::netinfo::NetInfo,
+            known_networks -> Vec<String>,
+            bluetooth -> wol_core::bluetooth::BtState,
+            printers -> Option<Vec<wol_core::printers::Printer>>,
+            discover_printers -> Vec<String>,
+            sharing -> $crate::ui::settings::Sharing,
+            consent -> Vec<(String, String)>,
+            flatpak_apps -> Vec<wol_core::flatpak::App>,
+            kernel -> $crate::ui::settings::Kernel,
+            power -> Option<wol_core::power::policy::Status>,
+            security -> Option<wol_core::security::Status>,
+            updates -> Option<wol_core::update::check::Updates>,
+            passwd -> String,
+            auto_updates -> (bool, bool),
+        );
+    };
+    (@ $($f:ident -> $t:ty),* $(,)?) => {
+        $(
+            fn $f(&self) -> $t {
+                $crate::ui::settings::Machine::$f(&$crate::ui::settings::Demo)
+            }
+        )*
+    };
+}
+#[cfg(test)]
+pub(crate) use demo_but_hardware;
