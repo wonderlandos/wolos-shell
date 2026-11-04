@@ -172,6 +172,8 @@ pub fn entry(p: &Packed) -> wopkg::index::plugins::Entry {
         url: format!("https://REPLACE-WITH-YOUR-ADDRESS.invalid/{name}"),
         sha256: p.sha256.clone(),
         size: p.size,
+        // description, icon and screenshots are the hub index's own (picture file names on the CDN).
+        ..Default::default()
     }
 }
 
