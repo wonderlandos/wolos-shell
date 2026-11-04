@@ -93,6 +93,25 @@ pub fn cases() -> Vec<Case> {
             }),
         });
     }
+    // NET-3: the whole Network pane (a tall window): Airplane Mode, each link with IP settings,
+    // the VPN section with Add VPN, Proxy and DNS over TLS, the firewall.
+    v.push(Case {
+        name: "settings-network-all-wide".into(),
+        size: (w::APP_SIZE.0, 1280),
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let mut h = ui::settings::Host::demo();
+            h.machine = Arc::new(ui::settings::DemoEdge {
+                airplane: Some(false),
+                ..Default::default()
+            });
+            let a = ui::settings::content(Rc::new(shell::system::Fake), &h);
+            a.open("Network");
+            pump(300);
+            a.root.clone().upcast()
+        }),
+    });
     // General with every shell installed and pwsh chosen for new terminal windows.
     for (tag, size) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {

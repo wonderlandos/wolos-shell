@@ -638,6 +638,38 @@ pub fn choose_file(
     }
 }
 
+/// Native file chooser for files ending in one of `suffixes` (Network > Add VPN: `conf`, `ovpn`),
+/// named `kind` in the chooser's filter; `done` gets the path.
+pub fn choose_file_of(
+    parent: &impl IsA<gtk::Widget>,
+    title: &str,
+    kind: &str,
+    suffixes: &[&str],
+    done: impl FnOnce(PathBuf) + 'static,
+) {
+    let filter = gtk::FileFilter::new();
+    for s in suffixes {
+        filter.add_suffix(s);
+    }
+    filter.set_name(Some(kind));
+    let filters = gio::ListStore::new::<gtk::FileFilter>();
+    filters.append(&filter);
+    let d = gtk::FileDialog::builder()
+        .title(title)
+        .modal(true)
+        .filters(&filters)
+        .build();
+    let win = parent.root().and_downcast::<gtk::Window>();
+    let done = RefCell::new(Some(done));
+    d.open(win.as_ref(), gio::Cancellable::NONE, move |r| {
+        if let (Ok(f), Some(done)) = (r, done.borrow_mut().take())
+            && let Some(p) = f.path()
+        {
+            done(p)
+        }
+    });
+}
+
 /// Native picture chooser (Wallpaper > Add Photo…).
 pub fn choose_picture(parent: &impl IsA<gtk::Widget>, done: impl FnOnce(PathBuf) + 'static) {
     let filter = gtk::FileFilter::new();

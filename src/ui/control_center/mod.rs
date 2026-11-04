@@ -700,7 +700,11 @@ impl Ui {
 fn asks_password(a: &Action) -> bool {
     !matches!(
         a,
-        Action::Wifi(_) | Action::Bluetooth(_) | Action::WifiJoin { .. } | Action::BtConnect(..)
+        Action::Wifi(_)
+            | Action::Bluetooth(_)
+            | Action::Airplane(_)
+            | Action::WifiJoin { .. }
+            | Action::BtConnect(..)
     )
 }
 
@@ -708,6 +712,7 @@ fn asks_password(a: &Action) -> bool {
 pub(crate) const WIFI: &str = "wifi";
 pub(crate) const BLUETOOTH: &str = "bluetooth";
 pub(crate) const NIGHT: &str = "night";
+pub(crate) const AIRPLANE: &str = "airplane";
 const APPEARANCE: &str = "appearance";
 
 /// The hold key of an accessibility tile (by the action it sends).
@@ -789,6 +794,8 @@ pub(crate) struct ControlCenter {
     mirroring: ToggleTile,
     keyboard: ToggleTile,
     night: ToggleTile,
+    /// Airplane mode (NET-3): first in the grid, shown on a computer with a radio.
+    airplane: ToggleTile,
     screenshot: gtk::Button,
     record: gtk::Button,
     a11y: Accessibility,
@@ -1005,6 +1012,14 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         let u = ui.clone();
         night.button.connect_clicked(move |_| u.toggle_night());
     }
+    let airplane = ToggleTile::new(crate::status::AIRPLANE_GLYPH, "Airplane Mode");
+    {
+        let u = ui.clone();
+        airplane.button.connect_clicked(move |_| {
+            let on = !u.holds.shown(AIRPLANE, u.sys.airplane().unwrap_or(false));
+            u.act_held(AIRPLANE, on, Action::Airplane(on));
+        });
+    }
     let screenshot = ToggleTile::new("camera-photo-symbolic", "Screenshot").button;
     screenshot.connect_clicked(|b| launch(b, SCREENSHOT));
     let record = ToggleTile::new("media-record-symbolic", "Record").button;
@@ -1099,6 +1114,7 @@ fn build(sys: Rc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
         mirroring,
         keyboard,
         night,
+        airplane,
         screenshot,
         record,
         a11y,
@@ -1161,6 +1177,10 @@ impl ControlCenter {
         p: &ControlCenterPrefs,
         acc: &crate::system::Accessibility,
     ) {
+        if let Some(on) = self.ui.sys.airplane() {
+            self.airplane.set_on(self.ui.holds.shown(AIRPLANE, on));
+            shown.push(self.airplane.button.clone().upcast());
+        }
         if night {
             shown.push(self.night.button.clone().upcast());
         }

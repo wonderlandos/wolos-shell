@@ -20,6 +20,15 @@ pub struct Sharing {
     pub firewall: Option<bool>,
 }
 
+/// Settings > Network beyond the links (NET-3): the VPN profiles (None: NetworkManager did not
+/// answer), the system proxy and DNS over TLS as saved.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NetSettings {
+    pub vpns: Option<Vec<wol_core::vpn::Vpn>>,
+    pub proxy: wol_core::netconf::ProxyConfig,
+    pub dot: wol_core::netconf::DotConfig,
+}
+
 /// Kernel facts for About.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Kernel {
@@ -36,6 +45,14 @@ impl Kernel {
             None => format!("Linux {}", self.release),
         }
     }
+}
+
+/// One VPN change from Settings > Network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VpnChange {
+    Connect(Option<String>),
+    Disconnect,
+    Forget,
 }
 
 pub trait Machine: Send + Sync {
@@ -74,6 +91,48 @@ pub trait Machine: Send + Sync {
         _on: Option<(String, String)>,
     ) -> Result<(), wol_core::controls::ControlError> {
         Err(wol_core::controls::ControlError::Unavailable)
+    }
+    /// Airplane mode (rfkill), None without a radio: read with the Network pane's facts.
+    fn airplane(&self) -> Option<bool> {
+        None
+    }
+    /// VPNs, proxy and DNS over TLS (NET-3). Slow (nmcli): off the UI thread.
+    fn net_settings(&self) -> NetSettings {
+        NetSettings::default()
+    }
+    /// How `iface` gets its IPv4 address (QA-LIVE3-14); None without an active profile.
+    fn ipv4(&self, _iface: &str) -> Option<wol_core::netconf::Ipv4Config> {
+        None
+    }
+    /// Saves `c` on `iface`, with the 15 s trial (blocks up to that long: off the UI thread).
+    fn set_ipv4(
+        &self,
+        _iface: &str,
+        _c: &wol_core::netconf::Ipv4Config,
+    ) -> Result<wol_core::netconf::IpApplied, wol_core::controls::ControlError> {
+        Err(wol_core::controls::ControlError::Unavailable)
+    }
+    /// Imports a WireGuard or OpenVPN file.
+    fn vpn_import(
+        &self,
+        _path: &std::path::Path,
+    ) -> Result<wol_core::vpn::Vpn, wol_core::controls::ControlError> {
+        Err(wol_core::controls::ControlError::Unavailable)
+    }
+    /// Connects (`password`: one OpenVPN asked for), disconnects or forgets one VPN.
+    fn vpn_change(
+        &self,
+        _uuid: &str,
+        _change: VpnChange,
+    ) -> Result<(), wol_core::controls::ControlError> {
+        Err(wol_core::controls::ControlError::Unavailable)
+    }
+    /// The person's side of a saved proxy: the desktop's keys and NetworkManager.
+    fn apply_proxy_session(
+        &self,
+        _c: &wol_core::netconf::ProxyConfig,
+    ) -> Result<(), wol_core::controls::ControlError> {
+        Ok(())
     }
     /// `wol_core::update::auto::FILE` as it is now (download and metered lines); None unread.
     fn auto_update_file(&self) -> Option<String> {
@@ -248,6 +307,53 @@ impl Machine for Live {
         self.controls()
             .set_hotspot(on.as_ref().map(|(n, p)| (n.as_str(), p.as_str())))
     }
+    fn airplane(&self) -> Option<bool> {
+        let saved = wol_core::journal::state_home().join(wol_core::netconf::AIRPLANE_FILE);
+        self.controls()
+            .airplane(self.os().read_text(&saved.to_string_lossy()).as_deref())
+    }
+    fn net_settings(&self) -> NetSettings {
+        let c = self.controls();
+        NetSettings {
+            vpns: c.vpns(),
+            proxy: c.proxy(),
+            dot: c.dns_over_tls(),
+        }
+    }
+    fn ipv4(&self, iface: &str) -> Option<wol_core::netconf::Ipv4Config> {
+        self.controls().ipv4(iface)
+    }
+    fn set_ipv4(
+        &self,
+        iface: &str,
+        c: &wol_core::netconf::Ipv4Config,
+    ) -> Result<wol_core::netconf::IpApplied, wol_core::controls::ControlError> {
+        self.controls().set_ipv4(iface, c)
+    }
+    fn vpn_import(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<wol_core::vpn::Vpn, wol_core::controls::ControlError> {
+        self.controls().vpn_import(path)
+    }
+    fn vpn_change(
+        &self,
+        uuid: &str,
+        change: VpnChange,
+    ) -> Result<(), wol_core::controls::ControlError> {
+        let c = self.controls();
+        match change {
+            VpnChange::Connect(pw) => c.vpn_connect(uuid, pw.as_deref()),
+            VpnChange::Disconnect => c.vpn_disconnect(uuid),
+            VpnChange::Forget => c.vpn_forget(uuid),
+        }
+    }
+    fn apply_proxy_session(
+        &self,
+        p: &wol_core::netconf::ProxyConfig,
+    ) -> Result<(), wol_core::controls::ControlError> {
+        self.controls().apply_proxy_session(p)
+    }
     fn auto_update_file(&self) -> Option<String> {
         self.os().read_text(wol_core::update::auto::FILE)
     }
@@ -412,6 +518,28 @@ impl Machine for Live {
     }
 }
 
+/// The demo laptop's VPN (one WireGuard, off), no proxy, DNS over TLS when available with Quad9.
+pub fn demo_net_settings() -> NetSettings {
+    NetSettings {
+        vpns: Some(vec![wol_core::vpn::Vpn {
+            name: "Office".into(),
+            uuid: "6a3f0c2e-1111-4a5b-9c8d-0123456789ab".into(),
+            kind: wol_core::vpn::VpnKind::WireGuard,
+            active: false,
+        }]),
+        proxy: wol_core::netconf::ProxyConfig::default(),
+        dot: wol_core::netconf::DotConfig {
+            mode: wol_core::netconf::DotMode::Opportunistic,
+            servers: vec!["9.9.9.9#dns.quad9.net".into()],
+        },
+    }
+}
+
+/// The demo laptop's Wi-Fi gets its address from DHCP; nothing else has a profile.
+pub fn demo_ipv4(iface: &str) -> Option<wol_core::netconf::Ipv4Config> {
+    (iface == "wlan0").then(wol_core::netconf::Ipv4Config::default)
+}
+
 /// A 14-inch laptop on WolOS: the same facts every render.
 pub struct Demo;
 
@@ -513,6 +641,12 @@ impl Machine for Demo {
     }
     fn hotspot(&self) -> Option<bool> {
         Some(false)
+    }
+    fn net_settings(&self) -> NetSettings {
+        demo_net_settings()
+    }
+    fn ipv4(&self, iface: &str) -> Option<wol_core::netconf::Ipv4Config> {
+        demo_ipv4(iface)
     }
     fn auto_update_file(&self) -> Option<String> {
         Some("download=on\nmetered=off\n".into())
@@ -805,9 +939,20 @@ pub struct DemoEdge {
     pub gave_up: bool,
     /// Installed with one copy of WolOS (Software Update says there is no restore point).
     pub one_copy: bool,
+    /// Airplane mode as the radios say (NET-3); None: no radio.
+    pub airplane: Option<bool>,
 }
 
 impl Machine for DemoEdge {
+    fn airplane(&self) -> Option<bool> {
+        self.airplane
+    }
+    fn net_settings(&self) -> NetSettings {
+        demo_net_settings()
+    }
+    fn ipv4(&self, iface: &str) -> Option<wol_core::netconf::Ipv4Config> {
+        demo_ipv4(iface)
+    }
     fn storage(&self) -> Option<Storage> {
         Demo.storage()
     }

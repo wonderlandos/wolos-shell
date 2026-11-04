@@ -351,8 +351,50 @@ pub const FIREWALL_ON: &str = "Blocks connections from other computers that you 
 /// Network > Firewall: on at startup, but the kernel has no table (QA-NET-2).
 pub const FIREWALL_STOPPED: &str = "On at startup, but not running now.";
 
+/// Network > Airplane Mode (NET-3).
+pub const AIRPLANE_SUB: &str =
+    "Turns off Wi-Fi, Bluetooth and mobile data. Turning it off brings back the ones that were on.";
+/// IP Settings: while the new address is tried.
+pub const IP_TRYING: &str =
+    "Trying the new address. If the network is lost, it goes back to Automatic within 15 seconds.";
+/// IP Settings: the change stayed.
+pub const IP_KEPT: &str = "Saved. The connection uses the new settings.";
+/// IP Settings: the typed address cut the computer off, and it went back (QA-LIVE3-14).
+pub const IP_ROLLED_BACK: &str =
+    "The new address did not reach the network, so the connection went back to Automatic (DHCP).";
+/// IP Settings: no link is on a network.
+pub const IP_NO_LINKS: &str =
+    "Connect to a network first, then choose how this computer gets its address there.";
+/// Network > VPN with none saved.
+pub const VPN_NONE: &str = "No VPN yet. Add one from a WireGuard or OpenVPN file.";
+/// The OpenVPN plugin is not on this computer.
+pub const VPN_NO_OPENVPN: &str =
+    "OpenVPN files need the OpenVPN part of the network, which is not installed on this computer.";
+/// The file is no VPN configuration NetworkManager reads.
+pub const VPN_BAD_FILE: &str =
+    "That file is not a WireGuard or OpenVPN configuration this computer can read.";
+/// The VPN asks for its password.
+pub const VPN_NEEDS_PASSWORD: &str = "This VPN asks for its password. Type it, then click Connect.";
+/// The VPN did not come up.
+pub const VPN_DID_NOT_CONNECT: &str =
+    "The VPN did not connect. Check the file with the people who run the VPN.";
+/// Network > VPN: the person picked a file and it was added.
+pub fn vpn_added(name: &str) -> String {
+    format!("Added {name}. Its key is kept in your login keyring.")
+}
+/// Proxy saved for the whole computer.
+pub const PROXY_SAVED: &str =
+    "Saved. Apps opened from now on use it; an app that is open may need to be opened again.";
+/// The proxy page's note.
+pub const PROXY_FOOT: &str =
+    "The proxy applies to every account: the desktop’s apps, the terminal and the web browser.";
+/// DNS over TLS saved.
+pub const DOT_SAVED: &str = "Saved. Every app’s name lookups use it now.";
+/// The DNS over TLS page's note.
+pub const DOT_FOOT: &str = "Hides the names this computer looks up. Always means no answer from a server that cannot encrypt.";
+
 /// Every network sentence, for the lint.
-pub const NETWORK_ALL: [&str; 13] = [
+pub const NETWORK_ALL: [&str; 27] = [
     FIREWALL_ON,
     FIREWALL_STOPPED,
     WIFI_ENTERPRISE,
@@ -366,6 +408,20 @@ pub const NETWORK_ALL: [&str; 13] = [
     PORTAL_BODY,
     NETWORK_LIMITED,
     NETWORK_PORTAL,
+    AIRPLANE_SUB,
+    IP_TRYING,
+    IP_KEPT,
+    IP_ROLLED_BACK,
+    IP_NO_LINKS,
+    VPN_NONE,
+    VPN_NO_OPENVPN,
+    VPN_BAD_FILE,
+    VPN_NEEDS_PASSWORD,
+    VPN_DID_NOT_CONNECT,
+    PROXY_SAVED,
+    PROXY_FOOT,
+    DOT_SAVED,
+    DOT_FOOT,
 ];
 
 #[cfg(test)]
@@ -376,11 +432,70 @@ mod tests {
             .iter()
             .copied()
             .map(String::from)
-            .chain([super::wifi_connected("Home"), super::hotspot_on("WolOS")])
+            .chain([
+                super::wifi_connected("Home"),
+                super::hotspot_on("WolOS"),
+                super::vpn_added("Office"),
+            ])
+            // The core's sentences Settings shows as they are (NET-3).
+            .chain(
+                [
+                    wol_core::netconf::IpProblem::Address,
+                    wol_core::netconf::IpProblem::Reserved,
+                    wol_core::netconf::IpProblem::Router,
+                    wol_core::netconf::IpProblem::RouterOutside,
+                    wol_core::netconf::IpProblem::Dns,
+                ]
+                .map(|p| p.sentence().to_string()),
+            )
+            .chain(net3_problems())
         {
             let p = crate::copy::lint(&s);
             assert!(p.is_empty(), "“{s}”: {p:?}");
         }
+    }
+
+    /// Every sentence `proxy_problem` and `dot_problem` can give.
+    fn net3_problems() -> Vec<String> {
+        use wol_core::netconf::*;
+        let mut v = Vec::new();
+        for p in [
+            ProxyConfig {
+                mode: ProxyMode::Auto,
+                ..Default::default()
+            },
+            ProxyConfig {
+                mode: ProxyMode::Manual,
+                ..Default::default()
+            },
+            ProxyConfig {
+                mode: ProxyMode::Manual,
+                http: "x".into(),
+                ..Default::default()
+            },
+            ProxyConfig {
+                mode: ProxyMode::Manual,
+                http: "x:1".into(),
+                no_proxy: vec!["a b".into()],
+                ..Default::default()
+            },
+        ] {
+            v.extend(proxy_problem(&p).map(String::from));
+        }
+        for d in [
+            DotConfig {
+                mode: DotMode::Strict,
+                servers: vec![],
+            },
+            DotConfig {
+                mode: DotMode::Off,
+                servers: vec!["x".into()],
+            },
+        ] {
+            v.extend(dot_problem(&d).map(String::from));
+        }
+        assert_eq!(v.len(), 6, "{v:?}");
+        v
     }
 
     #[test]

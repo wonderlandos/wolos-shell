@@ -64,6 +64,39 @@ impl TileSource for Plugins {
     fn toggle(&self, _id: &str, _on: bool) {}
 }
 
+/// A laptop in airplane mode (NET-3): every radio off, the Airplane Mode tile lit.
+struct InFlight;
+
+impl System for InFlight {
+    fn battery(&self) -> Option<shell::status::Battery> {
+        Fake.battery()
+    }
+    fn audio(&self) -> shell::status::Audio {
+        Fake.audio()
+    }
+    fn network(&self) -> shell::status::Network {
+        shell::status::Network::default()
+    }
+    fn brightness(&self) -> Option<u8> {
+        Fake.brightness()
+    }
+    fn wifi_enabled(&self) -> Option<bool> {
+        Some(false)
+    }
+    fn bluetooth(&self) -> Option<bool> {
+        Some(false)
+    }
+    fn airplane(&self) -> Option<bool> {
+        Some(true)
+    }
+    fn night_light(&self) -> Option<bool> {
+        Fake.night_light()
+    }
+    fn accessibility(&self) -> shell::system::Accessibility {
+        Fake.accessibility()
+    }
+}
+
 pub fn cases() -> Vec<Case> {
     let full = shell::kit::widgets::CONTROL_CENTER_WIDTH;
     let laptop = || -> Rc<dyn System> { Rc::new(Fake) };
@@ -80,6 +113,10 @@ pub fn cases() -> Vec<Case> {
                 full,
                 None,
             )
+        }),
+        // NET-21: Airplane Mode is the first tile, lit; Wi-Fi and Bluetooth read Off.
+        case("controlcenter-airplane", full, move || {
+            cc::content_with(Rc::new(InFlight), ControlCenterPrefs::default(), "main")
         }),
         case("controlcenter-narrow", cc::NARROW_WIDTH, move || {
             cc::content_sized(laptop(), all(), "main", cc::NARROW_WIDTH)

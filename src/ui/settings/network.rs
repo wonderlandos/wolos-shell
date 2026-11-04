@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Network: every connection with its addresses, router and DNS (read off the UI thread), kept
-//! current while the pane is open, and the Firewall switch (wol-admind `firewall`; the one place
-//! it lives, QA-NET-22).
+//! Network: Airplane Mode, every connection with its addresses, router and DNS (read off the UI
+//! thread) and its IP Settings, kept current while the pane is open; the VPNs, Proxy and DNS over
+//! TLS (NET-3); and the Firewall switch (wol-admind `firewall`; the one place it lives, QA-NET-22).
 use super::*;
 use wol_core::netinfo::{IfKind, Interface, NetInfo};
 use wol_core::security;
@@ -63,6 +63,8 @@ fn connected(i: &Interface) -> bool {
 struct Snap {
     net: NetInfo,
     security: Option<security::Status>,
+    /// Airplane mode; None without a radio (NET-3).
+    airplane: Option<bool>,
 }
 
 /// Firewall row text: "On at startup, but not running now" only when the unit is on and the
@@ -97,7 +99,29 @@ fn firewall_section(
     ))
 }
 
+/// Airplane Mode (NET-21): every radio off, then the ones that were on back on.
+fn airplane_section(e: &Rc<Env>, on: bool, status: &gtk::Label) -> gtk::Box {
+    let (ctx, st) = (e.ctx.clone(), status.clone());
+    w::section(
+        "",
+        &[form::pending_toggle_row(
+            "Airplane Mode",
+            crate::copy::settings::AIRPLANE_SUB,
+            on,
+            move |v, done| ctx.act_switch(Action::Airplane(v), &st, done),
+        )],
+    )
+}
+
+/// IP Settings is offered on Ethernet and Wi-Fi links that are on a network (QA-LIVE3-14).
+pub(crate) fn configurable(i: &Interface) -> bool {
+    connected(i) && matches!(i.kind, IfKind::Ethernet | IfKind::WiFi)
+}
+
 fn render(e: &Rc<Env>, p: &gtk::Box, snap: Snap, status: &gtk::Label) {
+    if let Some(on) = snap.airplane {
+        p.append(&airplane_section(e, on, status));
+    }
     let net = snap.net;
     if net.interfaces.is_empty() {
         p.append(&w::empty_state(
@@ -146,6 +170,14 @@ fn render(e: &Rc<Env>, p: &gtk::Box, snap: Snap, status: &gtk::Label) {
         if !i.mac.is_empty() {
             rows.push(info("Hardware address", &i.mac));
         }
+        if configurable(i) {
+            rows.push(form::button_row(
+                "IP settings",
+                "",
+                "Configure…",
+                e.opener(super::ip_settings::TITLE),
+            ));
+        }
         p.append(&w::section(kind, &rows));
     }
     if let Some(f) = firewall_section(e, snap.security.as_ref(), status) {
@@ -187,6 +219,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let load: Arc<dyn Fn() -> Snap + Send + Sync> = Arc::new(move || Snap {
         net: m.net(),
         security: m.security(),
+        airplane: m.airplane(),
     });
     let first = load.clone();
     later(
@@ -205,7 +238,60 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             }
         },
     );
+    p.append(&super::network_vpn::section(e));
+    p.append(&settings_section(e));
     p
+}
+
+/// Proxy and DNS over TLS rows with what each is set to; read again when the pane shows again
+/// (after a change on their page).
+fn settings_section(e: &Rc<Env>) -> gtk::Box {
+    let b = w::vbox(0);
+    let fill = {
+        let (e, b) = (e.clone(), b.clone());
+        move || {
+            clear(&b);
+            let m = e.machine();
+            let e = e.clone();
+            later(
+                &b,
+                move || m.net_settings(),
+                move |into, n| {
+                    let row = |icon: &str, title: &str, sub: &str, page: &'static str| {
+                        let r = form::nav_row(icon, title, sub);
+                        let open = e.opener(page);
+                        r.connect_clicked(move |_| open());
+                        r.upcast::<gtk::Widget>()
+                    };
+                    into.append(&w::section(
+                        "",
+                        &[
+                            row(
+                                "network-server-symbolic",
+                                super::proxy::TITLE,
+                                &super::proxy::summary(&n.proxy),
+                                super::proxy::TITLE,
+                            ),
+                            row(
+                                "system-lock-screen-symbolic",
+                                super::dns_over_tls::TITLE,
+                                &super::dns_over_tls::summary(&n.dot),
+                                super::dns_over_tls::TITLE,
+                            ),
+                        ],
+                    ));
+                },
+            );
+        }
+    };
+    fill();
+    let first = Cell::new(true);
+    b.connect_map(move |_| {
+        if !first.replace(false) {
+            fill();
+        }
+    });
+    b
 }
 
 #[cfg(test)]
