@@ -682,6 +682,23 @@ impl Installer {
         }
     }
 
+    /// Account page while typing (as Setup's): a field that was marked and is right now loses its
+    /// outline and the foot's sentence goes with it; what is still wrong stays said (QA-LIVE1-36:
+    /// "Enter your full name." stayed red after a name was typed).
+    fn show_typing_problem(&self) {
+        let live = self.flow.borrow().draft.typing_problem();
+        for (g, e) in self.editors.borrow().iter() {
+            if live.is_some_and(|(f, _)| f == *g) {
+                e.add_css_class("problem");
+            } else {
+                e.remove_css_class("problem");
+            }
+        }
+        self.with_card(Step::Account, |c| {
+            c.say(live.map_or("", |p| p.1), live.is_some());
+        });
+    }
+
     fn mark(&self, f: Field) {
         if let Some((_, e)) = self.editors.borrow().iter().find(|(g, _)| *g == f) {
             e.add_css_class("problem");
@@ -898,24 +915,28 @@ impl Installer {
                 if nm.text() != n {
                     nm.set_text(&n);
                 }
+                s.show_typing_problem();
             }
         });
         let me = Rc::downgrade(self);
         name.connect_changed(move |e| {
             if let Some(s) = me.upgrade() {
                 s.flow.borrow_mut().draft.set_name(&e.text());
+                s.show_typing_problem();
             }
         });
         let me = Rc::downgrade(self);
         pw.connect_changed(move |e| {
             if let Some(s) = me.upgrade() {
                 s.flow.borrow_mut().draft.password = e.text().to_string();
+                s.show_typing_problem();
             }
         });
         let me = Rc::downgrade(self);
         verify.connect_changed(move |e| {
             if let Some(s) = me.upgrade() {
                 s.flow.borrow_mut().draft.verify = e.text().to_string();
+                s.show_typing_problem();
             }
         });
         body.append(&a::form_row("Full name", &full));
@@ -944,6 +965,7 @@ impl Installer {
         host.connect_changed(move |e| {
             if let Some(s) = me.upgrade() {
                 s.flow.borrow_mut().set_hostname(&e.text());
+                s.show_typing_problem();
             }
         });
         body.append(&a::form_row("Computer name", &host));

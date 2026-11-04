@@ -32,6 +32,20 @@ pub fn account_hint(full: &str) -> Option<&'static str> {
     }
 }
 
+/// The `logins` that still have a line in `passwd` (an account removed from a terminal is gone
+/// from the list the next time the page shows, QA-FILES-26).
+pub(crate) fn still_here(passwd: &str, logins: &[String]) -> Vec<String> {
+    logins
+        .iter()
+        .filter(|u| {
+            passwd
+                .lines()
+                .any(|l| l.split(':').next() == Some(u.as_str()))
+        })
+        .cloned()
+        .collect()
+}
+
 /// One login user from passwd: (login, full name, shell name).
 pub(crate) fn people(passwd: &str, logins: &[String]) -> Vec<(String, String, String)> {
     logins
@@ -200,20 +214,42 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     };
     refill();
     p.append(&list);
+    // The list is read when the page is built and again each time it is shown: Close only hides
+    // the window, so after a `userdel` the old list stayed until the process was killed
+    // (QA-FILES-26).
     {
-        let (m, users, known, refill) = (
-            e.machine(),
-            host.users.clone(),
-            known.clone(),
-            refill.clone(),
-        );
-        off_thread(
-            move || people(&m.passwd(), &users),
-            move |v| {
-                *known.borrow_mut() = v;
-                refill();
-            },
-        );
+        let reread: Rc<dyn Fn(Vec<String>)> = {
+            let (m, known, refill) = (e.machine(), known.clone(), refill.clone());
+            Rc::new(move |users: Vec<String>| {
+                let (m, known, refill) = (m.clone(), known.clone(), refill.clone());
+                off_thread(
+                    move || {
+                        let passwd = m.passwd();
+                        people(&passwd, &still_here(&passwd, &users))
+                    },
+                    move |v| {
+                        *known.borrow_mut() = v;
+                        refill();
+                    },
+                );
+            })
+        };
+        reread(host.users.clone());
+        let (first, known, users) = (Cell::new(true), known.clone(), host.users.clone());
+        p.connect_map(move |_| {
+            // The first map is the build's own read.
+            if first.replace(false) {
+                return;
+            }
+            // Who the page knew, and whoever Settings added since.
+            let mut now = users.clone();
+            for (login, _, _) in known.borrow().iter() {
+                if !now.contains(login) {
+                    now.push(login.clone());
+                }
+            }
+            reread(now);
+        });
     }
 
     let full = w::text_field("Full name");
@@ -477,6 +513,25 @@ mod tests {
             assert!(crate::copy::lint(s).is_empty(), "{s}");
         }
         assert!(crate::copy::lint(&crate::copy::user_creating("and")).is_empty());
+    }
+
+    /// QA-FILES-26: Settings kept listing an account that `userdel` had removed (the window is only
+    /// hidden by Close). The list is re-read on show; a login with no passwd line is dropped.
+    #[test]
+    fn a_removed_account_leaves_the_list() {
+        let before = "alice:*:1001:1001:Alice,,,:/home/alice:/bin/zsh\nnandu:*:1002:1002:Nandu,,,:/home/nandu:/bin/zsh\n";
+        let after = "alice:*:1001:1001:Alice,,,:/home/alice:/bin/zsh\n";
+        let logins = vec!["alice".to_string(), "nandu".to_string()];
+        assert_eq!(still_here(before, &logins), logins);
+        assert_eq!(still_here(after, &logins), ["alice"]);
+        // A prefix is not the account: "nan" is not "nandu".
+        assert!(still_here(before, &["nan".to_string()]).is_empty());
+        let src = include_str!("accounts.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert!(
+            code.contains("p.connect_map("),
+            "the page re-reads when shown"
+        );
     }
 
     #[test]

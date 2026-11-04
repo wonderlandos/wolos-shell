@@ -1371,8 +1371,18 @@ pub fn passphrase_typable(p: &str) -> bool {
 
 /// How a disk reads under its name: size, device and what kind of disk (from the device name).
 pub fn disk_detail(d: &Disk) -> String {
-    let dev = d.path.rsplit('/').next().unwrap_or(&d.path);
-    let bus = if dev.starts_with("nvme") {
+    let bus = bus_of(&d.path);
+    // The title already says the kind when the disk has no model (QA-LIVE1-35).
+    match bus {
+        Some(b) if !d.model.is_empty() => format!("{} · {} · {b}", size_text(d.bytes), d.path),
+        _ => format!("{} · {}", size_text(d.bytes), d.path),
+    }
+}
+
+/// What kind of disk a device name is, in words (None: an ordinary SATA/USB disk, `sdX`).
+fn bus_of(path: &str) -> Option<&'static str> {
+    let dev = path.rsplit('/').next().unwrap_or(path);
+    if dev.starts_with("nvme") {
         Some("NVMe")
     } else if dev.starts_with("mmcblk") {
         Some("SD card or eMMC")
@@ -1380,10 +1390,6 @@ pub fn disk_detail(d: &Disk) -> String {
         Some("Virtual disk")
     } else {
         None
-    };
-    match bus {
-        Some(b) => format!("{} · {} · {b}", size_text(d.bytes), d.path),
-        None => format!("{} · {}", size_text(d.bytes), d.path),
     }
 }
 
@@ -1401,10 +1407,15 @@ pub trait DiskTitle {
 }
 
 impl DiskTitle for Disk {
-    /// The model, else the device name.
+    /// The model, else what kind of disk it is ("Virtual disk", "NVMe", "Disk"): the device name is
+    /// in the line under it, and the title read "/dev/vda" twice (QA-LIVE1-35).
     fn title_text(&self) -> String {
         if self.model.is_empty() {
-            self.path.clone()
+            match bus_of(&self.path) {
+                Some("NVMe") => "NVMe disk".into(),
+                Some(b) => b.into(),
+                None => "Disk".into(),
+            }
         } else {
             self.model.clone()
         }
