@@ -46,38 +46,70 @@ pub(crate) fn ago(now: u64, t: u64) -> String {
     }
 }
 
-/// Changes worth listing: not undo entries themselves, not already undone; newest first, at most `n`.
+/// The first thing in the journal is the computer being set up: the account's first theme, written
+/// by `wol theme set` from the first-boot setup (journal id 1, `by: cli`, no file before it). It
+/// is not a change the person made and Undo would only delete the file (QA-SET-R2-10).
+fn is_setup(all: &[Entry], e: &Entry) -> bool {
+    e.by == "cli"
+        && all.iter().all(|o| o.id >= e.id)
+        && !e.changes.is_empty()
+        && e.changes
+            .iter()
+            .all(|c| matches!(c, wol_core::journal::Change::File { before: None, .. }))
+}
+
+/// Changes worth listing: not undo entries themselves, not already undone, not the setup of the
+/// computer; newest first, at most `n`.
 pub(crate) fn listed(all: &[Entry], n: usize) -> Vec<&Entry> {
     all.iter()
-        .filter(|e| e.undoes.is_none() && !is_undone(all, e.id))
+        .filter(|e| e.undoes.is_none() && !is_undone(all, e.id) && !is_setup(all, e))
         .take(n)
         .collect()
 }
 
-/// A restore point's name in words: the running system, one made before an update, or its own name.
+/// A restore point's name in words (QA-SET-30). The slots are `wolos-a` and `wolos-b`: which one
+/// is not for the person to learn, only what each is for. The running system; the update that
+/// starts next time; the system as it was before the last update.
 pub(crate) fn point_name(b: &wol_core::update::be::BootEnv) -> String {
     if b.active {
         "Current system".into()
-    } else if b.name.starts_with("wol-before-update-") {
-        "Before an update".into()
+    } else if b.next_boot {
+        "Next start".into()
+    } else if b.name.starts_with("wol-before-update-") || wol_core::update::is_valid_be(&b.name) {
+        "Before the last update".into()
     } else {
         b.name.clone()
     }
 }
 
-/// "20 October 2026, 18:40 · 412 MB" from the snapshot list's "2026-10-20 18:40" and "412M".
+/// "2 November 2026" from a slot's release date ("2026/11/02", "2026.11.02" or "2026-11-02"),
+/// with ", 18:40" when the snapshot list gave a time ("2026-10-20 18:40").
+fn when(created: &str) -> Option<String> {
+    let (date, time) = match created.split_once(' ') {
+        Some((d, t)) => (d, Some(t)),
+        None => (created, None),
+    };
+    let mut d = date.split(['-', '/', '.']);
+    let (y, m, day) = (d.next()?, d.next()?.parse::<usize>().ok()?, d.next()?);
+    if d.next().is_some() || y.len() != 4 || !y.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let month = super::datetime::MONTHS.get(m.checked_sub(1)?)?;
+    let day = day.trim_start_matches('0');
+    if day.is_empty() || !day.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(match time {
+        Some(t) => format!("{day} {month} {y}, {t}"),
+        None => format!("{day} {month} {y}"),
+    })
+}
+
+/// "20 October 2026, 18:40 · 412 MB" from the snapshot list's "2026-10-20 18:40" and "412M"; a
+/// boot-menu slot gives "2 November 2026" and "2 tries left" (kept as it is: it says the slot has
+/// not started well yet).
 pub(crate) fn point_line(created: &str, space: &str) -> String {
-    let when = (|| {
-        let (date, time) = created.split_once(' ')?;
-        let mut d = date.split('-');
-        let (y, m, day) = (d.next()?, d.next()?.parse::<usize>().ok()?, d.next()?);
-        let month = super::datetime::MONTHS.get(m.checked_sub(1)?)?;
-        Some(format!(
-            "{} {month} {y}, {time}",
-            day.trim_start_matches('0')
-        ))
-    })()
-    .unwrap_or_else(|| created.to_string());
+    let when = when(created).unwrap_or_else(|| created.to_string());
     let size = match space.char_indices().last() {
         Some((i, u @ ('K' | 'M' | 'G' | 'T'))) => format!("{} {u}B", &space[..i]),
         _ => space.to_string(),
@@ -144,6 +176,19 @@ fn points(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label) {
     clear(into);
     let mut bes = e.sys().boot_environments();
     if bes.is_empty() {
+        // One copy of WolOS says so, in the place the list would be (QA-STORE-5).
+        if e.machine().single_copy() {
+            into.append(&w::section(
+                "Restore Points",
+                &[w::list_row(
+                    "drive-harddisk-symbolic",
+                    "One copy of WolOS",
+                    crate::copy::settings::RESTORE_ONE_COPY,
+                    None,
+                )
+                .upcast()],
+            ));
+        }
         return;
     }
     bes.sort_by(|a, b| b.created.cmp(&a.created));
@@ -230,6 +275,113 @@ mod tests {
         );
     }
 
+    /// QA-SET-R2-10: the theme written while the computer was set up is not a change to undo; a
+    /// later one from the terminal still is.
+    #[test]
+    fn setup_is_not_a_change_to_undo() {
+        use wol_core::journal::Change;
+        let file = |id, by: &str, before: Option<&str>| Entry {
+            id,
+            t: id,
+            by: by.into(),
+            what: "theme".into(),
+            changes: vec![Change::File {
+                path: "wolos/theme".into(),
+                before: before.map(String::from),
+                after: Some("wol-light".into()),
+            }],
+            undoes: None,
+        };
+        let first = file(1, "cli", None);
+        let all = vec![file(2, "cli", Some("wol-light")), first.clone()];
+        assert_eq!(
+            listed(&all, 8).iter().map(|x| x.id).collect::<Vec<_>>(),
+            [2]
+        );
+        assert!(
+            listed(&[first], 8).is_empty(),
+            "nothing to undo after setup"
+        );
+        let by_settings = vec![file(1, "settings", None)];
+        assert_eq!(
+            listed(&by_settings, 8).len(),
+            1,
+            "the person's own first change"
+        );
+    }
+
+    /// QA-SET-30: the names and dates of bootctl's slots, not ZFS-shaped ones.
+    #[test]
+    fn point_name_table() {
+        let be = |name: &str, active, next_boot, created: &str, space: &str| {
+            wol_core::update::be::BootEnv {
+                name: name.into(),
+                active,
+                next_boot,
+                mountpoint: None,
+                space: space.into(),
+                created: created.into(),
+            }
+        };
+        for (b, name, line) in [
+            (
+                be("wolos-a", true, false, "2026/10/20", ""),
+                "Current system",
+                "20 October 2026",
+            ),
+            (
+                be("wolos-b", false, true, "2026/11/02", "2 tries left"),
+                "Next start",
+                "2 November 2026 · 2 tries left",
+            ),
+            (
+                be("wolos-b", false, false, "2026.11.02", ""),
+                "Before the last update",
+                "2 November 2026",
+            ),
+            (
+                be("wolos-a", false, false, "", ""),
+                "Before the last update",
+                "",
+            ),
+        ] {
+            assert_eq!(point_name(&b), name, "{b:?}");
+            assert_eq!(point_line(&b.created, &b.space), line, "{b:?}");
+        }
+        assert_eq!(
+            point_line("2026-10-20 18:40", "412M"),
+            "20 October 2026, 18:40 · 412 MB"
+        );
+        assert_eq!(
+            point_line("2026/13/02", ""),
+            "2026/13/02",
+            "not a date: shown as it is"
+        );
+    }
+
+    /// QA-STORE-5: Restore lists what `System::boot_environments` reads, which drops a boot entry
+    /// whose root subvolume is gone; the page then names the slots that are really there.
+    #[test]
+    fn ghost_slot_filtered() {
+        let h = wol_core::system::fake::FakeHost::new(false);
+        h.command(
+            "bootctl list --json=short",
+            r#"[{"id":"wolos-a.conf","version":"2026/10/20","isSelected":true,"isDefault":true},
+                {"id":"wolos-b+3.conf","version":"2026/11/02","isSelected":false,"isDefault":false,"triesLeft":3}]"#,
+        );
+        h.command("ls /run/wolos/top", "@wolos-a\n");
+        let names: Vec<String> = wol_core::update::be::read(&h)
+            .unwrap()
+            .iter()
+            .map(point_name)
+            .collect();
+        assert_eq!(
+            names,
+            ["Current system"],
+            "the half-made wolos-b is not a restore point"
+        );
+    }
+
     #[test]
     fn restore_points_read_as_words() {
         let be = |name: &str, active| wol_core::update::be::BootEnv {
@@ -243,7 +395,7 @@ mod tests {
         assert_eq!(point_name(&be("default", true)), "Current system");
         assert_eq!(
             point_name(&be("wol-before-update-1792", false)),
-            "Before an update"
+            "Before the last update"
         );
         assert_eq!(point_name(&be("my-test", false)), "my-test");
         assert_eq!(

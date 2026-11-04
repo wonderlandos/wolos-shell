@@ -14,6 +14,22 @@ pub(crate) fn parts(s: &Storage) -> Vec<(String, String, f64)> {
         .collect()
 }
 
+/// The restore points: the root slots other than the one running now (QA-SET-32). The running
+/// system is where the person is, not somewhere to go back to; `Storage::boot_environments`
+/// counts it.
+pub(crate) fn restore_points(s: &Storage) -> u32 {
+    s.boot_environments.saturating_sub(1)
+}
+
+/// "None yet" / "1 restore point" / "2 restore points".
+pub(crate) fn restore_points_line(n: u32) -> String {
+    match n {
+        0 => "None yet".to_string(),
+        1 => "1 restore point".to_string(),
+        n => format!("{n} restore points"),
+    }
+}
+
 fn render(into: &gtk::Box, s: Option<Storage>) {
     let Some(s) = s else {
         into.append(&w::empty_state(
@@ -54,11 +70,7 @@ fn render(into: &gtk::Box, s: Option<Storage>) {
     if s.zfs {
         rows.push(info(
             "Restore points",
-            &match s.boot_environments {
-                0 => "None yet".to_string(),
-                1 => "1 restore point".to_string(),
-                n => format!("{n} restore points"),
-            },
+            &restore_points_line(restore_points(&s)),
         ));
         if s.snapshots > 0 {
             rows.push(info("Kept for restore points", &human(s.snapshots)));
@@ -85,6 +97,27 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
 mod tests {
     use super::*;
     use wol_core::storage::Category;
+
+    /// QA-SET-32: a computer with the running slot and one other has one restore point; with only
+    /// the running slot it has none yet.
+    #[test]
+    fn active_slot_not_a_restore_point() {
+        let s = |n| Storage {
+            boot_environments: n,
+            zfs: true,
+            ..Default::default()
+        };
+        assert_eq!(restore_points_line(restore_points(&s(0))), "None yet");
+        assert_eq!(restore_points_line(restore_points(&s(1))), "None yet");
+        assert_eq!(
+            restore_points_line(restore_points(&s(2))),
+            "1 restore point"
+        );
+        assert_eq!(
+            restore_points_line(restore_points(&s(3))),
+            "2 restore points"
+        );
+    }
 
     #[test]
     fn parts_are_shares_of_the_whole_disk() {

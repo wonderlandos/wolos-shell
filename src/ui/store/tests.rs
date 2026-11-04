@@ -166,3 +166,44 @@ fn native_packages_win_over_flathub() {
         &[]
     ));
 }
+
+/// QA-STORE-30: a repo package the catalog does not know but the package database lists is
+/// installed; its details open in "Open"/"Installed", not "Get".
+#[test]
+fn start_state_from_loaded() {
+    use w::TileState::{Get, Open};
+    assert_eq!(start_state(false, None), Get);
+    assert_eq!(
+        start_state(false, Some("")),
+        Get,
+        "an empty version is not installed"
+    );
+    assert_eq!(
+        start_state(false, Some("2.1-1")),
+        Open,
+        "pacman -Q knows it"
+    );
+    assert_eq!(start_state(true, None), Open, "the desktop file is there");
+    // Nothing to start: say what is true.
+    assert_eq!(details::open_label(Open, true), "Open");
+    assert_eq!(details::open_label(Open, false), "Installed");
+    assert_eq!(details::open_label(Get, false), "Get");
+    assert!(can_open(true, None), "a Flathub app runs by its id");
+    assert!(can_open(false, Some("vlc")));
+    assert!(!can_open(false, None), "a library has no Open");
+}
+
+/// Live-1 H1: Telegram's catalog id ends in ".desktop" and gtk4-launch took it for a file name.
+#[test]
+fn launch_arg_always_names_the_desktop_file() {
+    assert_eq!(launch_arg("vlc"), "vlc.desktop");
+    assert_eq!(
+        launch_arg("org.telegram.desktop"),
+        "org.telegram.desktop.desktop"
+    );
+    for a in store::CATALOG.iter() {
+        let d = a.desktop;
+        assert_eq!(launch_arg(d), format!("{d}.desktop"));
+        assert!(!d.contains(' '), "{d}");
+    }
+}

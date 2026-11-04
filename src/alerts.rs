@@ -25,6 +25,29 @@ pub enum Notice {
     Malware(String, String, String),
     /// Notify with a Restart action (a driver was installed in the background).
     Restart(String, String),
+    /// Notify; a click on it opens Settings > Software Update (`software_update::OPEN`).
+    Updates(String, String),
+}
+
+/// File (under `$XDG_STATE_HOME`) holding the `checked` time of the update check already told
+/// about, so a new login does not tell about the same check again (live-1 M1).
+pub const UPDATES_SHOWN_FILE: &str = "wolos/updates-shown";
+
+/// The `checked` time of the check already told about in an earlier session (0: none). Blocking.
+pub fn load_shown(state_home: &std::path::Path) -> u64 {
+    std::fs::read_to_string(state_home.join(UPDATES_SHOWN_FILE))
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Keeps `checked` as the check told about (live-1 M1). Blocking: off the UI thread.
+pub fn persist_shown(state_home: &std::path::Path, checked: u64) {
+    let file = state_home.join(UPDATES_SHOWN_FILE);
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(file, format!("{checked}\n"));
 }
 
 #[derive(Debug, Default)]
@@ -35,6 +58,8 @@ pub struct Alerts {
     polls: u32,
     /// The update check already notified about (its `checked` time).
     updates_shown: u64,
+    /// `updates_shown` changed and is not yet on disk: [`persist_shown`] writes it off the UI thread.
+    to_persist: Option<u64>,
     /// Plugin versions already notified about: (id, version).
     plugins_shown: Vec<(String, String)>,
     /// The online install result already shown (its `at` time).
@@ -79,12 +104,24 @@ impl Alerts {
         Some(Notice::Show(s, body, false))
     }
 
-    /// The daily update check's findings: a notice once per check that found something.
-    pub fn updates(&mut self, u: Option<Updates>) -> Option<Notice> {
-        let u = u.filter(|u| u.notify_after(self.updates_shown))?;
+    /// The `checked` time to write to [`UPDATES_SHOWN_FILE`], once: the poll hands it to a thread
+    /// that may block ([`persist_shown`]).
+    pub fn take_to_persist(&mut self) -> Option<u64> {
+        self.to_persist.take()
+    }
+
+    /// The daily update check's findings: a notice once per check that found something, and
+    /// never for the release this computer already runs (`running`: its `wolos-release.json`,
+    /// None when it cannot be read; the same filter `wol update status` and Software Update use).
+    pub fn updates(&mut self, u: Option<Updates>, running: Option<&str>) -> Option<Notice> {
+        let u = u?.installed(running);
+        if !u.notify_after(self.updates_shown) {
+            return None;
+        }
         self.updates_shown = u.checked;
+        self.to_persist = Some(u.checked);
         let (s, body) = crate::copy::updates_ready(u.count(), !u.security.is_empty());
-        Some(Notice::Show(s, body, false))
+        Some(Notice::Updates(s, body))
     }
 
     /// Plugin updates the plugin index has for this account (audit6 ST6-4): one notice for the
@@ -180,6 +217,10 @@ pub struct Reads {
 #[derive(Debug, Default)]
 pub struct DueReads {
     pub updates: Option<Updates>,
+    /// The check already told about in an earlier session ([`load_shown`]).
+    pub shown: u64,
+    /// This slot's `wolos-release.json`: a check's release equal to it is installed, not an update.
+    pub running: Option<String>,
     /// Plugin updates, read about once an hour ([`PLUGINS_EVERY_DUE`]); None between the checks
     /// (an empty list is a check that found nothing).
     pub plugins: Option<Vec<PluginNews>>,
@@ -206,6 +247,8 @@ fn plugins_due() -> bool {
 fn read(due: bool) -> Reads {
     let due = due.then(|| DueReads {
         updates: Updates::read(std::path::Path::new(wol_core::update::check::DIR)),
+        running: std::fs::read_to_string(wol_core::update::check::RELEASE_FILE).ok(),
+        shown: load_shown(&wol_core::journal::state_home()),
         plugins: plugins_due().then(crate::software_update::plugin_news),
         online: std::fs::read_to_string(wol_core::hardware::online::ONLINE_PATH)
             .ok()
@@ -223,9 +266,11 @@ fn read(due: bool) -> Reads {
 pub fn notices(a: &mut Alerts, r: Reads) -> Vec<Notice> {
     let mut out = Vec::new();
     if let Some(d) = r.due {
+        // What an earlier session told stays told.
+        a.updates_shown = a.updates_shown.max(d.shown);
         out.extend(a.online(d.online));
         out.extend(d.disk.and_then(|(f, t)| a.disk(f, t)));
-        out.extend(a.updates(d.updates));
+        out.extend(a.updates(d.updates, d.running.as_deref()));
         // Between the hourly checks nothing is read, and what was told stays told.
         if let Some(news) = d.plugins {
             out.extend(a.plugin_updates(news));
@@ -250,8 +295,15 @@ pub fn poll(b: Option<Battery>) {
         let Ok(r) = gtk::gio::spawn_blocking(move || read(due)).await else {
             return;
         };
-        for n in STATE.with_borrow_mut(|a| notices(a, r)) {
+        let (notes, told) = STATE.with_borrow_mut(|a| (notices(a, r), a.take_to_persist()));
+        for n in notes {
             act(n);
+        }
+        if let Some(checked) = told {
+            let _ = gtk::gio::spawn_blocking(move || {
+                persist_shown(&wol_core::journal::state_home(), checked)
+            })
+            .await;
         }
     });
 }
@@ -294,6 +346,20 @@ fn malware_read_in(
     )
 }
 
+/// The command of the updates banner: `notify-send` waits for the click on its `default` action
+/// and then runs `software_update::OPEN` (arguments after the summary and body).
+pub(crate) fn updates_argv(summary: String, body: String) -> Vec<String> {
+    let script = "[ \"$(notify-send -a WolOS -w -A default=Open \"$1\" \"$2\")\" = default ] && { shift 2; exec \"$@\"; }";
+    let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
+    argv.extend([summary, body]);
+    argv.extend(
+        crate::software_update::OPEN
+            .iter()
+            .map(|a| (*a).to_string()),
+    );
+    argv
+}
+
 fn act(n: Notice) {
     let notify = |s: &str, body: &str, critical: bool| {
         let mut argv = vec!["notify-send".to_string(), "-a".into(), "WolOS".into()];
@@ -313,6 +379,7 @@ fn act(n: Notice) {
             );
             crate::kit::spawn(&["sh".into(), "-c".into(), script, "sh".into(), s, body]);
         }
+        Notice::Updates(s, body) => crate::kit::spawn(&updates_argv(s, body)),
         Notice::Malware(s, body, path) => {
             // Open Anyway is a deliberate step in Settings; a notification only offers the safe one.
             let script = "case \"$(notify-send -a WolOS -u critical -w -A trash='Move to Trash' -A details=Details \"$1\" \"$2\")\" in \
@@ -440,7 +507,9 @@ mod tests {
             seen.push(match a.battery(bat(p, s)) {
                 Some(Notice::Show(_, body, critical)) => format!("{p}:show:{critical}:{body}"),
                 Some(Notice::Sleep(..)) => format!("{p}:sleep"),
-                Some(Notice::Restart(..)) | Some(Notice::Malware(..)) => unreachable!(),
+                Some(Notice::Restart(..) | Notice::Malware(..) | Notice::Updates(..)) => {
+                    unreachable!()
+                }
                 None => format!("{p}:-"),
             });
         }
@@ -472,6 +541,8 @@ mod tests {
         };
         assert_eq!(s, crate::copy::disk_full("4 GB").0);
         assert!(body.contains("4 GB"), "{body}");
+        // QA-ACC-23: the Trash is rarely the big one; the alert points at what shows the real ones.
+        assert!(body.contains("Settings > Storage"), "{body}");
         assert_eq!(a.disk(3 * G, 100 * G), None, "once");
         assert_eq!(a.disk(7 * G, 100 * G), None, "still low: no repeat");
         assert_eq!(a.disk(12 * G, 100 * G), None);
@@ -511,8 +582,8 @@ mod tests {
         let found = |t: &str, audit: &str| {
             Updates::parse(t, "curl 8.1-1 -> 8.2-1\nfirefox 1-1 -> 2-1\n", audit, "")
         };
-        assert_eq!(a.updates(None), None, "never checked");
-        let Some(Notice::Show(s, body, false)) = a.updates(found("100", "")) else {
+        assert_eq!(a.updates(None, None), None, "never checked");
+        let Some(Notice::Updates(s, body)) = a.updates(found("100", ""), None) else {
             panic!()
         };
         assert_eq!(s, "Updates Available");
@@ -520,15 +591,120 @@ mod tests {
             body,
             "WolOS has 2 updates ready. Open Software Update to install them."
         );
-        assert_eq!(a.updates(found("100", "")), None, "same check: once");
-        let Some(Notice::Show(_, body, _)) = a.updates(found("200", "curl")) else {
+        assert_eq!(a.updates(found("100", ""), None), None, "same check: once");
+        let Some(Notice::Updates(_, body)) = a.updates(found("200", "curl"), None) else {
             panic!()
         };
         assert!(body.contains("including security fixes"), "{body}");
         assert_eq!(
-            a.updates(Updates::parse("300", "", "", "")),
+            a.updates(Updates::parse("300", "", "", ""), None),
             None,
             "up to date"
+        );
+    }
+
+    /// The check's `base` file (a signed release manifest).
+    const BASE: &str = r#"{"version":"2026.11","snapshot":"2026/11/02","wolos_repo":"r42","kernel":"6.17.3-1","image":"wolos-2026.11.iso","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#;
+
+    /// QA-STORE-57: the release this computer runs is not an update, whatever the image's own
+    /// `wolos-release.json` looks like, and a newer one still is.
+    #[test]
+    fn running_version_is_not_an_update() {
+        let found = || Updates::parse("100", "", "", BASE);
+        let running = r#"{"version":"2026.11","snapshot":"2026/11/02"}"#;
+        let mut a = Alerts::default();
+        assert_eq!(
+            a.updates(found(), Some(running)),
+            None,
+            "first login: no banner"
+        );
+        assert_eq!(
+            a.updates_shown, 0,
+            "nothing was told, so nothing is remembered"
+        );
+        let older = running.replace("2026.11", "2026.10");
+        let mut a = Alerts::default();
+        let Some(Notice::Updates(_, body)) = a.updates(found(), Some(&older)) else {
+            panic!("a newer release is an update")
+        };
+        assert!(body.contains("1 update"), "{body}");
+    }
+
+    /// Live-1 M1: a click on the banner opens Software Update (the notification server runs the
+    /// `default` action when the banner is clicked, `ui/notify.rs::click_action`).
+    #[test]
+    fn update_notice_has_default_action() {
+        let argv = updates_argv(
+            "Updates Available".into(),
+            "WolOS has 1 update ready.".into(),
+        );
+        assert_eq!(&argv[..2], ["sh", "-c"]);
+        let script = &argv[2];
+        assert!(
+            script.contains("notify-send -a WolOS -w -A default=Open"),
+            "{script}"
+        );
+        assert!(
+            script.contains("= default ] && { shift 2; exec \"$@\"; }"),
+            "{script}"
+        );
+        assert_eq!(
+            &argv[4..6],
+            ["Updates Available", "WolOS has 1 update ready."]
+        );
+        assert_eq!(&argv[6..], ["wol-settings", "Software Update"]);
+        // The banner side: a note with a `default` action is clicked through to it.
+        let note = crate::ui::notify::Note {
+            id: 1,
+            app: "WolOS".into(),
+            icon: String::new(),
+            summary: "Updates Available".into(),
+            body: String::new(),
+            critical: false,
+            timeout_ms: -1,
+            image: String::new(),
+            actions: vec![("default".into(), "Open".into())],
+        };
+        assert_eq!(crate::ui::notify::click_action(&note), Some("default"));
+    }
+
+    /// Live-1 M1: what was told stays told in the next session, and the banner opens the page.
+    #[test]
+    fn a_told_check_is_not_told_again_after_a_new_login() {
+        let d = std::env::temp_dir().join(format!("wol-alerts-shown-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let found = || Updates::parse("100", "curl 8.1-1 -> 8.2-1\n", "", "");
+        let mut first = Alerts::default();
+        assert!(matches!(
+            first.updates(found(), None),
+            Some(Notice::Updates(..))
+        ));
+        persist_shown(&d, first.take_to_persist().expect("told, so to be kept"));
+        assert_eq!(first.take_to_persist(), None, "written once");
+        // The next session knows nothing until its first due read brings the file's value.
+        let mut next_login = Alerts::default();
+        let r = Reads {
+            due: Some(DueReads {
+                updates: found(),
+                shown: load_shown(&d),
+                ..Default::default()
+            }),
+            malware: None,
+        };
+        assert!(
+            notices(&mut next_login, r).is_empty(),
+            "same check, new session"
+        );
+        let newer = Updates::parse("200", "curl 8.1-1 -> 8.2-1\n", "", "");
+        assert!(
+            next_login.updates(newer, None).is_some(),
+            "a newer check is told"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(
+            crate::software_update::OPEN,
+            ["wol-settings", "Software Update"],
+            "the banner's click goes to the page"
         );
     }
 
@@ -604,6 +780,8 @@ mod tests {
         let r = Reads {
             due: Some(DueReads {
                 updates: Updates::parse("100", "curl 8.1-1 -> 8.2-1\n", "", ""),
+                running: None,
+                shown: 0,
                 plugins: Some(vec![PluginNews {
                     id: "alice.weather".into(),
                     name: "Weather".into(),
@@ -626,7 +804,7 @@ mod tests {
             panic!("{got:?}")
         };
         assert_eq!(disk, &crate::copy::disk_full("2 GB").0);
-        assert!(matches!(&got[2], Notice::Show(s, ..) if s == "Updates Available"));
+        assert!(matches!(&got[2], Notice::Updates(s, _) if s == "Updates Available"));
         let Notice::Show(s, body, false) = &got[3] else {
             panic!("{got:?}")
         };

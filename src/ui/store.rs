@@ -439,8 +439,34 @@ fn launch(target: &str, flathub: bool, desktop: Option<&str>) {
     if flathub {
         kit::spawn_app(&["flatpak".into(), "run".into(), target.into()]);
     } else if let Some(d) = desktop {
-        kit::spawn_app(&["gtk4-launch".into(), d.into()]);
+        kit::spawn_app(&["gtk4-launch".into(), launch_arg(d)]);
     }
+}
+
+/// What `gtk4-launch` is given for a catalog desktop id. The catalog's ids are desktop entry ids
+/// without the file extension, and `org.telegram.desktop` ends in ".desktop" by itself: gtk4-launch
+/// takes a name that ends in ".desktop" for the file name, finds no such file and says nothing
+/// (live-1 H1). The extension is always added.
+pub(crate) fn launch_arg(id: &str) -> String {
+    format!("{id}.desktop")
+}
+
+/// The state a details page (or tile) opens in: Open when the app is on this computer, by the
+/// catalog's desktop file or by what the package database says (`Loaded::installed`): a repo
+/// package that is not in the catalog has no desktop file the Store knows, but it is there
+/// (QA-STORE-30).
+pub(crate) fn start_state(present: bool, installed_version: Option<&str>) -> w::TileState {
+    if present || installed_version.is_some_and(|v| !v.is_empty()) {
+        w::TileState::Open
+    } else {
+        w::TileState::Get
+    }
+}
+
+/// Whether "Open" has something to start: a Flathub app, or a package with a desktop id. A
+/// package without one is installed but is not an app to open (a library, a command-line tool).
+pub(crate) fn can_open(flathub: bool, desktop: Option<&str>) -> bool {
+    flathub || desktop.is_some()
 }
 
 fn is_present(sh: &Shared, target: &str, flathub: bool) -> bool {
@@ -705,8 +731,9 @@ fn ask_aur(sh: &Rc<Shared>, gate: &Rc<AurGate>) {
             ctx.set_why(&was);
             match r {
                 Ok(()) => gate.show_open(),
-                // Cancel: the tab stays locked, and that is the whole answer.
-                Err(ActionError::Denied) => {}
+                // Cancel (the sheet's `Cancelled`; `Denied` from a sheet that gave up): the tab
+                // stays locked, and that is the whole answer.
+                Err(ActionError::Denied | ActionError::Cancelled) => {}
                 Err(e) => say(&st, e.message()),
             }
         }),

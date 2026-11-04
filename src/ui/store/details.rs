@@ -191,6 +191,15 @@ pub fn info_rows(s: &Subject, l: &Loaded) -> Vec<(&'static str, String)> {
 }
 
 /// Get button label for a tile state: "Get", "Open", "42%".
+/// The button's text on a details page: an installed package with nothing to open says
+/// "Installed" (QA-STORE-30), not an "Open" that does nothing.
+pub fn open_label(s: w::TileState, can_open: bool) -> String {
+    match s {
+        w::TileState::Open if !can_open => "Installed".into(),
+        other => button_label(other),
+    }
+}
+
 pub fn button_label(s: w::TileState) -> String {
     match s {
         w::TileState::Get => "Get".into(),
@@ -480,23 +489,21 @@ pub(super) fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Lo
 
     let chosen = Rc::new(RefCell::new((s.target.clone(), s.flathub)));
     versions(sh, page, s, l, &chosen);
-    let installed = Rc::new(std::cell::Cell::new(is_present(sh, &s.target, s.flathub)));
+    let start = super::start_state(is_present(sh, &s.target, s.flathub), l.installed.as_deref());
+    let installed = Rc::new(std::cell::Cell::new(start == w::TileState::Open));
     let system = Rc::new(std::cell::Cell::new(l.system));
+    let openable = super::can_open(s.flathub, s.desktop);
     let set: Rc<dyn Fn(w::TileState)> = {
         let (get, all, remove, flathub) = (get.clone(), all.clone(), remove.clone(), s.flathub);
         Rc::new(move |st| {
-            get.set_label(&button_label(st));
-            get.set_sensitive(!st.busy());
+            get.set_label(&open_label(st, openable));
+            get.set_sensitive(!st.busy() && (st != w::TileState::Open || openable));
             remove.set_visible(st == w::TileState::Open);
             remove.set_sensitive(!st.busy());
             all.set_visible(flathub && st == w::TileState::Get);
         })
     };
-    set(if installed.get() {
-        w::TileState::Open
-    } else {
-        w::TileState::Get
-    });
+    set(start);
     {
         let (sh, s, set, inst, chosen) = (
             sh.clone(),

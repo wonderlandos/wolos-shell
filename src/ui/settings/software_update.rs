@@ -50,6 +50,104 @@ pub fn parse_check(out: Option<&str>) -> UpdateState {
     }
 }
 
+/// Free bytes on the disk `wol update check` measures. Blocking: off the GTK thread.
+pub fn check_disk_free() -> Option<u64> {
+    wol_core::system::run_with_timeout(
+        &shared::update::FREE_ARGV,
+        std::time::Duration::from_secs(5),
+    )
+    .and_then(|o| shared::update::free_from_df(&o))
+}
+
+/// [`parse_check`] for a check that got no answer on a computer whose check disk (`/var`, the
+/// one `wol update check` measures, `shared::update`) has `free` bytes left: a full disk is said
+/// (QA-FDAY F10), "are you online?" is not asked of it.
+pub fn check_result(out: Option<&str>, free: Option<u64>) -> UpdateState {
+    match (parse_check(out), free) {
+        (UpdateState::Failed(_), free) if shared::update::no_room(free) => {
+            UpdateState::Failed(crate::copy::settings::UPDATE_NO_ROOM.into())
+        }
+        (s, _) => s,
+    }
+}
+
+/// What a finished check says about when: an answer was just got, a failure says nothing.
+pub fn checked_note(s: &UpdateState) -> Option<String> {
+    matches!(s, UpdateState::UpToDate | UpdateState::Available(_))
+        .then(|| crate::copy::settings::UPDATE_CHECKED_NOW.to_string())
+}
+
+/// What the download will be, from `pacman -Sup --print-format %s` (bytes per package).
+pub const SIZE_ARGV: [&str; 4] = ["pacman", "-Sup", "--print-format", "%s"];
+
+/// The bytes of the downloads `pacman -Sup --print-format %s` lists (QA-ACC-19). None when
+/// it said nothing usable.
+pub fn download_bytes(out: &str) -> Option<u64> {
+    let sizes: Vec<u64> = out
+        .lines()
+        .filter_map(|l| l.trim().parse::<u64>().ok())
+        .collect();
+    (!sizes.is_empty()).then(|| sizes.iter().sum())
+}
+
+/// The size `pacman -Sup` gave for `asked` is shown only while the page is still in that state:
+/// not after Update Now or Check Now was clicked meanwhile.
+pub fn weigh_applies(now: &UpdateState, asked: &UpdateState) -> bool {
+    matches!(now, UpdateState::Available(_)) && now == asked
+}
+
+/// "3 updates available" with what they weigh when known: "3 updates, 312 MB".
+pub fn available_title(n: usize, bytes: Option<u64>) -> String {
+    match bytes.filter(|b| *b > 0) {
+        Some(b) => format!(
+            "{n} update{}, {}",
+            if n == 1 { "" } else { "s" },
+            wol_core::storage::human(b)
+        ),
+        None => crate::copy::updates_available(n),
+    }
+}
+
+/// The page's title and the line under it for `s`: what the last check said, and when.
+pub fn headline(
+    s: &UpdateState,
+    note: Option<&str>,
+    one_copy: bool,
+    bytes: Option<u64>,
+) -> (String, String) {
+    match s {
+        UpdateState::Idle => (
+            "Software Update".into(),
+            // A check that finished leaves its time in `note`; none has finished here.
+            match note {
+                Some(n) => format!("Check for new WolOS packages. {n}"),
+                None => crate::copy::settings::UPDATE_NEVER_CHECKED.into(),
+            },
+        ),
+        UpdateState::Checking => ("Checking for updates…".into(), String::new()),
+        UpdateState::UpToDate => (
+            "WolOS is up to date".into(),
+            match note {
+                Some(n) => format!("All packages are current. {n}"),
+                None => "All packages are current.".into(),
+            },
+        ),
+        UpdateState::Available(v) => (
+            available_title(v.len(), bytes),
+            before_update(note, one_copy),
+        ),
+        UpdateState::Installing => (
+            "Installing updates…".into(),
+            "You can keep working while this runs.".into(),
+        ),
+        UpdateState::Installed => (
+            "Updates installed".into(),
+            "Restart to finish updating.".into(),
+        ),
+        UpdateState::Failed(e) => ("Software Update".into(), e.clone()),
+    }
+}
+
 /// Adds Flathub apps with an update waiting (`flatpak remote-ls --updates`) to a check result.
 pub fn with_flatpaks(s: UpdateState, ids: &[String]) -> UpdateState {
     let names = ids.iter().map(|id| format!("{id} (Flathub)"));
@@ -280,6 +378,10 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     // What the daily check adds under the title (security fixes, when it ran); a fresh Check Now
     // clears it.
     let note: Rc<RefCell<Option<String>>> = Default::default();
+    // What the waiting updates weigh, once `pacman -Sup` has said (QA-ACC-19).
+    let size: Rc<std::cell::Cell<Option<u64>>> = Default::default();
+    // The state the page shows now: an answer that comes late applies only to the state it asked about.
+    let shown: Rc<RefCell<UpdateState>> = Rc::new(RefCell::new(UpdateState::Idle));
     let show: Rc<dyn Fn(&UpdateState)> = {
         let (title, detail, spin, progress_row, names_row, names, check, install, bar) = (
             title.clone(),
@@ -293,9 +395,11 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             bar.clone(),
         );
         let pulse: Rc<RefCell<Option<glib::SourceId>>> = Default::default();
-        let note = note.clone();
+        let (note, size) = (note.clone(), size.clone());
         let one_copy = e.machine().single_copy();
+        let shown = shown.clone();
         Rc::new(move |s: &UpdateState| {
+            *shown.borrow_mut() = s.clone();
             let busy = matches!(s, UpdateState::Checking | UpdateState::Installing);
             spin.set_spinning(busy);
             spin.set_visible(busy);
@@ -316,71 +420,78 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             check.set_sensitive(!busy);
             install.set_visible(matches!(s, UpdateState::Available(_)));
             names_row.set_visible(matches!(s, UpdateState::Available(_)));
-            let (t, d) = match s {
-                UpdateState::Idle => (
-                    "Software Update".to_string(),
-                    "Check for new WolOS packages.".to_string(),
-                ),
-                UpdateState::Checking => ("Checking for updates…".into(), String::new()),
-                UpdateState::UpToDate => (
-                    "WolOS is up to date".into(),
-                    match note.borrow().as_deref() {
-                        Some(n) => format!("All packages are current. {n}"),
-                        None => "All packages are current.".into(),
-                    },
-                ),
-                UpdateState::Available(v) => {
-                    names.set_label(&names_line(v, 6));
-                    (
-                        crate::copy::updates_available(v.len()),
-                        before_update(note.borrow().as_deref(), one_copy),
-                    )
-                }
-                UpdateState::Installing => (
-                    "Installing updates…".into(),
-                    "You can keep working while this runs.".into(),
-                ),
-                UpdateState::Installed => (
-                    "Updates installed".into(),
-                    "Restart to finish updating.".into(),
-                ),
-                UpdateState::Failed(e) => ("Software Update".into(), e.clone()),
-            };
+            if let UpdateState::Available(v) = s {
+                names.set_label(&names_line(v, 6));
+            }
+            let (t, d) = headline(s, note.borrow().as_deref(), one_copy, size.get());
             title.set_label(&t);
             detail.set_label(&d);
             detail.set_visible(!d.is_empty());
         })
     };
     show(&UpdateState::Idle);
+    // The size of the waiting downloads, asked once the page shows updates.
+    let weigh: Rc<dyn Fn(&UpdateState)> = {
+        let (show, size, shown) = (show.clone(), size.clone(), shown.clone());
+        Rc::new(move |s: &UpdateState| {
+            if !matches!(s, UpdateState::Available(_)) {
+                return;
+            }
+            let (show, size, shown, s) = (show.clone(), size.clone(), shown.clone(), s.clone());
+            off_thread(
+                || {
+                    wol_core::system::run_with_timeout(
+                        &SIZE_ARGV,
+                        std::time::Duration::from_secs(30),
+                    )
+                    .and_then(|o| download_bytes(&o))
+                },
+                move |bytes| {
+                    if bytes.is_some() && weigh_applies(&shown.borrow(), &s) {
+                        size.set(bytes);
+                        show(&s);
+                    }
+                },
+            );
+        })
+    };
     {
-        let (show, note, m) = (show.clone(), note.clone(), e.machine());
+        let (show, note, weigh, m) = (show.clone(), note.clone(), weigh.clone(), e.machine());
         off_thread(
             move || m.updates(),
             move |u| {
                 *note.borrow_mut() = u
                     .as_ref()
                     .map(|u| snapshot_line(u, wol_core::journal::now()));
-                show(&from_snapshot(u.as_ref()));
+                let s = from_snapshot(u.as_ref());
+                show(&s);
+                weigh(&s);
             },
         );
     }
     {
-        let (show, note) = (show.clone(), note.clone());
+        let (show, note, size, weigh) = (show.clone(), note.clone(), size.clone(), weigh.clone());
         check.connect_clicked(move |_| {
             *note.borrow_mut() = None;
+            size.set(None);
             show(&UpdateState::Checking);
             let (tx, rx) = async_channel::bounded(1);
             std::thread::spawn(move || {
+                // `CHECK_SECS` outwaits the refresh `wol update check` makes (QA-STORE-14).
                 let out = wol_core::system::run_with_timeout(
                     &["wol", "update", "check", "--json"],
-                    std::time::Duration::from_secs(120),
+                    std::time::Duration::from_secs(wol_core::update::check::CHECK_SECS),
                 );
-                let _ = tx.send_blocking(out);
+                let free = out.is_none().then(check_disk_free).flatten();
+                let _ = tx.send_blocking((out, free));
             });
-            let show = show.clone();
+            let (show, note, weigh) = (show.clone(), note.clone(), weigh.clone());
             glib::spawn_future_local(async move {
-                if let Ok(out) = rx.recv().await {
-                    show(&parse_check(out.as_deref()));
+                if let Ok((out, free)) = rx.recv().await {
+                    let s = check_result(out.as_deref(), free);
+                    *note.borrow_mut() = checked_note(&s);
+                    show(&s);
+                    weigh(&s);
                 }
             });
         });
@@ -513,6 +624,109 @@ mod tests {
         // `ap` ends on: main on, `ap` on, `dl` off.
         ap = (true, true);
         assert!(auto_main(dl.0, ap.0) && ap.0 && !dl.0);
+    }
+
+    /// QA-FDAY-4: the page always says when it last looked, or that it has not.
+    #[test]
+    fn software_update_idle_last_checked() {
+        let (t, d) = headline(&UpdateState::Idle, None, false, None);
+        assert_eq!(t, "Software Update");
+        assert_eq!(d, "Check for new WolOS packages. It has not checked yet.");
+        let u = Updates {
+            checked: 10_000,
+            ..Default::default()
+        };
+        let note = snapshot_line(&u, 10_000 + 120);
+        let (t, d) = headline(&from_snapshot(Some(&u)), Some(&note), false, None);
+        assert_eq!(
+            (t.as_str(), d.as_str()),
+            (
+                "WolOS is up to date",
+                "All packages are current. Last checked 2 min ago."
+            )
+        );
+        // Check Now: the answer just got says so.
+        let s = parse_check(Some("[]"));
+        let note = checked_note(&s);
+        assert_eq!(note.as_deref(), Some("Last checked just now."));
+        assert_eq!(
+            headline(&s, note.as_deref(), false, None).1,
+            "All packages are current. Last checked just now."
+        );
+        assert_eq!(
+            checked_note(&parse_check(None)),
+            None,
+            "a failed check has no time"
+        );
+        for sentence in [
+            crate::copy::settings::UPDATE_NEVER_CHECKED,
+            crate::copy::settings::UPDATE_CHECKED_NOW,
+            crate::copy::settings::UPDATE_NO_ROOM,
+        ] {
+            assert!(!sentence.is_empty());
+        }
+    }
+
+    /// A late size does not bring the update list back over an install or a new check.
+    #[test]
+    fn a_late_size_applies_only_to_the_state_it_asked_about() {
+        let a = UpdateState::Available(vec!["curl".into()]);
+        assert!(weigh_applies(&a, &a));
+        for now in [
+            UpdateState::Installing,
+            UpdateState::Installed,
+            UpdateState::Checking,
+            UpdateState::UpToDate,
+            UpdateState::Available(vec!["git".into()]),
+            UpdateState::Failed("x".into()),
+        ] {
+            assert!(!weigh_applies(&now, &a), "{now:?}");
+        }
+    }
+
+    /// QA-ACC-19: what the update weighs is in the title.
+    #[test]
+    fn update_title_names_the_download() {
+        assert_eq!(download_bytes("1000000\n311400000\n"), Some(312_400_000));
+        assert_eq!(download_bytes("error: nothing\n"), None);
+        assert_eq!(download_bytes(""), None);
+        assert_eq!(available_title(3, Some(312_400_000)), "3 updates, 312 MB");
+        assert_eq!(available_title(1, Some(5_000_000)), "1 update, 5 MB");
+        assert_eq!(available_title(2, None), "2 updates available");
+        assert_eq!(available_title(2, Some(0)), "2 updates available");
+        let v = vec!["curl".to_string(), "git".to_string()];
+        assert_eq!(
+            headline(&UpdateState::Available(v), None, false, Some(312_400_000)).0,
+            "2 updates, 312 MB"
+        );
+    }
+
+    /// QA-FDAY F10: a check that failed on a full disk says so; with room left it is the network.
+    #[test]
+    fn a_full_disk_is_not_blamed_on_the_network() {
+        let full = check_result(None, Some(0));
+        assert_eq!(
+            full,
+            UpdateState::Failed(crate::copy::settings::UPDATE_NO_ROOM.into())
+        );
+        assert_eq!(
+            check_result(None, Some(40 << 30)),
+            UpdateState::Failed(crate::copy::UPDATE_CHECK.into())
+        );
+        assert_eq!(
+            check_result(None, None),
+            UpdateState::Failed(crate::copy::UPDATE_CHECK.into()),
+            "free space unknown: the old sentence"
+        );
+        assert_eq!(check_result(Some("[]"), Some(0)), UpdateState::UpToDate);
+    }
+
+    /// Live-4 F1: no sentence of ours blames the network for a failure it cannot name (Check Now
+    /// outwaiting the refresh is `check.rs::check_now_outwaits_the_refresh`).
+    #[test]
+    fn update_failure_does_not_guess_the_network() {
+        let said = crate::copy::update(ActionError::Failed);
+        assert!(!said.to_lowercase().contains("online"), "{said}");
     }
 
     #[test]
