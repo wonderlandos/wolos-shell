@@ -4,6 +4,7 @@
 #   crates/shell/tests/golden-env/run.sh                      all cases, compare with the goldens
 #   WOL_GOLDEN_ONLY=lua-clock crates/shell/tests/golden-env/run.sh   cases whose name contains it
 #   WOL_GOLDEN_UPDATE=1 crates/shell/tests/golden-env/run.sh  rewrite the goldens (review the diff!)
+#   WOL_GOLDEN_LABELS=update crates/shell/tests/golden-env/run.sh  rewrite only button-labels.tsv
 #   crates/shell/tests/golden-env/starve.sh                   wallpaper capture on a starved CPU
 # Renders land in $WOL_GOLDEN_TARGET/tmp/golden (default <repo>/target/golden-env).
 set -euo pipefail
@@ -16,7 +17,7 @@ user=(--user "$(id -u):$(id -g)")
 [[ $engine == *podman ]] && user=(--userns=keep-id)
 "$engine" build -t wol-golden "$here"
 env_args=()
-for v in WOL_GOLDEN_UPDATE WOL_GOLDEN_ONLY; do [[ -v $v ]] && env_args+=(-e "$v=${!v}"); done
+for v in WOL_GOLDEN_UPDATE WOL_GOLDEN_ONLY WOL_GOLDEN_LABELS; do [[ -v $v ]] && env_args+=(-e "$v=${!v}"); done
 # WOL_GOLDEN_RUN_ARGS: extra container flags, e.g. "--cpuset-cpus 0" (see starve.sh).
 # shellcheck disable=SC2086
 exec "$engine" run --rm "${user[@]}" "${env_args[@]}" ${WOL_GOLDEN_RUN_ARGS:-} \

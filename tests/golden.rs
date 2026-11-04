@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Golden screenshots of every surface, light and dark, with the layout check on.
 //! Runs under a private `gtk4-broadwayd` (headless). `WOL_GOLDEN_UPDATE=1` rewrites goldens.
+//! Every case's button texts are kept too, in `tests/golden/button-labels.tsv`: a changed label
+//! fails even when the pixels stay inside the tolerance. `WOL_GOLDEN_UPDATE=1` rewrites the lines of
+//! the cases it ran; `WOL_GOLDEN_LABELS=update` rewrites only those lines, no PNG.
 //! Renders land in `$CARGO_TARGET_TMPDIR/golden/`.
 use gtk::{gdk, glib, prelude::*};
 use shell::kit::{self, widgets as w};
@@ -1809,6 +1812,9 @@ fn main() {
     std::fs::create_dir_all(&out).unwrap();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
     let update = std::env::var_os("WOL_GOLDEN_UPDATE").is_some();
+    let update_labels = update || std::env::var("WOL_GOLDEN_LABELS").as_deref() == Ok("update");
+    let labels_file = golden.join(LABELS_FILE);
+    let mut labels = read_labels(&labels_file);
     let only = std::env::var("WOL_GOLDEN_ONLY").ok();
     let mut failures = Vec::new();
     // What the checks above logged is theirs: left in WARNINGS it would fail the first case of
@@ -1911,6 +1917,20 @@ fn main() {
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             issues.extend(untitled_icon_buttons(win.upcast_ref()));
             issues.extend(host_icons(win.upcast_ref()));
+            let said = button_labels(win.upcast_ref()).join(" | ");
+            if update_labels {
+                labels.insert(name.clone(), said);
+            } else {
+                match labels.get(&name) {
+                    Some(was) if *was == said => {}
+                    Some(was) => issues.push(format!(
+                        "button labels changed: golden [{was}], now [{said}]"
+                    )),
+                    None => issues.push(format!(
+                        "no button labels in {LABELS_FILE} (run with WOL_GOLDEN_LABELS=update)"
+                    )),
+                }
+            }
             let png = out.join(format!("{name}.png"));
             tex.save_to_png(&png).unwrap();
             let gold = golden.join(format!("{name}.png"));
@@ -1943,6 +1963,9 @@ fn main() {
             win.destroy();
         }
     }
+    if update_labels {
+        write_labels(&labels_file, &labels);
+    }
     drop(broadway);
     let _ = std::fs::remove_dir_all(cfg);
     println!("renders: {}", out.display());
@@ -1950,6 +1973,62 @@ fn main() {
         eprintln!("golden failures: {failures:?}");
         std::process::exit(1);
     }
+}
+
+/// The button-label manifest next to the PNGs: one `case<TAB>labels` line per case, sorted.
+const LABELS_FILE: &str = "button-labels.tsv";
+
+fn read_labels(p: &Path) -> std::collections::BTreeMap<String, String> {
+    std::fs::read_to_string(p)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+fn write_labels(p: &Path, m: &std::collections::BTreeMap<String, String>) {
+    let mut s = String::new();
+    for (k, v) in m {
+        s.push_str(&format!("{k}\t{v}\n"));
+    }
+    std::fs::write(p, s).unwrap();
+}
+
+/// The text of every drawn button (its label, or its drawn labels joined), in tree order. A state
+/// that became a button (or a button that became a state) changes this list, not only pixels.
+fn button_labels(w: &gtk::Widget) -> Vec<String> {
+    fn texts(w: &gtk::Widget, out: &mut Vec<String>) {
+        if !w.is_drawable() {
+            return;
+        }
+        if let Some(l) = w.downcast_ref::<gtk::Label>() {
+            let t = l.label();
+            if !t.is_empty() {
+                out.push(t.to_string());
+            }
+        }
+        let mut c = w.first_child();
+        while let Some(ch) = c {
+            texts(&ch, out);
+            c = ch.next_sibling();
+        }
+    }
+    let mut out = Vec::new();
+    if w.is_drawable() && w.is::<gtk::Button>() {
+        let mut t = Vec::new();
+        texts(w, &mut t);
+        if !t.is_empty() {
+            out.push(t.join(" ").replace(['\t', '\n'], " "));
+        }
+        return out;
+    }
+    let mut c = w.first_child();
+    while let Some(ch) = c {
+        out.extend(button_labels(&ch));
+        c = ch.next_sibling();
+    }
+    out
 }
 
 /// Audit4 S3-7: the login window with no account that can sign in says so.
