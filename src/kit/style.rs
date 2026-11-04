@@ -293,7 +293,11 @@ pub fn glass_override(token: &str, scale: f32, blur: bool) -> Option<String> {
     let a: f32 = a.parse().ok()?;
     let a = ((a * scale).clamp(0.3, 1.0)).max(SOLID_GLASS_ALPHA);
     let a = (a * 100.0).round() / 100.0;
-    Some(format!("* {{ --glass: rgba({r},{g},{b},{a}); }}\n"))
+    // The Dock's shelf is half the glass with blur behind it (kit.css `--dock-mix`); without blur it
+    // is all of it, or the windows' text reads through the shelf (QA-DESIGN-21).
+    Some(format!(
+        "* {{ --glass: rgba({r},{g},{b},{a}); --dock-mix: 100%; }}\n"
+    ))
 }
 
 /// Settings > Effects & Looks prefs (`glass` multiplies the theme's glass alpha).
@@ -440,6 +444,28 @@ mod tests {
     /// QA-DESIGN-21 / LIVE-16: without compositor blur the translucent glass showed the windows
     /// behind it. The theme's 0.84 or 0.70 rises to 0.92; with blur it stays the theme's.
     #[test]
+    fn the_dock_shelf_is_solid_without_blur_too() {
+        let dark = "rgba(36,36,42,0.70)";
+        let kit = include_str!("kit.css");
+        assert!(
+            kit.contains("var(--dock-mix, 50%)"),
+            "kit.css reads --dock-mix"
+        );
+        assert!(
+            glass_override(dark, 1.0, false)
+                .unwrap()
+                .contains("--dock-mix: 100%;"),
+            "no blur: the shelf takes all of the glass"
+        );
+        assert!(
+            !glass_override(dark, 1.0, true)
+                .unwrap_or_default()
+                .contains("--dock-mix"),
+            "blur: the shelf keeps half"
+        );
+    }
+
+    #[test]
     fn glass_is_solid_without_blur() {
         let dark = "rgba(36,36,42,0.70)";
         assert_eq!(
@@ -449,11 +475,11 @@ mod tests {
         );
         assert_eq!(
             glass_override(dark, 1.0, false).as_deref(),
-            Some("* { --glass: rgba(36,36,42,0.92); }\n")
+            Some("* { --glass: rgba(36,36,42,0.92); --dock-mix: 100%; }\n")
         );
         assert_eq!(
             glass_override("rgba(36,36,42,0.98)", 1.0, false).as_deref(),
-            Some("* { --glass: rgba(36,36,42,0.98); }\n"),
+            Some("* { --glass: rgba(36,36,42,0.98); --dock-mix: 100%; }\n"),
             "already solid enough: kept"
         );
         assert_eq!(glass_override("#242428", 1.0, false), None, "not rgba");

@@ -120,6 +120,19 @@ pub struct Board {
     stamp: RefCell<Option<String>>,
 }
 
+/// What the empty desktop paints: one pixel at 1/255 black, to everyone's eye nothing. A board
+/// with no widget has nothing else to draw, and GTK never attaches a buffer to a window that
+/// renders nothing: its frame clock then commits an empty layer surface every 16 ms, and Hyprland
+/// answers each commit with a new `configure` and damage on the whole output (QA-100 H17-01: four
+/// cores of compositor with one window open; one widget on the desktop stopped it). One drawn
+/// pixel makes the first frame a real one, after which the surface is idle like any other. The
+/// window stays mapped, so the bare desktop keeps its right-click menu and takes dropped files.
+fn mark_presence(cr: &gtk::cairo::Context) {
+    cr.rectangle(0.0, 0.0, 1.0, 1.0);
+    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0 / 255.0);
+    let _ = cr.fill();
+}
+
 fn entries(packages: &[Rc<Package>]) -> Vec<Entry> {
     Builtin::ALL
         .into_iter()
@@ -153,6 +166,7 @@ impl Board {
                     b.resize(wd, ht);
                 }
             });
+            probe.set_draw_func(|_, cr, _, _| mark_presence(cr));
             let root = d::layers(&probe);
             let canvas = d::canvas();
             canvas.set_halign(gtk::Align::Fill);
@@ -1950,7 +1964,30 @@ pub fn build(
 
 #[cfg(test)]
 mod gallery_tests {
-    use super::gallery_margins;
+    use super::{gallery_margins, mark_presence};
+
+    /// QA-100 H17-01: the empty desktop draws a pixel (alpha 1 of 255), so GTK has a frame to attach.
+    #[test]
+    fn the_empty_desktop_paints_a_pixel_for_the_buffer() {
+        let mut s = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 4, 4).unwrap();
+        let blank = {
+            let cr = gtk::cairo::Context::new(&s).unwrap();
+            drop(cr);
+            s.flush();
+            s.data().unwrap().iter().all(|b| *b == 0)
+        };
+        assert!(blank, "a fresh surface is transparent");
+        mark_presence(&gtk::cairo::Context::new(&s).unwrap());
+        s.flush();
+        let d = s.data().unwrap();
+        let alphas: Vec<u8> = d.chunks(4).map(|px| px[3]).collect();
+        assert_eq!(alphas[0], 1, "the first pixel is at alpha 1/255");
+        assert_eq!(
+            alphas.iter().filter(|a| **a != 0).count(),
+            1,
+            "and only that pixel"
+        );
+    }
 
     #[test]
     fn the_gallery_never_covers_a_card() {
@@ -1960,6 +1997,19 @@ mod gallery_tests {
             (0, 444)
         );
         assert_eq!(gallery_margins(std::iter::empty(), 1920, 24), (0, 0));
+    }
+
+    /// QA hunt F1: Esc ends Edit Widgets even while Settings has the keyboard. The gallery is a
+    /// `wol-panel-*` layer, so while it is mapped wol-hypr forwards every Esc as `hide transient`
+    /// (`wm_gates::SwitchKeys`, never consumed), and that command runs `transient::also_close`,
+    /// which ui/mod.rs points at `Board::set_edit(false)`. Its own Esc handler covers the case
+    /// where the gallery has the keyboard (an on-demand layer gets it when it maps).
+    #[test]
+    fn esc_reaches_the_gallery_without_its_keyboard() {
+        use crate::kit::surface::Spec;
+        assert!(Spec::widgets_gallery().namespace.starts_with("wol-panel-"));
+        let esc = crate::protocol::parse("hide transient").unwrap();
+        assert!(super::super::transient::closes_all(&esc));
     }
 }
 

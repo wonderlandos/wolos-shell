@@ -243,6 +243,21 @@ impl Setup {
         if let Some(p) = self.flow.borrow_mut().back() {
             self.with_card(from, |c| c.say("", false));
             self.pager.set_visible_child_name(p.id());
+            self.entered(p);
+        }
+    }
+
+    /// The step the flow is on.
+    pub fn step(&self) -> Step {
+        self.flow.borrow().step
+    }
+
+    /// `step` was just shown. The account card keeps what its form says (QA-LIVE-3): leaving it
+    /// cleared the sentence and the outlined field while Continue stayed off for that very
+    /// reason, so coming back showed a dead button and no why. The form is judged again.
+    fn entered(&self, step: Step) {
+        if step == Step::Account {
+            self.show_typing_problem();
         }
     }
 
@@ -255,6 +270,7 @@ impl Setup {
                     c.say("", false);
                 }
                 self.pager.set_visible_child_name(s.id());
+                self.entered(s);
                 if s == Step::Wifi {
                     self.scan();
                 }

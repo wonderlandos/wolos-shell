@@ -183,6 +183,8 @@ fn plain_command_letters_belong_to_the_app() {
         );
     }
     assert!(letters >= 18, "{letters}");
+    // Plain ⌘ + letter stays the app's. Control Center and Notification Center have keys of their
+    // own with Ctrl (⌃⌘C, ⌃⌘A: keyboard-only access, QA-ACC-7), never on a plain ⌘ key.
     for gone in [
         "wol shell toggle control-center",
         "wol shell toggle notifications",
@@ -190,8 +192,10 @@ fn plain_command_letters_belong_to_the_app() {
         "nautilus",
     ] {
         assert!(
-            !binds.iter().any(|b| b.args == gone),
-            "{gone} keeps a shortcut"
+            !binds
+                .iter()
+                .any(|b| b.args == gone && b.combo.mods == SUPER),
+            "{gone} keeps a plain ⌘ shortcut"
         );
     }
 }

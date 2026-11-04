@@ -80,7 +80,9 @@ tooltip label { font-size: 11px; color: var(--text); }
 
 /* ---- Dock: glass shelf, 56px tiles, 8px gaps, running dot ---- */
 .dock-shelf {
-  background: color-mix(in srgb, var(--glass) 50%, transparent); border-radius: var(--glass-radius); padding: 4px 8px 0 8px; margin: 24px 32px 8px 32px;
+  /* Half the glass, lighter than a panel: only with blur behind it. style.rs sets --dock-mix: 100% when
+     the compositor does not blur (QA-DESIGN-21: windows' text read through the shelf). */
+  background: color-mix(in srgb, var(--glass) var(--dock-mix, 50%), transparent); border-radius: var(--glass-radius); padding: 4px 8px 0 8px; margin: 24px 32px 8px 32px;
   border: 1px solid var(--glass-hairline); box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim);
 }
 button.dock-tile { background: none; border: none; box-shadow: none; padding: 0; margin: 0; min-width: 0; min-height: 0; border-radius: 12px;
@@ -471,6 +473,8 @@ button.wallpaper-tile:checked .wallpaper-thumb { box-shadow: 0 0 0 3px var(--acc
 /* ---- Data display (kit/data.rs): widget cards, label roles and tones, badge, meter, gauge, chart, clock, month grid ---- */
 /* Widget figures (time, temperature) use 34 px display type: the second exception to the type scale (HIG). */
 window.desktop { background: none; box-shadow: none; border: none; }
+/* Edit Widgets' own surface (ui::widgets gallery_window): transparent around the glass gallery, like the desktop under it. */
+window.widgets-gallery { background: none; box-shadow: none; border: none; }
 .widget-card { background: var(--glass); color: var(--text); border-radius: var(--glass-radius); padding: 16px; border: 1px solid var(--glass-hairline); box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-rim); }
 /* One surface per card: Kit modules inside a widget card (Now Playing, layout "card" groups) draw flat. */
 .widget-card .module { background: none; box-shadow: none; padding: 0; border-radius: 0; }
@@ -571,6 +575,10 @@ button.dock-tile:active image { -gtk-icon-filter: brightness(0.65); }
    (kit::check "ring only on the focused control"). Surfaces that draw focus differently say so. */
 *:focus:focus-visible, entry:focus-visible, spinbutton:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 entry > text:focus:focus-visible, spinbutton > text:focus:focus-visible { outline: none; }
+/* Row-wide buttons (a list row you press: Wi-Fi networks, outputs, sidebar-like rows) ring inside
+   the row, on its own rounded edge: a ring around the whole row and over its neighbours read as
+   the chosen row, which is the accent mark's job (QA hunt A1). */
+button.device-button:focus:focus-visible, button.row-button:focus:focus-visible, button.nav-row:focus:focus-visible { outline-offset: -2px; }
 
 /* A note on the desktop: text straight on the card, no field box. */
 .note-widget { padding: 4px; }

@@ -12,6 +12,9 @@ pub enum Verdict {
     Ok,
     Denied,
     Error,
+    /// The password was never sent: it can never be valid (over-long paste, NUL). Not a wrong
+    /// password (no hint count), not a broken helper (no Restart button).
+    Unusable,
 }
 
 impl Verdict {
@@ -20,6 +23,9 @@ impl Verdict {
             Verdict::Ok => "",
             Verdict::Denied => "Incorrect password",
             Verdict::Error => "Your password can’t be checked right now. Try again, or restart.",
+            Verdict::Unusable => {
+                "Your password can’t be checked: it is too long or has a character that isn’t allowed."
+            }
         }
     }
 }
@@ -58,8 +64,10 @@ pub fn login_request(user: &str, password: &str) -> Option<Vec<u8>> {
 
 /// Blocking; run off the GTK thread.
 pub fn authcheck(password: &str) -> Verdict {
+    // A password that can never be valid (over-long, NUL) is not a wrong one: "Incorrect password"
+    // hid a paste that went wrong (QA-HUNT-4). Nothing was checked: it says why.
     if password.len() > MAX_PASSWORD || password.contains('\0') {
-        return Verdict::Denied;
+        return Verdict::Unusable;
     }
     let Ok(mut child) = std::process::Command::new(AUTHCHECK)
         .env_clear()
@@ -77,7 +85,7 @@ pub fn authcheck(password: &str) -> Verdict {
 /// Blocking; run off the GTK thread.
 pub fn login(socket: &str, user: &str, password: &str) -> Verdict {
     let Some(req) = login_request(user, password) else {
-        return Verdict::Denied;
+        return Verdict::Unusable;
     };
     exchange(socket, &req)
 }
@@ -355,6 +363,32 @@ mod tests {
         ] {
             assert_eq!(from_reply(r), v);
         }
+    }
+
+    /// QA-HUNT-4: a password that can never be valid (over-long paste, NUL) is not "Incorrect
+    /// password" (that hid the paste that went wrong), does not count toward the hint, and its
+    /// sentence names the reason and does not send the person to Restart.
+    #[test]
+    fn long_or_nul_password_is_error() {
+        let sock = "/nonexistent/wol-login.sock";
+        for bad in ["x".repeat(MAX_PASSWORD + 1), "pa\0ss".to_string()] {
+            assert_eq!(login(sock, "klee", &bad), Verdict::Unusable);
+            assert_eq!(authcheck(&bad), Verdict::Unusable);
+        }
+        let say = Verdict::Unusable.message();
+        assert!(
+            say.contains("too long") && !say.to_lowercase().contains("restart"),
+            "{say}"
+        );
+        assert_ne!(say, Verdict::Denied.message());
+        // The limit itself is a real password: it goes to the helper (here: unreachable, Error too,
+        // but only after trying, which `login_request` shows).
+        assert!(login_request("klee", &"x".repeat(MAX_PASSWORD)).is_some());
+        let n = std::cell::Cell::new(0);
+        for _ in 0..3 {
+            assert!(wrong_password(&n, Verdict::Unusable, || Some("rabbit".into())).is_none());
+        }
+        assert_eq!(n.get(), 0, "no wrong password was counted");
     }
 
     #[test]

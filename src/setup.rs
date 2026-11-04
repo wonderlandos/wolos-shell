@@ -663,7 +663,7 @@ impl Flow {
                 None,
                 format!("“{ssid}” didn’t accept that password. Check it and try again."),
             ),
-            (Job::JoinWifi { ssid, .. }, Verdict::Error) => Next::Stay(
+            (Job::JoinWifi { ssid, .. }, Verdict::Error | Verdict::Unusable) => Next::Stay(
                 None,
                 format!("“{ssid}” didn’t answer. Try again, or choose Not Now and join later."),
             ),
@@ -675,7 +675,7 @@ impl Flow {
                 None,
                 "That account name can’t be used. Press Back and choose another one.".into(),
             ),
-            (Job::CreateAccount(_), Verdict::Error) => Next::Stay(
+            (Job::CreateAccount(_), Verdict::Error | Verdict::Unusable) => Next::Stay(
                 None,
                 "Your account couldn’t be created just now. Press Continue to try again.".into(),
             ),

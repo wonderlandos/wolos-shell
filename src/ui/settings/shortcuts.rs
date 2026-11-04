@@ -213,6 +213,22 @@ fn shortcut_row(
                         &[swap, cancel],
                     ));
                 }
+                // A custom shortcut has no "off": swapping would delete it (QA-SET-35).
+                Err(Refused::CustomNeedsKeys(_, other)) => {
+                    let label = combo.as_ref().map(Combo::label).unwrap_or_default();
+                    let (slot2, sy2) = (slot.clone(), sy.clone());
+                    let ok = w::button("OK", w::Kind::Default, move || {
+                        clear(&slot2);
+                        sy2();
+                    });
+                    sy();
+                    slot.append(&form::notice(
+                        &format!(
+                            "{label} belongs to your shortcut “{other}”, which has no other keys to take. Change or remove “{other}” first."
+                        ),
+                        &[ok],
+                    ));
+                }
                 Err(_) => sy(),
             }
         }

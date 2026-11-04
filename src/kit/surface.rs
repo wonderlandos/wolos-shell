@@ -496,29 +496,6 @@ pub fn reserved_bottom() -> i32 {
     0
 }
 
-/// Move a surface between layers and keyboard modes at runtime (Edit Widgets).
-#[cfg(feature = "layer-shell")]
-pub fn set_layer(w: &impl IsA<gtk::Window>, layer: Layer, keyboard: Keyboard) {
-    use gtk4_layer_shell::{KeyboardMode, Layer as L, LayerShell};
-    if !gtk4_layer_shell::is_supported() {
-        return;
-    }
-    w.set_layer(match layer {
-        Layer::Background => L::Background,
-        Layer::Bottom => L::Bottom,
-        Layer::Top => L::Top,
-        Layer::Overlay => L::Overlay,
-    });
-    w.set_keyboard_mode(match keyboard {
-        Keyboard::None => KeyboardMode::None,
-        Keyboard::OnDemand => KeyboardMode::OnDemand,
-        Keyboard::Exclusive => KeyboardMode::Exclusive,
-    });
-}
-
-#[cfg(not(feature = "layer-shell"))]
-pub fn set_layer(_w: &impl IsA<gtk::Window>, _layer: Layer, _keyboard: Keyboard) {}
-
 /// Keyboard mode of the menu bar and the Dock while invoked (⌃F2, ⌃F3). The compositor 0.56 gives a
 /// mapped layer the keyboard on a None -> Exclusive change only (LayerSurface.cpp), not OnDemand.
 pub const INVOKED: Keyboard = Keyboard::Exclusive;
