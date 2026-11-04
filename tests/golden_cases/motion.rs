@@ -27,10 +27,10 @@ fn wall(name: &str) -> gdk::Texture {
     gdk::Texture::from_filename(&p).unwrap_or_else(|e| panic!("{p}: {e}"))
 }
 
-/// A Moon Gate picture (design east/wallpapers) decoded at the golden's size.
+/// A Moon Gate picture (design brand/wallpapers) decoded at the golden's size.
 fn gate(mode: &str) -> gdk::Texture {
     let p = format!(
-        "{}/../../design/east/wallpapers/wolos-gate-{mode}-4k.svg",
+        "{}/../../design/brand/wallpapers/wolos-gate-{mode}-4k.svg",
         env!("CARGO_MANIFEST_DIR")
     );
     let pb = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(&p, 480, 270, false)

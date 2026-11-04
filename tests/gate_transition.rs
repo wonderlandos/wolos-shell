@@ -5,7 +5,7 @@
 //! wallpaper (the morph step, the snapshot and GSK's cairo renderer at 1920x1080) is timed.
 //! The numbers are printed; `WOL_GATE_BUDGET=1 cargo test --release --test gate_transition`
 //! also asserts the 16 ms budget (a timing, so not by default). Runs under a private
-//! `gtk4-broadwayd` like `tests/golden.rs`; skips without the design's east wallpapers.
+//! `gtk4-broadwayd` like `tests/golden.rs`; skips without the design's brand wallpapers.
 use gtk::{gdk, glib, prelude::*};
 use shell::kit::{anim::Clock, gate};
 use shell::ui::panels::{CrossFade, morph_between, wallpaper_texture};
@@ -26,7 +26,7 @@ fn pump(ms: u64) {
 
 fn gate_svg(mode: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../design/east/wallpapers/wolos-gate-{mode}-4k.svg"
+        "../../design/brand/wallpapers/wolos-gate-{mode}-4k.svg"
     ))
 }
 
@@ -94,7 +94,7 @@ fn start_broadway() -> impl Drop {
 
 fn main() {
     if !gate_svg("day").exists() {
-        eprintln!("skip: no design/east/wallpapers (the design tree predates the Moon Gate)");
+        eprintln!("skip: no design/brand/wallpapers (the design tree predates the Moon Gate)");
         return;
     }
     let _broadway = start_broadway();

@@ -6,7 +6,7 @@
 //! new dye, the sun settles last.
 //!
 //! Why it works on pixels: every surface of the gate is a flat colour
-//! `calculus.derive(k, chroma, hue)` (design `tools/east/walls_ribbon.py`), that is OKLCH with
+//! `calculus.derive(k, chroma, hue)` (design `tools/brand/walls_ribbon.py`), that is OKLCH with
 //! the lightness affine in `k`. The geometry is the same in every mode and dye, so each pixel's
 //! colour in the old and the new picture are the two ends of that surface's parameters, and
 //! moving the pixel in OKLCH (lightness and chroma straight, hue round the short way) is moving
@@ -425,10 +425,10 @@ mod tests {
     fn params_match_walls_py() {
         let walls = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../design/tools/east/walls.py"
+            "/../../design/tools/brand/walls.py"
         );
         if !Path::new(walls).exists() {
-            eprintln!("skip: no design tree with tools/east");
+            eprintln!("skip: no design tree with tools/brand");
             return;
         }
         let Ok(out) = std::process::Command::new("python3")

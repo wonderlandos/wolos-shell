@@ -69,11 +69,11 @@ impl Tokens {
 }
 
 /// Shipped wallpapers: installed, else the repo's design tree (dev, tests): the earlier pictures
-/// and the east set (the Moon Gate, the places).
+/// and the brand set (the Moon Gate, the places).
 pub const WALLPAPER_DIRS: [&str; 3] = [
     "/usr/share/wolos/wallpapers",
     concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/wallpapers"),
-    concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/east/wallpapers"),
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../../design/brand/wallpapers"),
 ];
 /// Day, dusk and night pictures of the Dynamic wallpaper, in that order.
 pub const DYNAMIC: [&str; 3] = ["wonderland-day", "wonderland-dusk", "wonderland-night"];
@@ -832,7 +832,7 @@ mod tests {
     #[test]
     fn the_gate_is_the_default_and_follows_light_and_dark() {
         if !gate_shipped() {
-            eprintln!("skip: no design/east tree");
+            eprintln!("skip: no design/brand tree");
             return;
         }
         let day = wallpaper_for(None, 9, &look("wol-light", false), 1.77).unwrap();
@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn a_theme_takes_its_gate_dye_when_generated() {
         if !gate_shipped() {
-            eprintln!("skip: no design/east tree");
+            eprintln!("skip: no design/brand tree");
             return;
         }
         let f = gate_file("nord", true, 1.77).unwrap();
@@ -872,7 +872,7 @@ mod tests {
     #[test]
     fn places_follow_light_and_dark() {
         if place_file("cachoeira", false, 1.77).is_none() {
-            eprintln!("skip: no design/east tree");
+            eprintln!("skip: no design/brand tree");
             return;
         }
         let n = wallpaper_for(Some("place:cachoeira"), 9, &look("nord", true), 1.77).unwrap();
@@ -888,7 +888,7 @@ mod tests {
     #[test]
     fn the_other_side_is_the_same_picture_at_night_or_by_day() {
         if !gate_shipped() {
-            eprintln!("skip: no design/east tree");
+            eprintln!("skip: no design/brand tree");
             return;
         }
         let day = shipped_wallpaper("wolos-gate-day-4k").unwrap();
