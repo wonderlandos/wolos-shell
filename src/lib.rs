@@ -31,6 +31,7 @@ pub mod perf;
 pub mod phones;
 pub mod protocol;
 pub mod search;
+pub mod search_sem;
 pub mod sessions;
 pub mod setup;
 pub mod shortcut_sheet;

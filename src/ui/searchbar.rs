@@ -19,6 +19,8 @@ pub const PROVIDED: &str = "From an app";
 const OPEN_ROW: &str = "wol-open-provided-row";
 /// Results shown at most; apps and Settings keep at most [`APPS`] of them when files match.
 pub const ROWS: usize = 8;
+/// Characters of a query that count for the meaning providers (as Settings search caps it).
+const QUERY_MAX: usize = 64;
 pub const APPS: usize = 5;
 
 pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
@@ -175,6 +177,17 @@ pub fn keep_file_index() {
 /// Apps and Settings first, then file names, [`ROWS`] at most.
 /// The calculator's answer, if any, comes first; Return copies it.
 pub fn results(items: &[Item], files: &files::Index, query: &str) -> Vec<Item> {
+    let sem = crate::search_sem::get();
+    results_with(items, files, query, sem.as_deref())
+}
+
+/// [`results`] with the meaning providers given (tests use their own table).
+pub fn results_with(
+    items: &[Item],
+    files: &files::Index,
+    query: &str,
+    sem: Option<&crate::search_sem::Providers<'_>>,
+) -> Vec<Item> {
     if let Some(answer) = search::calc(query) {
         let mut v = vec![Item::new(
             &format!("= {answer}"),
@@ -189,6 +202,16 @@ pub fn results(items: &[Item], files: &files::Index, query: &str) -> Vec<Item> {
         .into_iter()
         .cloned()
         .collect();
+    // Word hits first; what the query means follows them (a Settings row, a manual section).
+    if let Some(p) = sem.filter(|_| !query.trim().is_empty()) {
+        let q: String = query.chars().take(QUERY_MAX).collect();
+        let room = ROWS.saturating_sub(top.len());
+        for it in p.extra(&q, !top.is_empty(), room) {
+            if !top.iter().any(|t| t.title == it.title && t.kind == it.kind) {
+                top.push(it);
+            }
+        }
+    }
     let found = files.search(query, ROWS - top.len().min(APPS));
     top.truncate(ROWS - found.len());
     top.extend(found);
@@ -278,6 +301,14 @@ pub fn run() -> glib::ExitCode {
                     let apps = super::ipc::installed().await;
                     *items.borrow_mut() = index(apps.as_ref().clone());
                     render();
+                    // The meaning providers: table, manual and Settings rows, off this thread.
+                    let snapshot = items.borrow().clone();
+                    if gtk::gio::spawn_blocking(move || crate::search_sem::build_for(&snapshot))
+                        .await
+                        .is_ok()
+                    {
+                        render();
+                    }
                 });
             }
             // File names: the saved list at once, a fresh one after when it is old.
@@ -362,6 +393,11 @@ pub fn content(
                 none.add_css_class("searchbar-none");
                 none.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
                 hits.append(&none);
+                if let Some(d) = crate::search_sem::get()
+                    .and_then(|p| p.did_you_mean(&items.borrow(), wolsem::capped(q.trim())))
+                {
+                    found.push(d);
+                }
                 found.push(web_search(q.trim()));
             }
             for (i, it) in found.into_iter().enumerate() {
@@ -721,6 +757,114 @@ mod tests {
         assert_eq!(got.len(), ROWS);
         assert!(got.iter().filter(|i| i.kind == "Text").count() >= ROWS - APPS);
         assert!(results(&idx, &files::Index::default(), "").is_empty());
+    }
+
+    /// The meaning providers on the wolsem fixture: the table, the manual's 505 sections and every
+    /// Settings row. Built once per test (a table load and ~1 s of embedding unoptimised).
+    fn with_providers<R>(f: impl FnOnce(&[Item], &crate::search_sem::Providers<'_>) -> R) -> R {
+        let dir =
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../wolsem/tests/data"));
+        let table = wolsem::Table::open(&dir.join("mini.wst")).unwrap_or_else(|e| panic!("{e}"));
+        let manual = wolsem::Corpus::from_json(
+            &std::fs::read_to_string(dir.join("sections.json")).unwrap_or_default(),
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        let installed = wolsem::Installed::from_parts(table, manual, dir);
+        let idx = index(vec![]);
+        let p = crate::search_sem::Providers {
+            sem: crate::search_sem::Semantic::build(&installed.table, &idx),
+            installed: &installed,
+        };
+        f(&idx, &p)
+    }
+
+    /// Questions in other words and other languages find a Settings row or a manual section after
+    /// the word hits; a name typed as it is still opens the same first row.
+    #[test]
+    fn meaning_follows_the_word_hits() {
+        with_providers(|idx, p| {
+            let none = files::Index::default();
+            let got = |q: &str| results_with(idx, &none, q, Some(p));
+            let titles = |q: &str| {
+                got(q)
+                    .into_iter()
+                    .map(|i| format!("{} [{}]", i.title, i.kind))
+                    .collect::<Vec<_>>()
+            };
+            // Words first, unchanged.
+            assert_eq!(got("term")[0].title, "Terminal");
+            assert_eq!(got("wifi")[0].title, "Wi-Fi");
+            assert_eq!(
+                got("wifi")[0].title,
+                results_with(idx, &none, "wifi", None)[0].title
+            );
+            assert!(got("wifi").len() <= results_with(idx, &none, "wifi", None).len() + 2);
+            // Meaning.
+            let t = titles("make the cursor bigger");
+            assert!(
+                t.iter()
+                    .any(|x| x.starts_with("Pointer size") || x.starts_with("Accessibility")),
+                "{t:?}"
+            );
+            let t = titles("tirar uma captura da tela");
+            assert!(
+                t.iter()
+                    .any(|x| x.contains("[Manual]") || x.starts_with("Take Screenshot")),
+                "{t:?}"
+            );
+            let manual: Vec<_> = got("modo escuro")
+                .into_iter()
+                .filter(|i| i.kind == crate::search_sem::MANUAL)
+                .collect();
+            assert!(
+                manual
+                    .iter()
+                    .any(|i| i.exec[1].starts_with("https://wolos.org/manual/dark-mode")),
+                "{manual:?}"
+            );
+            assert!(manual.len() <= crate::search_sem::MANUAL_ROWS);
+            // Nothing: nothing.
+            assert!(got("qwertyuiop asdfgh").is_empty());
+            assert!(got("").is_empty());
+            assert!(got("   ").is_empty());
+            assert!(got("2+2")[0].kind == "Calculator");
+        });
+    }
+
+    /// A pasted page (100 000 characters) in the field: the meaning providers cut it before any
+    /// work (the spelling pass alone took 6 s on the interface thread).
+    #[test]
+    fn a_pasted_page_does_not_stall_the_meaning_providers() {
+        with_providers(|idx, p| {
+            let none = files::Index::default();
+            let paste = "pasword wireles blutooth firewal securty ".repeat(2500);
+            assert!(paste.chars().count() >= 100_000);
+            let t0 = std::time::Instant::now();
+            let _ = p.did_you_mean(idx, wolsem::capped(paste.trim()));
+            let _ = p.did_you_mean(idx, &paste);
+            let _ = results_with(idx, &none, &paste, Some(p));
+            let spent = t0.elapsed();
+            assert!(spent.as_secs() < 3, "{spent:?}");
+        });
+    }
+
+    /// "Did you mean": a misspelt word is put right; a near title is offered; nonsense offers nothing.
+    #[test]
+    fn did_you_mean_offers_the_nearest_title() {
+        with_providers(|idx, p| {
+            let d = p.did_you_mean(idx, "bluetoth").map(|i| (i.title, i.kind));
+            assert_eq!(
+                d,
+                Some(("Bluetooth".into(), crate::search_sem::DID_YOU_MEAN)),
+                "{d:?}"
+            );
+            let d = p.did_you_mean(idx, "securty").map(|i| i.title);
+            assert!(d.is_some(), "{d:?}");
+            assert_eq!(
+                p.did_you_mean(idx, "qwertyuiop asdfgh").map(|i| i.title),
+                None
+            );
+        });
     }
 
     /// Nothing found: say so, and offer the web.

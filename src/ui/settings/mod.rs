@@ -46,6 +46,7 @@ mod printers;
 mod privacy;
 mod restore;
 mod search;
+mod search_rows;
 mod sharing;
 mod shortcuts;
 mod software_update;
@@ -61,6 +62,7 @@ pub use accounts::{account_hint, account_name, password_problem};
 pub use machine::{Demo, DemoEdge, Kernel, Live, Machine, Sharing};
 pub use malware::{full_section as malware_full_section, section as malware_section};
 pub use search::{Hit, hits};
+pub use search_rows::rows as meaning_rows;
 pub use shortcuts::KEY_LEGEND;
 pub use software_update::{UpdateState, parse_check, with_flatpaks};
 pub use sound::{
@@ -1226,6 +1228,8 @@ pub fn content_searching(sys: Rc<dyn System>, host: &Host, query: &str) -> w::Ap
 type OnQuery = Rc<dyn Fn(&str)>;
 
 fn build(sys: Rc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, OnQuery) {
+    // The table and the meaning index load now, off this thread, so the first query finds them.
+    search_rows::warm();
     let aw = w::AppWindow::new(true, false);
     aw.set_column(crate::kit::column::PANE_COLUMN);
     let ctx = Ctx::new(sys.clone(), "System Settings");
