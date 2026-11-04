@@ -89,10 +89,14 @@ pub fn content(items: &[PathBuf], live: bool) -> gtk::Box {
     // The scroller is as tall as its list at the width it really has, up to MAX_HEIGHT. It used to
     // be sized from a measure at a guessed width (8 px narrower than the panel gives it), so the
     // empty-state sentence wrapped to a second line in the measure only and the panel kept 16 px of
-    // nothing under it (QA-DESIGN-30).
+    // nothing under it (QA-DESIGN-30). The natural height alone left a full shelf one row high in
+    // the panel, so the floor is the list's natural height at its natural width (no guessed width,
+    // nothing wraps there), up to MAX_HEIGHT.
+    let (_, natural, _, _) = list.measure(gtk::Orientation::Vertical, -1);
     let scroll = gtk::ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_height(natural.min(MAX_HEIGHT))
         .propagate_natural_height(true)
         .max_content_height(MAX_HEIGHT)
         .build();
