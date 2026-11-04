@@ -84,13 +84,38 @@ impl Awake {
     }
 }
 
+/// The words a tool says when the disk it writes is full (`ENOSPC`, `EDQUOT`).
+const OUT_OF_SPACE: [&str; 3] = ["No space left on device", "ENOSPC", "Disk quota exceeded"];
+
+/// True when `text` (the tool's line or the install log) says the target disk filled up.
+pub fn out_of_space(text: &str) -> bool {
+    OUT_OF_SPACE.iter().any(|w| text.contains(w))
+}
+
+/// The Failed page subtitle: the refusal's when `wol install check` refused the plan (nothing was
+/// written), the full-disk sentence when the tool or the log says the disk filled up (QA-SHADOW-24:
+/// the installer had no low-disk site at all), else the stage's own.
+pub fn failed_subtitle(at: Stage, refused: bool, message: &str, log: &str) -> &'static str {
+    if refused {
+        crate::copy::installer::REFUSED_STOPPED
+    } else if out_of_space(message) || out_of_space(log) {
+        crate::copy::installer::DISK_FULL_STOPPED
+    } else {
+        stopped_text(at)
+    }
+}
+
 /// Prefix of every progress line `install-run` prints.
 pub const MARK: &str = "wolos-install: ";
 
-/// Decimal size as disks are sold: "500 GB", "1 TB", "1.5 TB".
+/// Decimal size as disks are sold: "300 MB", "500 GB", "1 TB", "1.5 TB". Under 1 GB in MB: a
+/// module download or a startup partition read "0 GB" (QA-LIVE3-6).
 pub fn size_text(bytes: u64) -> String {
     let gb = bytes as f64 / 1e9;
-    if gb >= 1000.0 {
+    let mb = (bytes as f64 / 1e6).round() as u64;
+    if mb < 1000 {
+        format!("{mb} MB")
+    } else if gb >= 1000.0 {
         let tb = gb / 1000.0;
         let r = (tb * 10.0).round() / 10.0;
         if r.fract() == 0.0 {
@@ -1090,5 +1115,55 @@ mod tests {
                 "{s:?} reports its own percent"
             );
         }
+    }
+
+    /// QA-LIVE3-6: a download under 1 GB read "About 0 GB to download" (whole GB only); sizes
+    /// under 1 GB are said in MB, a partition of a few hundred MB too.
+    #[test]
+    fn size_text_300mb() {
+        assert_eq!(size_text(300_000_000), "300 MB");
+        assert_eq!(size_text(999_400_000), "999 MB");
+        assert_eq!(size_text(999_600_000), "1 GB");
+        assert_eq!(size_text(1_000_000_000), "1 GB");
+        assert_eq!(size_text(500_000_000_000), "500 GB");
+        assert_eq!(size_text(4_000_000), "4 MB");
+        assert_eq!(size_text(0), "0 MB");
+        assert_eq!(
+            crate::copy::installer::modules_download(300),
+            "About 300 MB to download."
+        );
+    }
+
+    /// QA-SHADOW-24: a disk that fills up during the install is said as such on the Failed page,
+    /// from the tool's own line or the log, never only "couldn't be copied".
+    #[test]
+    fn a_full_disk_stops_with_its_own_sentence() {
+        for said in [
+            "cp: error writing '/mnt/usr/lib/x': No space left on device",
+            "btrfs receive: ENOSPC",
+            "write failed: Disk quota exceeded",
+        ] {
+            assert!(out_of_space(said), "{said}");
+            assert_eq!(
+                failed_subtitle(Stage::Files, false, said, ""),
+                crate::copy::installer::DISK_FULL_STOPPED
+            );
+            assert_eq!(
+                failed_subtitle(Stage::Boot, false, "", &format!("a\n{said}\nb")),
+                crate::copy::installer::DISK_FULL_STOPPED
+            );
+        }
+        assert!(!out_of_space("mkfs.btrfs: device busy"));
+        assert_eq!(
+            failed_subtitle(Stage::Files, false, "rsync: read error", ""),
+            stopped_text(Stage::Files)
+        );
+        // A refused plan wrote nothing: its own subtitle wins.
+        assert_eq!(
+            failed_subtitle(Stage::Files, true, "No space left on device", ""),
+            crate::copy::installer::REFUSED_STOPPED
+        );
+        let l = crate::copy::lint(crate::copy::installer::DISK_FULL_STOPPED);
+        assert!(l.is_empty(), "{l:?}");
     }
 }

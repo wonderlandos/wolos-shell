@@ -1935,14 +1935,13 @@ pub fn build(
     });
     board.set_saver(desks.saver(""));
     desks.split();
-    if let Some(d) = gtk::gdk::Display::default() {
-        let weak = Rc::downgrade(&desks);
-        d.monitors().connect_items_changed(move |_, _, _, _| {
-            if let Some(me) = weak.upgrade() {
-                me.split();
-            }
-        });
-    }
+    // A display's name can come after the display (QA-GFX-18): split again then too.
+    let weak = Rc::downgrade(&desks);
+    super::displays::on_change(move || {
+        if let Some(me) = weak.upgrade() {
+            me.split();
+        }
+    });
     // `wol shell reload`: widgets.json and the package folders again.
     let first = Cell::new(true);
     let weak = Rc::downgrade(&desks);

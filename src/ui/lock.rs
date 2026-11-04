@@ -1049,6 +1049,18 @@ pub fn run_lock() -> glib::ExitCode {
 
 /// The lock screen itself. `startup`: fades in from the compositor's black, and the password
 /// typed here also opens the login keyring (nobody typed one at boot).
+/// What gets the keyboard back after an unlock: the window that was in front when the lock came
+/// up. Locked from the WolOS menu, the menu's popup had the keyboard; it was gone at unlock, so
+/// nothing had it and the open windows ignored every key (QA-FILES-20). None: no window was in
+/// front (the compositor picks, as before).
+pub(crate) fn refocus_after_unlock(
+    before: Option<&crate::hypr::Client>,
+) -> Option<crate::hypr::Dispatch> {
+    before
+        .filter(|c| !c.address.is_empty())
+        .map(|c| crate::hypr::Dispatch::FocusWindow(format!("address:{}", c.address)))
+}
+
 fn run_lock_screen(startup: bool) -> glib::ExitCode {
     // NON_UNIQUE: a hung earlier instance holding the bus name must not turn every new lock
     // screen into a remote call that exits at once (the supervisor would respawn in vain).
@@ -1062,6 +1074,10 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
         win.add_css_class("lock-window");
         let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
         let user = user_name(&passwd);
+        // The window in front now, read off the UI thread (a compositor request).
+        let front =
+            std::thread::spawn(|| refocus_after_unlock(crate::hypr::active_window().as_ref()));
+        let front = Rc::new(RefCell::new(Some(front)));
         let panel = Rc::new(w::UserPanel::new(&login::display_name(&user, &passwd)));
         // The avatar in the colour picked in Setup, as on the login window.
         if let (Some(tone), Some(av)) = (login::read_avatar(&user), panel.root.first_child()) {
@@ -1092,15 +1108,20 @@ fn run_lock_screen(startup: bool) -> glib::ExitCode {
                 // The content eases out over the blurred wallpaper, then the desktop shows; no
                 // second Enter while it does.
                 p_ok.field.set_sensitive(false);
-                let (app2, unlock) = (app2.clone(), unlock.clone());
+                let (app2, unlock, front) = (app2.clone(), unlock.clone(), front.clone());
                 entrance.leave_then(move || {
                     unlock();
                     println!("{}", login::UNLOCKED);
                     // The login keyring opens with the password just typed: at boot (nobody typed
                     // one yet) and after any lock (the daemon may have restarted, B2).
                     let app3 = app2.clone();
+                    let front = front.borrow_mut().take();
                     glib::spawn_future_local(async move {
                         let _ = gtk::gio::spawn_blocking(move || {
+                            // The window that had the keyboard before the lock gets it back.
+                            if let Some(d) = front.and_then(|t| t.join().ok()).flatten() {
+                                let _ = crate::hypr::dispatch(&d);
+                            }
                             set_locked_hint(false);
                             unlock_keyring(&password, startup);
                         })
@@ -1295,6 +1316,30 @@ mod tests {
         assert_eq!(import[..3], ["systemctl", "--user", "import-environment"]);
         assert!(import.contains(&"WAYLAND_DISPLAY"));
         assert_eq!(start, ["systemctl", "--user", "start", "wol-lock.service"]);
+    }
+
+    /// QA-FILES-20: after an unlock the window that was in front gets the keyboard back (locked
+    /// from the WolOS menu, nothing had it: the popup that held it was gone).
+    #[test]
+    fn unlock_refocuses_the_window_in_front() {
+        let c =
+            crate::hypr::parse_active_client(r#"{"address":"0x5d2a","class":"foot","title":"~"}"#)
+                .unwrap();
+        assert_eq!(
+            refocus_after_unlock(Some(&c)).map(|d| d.to_request()),
+            Some(crate::hypr::Dispatch::FocusWindow("address:0x5d2a".into()).to_request())
+        );
+        assert!(
+            refocus_after_unlock(Some(&c))
+                .unwrap()
+                .to_request()
+                .contains("focuswindow address:0x5d2a")
+        );
+        assert_eq!(refocus_after_unlock(None).map(|d| d.to_request()), None);
+        let src = include_str!("lock.rs");
+        let code = &src[..src.find("#[cfg(test)]").unwrap()];
+        assert!(code.contains("refocus_after_unlock(crate::hypr::active_window().as_ref())"));
+        assert!(code.contains("crate::hypr::dispatch(&d)"));
     }
 
     /// QA-LIVE-41: the lock tells logind the session is locked, and unlocked again.

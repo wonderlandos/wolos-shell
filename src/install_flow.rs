@@ -1347,6 +1347,7 @@ impl Flow {
                 name: a.name,
                 full_name: a.full_name,
                 tone: a.avatar,
+                hint: a.hint,
             }),
             secure_boot: Some(self.secure_wanted()),
             modules: self.ticked().iter().map(|m| m.id.clone()).collect(),

@@ -501,6 +501,12 @@ impl Installer {
         let tail = install::log_tail(log, LOG_LINES);
         let lines: Vec<String> = tail.lines().map(String::from).collect();
         replace_child(&self.failed_log, &a::lines(&lines));
+        // The log comes after the page: a full disk said only there still names the cause.
+        if install::out_of_space(log) && !self.failed_refusal.property::<bool>("visible") {
+            self.with_card(Step::Failed, |c| {
+                c.subtitle.set_label(copy::installer::DISK_FULL_STOPPED);
+            });
+        }
     }
 
     /// [`Self::show_failed`] with the log given (goldens).
@@ -523,11 +529,12 @@ impl Installer {
             .set_label(refused.as_deref().unwrap_or_default());
         self.failed_refusal.set_visible(refused.is_some());
         self.with_card(Step::Failed, |c| {
-            c.subtitle.set_label(if refused.is_some() {
-                copy::installer::REFUSED_STOPPED
-            } else {
-                install::stopped_text(at)
-            });
+            c.subtitle.set_label(install::failed_subtitle(
+                at,
+                refused.is_some(),
+                message,
+                log,
+            ));
             // The tool's words are behind Details; the foot keeps one plain sentence.
             c.say(
                 if refused.is_some() || tool.is_empty() {
