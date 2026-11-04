@@ -224,7 +224,6 @@ const BASELINE: &[(&str, usize)] = &[
     ("RU-026", 3),
     ("RU-035", 4),
     ("RU-040", 35),
-    ("RU-043", 1),
     ("RU-045", 5),
     ("RU-050", 1),
     ("RU-060", 2),
@@ -992,6 +991,9 @@ fn is_app_icon_literal(t: &str) -> bool {
         && !t.ends_with("-symbolic")
         && !t.ends_with('-')
         && t != "wolos-cachy"
+        // The slot names of the bootctl-shaped restore points (system.rs Fake), not icons.
+        && t != "wolos-a"
+        && t != "wolos-b"
         && t != "wolos-install"
         && t != "wolos-sessions-offered"
         && !t.starts_with("wolos-module-")

@@ -88,10 +88,9 @@ tooltip { background: var(--glass); color: var(--text); border-radius: 8px; bord
 tooltip label { font-size: 11px; color: var(--text); }
 
 /* ---- Dock: glass shelf, 60px tiles, 8px gaps, running dot over the tile's last 4px (the icon keeps air there) ---- */
+/* The shelf's brand gradient is lighter than a panel: only with blur behind it. style.rs sets --dock-mix: 100% when
+   the compositor does not blur, and both stops then take all of the glass (QA-DESIGN-21: windows' text read through). */
 .dock-shelf {
-  /* Brand gradient over the glass, lighter than a panel: only with blur behind it. style.rs sets --dock-mix: 100%
-     when the compositor does not blur, and both stops then take all of the glass (QA-DESIGN-21: windows' text read
-     through the shelf). */
   background: linear-gradient(153deg, color-mix(in srgb, var(--glass) var(--dock-mix, 58%), transparent), color-mix(in srgb, var(--glass) var(--dock-mix, 42%), transparent)); border-radius: var(--glass-radius); padding: 4px 12px 4px 12px; margin: 24px 32px 8px 32px;
   border: 1px solid var(--glass-hairline); box-shadow: var(--elev-3), var(--elev-1), inset 1px 1px 0 var(--glass-rim);
 }

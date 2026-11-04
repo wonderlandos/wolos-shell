@@ -206,7 +206,6 @@ fn screen_with(content: &impl IsA<gtk::Widget>, chrome: bool) -> gtk::Widget {
     o.add_overlay(&scrim);
     if chrome {
         let mark = w::hbox(w::S3);
-        mark.add_css_class("screen-chrome");
         mark.set_halign(gtk::Align::Start);
         mark.set_valign(gtk::Align::Start);
         mark.set_margin_start(w::S15);

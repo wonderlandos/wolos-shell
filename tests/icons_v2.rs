@@ -163,7 +163,15 @@ const LONG_TAIL: &[&str] = &[
 /// `wolos-` literals that name packages, repositories and runtime files, not icons, and prefixes
 /// a name is built from (`"wolos-kit-"` + the kit id; the kits are in APP_TILES).
 fn not_an_icon(n: &str) -> bool {
-    ["wolos-cachy", "wolos-install", "wolos-sessions-offered"].contains(&n)
+    // wolos-a / wolos-b: the slot names of the bootctl-shaped restore points (system.rs Fake).
+    [
+        "wolos-a",
+        "wolos-b",
+        "wolos-cachy",
+        "wolos-install",
+        "wolos-sessions-offered",
+    ]
+    .contains(&n)
         || n.starts_with("wolos-module-")
         || n.ends_with('-')
 }

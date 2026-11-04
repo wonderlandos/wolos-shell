@@ -169,6 +169,9 @@ fn hotspot_section(e: &Rc<Env>, host: &str, on: bool, status: &gtk::Label) -> gt
     let pw_row = w::list_row("", "Password", "", Some(pw.upcast_ref()));
     let b = w::vbox(w::S2);
     b.append(&w::section("", &[toggle, pw_row.upcast()]));
+    let caps = w::caps_lock_note();
+    caps.set_halign(gtk::Align::Start);
+    b.append(&caps);
     b.append(&hint);
     b
 }

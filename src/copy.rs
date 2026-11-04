@@ -942,6 +942,9 @@ pub const DESKTOP_BUSY: &str = "The desktop is busy. Try again.";
 /// The password is right, but the account may not use the screen (not in group `seat`).
 pub const LOGIN_NO_DISPLAY: &str =
     "This account can’t use the screen yet. Ask an administrator to add it to the seat group.";
+/// A password that can never be valid (too long, a NUL): not a wrong one (login::Verdict::Unusable).
+pub const LOGIN_UNUSABLE: &str =
+    "Your password can’t be checked: it is too long or has a character that isn’t allowed.";
 /// The encrypted home opens only with a password of typed characters (QA-SHADOW-39; the window's
 /// form of controller::login::TEXT_PASSWORD_SENTENCE, within RU-001's 140 characters).
 pub const LOGIN_TEXT_PASSWORD: &str = "Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks after this computer.";

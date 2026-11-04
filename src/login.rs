@@ -29,9 +29,7 @@ impl Verdict {
             Verdict::Ok => "",
             Verdict::Denied => "Incorrect password",
             Verdict::Error => "Your password can’t be checked right now. Try again, or restart.",
-            Verdict::Unusable => {
-                "Your password can’t be checked: it is too long or has a character that isn’t allowed."
-            }
+            Verdict::Unusable => crate::copy::LOGIN_UNUSABLE,
             Verdict::NoDisplay => crate::copy::LOGIN_NO_DISPLAY,
             Verdict::TextPassword => crate::copy::LOGIN_TEXT_PASSWORD,
         }

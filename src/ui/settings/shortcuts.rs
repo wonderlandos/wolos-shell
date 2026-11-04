@@ -217,7 +217,7 @@ fn shortcut_row(
                 Err(Refused::CustomNeedsKeys(_, other)) => {
                     let label = combo.as_ref().map(Combo::label).unwrap_or_default();
                     let (slot2, sy2) = (slot.clone(), sy.clone());
-                    let ok = w::button("OK", w::Kind::Default, move || {
+                    let ok = w::button("Done", w::Kind::Default, move || {
                         clear(&slot2);
                         sy2();
                     });

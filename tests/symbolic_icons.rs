@@ -91,7 +91,15 @@ fn every_requested_wolos_app_icon_ships() {
                 .filter(|t| {
                     t.starts_with("wolos-")
                         // Package repositories, packages and runtime files, not icons.
-                        && !["wolos-cachy", "wolos-install", "wolos-sessions-offered"].contains(t)
+                        // wolos-a / wolos-b: slot names of the bootctl-shaped restore points.
+                        && ![
+                            "wolos-a",
+                            "wolos-b",
+                            "wolos-cachy",
+                            "wolos-install",
+                            "wolos-sessions-offered",
+                        ]
+                        .contains(t)
                         && !t.starts_with("wolos-module-")
                         && !t.ends_with("-symbolic")
                         // A prefix a test checks names against (`"wolos-kit-"`), not a name.
