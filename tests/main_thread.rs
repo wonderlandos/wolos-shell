@@ -85,7 +85,7 @@ const BASELINE: [(&str, usize); 38] = [
     ("software_update.rs", 1),
     // The `--supervised` parent (SP-1): std only, no GTK main loop to stall. Runs the shell
     // (`.status()`), journals restarts, checks the display socket and reads where its stderr goes.
-    ("supervise.rs", 4),
+    ("supervise.rs", 3),
     ("system.rs", 8),
     ("widgets/weather.rs", 1),
     // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).

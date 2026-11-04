@@ -232,13 +232,21 @@ const BASELINE: &[(&str, usize)] = &[
     ("RU-073", 6),
     ("RU-074", 8),
     ("RU-075", 5),
-    ("RU-081", 5),
+    ("RU-081", 3),
     ("RU-082", 6),
     ("RU-093", 15),
     ("RU-094", 19),
     ("RU-095", 2),
     ("RU-098", 2),
 ];
+
+/// RU-089's known gaps, by number (only shrinks): ADRs written on branches that have not landed in
+/// the integration tree. 0045 (i18n), 0046, 0047, 0049 and 0050 (hub-arch) land with their
+/// branches; 0044 came with rel/0.12.1. 0043 is a number no branch ever used: no decision was
+/// recorded under it, so no record is invented to fill it (qa100 step 0.4, A-7), and 0048 is not
+/// renumbered while its references (webapp docs, tests, the catalog) are still being edited by
+/// other lanes. It is dropped here when the hub-arch merge settles the numbering.
+const RU_089_KNOWN_GAPS: &[&str] = &["0043", "0045", "0046", "0047", "0049", "0050"];
 
 fn baseline(id: &str) -> usize {
     BASELINE.iter().find(|b| b.0 == id).map_or(0, |b| b.1)
@@ -1661,6 +1669,17 @@ fn ru_085_to_090_adrs() {
                 .map(|n| format!("gap {n:04}")),
         );
     }
+    // Named, not counted: a new gap or duplicate fails even when a known gap closes the same day.
+    let known: Vec<String> = RU_089_KNOWN_GAPS
+        .iter()
+        .map(|g| format!("gap {g}"))
+        .collect();
+    for k in &known {
+        if !bad.contains(k) {
+            eprintln!("note: RU-089 {k} is closed: drop it from RU_089_KNOWN_GAPS");
+        }
+    }
+    bad.retain(|b| !known.contains(b));
     check("RU-089", bad);
 }
 

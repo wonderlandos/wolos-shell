@@ -240,7 +240,19 @@ fn load_in(
             let (have, on, more) = on_this_account(p);
             Listing::Ready(rows(&index, &have, &on, &more, env!("CARGO_PKG_VERSION")))
         }
-        Err(_) => Listing::Unavailable(STORE_PLUGINS_OFFLINE.into()),
+        // e2e D5: every failure read "check that you are online", also with the network up and
+        // no list on the server.
+        Err(e) => Listing::Unavailable(unavailable(e.status).into()),
+    }
+}
+
+/// Why there is no list, in the Store's words: no list on the server, a list that does not
+/// check, or the server could not be reached.
+fn unavailable(status: wopkg::ffi::Status) -> &'static str {
+    match status {
+        wopkg::ffi::Status::NotFound => STORE_PLUGINS_NOT_PUBLISHED,
+        wopkg::ffi::Status::Untrusted => STORE_PLUGINS_UNTRUSTED,
+        _ => STORE_PLUGINS_OFFLINE,
     }
 }
 
@@ -283,8 +295,9 @@ use crate::copy::{
     STORE_PLUGIN_HELD, STORE_PLUGIN_NEEDS, STORE_PLUGIN_REMOVE, STORE_PLUGIN_TURN_OFF,
     STORE_PLUGIN_TURN_ON, STORE_PLUGIN_UPDATE_TO, STORE_PLUGINS_AVAILABLE, STORE_PLUGINS_CHECKED,
     STORE_PLUGINS_CREATE, STORE_PLUGINS_EMPTY, STORE_PLUGINS_INTRO as INTRO, STORE_PLUGINS_LOADING,
-    STORE_PLUGINS_MINE, STORE_PLUGINS_NOT_YET, STORE_PLUGINS_OFFLINE,
+    STORE_PLUGINS_MINE, STORE_PLUGINS_NOT_PUBLISHED, STORE_PLUGINS_NOT_YET, STORE_PLUGINS_OFFLINE,
     STORE_PLUGINS_SIGNED as SIGNED, STORE_PLUGINS_TITLE, STORE_PLUGINS_TRY_AGAIN,
+    STORE_PLUGINS_UNTRUSTED,
 };
 
 /// Runs `work` off the UI thread, then `done(result)` on it.
@@ -643,6 +656,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// e2e D5: every failure read "check that you are online", also with the network up and no
+    /// list on the server. Each reason has its own sentence.
+    #[test]
+    fn a_missing_or_unchecked_list_is_not_called_offline() {
+        use wopkg::ffi::Status;
+        assert_eq!(unavailable(Status::NotFound), STORE_PLUGINS_NOT_PUBLISHED);
+        assert_eq!(unavailable(Status::Untrusted), STORE_PLUGINS_UNTRUSTED);
+        assert_eq!(unavailable(Status::Unavailable), STORE_PLUGINS_OFFLINE);
+        for t in [STORE_PLUGINS_NOT_PUBLISHED, STORE_PLUGINS_UNTRUSTED] {
+            assert!(!t.contains("online"), "{t}");
+        }
+    }
+
     /// The Store's load over a verified cache (no download: it is fresh), with this account's
     /// plugins on it; a plugin removed from the folder (what `wol plugin remove` deletes) is
     /// offered as Get again.
@@ -695,10 +721,11 @@ mod tests {
         assert!(on_this_account(&p).0.is_empty(), "a removed plugin is gone");
         let got: Vec<(String, State)> = state(load_in(&p, &keys, &net, url, false));
         assert_eq!(got, [("alice.demo".to_string(), State::Get)]);
-        // A list that is not signed by a known key is not shown.
+        // A list that is not signed by a known key is not shown, and says so (e2e D5: not
+        // "check that you are online").
         assert_eq!(
             load_in(&p, &[[0; 32]], &net, url, false),
-            Listing::Unavailable(STORE_PLUGINS_OFFLINE.into())
+            Listing::Unavailable(STORE_PLUGINS_UNTRUSTED.into())
         );
         let _ = std::fs::remove_dir_all(root);
     }

@@ -1496,7 +1496,15 @@ mod tests {
         use std::time::{Duration, Instant};
         // The page's timers run on the default context (the GTK thread's); this test owns it.
         let main = glib::MainContext::default();
-        let _owner = main.acquire().expect("the default main context");
+        // Other tests of this binary iterate the same context for a moment: wait for it.
+        let until = Instant::now() + Duration::from_secs(10);
+        let _owner = loop {
+            match main.acquire() {
+                Ok(owner) => break owner,
+                Err(e) if Instant::now() > until => panic!("the default main context: {e}"),
+                Err(_) => std::thread::yield_now(),
+            }
+        };
         {
             let echo = Rc::new(Echo::default());
             let ended: Rc<RefCell<Vec<bool>>> = Rc::default();

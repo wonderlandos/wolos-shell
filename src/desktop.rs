@@ -2,12 +2,15 @@
 //! Freedesktop `.desktop` entries: the apps Search and the dock can launch.
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Entry {
     pub id: String,
     pub name: String,
     pub exec: Vec<String>,
     pub icon: String,
+    /// `StartupWMClass`: the window class the app's windows get when it is neither the desktop
+    /// id nor the program (a web app's `chrome-<host>_<path>-Default`, wol_core::webapps).
+    pub wm_class: String,
 }
 
 /// Installed entries that are not apps for people: a terminal server and its client, the bare
@@ -51,6 +54,7 @@ pub fn parse(id: &str, text: &str) -> Option<Entry> {
         name: e.name().unwrap_or(id).into(),
         exec: argv,
         icon: e.icon().unwrap_or_default().into(),
+        wm_class: e.get("StartupWMClass").unwrap_or_default().into(),
     })
 }
 

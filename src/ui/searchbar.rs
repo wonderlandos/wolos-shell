@@ -543,6 +543,7 @@ mod tests {
             name: name.into(),
             exec: vec![exec.into()],
             icon: id.trim_end_matches(".desktop").into(),
+            wm_class: String::new(),
         };
         let idx = index(vec![
             e("org.gnome.Geary.desktop", "Geary", "geary"),

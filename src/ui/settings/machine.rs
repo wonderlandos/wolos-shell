@@ -57,6 +57,11 @@ pub trait Machine: Send + Sync {
     fn sharing(&self) -> Sharing;
     /// Compositor consent grants: (app path, capability) (`wol_core::consent`).
     fn consent(&self) -> Vec<(String, String)>;
+    /// This account's apps wold refused a grant (`wol_core::consent::asked`): shown with their
+    /// switch off. None by default.
+    fn asked(&self) -> Vec<(String, String)> {
+        Vec::new()
+    }
     /// Flatpak apps with the permissions they were granted (`wol_core::flatpak`).
     fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App>;
     fn kernel(&self) -> Kernel;
@@ -194,6 +199,13 @@ impl Machine for Live {
     fn consent(&self) -> Vec<(String, String)> {
         wol_core::consent::read(self.os())
     }
+    fn asked(&self) -> Vec<(String, String)> {
+        let path = wol_core::consent::asked_path(shared::sys::euid());
+        self.os()
+            .read_text(&path.to_string_lossy())
+            .map(|t| wol_core::consent::asked(&t))
+            .unwrap_or_default()
+    }
     fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App> {
         let home = std::env::var("HOME").unwrap_or_default();
         wol_core::flatpak::apps(self.os(), &home)
@@ -233,11 +245,15 @@ impl Machine for Live {
         ))
     }
     fn updates(&self) -> Option<wol_core::update::check::Updates> {
-        use wol_core::update::check::{DIR, USERLAND_ARGV, Updates};
+        use wol_core::update::check::{DIR, OS_RELEASE, USERLAND_ARGV, Updates};
         let os = self.os();
         let f = |n: &str| os.read_text(&format!("{DIR}/{n}")).unwrap_or_default();
         let u = Updates::parse(&f("checked"), &f("pkg"), &f("audit"), &f("base"))?;
-        let userland = u.base.as_ref().and_then(|_| os.run(&USERLAND_ARGV));
+        // No manifest in the image (v0.12.0): os-release names the running release.
+        let userland = u
+            .base
+            .as_ref()
+            .and_then(|_| os.run(&USERLAND_ARGV).or_else(|| os.read_text(OS_RELEASE)));
         Some(u.installed(userland.as_deref()))
     }
     fn single_copy(&self) -> bool {
@@ -530,6 +546,10 @@ impl Machine for Demo {
             ("/usr/bin/hello".into(), "notifications".into()),
         ]
     }
+    /// An app built in the account's home that asked and was refused: its switch is off.
+    fn asked(&self) -> Vec<(String, String)> {
+        vec![("/opt/weather/weather".into(), "notifications".into())]
+    }
     fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App> {
         let perm = |s, on| (wol_core::flatpak::Perm::parse(s).expect("valid"), on);
         vec![wol_core::flatpak::App {
@@ -727,6 +747,9 @@ impl Machine for DemoEdge {
     }
     fn consent(&self) -> Vec<(String, String)> {
         Demo.consent()
+    }
+    fn asked(&self) -> Vec<(String, String)> {
+        Demo.asked()
     }
     fn flatpak_apps(&self) -> Vec<wol_core::flatpak::App> {
         Demo.flatpak_apps()

@@ -555,7 +555,15 @@ fn bitlocker_is_said_when_the_secure_boot_keys_change_next_to_it() {
     // Own keys only when the person turns Secure Boot on (lead, 2026-11-02: opt-in).
     f.secure = true;
     assert!(f.windows_stays() && f.bitlocker_stays());
-    let lines = f.summary();
+    // This disk's BitLocker Windows now makes Replace a refusal (FIX-install, WindowsUnchecked), so
+    // there is no plan to summarise; the notes themselves are what the person reads next to a
+    // Windows on another disk, and they are checked here as they are built.
+    assert!(f.summary().is_empty());
+    let lines: Vec<String> = f
+        .bitlocker_notes(false)
+        .into_iter()
+        .map(String::from)
+        .collect();
     for want in [
         copy::installer::BITLOCKER_RECOVERY,
         copy::installer::BITLOCKER_KEY_WHERE,

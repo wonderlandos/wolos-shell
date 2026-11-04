@@ -79,9 +79,9 @@ pub const PRIVACY_SCREEN: &str =
 /// Privacy footnote, before what WolOS does with the grants listed: how the screen is guarded.
 pub const PRIVACY_SCREEN_NOTE: &str = "Only WolOS’s own screenshot and recording tools can copy \
      the screen without asking. Every other app has to ask, each time.";
-/// No app has a grant yet.
+/// No app has a grant yet, and none asked.
 pub const PRIVACY_NONE: &str =
-    "Apps you allow to send notifications, control input or install apps are listed here.";
+    "Apps that ask to send notifications, control input or install apps are listed here.";
 
 // ---- Users & Groups ----
 
