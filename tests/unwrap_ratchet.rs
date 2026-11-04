@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 const NEEDLES: [&str; 5] = [".unwrap()", ".expect(", " as i32", " as u32", " as usize"];
 
 /// Per file, outside tests. Only shrinks.
-const BASELINE: [(&str, usize); 35] = [
+const BASELINE: [(&str, usize); 33] = [
     ("bin/wol-window-shot.rs", 5),
     ("clock.rs", 5),
     ("hypr.rs", 1),

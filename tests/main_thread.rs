@@ -69,7 +69,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 41] = [
+const BASELINE: [(&str, usize); 40] = [
     // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
     // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
     // cannot follow a call into another file); each row only shrinks.
