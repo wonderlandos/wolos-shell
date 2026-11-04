@@ -17,6 +17,7 @@ pub mod displays;
 pub mod drop_shelf;
 pub(crate) mod envv;
 pub mod files;
+pub mod first_login;
 pub mod focus;
 pub mod focus_grab;
 pub mod hypr;

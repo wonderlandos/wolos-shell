@@ -52,6 +52,22 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     p.append(&w::footnote(
         "Manage your computer’s overall setup: updates, storage, language, time and sharing.",
     ));
+    // The first sign-in Setup was put off (Later): it can be finished here, also after it stopped asking.
+    if crate::first_login::Marks::here().unfinished(crate::apps::is_live()) {
+        let b = form::nav_row(
+            "emblem-default-symbolic",
+            "Finish Setting Up",
+            crate::copy::first_login::SETTINGS_ROW,
+        );
+        b.connect_clicked(|_| {
+            kit::spawn(&[
+                "wol-setup".to_string(),
+                crate::first_login::ARG.to_string(),
+                crate::ui::first_login::AGAIN.to_string(),
+            ])
+        });
+        p.append(&w::section("", &[b.upcast()]));
+    }
     for g in GROUPS {
         let rows: Vec<gtk::Widget> = g
             .iter()

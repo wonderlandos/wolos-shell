@@ -3,8 +3,9 @@
 //! is constructed in them directly, so every page shares the Kit's sizes, insets and states.
 use std::path::Path;
 
-const FILES: [&str; 3] = [
+const FILES: [&str; 4] = [
     "src/ui/setup.rs",
+    "src/ui/first_login.rs",
     "src/ui/installer.rs",
     "src/ui/installer/disks.rs",
 ];
