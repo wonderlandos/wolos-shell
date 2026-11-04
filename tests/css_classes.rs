@@ -24,7 +24,7 @@ const HOOKS: [&str; 5] = [
 
 /// How many [`UNSTYLED`] may hold (audit3 R2A-23): lower it with every class you style or drop;
 /// the list only shrinks.
-const UNSTYLED_MAX: usize = 35;
+const UNSTYLED_MAX: usize = 34;
 
 /// Still on a widget and styled by nothing (2026-11-01). Style or drop, never add.
 const UNSTYLED: &[&str] = &[
@@ -54,7 +54,6 @@ const UNSTYLED: &[&str] = &[
     "numeric",
     "overview",
     "overview-window-surface",
-    "shortcut-sheet",
     "shortcut-sheet-section",
     "stepper",
     "store-screenshot",

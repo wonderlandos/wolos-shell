@@ -477,9 +477,16 @@ pub(super) fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Lo
     let get = gtk::Button::with_label("Get");
     get.add_css_class("get-button");
     get.add_css_class("get-primary");
+    // Installed with nothing to open is a state, not an action (HIG): a quiet Kit pill stands
+    // where the primary pill was, and "Open" stays the one filled button.
+    let state = crate::kit::data::badge(
+        &open_label(w::TileState::Open, false),
+        crate::kit::data::Tone::Text,
+    );
     let all = w::button("Install for All Accounts", w::Kind::Default, || {});
     let remove = w::button("Remove", w::Kind::Default, || {});
     first.append(&get);
+    first.append(&state);
     first.append(&remove);
     buttons.append(&first);
     buttons.append(&all);
@@ -500,8 +507,17 @@ pub(super) fn details_body(sh: &Rc<Shared>, page: &gtk::Box, s: &Subject, l: &Lo
     let system = Rc::new(std::cell::Cell::new(l.system));
     let openable = super::can_open(s.flathub, s.desktop);
     let set: Rc<dyn Fn(w::TileState)> = {
-        let (get, all, remove, flathub) = (get.clone(), all.clone(), remove.clone(), s.flathub);
+        let (get, state, all, remove, flathub) = (
+            get.clone(),
+            state.clone(),
+            all.clone(),
+            remove.clone(),
+            s.flathub,
+        );
         Rc::new(move |st| {
+            let quiet = st == w::TileState::Open && !openable;
+            get.set_visible(!quiet);
+            state.set_visible(quiet);
             get.set_label(&open_label(st, openable));
             get.set_sensitive(!st.busy() && (st != w::TileState::Open || openable));
             remove.set_visible(st == w::TileState::Open);

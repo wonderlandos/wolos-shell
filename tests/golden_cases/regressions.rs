@@ -314,3 +314,198 @@ pub(super) fn an_app_tile_keeps_one_source_badge() {
     t.set_source("");
     assert_eq!(t.source(), "", "an empty source hides it");
 }
+
+/// INT-1 sheet 3: an installed package with nothing to open showed "Installed" as the filled
+/// accent pill next to Remove, so a state read as an action. HIG: the state is a quiet Kit pill
+/// (`label.badge`, not a button) and "Open" stays the one primary button.
+pub(super) fn installed_is_a_state_and_open_the_action() {
+    // Shown: the widget and every ancestor visible (the page is not in a window).
+    fn shown(w: &gtk::Widget) -> bool {
+        w.is_visible() && w.parent().is_none_or(|p| shown(&p))
+    }
+    fn text_of(w: &gtk::Widget) -> Option<String> {
+        if let Some(l) = w.downcast_ref::<gtk::Label>() {
+            return Some(l.label().to_string());
+        }
+        w.downcast_ref::<gtk::Button>()
+            .and_then(|b| b.label())
+            .map(|l| l.to_string())
+    }
+    fn all(w: &gtk::Widget, out: &mut Vec<gtk::Widget>) {
+        out.push(w.clone());
+        let mut c = w.first_child();
+        while let Some(ch) = c {
+            all(&ch, out);
+            c = ch.next_sibling();
+        }
+    }
+    let page = |flatpaks: Vec<String>, subject: ui::store::Subject, installed: Option<&str>| {
+        let s = ui::store::content(
+            Rc::new(shell::system::Fake),
+            ui::store::Env {
+                data_dirs: vec![],
+                pkg_search: false,
+                flatpaks,
+                installed: Some(Default::default()),
+            },
+        );
+        s.show_details(
+            subject,
+            ui::store::Loaded {
+                installed: installed.map(Into::into),
+                ..Default::default()
+            },
+        );
+        pump(50);
+        let mut v = Vec::new();
+        all(s.aw.root.upcast_ref(), &mut v);
+        (s, v)
+    };
+    let named = |v: &[gtk::Widget], t: &str| -> Vec<gtk::Widget> {
+        v.iter()
+            .filter(|w| shown(w) && text_of(w).as_deref() == Some(t))
+            .cloned()
+            .collect()
+    };
+    // A package without a desktop id, installed: nothing to open.
+    let hit = wol_core::store::PkgHit {
+        name: "demo".into(),
+        summary: "An app from three places".into(),
+    };
+    let (_keep, v) = page(vec![], ui::store::Subject::pkg(&hit), Some("3.0-1"));
+    let state = named(&v, "Installed");
+    assert_eq!(state.len(), 1, "one \"Installed\" on the page");
+    let state = &state[0];
+    assert!(
+        state.is::<gtk::Label>() && state.has_css_class("badge"),
+        "\"Installed\" is a Kit pill (label.badge), got {} {:?}",
+        state.type_().name(),
+        state.css_classes()
+    );
+    assert!(
+        !state.ancestor(gtk::Button::static_type()).is_some(),
+        "\"Installed\" is not inside a button"
+    );
+    assert!(
+        !v.iter()
+            .any(|w| shown(w) && w.is::<gtk::Button>() && w.has_css_class("get-primary")),
+        "no primary pill when there is nothing to do"
+    );
+    assert!(
+        named(&v, "Remove")
+            .iter()
+            .any(|w| w.is::<gtk::Button>() || w.ancestor(gtk::Button::static_type()).is_some()),
+        "Remove stays a button"
+    );
+    // A Flatpak that is installed opens: "Open" is the primary button, no state pill.
+    let fh = wol_core::flatpak::Hit {
+        id: "org.gimp.GIMP".into(),
+        name: "GIMP".into(),
+        summary: "Edit images".into(),
+    };
+    let (_keep, v) = page(
+        vec!["org.gimp.GIMP".into()],
+        ui::store::Subject::flathub(&fh),
+        None,
+    );
+    let open = named(&v, "Open");
+    assert!(
+        open.iter()
+            .any(|w| w.is::<gtk::Button>() && w.has_css_class("get-primary")),
+        "\"Open\" is the primary pill: {open:?}"
+    );
+    assert!(
+        named(&v, "Installed").is_empty(),
+        "no state pill next to Open"
+    );
+}
+
+/// INT-1 sheet 2: the shortcut sheet scrolled its columns at 640 px and the last row showed half
+/// ("Actual Size"). Now no row is ever cut: on a 1080-high screen the sheet is as tall as its rows,
+/// on a 768-high one whole sections go on pages; every row is on a page, each page fits.
+/// Runs with the kit stylesheet on (the rows' real heights).
+pub(super) fn shortcut_sheet_rows_are_whole() {
+    use ui::shortcut_sheet as sheet;
+    let list =
+        shell::shortcut_sheet::sections(&wol_core::shortcuts::load_defaults(|_| None), false);
+    let want: usize = list.iter().map(|s| s.rows.len()).sum();
+    for screen in [1080, sheet::SMALL_SCREEN] {
+        let max = sheet::max_height(screen);
+        let g = sheet::content(&list, max);
+        let win = gtk::Window::builder().decorated(false).build();
+        win.add_css_class("preview");
+        win.set_child(Some(&g));
+        win.present();
+        pump(200);
+        let mut stacks: Vec<gtk::Stack> = Vec::new();
+        find_type(g.upcast_ref(), &mut stacks);
+        let pages: Vec<gtk::Widget> = match stacks.first() {
+            Some(st) => {
+                let mut v = Vec::new();
+                let mut c = st.first_child();
+                while let Some(p) = c {
+                    v.push(p.clone());
+                    c = p.next_sibling();
+                }
+                v
+            }
+            None => vec![g.clone().upcast()],
+        };
+        let mut seen = 0;
+        for (pi, p) in pages.iter().enumerate() {
+            if let Some(st) = stacks.first() {
+                st.set_visible_child(p);
+                // Laid out on the next frame: wait for it (Broadway's clock can be slow).
+                for _ in 0..40 {
+                    pump(50);
+                    if p.height() > 0 && p.is_drawable() {
+                        break;
+                    }
+                }
+            }
+            let mut secs = Vec::new();
+            find_class(p, "shortcut-sheet-section", &mut secs);
+            for s in &secs {
+                let mut r = s.first_child().and_then(|t| t.next_sibling());
+                while let Some(row) = r {
+                    seen += 1;
+                    let rh = row.height();
+                    assert!(rh > 0, "{screen}: a row with no height on page {pi}");
+                    // Whole inside every ancestor up to the sheet: no viewport or clamp cuts it.
+                    let mut a = row.parent();
+                    while let Some(anc) = a {
+                        let b = row.compute_bounds(&anc).expect("bounds");
+                        assert!(
+                            b.y() >= -0.5 && b.y() + b.height() <= anc.height() as f32 + 0.5,
+                            "{screen}: row {}..{} cut by a {} {} high",
+                            b.y(),
+                            b.y() + b.height(),
+                            anc.type_().name(),
+                            anc.height()
+                        );
+                        if anc == *g.upcast_ref::<gtk::Widget>() {
+                            break;
+                        }
+                        a = anc.parent();
+                    }
+                    r = row.next_sibling();
+                }
+            }
+        }
+        assert_eq!(seen, want, "{screen}: every row on a page, once");
+        assert!(
+            g.height() <= max,
+            "{screen}: sheet {} high, the screen gives {max}",
+            g.height()
+        );
+        if screen == 1080 {
+            assert!(stacks.is_empty(), "1080: one page, the sheet grows");
+        } else {
+            assert!(
+                pages.len() > 1,
+                "768: the rows do not fit one page, so they go on pages"
+            );
+        }
+        win.destroy();
+    }
+}

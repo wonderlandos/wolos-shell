@@ -383,7 +383,9 @@ pub fn logo_menu(live: bool) -> Vec<(&'static str, &'static [&'static str])> {
         .collect()
 }
 
-/// The WolOS menu's rows as the popover shows them, out of their popover (goldens).
+/// The WolOS menu's rows as the popover shows them, out of their popover (goldens), on the
+/// popover's glass: kit.css draws `box.menu` like `popover.menu > contents` (the card had no
+/// surface, so the dark goldens showed light text on the wallpaper).
 pub fn logo_menu_view(live: bool) -> gtk::Widget {
     let p = w::menu(
         logo_menu(live)
