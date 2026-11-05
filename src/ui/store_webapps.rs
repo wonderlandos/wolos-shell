@@ -24,6 +24,11 @@ use std::rc::Rc;
 use std::time::Duration;
 use wol_core::webapps::{self, Profile};
 
+/// How long the list of web apps waits for `wol webapp list`.
+const LIST_WAIT: Duration = Duration::from_secs(10);
+/// How long an add or a remove waits for its `wol` line (the page's icon download is the slow part).
+const CHANGE_WAIT: Duration = Duration::from_secs(45);
+
 /// What the person filled in.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Form {
@@ -157,10 +162,7 @@ pub fn subtitle(r: &Row) -> String {
 
 /// Reads the list. Blocks.
 fn load() -> Listing {
-    let out = wol_core::system::run_with_timeout(
-        &["wol", "webapp", "list", "--json"],
-        Duration::from_secs(10),
-    );
+    let out = wol_core::system::run_with_timeout(&["wol", "webapp", "list", "--json"], LIST_WAIT);
     match out.as_deref().and_then(parse_list) {
         Some(rows) => Listing::Ready(rows),
         None => Listing::Unavailable,
@@ -171,7 +173,7 @@ fn load() -> Listing {
 fn run(argv: &[String]) -> bool {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
     matches!(
-        wol_core::system::run_full(&a, None, Duration::from_secs(45)),
+        wol_core::system::run_full(&a, None, CHANGE_WAIT),
         Ok((0, _, _))
     )
 }

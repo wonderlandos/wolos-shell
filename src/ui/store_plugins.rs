@@ -13,6 +13,9 @@ use std::rc::Rc;
 use wopkg::index::plugins::{Entry, PluginIndex};
 use wopkg::release::{PluginReason, plugin_fits, plugin_updates};
 
+/// How long adding a plugin from a file waits for `wol plugin add` (it checks the package and copies it).
+const ADD_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// What the row's button does now.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
@@ -404,7 +407,7 @@ pub fn added(code: i32, out: &str) -> Added {
 fn add_file(file: &str, yes: bool) -> Added {
     let argv = add_argv(file, yes);
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
-    match wol_core::system::run_full(&a, None, std::time::Duration::from_secs(60)) {
+    match wol_core::system::run_full(&a, None, ADD_WAIT) {
         Ok((code, out, _)) => added(code, &out),
         Err(_) => Added::Refused,
     }
