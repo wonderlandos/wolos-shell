@@ -59,6 +59,15 @@ copy.login_no_display	This account can’t use the screen yet. Ask an administra
 copy.login_unusable	Your password can’t be checked: it is too long or has a character that isn’t allowed.	Votre mot de passe ne peut pas être vérifié : il est trop long ou contient un caractère non autorisé.	6719d5a4
 copy.login_text_password	Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks after this computer.	Vos fichiers ne s’ouvrent qu’avec un mot de passe fait de caractères saisis au clavier. Utilisez-en un que vous pouvez taper, ou demandez à la personne qui s’occupe de cet ordinateur.	2f6a063a
 copy.lock_restart_refused	This computer can’t restart right now. If someone else is signed in, they need to sign out first.	Cet ordinateur ne peut pas redémarrer pour le moment. Si quelqu’un d’autre a ouvert une session, il doit d’abord la fermer.	32504043
+copy.store_flathub_picks	Picked from Flathub	Sélection issue de Flathub	b0612df1
+copy.store_about_source	About this source	À propos de cette source	9ffc2fd3
+copy.store_source_picked	Flathub · Picked by WolOS	Flathub · Choisi par WolOS	d6bf1071
+copy.store_source_verified	Flathub · Verified by Flathub	Flathub · Vérifié par Flathub	a745133f
+copy.store_source_community	Flathub	Flathub	af3c1ae1
+copy.store_about_picked_verified	Picked by WolOS. Flathub verified the developer, and you still choose what it may do.	Choisi par WolOS. Flathub a vérifié le développeur, et c’est toujours vous qui décidez de ce qu’il peut faire.	5ecf1659
+copy.store_about_picked	Picked by WolOS, but the community packages it, not the developer. You still choose what it may do.	Choisi par WolOS, mais empaqueté par la communauté, pas par le développeur. C’est toujours vous qui décidez de ce qu’il peut faire.	44c550fc
+copy.store_about_verified	Flathub verified the developer. WolOS did not pick it, and you choose what it may do.	Flathub a vérifié le développeur. WolOS ne l’a pas choisi, et c’est vous qui décidez de ce qu’il peut faire.	2d7d9a22
+copy.store_about_community	Packaged by the community and not verified. You choose what it may do.	Empaqueté par la communauté et non vérifié. C’est vous qui décidez de ce qu’il peut faire.	eeb0a821
 copy.store_not_finished	That did not finish. Nothing was changed.	Cela ne s’est pas terminé. Rien n’a été modifié.	bdc6d173
 copy.store_kits_intro	Sets of extras added in one step. Nothing here is installed until you choose it.	Des ensembles d’extras ajoutés en une étape. Rien n’est installé tant que vous ne l’avez pas choisi.	ef1c98d1
 copy.store_plugins_intro	Plugins add to the menu bar, the desktop and search. They install for you only and update on their own, apart from WolOS updates.	Les plugins ajoutent des éléments à la barre des menus, au bureau et à la recherche. Ils s’installent pour vous seul et se mettent à jour d’eux-mêmes, indépendamment des mises à jour de WolOS.	b95036f0

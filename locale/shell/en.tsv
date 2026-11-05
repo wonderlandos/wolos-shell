@@ -59,6 +59,15 @@ copy.login_no_display	This account can’t use the screen yet. Ask an administra
 copy.login_unusable	Your password can’t be checked: it is too long or has a character that isn’t allowed.	A password that can never be valid (too long, a NUL): not a wrong one (login::Verdict::Unusable).	
 copy.login_text_password	Your files open only with a password made of typed characters. Use one you can type, or ask whoever looks after this computer.	The encrypted home opens only with a password of typed characters (QA-SHADOW-39; the window's form of controller::login::TEXT_PASSWORD_SENTENCE, within RU-001's 140 characters).	
 copy.lock_restart_refused	This computer can’t restart right now. If someone else is signed in, they need to sign out first.	The lock screen's Restart was refused: wol-admind does not end another account's session (audit6 S6-5).	
+copy.store_flathub_picks	Picked from Flathub	Discover: the shelf of WolOS's picks from Flathub (`wol_core::flathub::CURATED`).	
+copy.store_about_source	About this source	Details page: the row that says what WolOS or Flathub did for this app.	
+copy.store_source_picked	Flathub · Picked by WolOS	The badge under a Flathub app's name, by what was done. A community app keeps the plain "Flathub".	
+copy.store_source_verified	Flathub · Verified by Flathub		
+copy.store_source_community	Flathub		
+copy.store_about_picked_verified	Picked by WolOS. Flathub verified the developer, and you still choose what it may do.	What each standing says on the details page: what was done, and what was not. Never "safe".	
+copy.store_about_picked	Picked by WolOS, but the community packages it, not the developer. You still choose what it may do.		
+copy.store_about_verified	Flathub verified the developer. WolOS did not pick it, and you choose what it may do.		
+copy.store_about_community	Packaged by the community and not verified. You choose what it may do.		
 copy.store_not_finished	That did not finish. Nothing was changed.	A wopkg kit install or a plugin action did not complete.	
 copy.store_kits_intro	Sets of extras added in one step. Nothing here is installed until you choose it.	Kits page, under the title.	
 copy.store_plugins_intro	Plugins add to the menu bar, the desktop and search. They install for you only and update on their own, apart from WolOS updates.	Plugins page, under the title.	

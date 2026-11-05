@@ -1035,6 +1035,44 @@ pub const TIMER_DONE: (&str, &str) = ("Timer done", "Your countdown has finished
 
 // ---- App Store: Kits and Plugins (ADR 0032 B, ADR 0031 W4) ----
 
+/// Discover: the shelf of WolOS's picks from Flathub (`wol_core::flathub::CURATED`).
+pub const STORE_FLATHUB_PICKS: &str = "Picked from Flathub";
+/// Details page: the row that says what WolOS or Flathub did for this app.
+pub const STORE_ABOUT_SOURCE: &str = "About this source";
+/// The badge under a Flathub app's name, by what was done. A community app keeps the plain "Flathub".
+pub const STORE_SOURCE_PICKED: &str = "Flathub · Picked by WolOS";
+pub const STORE_SOURCE_VERIFIED: &str = "Flathub · Verified by Flathub";
+pub const STORE_SOURCE_COMMUNITY: &str = "Flathub";
+/// What each standing says on the details page: what was done, and what was not. Never "safe".
+pub const STORE_ABOUT_PICKED_VERIFIED: &str =
+    "Picked by WolOS. Flathub verified the developer, and you still choose what it may do.";
+pub const STORE_ABOUT_PICKED: &str = "Picked by WolOS, but the community packages it, not the developer. You still choose what it may do.";
+pub const STORE_ABOUT_VERIFIED: &str =
+    "Flathub verified the developer. WolOS did not pick it, and you choose what it may do.";
+pub const STORE_ABOUT_COMMUNITY: &str =
+    "Packaged by the community and not verified. You choose what it may do.";
+
+/// The badge for a Flathub app's standing (`wol_core::flathub::standing`).
+pub fn store_source_label(s: wol_core::flathub::Standing) -> &'static str {
+    use wol_core::flathub::Standing::{Community, Picked, Verified};
+    match s {
+        Picked { .. } => STORE_SOURCE_PICKED,
+        Verified => STORE_SOURCE_VERIFIED,
+        Community => STORE_SOURCE_COMMUNITY,
+    }
+}
+
+/// The details sentence for a Flathub app's standing.
+pub fn store_source_about(s: wol_core::flathub::Standing) -> &'static str {
+    use wol_core::flathub::Standing::{Community, Picked, Verified};
+    match s {
+        Picked { verified: true } => STORE_ABOUT_PICKED_VERIFIED,
+        Picked { verified: false } => STORE_ABOUT_PICKED,
+        Verified => STORE_ABOUT_VERIFIED,
+        Community => STORE_ABOUT_COMMUNITY,
+    }
+}
+
 /// A wopkg kit install or a plugin action did not complete.
 pub const STORE_NOT_FINISHED: &str = "That did not finish. Nothing was changed.";
 /// Kits page, under the title.

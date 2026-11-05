@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use wol_core::flathub;
 use wol_core::package;
 use wol_core::store::{self, App, Category};
 
@@ -682,7 +683,11 @@ fn pkg_tile(sh: &Rc<Shared>, h: &store::PkgHit) -> gtk::Widget {
 /// A Flathub app: same tile, a Flathub badge under the name, installed for this account.
 fn flathub_tile(sh: &Rc<Shared>, h: &wol_core::flatpak::Hit) -> gtk::Widget {
     let t = w::AppTile::new(&w::store_icon(&h.id, w::ICON_L), &h.name, &h.summary);
-    t.set_source("Flathub");
+    // What WolOS knows: picked for the list, verified by Flathub, or neither (plain "Flathub").
+    t.set_source(crate::copy::store_source_label(flathub::standing(
+        &h.id,
+        flathub::cached(),
+    )));
     let t2 = t.clone();
     wire(
         sh,
@@ -924,6 +929,13 @@ fn aur_details(page: &gtk::Box, s: &Subject) {
     page.append(&found);
 }
 
+/// Flathub's verified ids, read once for the badges: the AppStream file is tens of megabytes, so
+/// only off the UI thread (the search worker and the details loader call it).
+pub(crate) fn warm_flathub() {
+    let home = gtk::glib::home_dir();
+    flathub::warm(&home.to_string_lossy(), |p| std::fs::read_to_string(p).ok());
+}
+
 /// Whether a native package (catalog first, then a repo hit) already covers a Flathub app: by
 /// the id's last part or by the app's name, either case (QA-STORE-70: Arch `ponysay` and
 /// Flathub "Ponysay" were two tiles).
@@ -976,6 +988,8 @@ fn show_more(
     }
     if !flat.is_empty() {
         more.append(&w::label("From Flathub", "title"));
+        // Picks first, then verified apps, then the rest (each in the order Flathub answered).
+        let flat = flathub::rank(flat.to_vec(), flathub::cached());
         more.append(&grid(flat.iter().take(30).map(|h| flathub_tile(sh, h))));
     }
 }
@@ -1039,6 +1053,15 @@ fn discover(sh: &Rc<Shared>) -> gtk::Box {
                 .map(|a| tile(sh, a)),
         );
         p.append(&shelf(title, &g));
+    }
+    // WolOS's picks from Flathub (wol_core::flathub::CURATED): apps people ask for that the
+    // repositories do not carry. Off where the machine is not searched (goldens, no network).
+    if sh.env.pkg_search {
+        let picks = flathub::curated_hits(|_| false);
+        p.append(&shelf(
+            crate::copy::STORE_FLATHUB_PICKS,
+            &grid(picks.iter().take(9).map(|h| flathub_tile(sh, h))),
+        ));
     }
     p
 }
@@ -1380,6 +1403,8 @@ fn fill_search(sh: &Rc<Shared>, page: &gtk::Box, term: &str) {
     let shown_for = term.clone();
     let (tx, rx) = async_channel::bounded(1);
     std::thread::spawn(move || {
+        // Flathub's verified ids, read once here and not on the UI thread (the tiles use the cache).
+        warm_flathub();
         // The package index answers in milliseconds; the commands below are the fallback.
         if let Some((pkgs, flat)) = crate::packages::search(&term) {
             let flat = flathub_beyond_native(&pkgs, flat);

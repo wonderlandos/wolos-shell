@@ -1311,7 +1311,9 @@ fn admin_topics(a: shared::admin::AdminAction) -> [bool; TOPICS] {
         | A::SystemChannel
         | A::Reports
         | A::Proxy
-        | A::DnsOverTls => (0, 0, 0, 0, 0),
+        | A::DnsOverTls
+        | A::MirrorGate
+        | A::CoolingHelper => (0, 0, 0, 0, 0),
     };
     [audio, wifi, slow, media, panel].map(|t| t == 1)
 }
