@@ -546,12 +546,12 @@ row-button-focus-offset-dark	Home Secured | Office Secured | Guest Secured
 row-button-focus-offset-light	Home Secured | Office Secured | Guest Secured
 searchbar-calc-dark	= 2057.1428571429 Calculator
 searchbar-calc-light	= 2057.1428571429 Calculator
-searchbar-dark	Terminal Application | Notes Application | Battery System Settings | Printers System Settings | Date & Time System Settings | Login Items System Settings | Control Center System Settings | Software Update System Settings
+searchbar-dark	Terminal Application | Text · Default Apps System Settings | Notes Application | Battery System Settings | Printers System Settings | Date & Time System Settings | Login Items System Settings | Control Center System Settings
 searchbar-empty-dark	Search the web for “qwzx kettle” Browser
 searchbar-empty-light	Search the web for “qwzx kettle” Browser
 searchbar-files-dark	Tax Receipts Folder | Taxes 2026.pdf PDF Document | tax receipt.jpeg Image | syntax-cheatsheet.md Text
 searchbar-files-light	Tax Receipts Folder | Taxes 2026.pdf PDF Document | tax receipt.jpeg Image | syntax-cheatsheet.md Text
-searchbar-light	Terminal Application | Notes Application | Battery System Settings | Printers System Settings | Date & Time System Settings | Login Items System Settings | Control Center System Settings | Software Update System Settings
+searchbar-light	Terminal Application | Text · Default Apps System Settings | Notes Application | Battery System Settings | Printers System Settings | Date & Time System Settings | Login Items System Settings | Control Center System Settings
 session-confirm-logout-dark	Cancel | Log Out
 session-confirm-logout-light	Cancel | Log Out
 session-confirm-shutdown-dark	Cancel | Shut Down
