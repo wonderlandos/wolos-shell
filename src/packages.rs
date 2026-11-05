@@ -510,13 +510,26 @@ pub fn run_reading(prog: &str, argv: &[String]) -> (Option<i32>, Option<String>)
 /// (`wol_core::controls::take_failure`); a run that worked clears it.
 pub fn run_wopkg(argv: &[String]) -> Option<i32> {
     let (code, said) = run_reading(WOPKG, argv);
-    if argv == upgrade_argv().as_slice() {
-        wol_core::controls::note_failure(
-            shared::admin::AdminAction::PkgUpgrade,
-            said.filter(|_| code != Some(0)),
-        );
-    }
+    note_said(argv, code, said);
     code
+}
+
+/// Keeps what the system service said about the wopkg run `argv` that ended with `code` for the
+/// page that shows it; a run that worked clears it. Update Now (Software Update) and, since
+/// QA-STORE-59, an install or a remove (the Store's status sheet): before, the Store had only
+/// "Check that you’re online" for a disk that was full.
+fn note_said(argv: &[String], code: Option<i32>, said: Option<String>) {
+    use shared::admin::AdminAction as A;
+    let action = if argv == upgrade_argv().as_slice() {
+        A::PkgUpgrade
+    } else if argv.first().is_some_and(|a| a == "install") {
+        A::PkgInstall
+    } else if argv.first().is_some_and(|a| a == "remove") {
+        A::PkgRemove
+    } else {
+        return;
+    };
+    wol_core::controls::note_failure(action, said.filter(|_| code != Some(0)));
 }
 
 /// Install through wopkg; None when wopkg is not on this system (the caller keeps the old path).
@@ -568,6 +581,31 @@ mod tests {
         assert!(ran.borrow().is_empty(), "{:?}", ran.borrow());
         assert_eq!(install("htop", true, &run), Some(Ok(())));
         assert_eq!(ran.borrow().len(), 1);
+    }
+
+    /// QA-STORE-59: a failed wopkg install or remove keeps wol-admind's sentence for the Store's
+    /// status sheet, as Update Now does for Software Update; a run that worked clears it, and
+    /// another verb leaves what is kept alone.
+    #[test]
+    fn a_failed_install_or_remove_keeps_the_systems_sentence() {
+        use shared::admin::AdminAction as A;
+        use wol_core::controls::take_failure;
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let said = || Some("Nothing was installed: the download failed.".to_string());
+        let install = install_argv("htop").unwrap();
+        note_said(&install, Some(1), said());
+        assert_eq!(take_failure(A::PkgInstall), said());
+        note_said(&install, Some(1), said());
+        note_said(&install, Some(0), None);
+        assert_eq!(take_failure(A::PkgInstall), None, "a success clears it");
+        note_said(&remove_argv("htop").unwrap(), Some(1), said());
+        assert_eq!(take_failure(A::PkgRemove), said());
+        assert_eq!(take_failure(A::PkgInstall), None, "each verb its own");
+        note_said(&install, Some(1), said());
+        note_said(&argv(&["search", "x"]), Some(1), None);
+        assert_eq!(take_failure(A::PkgInstall), said());
+        note_said(&upgrade_argv(), Some(1), said());
+        assert_eq!(take_failure(A::PkgUpgrade), said());
     }
 
     /// Settings reads wol-admind's sentence from wopkg's stderr: the last prefixed line, and the

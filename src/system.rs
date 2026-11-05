@@ -1156,11 +1156,25 @@ fn flatpak_install_tracked(id: &str) -> Option<Result<(), wol_core::controls::Co
         &path,
         std::time::Duration::from_secs(1800),
     );
+    note_flatpak_install(ok, &wol_core::privileged::take_last_stderr());
     Some(if ok {
         Ok(())
     } else {
         Err(ControlError::Failed)
     })
+}
+
+/// Keeps why this account's Flathub install failed for the Store's status sheet, as wol-admind's
+/// sentence is for the admin path (`wol_core::controls::take_failure`; QA-STORE-59: no
+/// sentence, so "Check that you’re online" for a full disk); a success clears the last one.
+/// `output` is the end of flatpak's own words.
+fn note_flatpak_install(ok: bool, output: &str) {
+    wol_core::controls::note_failure(
+        shared::admin::AdminAction::FlatpakInstall,
+        (!ok)
+            .then(|| wol_core::pkg_failure::explain(output, true))
+            .flatten(),
+    );
 }
 
 /// The admin password between the Authenticate sheet and the action: its bytes are overwritten

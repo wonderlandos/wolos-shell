@@ -10,6 +10,7 @@ pub mod fence;
 pub mod form;
 pub mod gate;
 pub mod graph;
+pub mod input_guard;
 pub mod lifetime;
 pub mod motion;
 pub mod patience;

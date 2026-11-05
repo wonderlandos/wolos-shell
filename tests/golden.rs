@@ -2023,6 +2023,7 @@ fn main() {
     regressions::the_dock_takes_a_new_layout();
     regressions::store_get_waits_for_the_password();
     regressions::a_failed_store_install_says_so();
+    regressions::every_failed_install_says_why();
     regressions::two_gets_in_a_row_both_reach_the_system();
     regressions::clear_is_off_while_there_is_nothing_to_clear();
     regressions::the_store_window_shows_a_spinner_while_the_env_is_read();
