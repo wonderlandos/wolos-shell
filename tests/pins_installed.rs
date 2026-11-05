@@ -160,3 +160,25 @@ fn app_store_is_pinned_installed_and_opens_wol_packages() {
         "App Store"
     );
 }
+
+/// QA-IMG13-2-DOCK-ATLAS: the default Dock shows the browser, third (after Files and Apps, as the
+/// design's dock spec `design/tools/ui/dock.py` lists it), under the pin id the compositor
+/// reports (`atlas`), with an icon the installed theme ships at every size the Dock asks for.
+/// The Folio icon is a folded paper map: a reader of a screenshot calls it "Maps", so this
+/// pins what the tile is, not how it looks.
+#[test]
+fn default_dock_has_the_browser_third_with_an_installed_icon() {
+    let pos = PINS.iter().position(|p| p.exec[0] == "atlas");
+    assert_eq!(pos, Some(2), "Browser is the third default tile");
+    let b = &PINS[2];
+    assert_eq!((b.id, b.name), ("atlas", "Browser"));
+    for size in ["48x48", "128x128", "512x512"] {
+        let png = repo("desktop/overlay/usr/share/icons/WolOS")
+            .join(size)
+            .join("apps")
+            .join(format!("{}.png", b.icon));
+        assert!(png.is_file(), "{} missing", png.display());
+    }
+    // No default tile is named Maps: no Maps app ships, so a "Maps" tile is the Browser's icon.
+    assert!(PINS.iter().all(|p| p.name != "Maps"));
+}
