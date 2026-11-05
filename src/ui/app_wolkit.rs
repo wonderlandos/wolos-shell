@@ -251,7 +251,6 @@ impl Host {
         register_icons(tree);
         page.mount(tree).ok()?;
         let area = gtk::DrawingArea::new();
-        area.add_css_class("wolkit-page");
         area.set_hexpand(true);
         area.set_vexpand(true);
         area.set_focusable(true);

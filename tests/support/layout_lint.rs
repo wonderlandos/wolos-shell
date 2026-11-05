@@ -10,6 +10,18 @@
 use gtk::{gdk, prelude::*};
 use shared::theme::scaffold;
 
+/// Runs the default main context for `ms`: it blocks between events and wakes for its own timer,
+/// so nothing sleeps (RR-049) and every idle and timeout due meanwhile runs.
+fn pump(ms: u64) {
+    let ctx = gtk::glib::MainContext::default();
+    let done = std::rc::Rc::new(std::cell::Cell::new(false));
+    let d = done.clone();
+    gtk::glib::timeout_add_local_once(std::time::Duration::from_millis(ms), move || d.set(true));
+    while !done.get() {
+        ctx.iteration(true);
+    }
+}
+
 /// Rule ids, in the order of the table in docs/RULES-ui.md (rules_ui.rs holds the wording).
 pub const EDGE: &str = "RU-700";
 pub const INSIDE: &str = "RU-701";
@@ -33,12 +45,6 @@ const TOL: i32 = shell::layout::TOLERANCE;
 pub const BASELINE: &[(&str, &str, usize, &str)] = &[
     (
         EDGE,
-        "app",
-        2,
-        "app-window-parts: the row slider's box is 40 px in a 52 px two-line row (6 px); the slider spec (DS) sizes its box",
-    ),
-    (
-        EDGE,
         "firstlogin",
         8,
         "accounts/keyboard: assistant buttons are 40 px (.assistant-card button.btn) inside a 52 px list row, 6 px from its edges",
@@ -58,8 +64,8 @@ pub const BASELINE: &[(&str, &str, usize, &str)] = &[
     (
         EDGE,
         "store",
-        10,
-        "Get buttons in scrolled pages (hero banner, app tiles) end 4-6 px above the window's bottom edge at rest",
+        12,
+        "Get buttons in scrolled pages (hero banner, app tiles) end 4-6 px above the window's bottom edge at rest; +2: the install-failed narrow case (INT-2, same hero banner)",
     ),
     (
         HEIGHT,
@@ -106,8 +112,8 @@ pub const BASELINE: &[(&str, &str, usize, &str)] = &[
     (
         HEIGHT,
         "settings",
-        114,
-        "sidebar search 34 px (min-height 32 + border, 96); GTK's own MenuButton with no kit style is 34 px (18)",
+        116,
+        "sidebar search 34 px (min-height 32 + border, 98); GTK's own MenuButton with no kit style is 34 px (18); +2: the Default Apps case (INT-2)",
     ),
     (
         HEIGHT,
@@ -118,8 +124,8 @@ pub const BASELINE: &[(&str, &str, usize, &str)] = &[
     (
         HEIGHT,
         "store",
-        54,
-        "sidebar search 34 px (50) and the store search page field 34 px (4): min-height 32 + border",
+        58,
+        "sidebar search 34 px (54) and the store search page field 34 px (4): min-height 32 + border; +4: the install-failed and package-missing wide cases (INT-2, same sidebar search)",
     ),
     (
         GAP,
@@ -748,11 +754,7 @@ pub fn self_check(render: impl Fn(&gtk::Window) -> gdk::Texture) {
         }
         win.set_child(Some(&bar));
         win.present();
-        let until = std::time::Instant::now() + std::time::Duration::from_millis(600);
-        while std::time::Instant::now() < until {
-            while gtk::glib::MainContext::default().iteration(false) {}
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        pump(600);
         win
     };
     let rules = |v: &[Violation]| {
@@ -796,11 +798,7 @@ pub fn self_check(render: impl Fn(&gtk::Window) -> gdk::Texture) {
     holder.append(&p);
     win.set_child(Some(&holder));
     win.present();
-    let until = std::time::Instant::now() + std::time::Duration::from_millis(300);
-    while std::time::Instant::now() < until {
-        while gtk::glib::MainContext::default().iteration(false) {}
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    pump(300);
     let out = lint("self-check-inside", &win, None);
     win.destroy();
     assert!(

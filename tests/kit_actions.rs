@@ -33,9 +33,8 @@ const KNOWN: Known = &[
     ("dropdown", "standard.row", "52"),
     // `scale.slider` has no height of its own: the row's min-height stretches the line to 40 (DS-GTK-1).
     ("slider", "standard.sizes.regular.height", "40"),
-    // A control's `min-height: 24px` is the content box, the 1 px border comes on top: 26 (DS-GTK-1:
-    // min-height 22). GtkMenuButton has no Kit rule at all and draws the toolkit's 34.
-    ("dropdown", "standard.sizes.regular.height", "26"),
+    // GtkMenuButton has no Kit rule at all and draws the toolkit's 34 (the dropdown, 24 since the
+    // field root fix of KIT-LINT, no longer needs a row).
     ("menu-button", "standard.sizes.regular.height", "34"),
     // Accessibility the Kit does not give yet (DS-A11Y-1): a segmented group is a generic box, a stepper
     // is two buttons and a label with no spinbutton role or value, a menu button has no accessible label.

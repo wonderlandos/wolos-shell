@@ -17,8 +17,8 @@ use shell::kit::{groups, widgets as w};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// The text field is 26 px for a 24 px control until DS-GTK-1 (text-field in `kit_input.rs`).
-const KNOWN: Known = &[("date-input", "standard.sizes.regular.height", "26")];
+/// Nothing is known to be off: the date input is 24 px like its spec since the field root fix of KIT-LINT.
+const KNOWN: Known = &[];
 
 type Log = Rc<RefCell<Vec<String>>>;
 

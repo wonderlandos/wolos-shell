@@ -276,11 +276,7 @@ pub fn cases() -> Vec<Case> {
         build: Box::new(|| {
             let tree = design_parts();
             assert_eq!(tree.validate(), Ok(()), "the sample tree is a valid view");
-            let view = AppView::new(&tree, Sink::new(|_| {}));
-            let aw = app_frame(&view);
-            let root = aw.root.clone();
-            unsafe { root.set_data("view", view) };
-            root.upcast()
+            framed(&tree)
         }),
     });
     v

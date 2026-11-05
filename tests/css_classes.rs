@@ -14,12 +14,13 @@ const HYPRLAND_CONF: &str =
     include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 
 /// Classes code reads back (`has_css_class`, kit::check's layout-only list): not for styling.
-const HOOKS: [&str; 5] = [
+const HOOKS: [&str; 6] = [
     "control",
     "device-row",
     "kit-reveal",
     "may-ellipsize",
     "no-row-check",
+    "wolkit-frame",
 ];
 
 /// How many [`UNSTYLED`] may hold (audit3 R2A-23): lower it with every class you style or drop;
