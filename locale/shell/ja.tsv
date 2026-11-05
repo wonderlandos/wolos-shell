@@ -114,6 +114,11 @@ copy.trash_not_moved	That could not be moved to the Trash.	それをゴミ箱に
 copy.share_only_files	Only a file can be shared.	共有できるのはファイルだけです。	c274fdc8
 copy.clipboard_unchanged	The clipboard could not be changed.	クリップボードを変更できませんでした。	87b2db6b
 copy.copy_not_saved	That copy could not be saved.	そのコピーを保存できませんでした。	7534faf1
+copy.share_text_detail	Choose where this goes.	これを送る先を選んでください。	75a1f895
+copy.share_no_apps	No app here takes this. You can still copy it or save it.	ここにはこれを受け取れるアプリがありません。コピーまたは保存はできます。	0fd3c811
+copy.share_text_long	That text is longer than 24 KiB. Share a shorter part.	このテキストは 24 KiB を超えています。短い部分を共有してください。	7984dc0f
+copy.share_text_odd	That text has characters that cannot be shared.	このテキストには共有できない文字が含まれています。	4bbcaff3
+copy.share_app_not_started	That app could not start. Try another one.	そのアプリを起動できませんでした。ほかのアプリをお試しください。	196307dd
 installer.secure_boot_title	Change One Startup Setting First	先に起動設定を 1 つ変更してください	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	このコンピュータのセキュアブートは Windows だけを信頼しているため、WolOS はまだ起動できません。	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	WolOS はインストールされましたが、リカバリーキーを読み取れませんでした。「再試行」をクリックしてください。キーが表示されるまで再起動は待機します。	87ec9bf0

@@ -2,6 +2,8 @@
 //! What wold asks the desktop to do for an app whose call passed its check (ADR 0020). wold is a
 //! system daemon, so anything of the person's session runs here, in the account's own shell. No
 //! GTK: a short thread per ask, its reply a `session.answer` to wold.
+use crate::share_targets::{self, Item};
+use crate::ui::share_sheet::{self, Choice};
 use serde_json::{Value, json};
 use shared::portal::{Ask, Call, MAX_CLIPBOARD, MAX_LINE};
 use std::fs::File;
@@ -16,15 +18,16 @@ const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 const MAX_PREVIEW: usize = 400;
 /// Rows a search hands an app.
 const MAX_FOUND: usize = 20;
-/// Apps the open-with chooser offers (the dialog's row of buttons stays readable).
-const MAX_CHOICES: usize = 4;
+/// Apps the open-with chooser offers (two rows of tiles).
+const MAX_CHOICES: usize = share_targets::MAX_TARGETS;
 
 /// The session, apart from the rules (fake in tests).
 pub trait Session {
     /// Text on the clipboard, at most `max` + 1 bytes; None when it holds no text.
     fn clipboard(&self, max: usize) -> Option<Vec<u8>>;
     fn set_clipboard(&self, text: &str) -> bool;
-    /// Where the person wants shared text to go; None when they cancelled. Blocks until then.
+    /// Where the person wants shared text (or a link) to go; None when they cancelled. Blocks
+    /// until then.
     fn share(&self, title: &str, text: &str) -> Option<ShareTo>;
     /// Titles and kinds of the apps and Settings pages found. Never the rows of provider apps:
     /// those are the person's, for Search alone.
@@ -44,8 +47,10 @@ pub trait Session {
     /// Move `path` to the Trash as the person, the one way the system does it
     /// (the desktop's own Trash, as Settings > Malware's `gio trash` does). False when it failed.
     fn trash(&self, path: &Path) -> bool;
-    /// Where the person wants the file called `name` to go; None when they cancelled. Blocks.
-    fn share_file(&self, name: &str) -> Option<FileTo>;
+    /// Where the person wants the file at `path` to go; None when they cancelled. Blocks.
+    fn share_file(&self, path: &Path) -> Option<FileTo>;
+    /// Hand `item` to the app `id` (a share target, `share_targets`): Err is the sentence to show.
+    fn deliver(&self, id: &str, item: &Item) -> Result<(), String>;
     /// Put the file on the clipboard as a link to it (`text/uri-list`), so a paste in Files or
     /// another app takes the file itself.
     fn copy_file(&self, path: &Path) -> bool;
@@ -102,29 +107,61 @@ impl Session for Desktop {
             .is_ok()
     }
 
-    fn share_file(&self, name: &str) -> Option<FileTo> {
-        let name = name.to_owned();
-        let (tx, rx) = std::sync::mpsc::channel();
-        gtk::glib::MainContext::default().invoke(move || {
-            let d = gtk::AlertDialog::builder()
-                .modal(true)
-                .message(name.as_str())
-                .detail(crate::copy::FILE_SHEET_DETAIL)
-                .buttons(["Cancel", "Open With\u{2026}", "Save a Copy\u{2026}", "Copy"])
-                .cancel_button(0)
-                .default_button(3)
-                .build();
-            let cancel = gtk::gio::Cancellable::NONE;
-            d.choose(None::<&gtk::Window>, cancel, move |r| {
-                let _ = tx.send(r.ok());
-            });
-        });
-        match rx.recv().ok().flatten() {
-            Some(1) => Some(FileTo::App),
-            Some(2) => Some(FileTo::Copy),
-            Some(3) => Some(FileTo::Clipboard),
-            _ => None,
+    fn share_file(&self, path: &Path) -> Option<FileTo> {
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let targets = share_targets::find(&Item::file(path));
+        let view = share_sheet::View::file(&name, tiles(&targets));
+        match ask_sheet(view)? {
+            Choice::Target(i) => targets.get(i).map(|t| FileTo::Target(t.id.clone())),
+            Choice::OpenWith => Some(FileTo::App),
+            Choice::Save => Some(FileTo::Copy),
+            Choice::Copy => Some(FileTo::Clipboard),
+            Choice::Cancel => None,
         }
+    }
+
+    fn deliver(&self, id: &str, item: &Item) -> Result<(), String> {
+        let not_started = || crate::copy::SHARE_APP_NOT_STARTED.to_owned();
+        let target = share_targets::find_one(id, item).ok_or_else(not_started)?;
+        // Long text goes to an app that asks for a file in a file of the person's own (0600), not
+        // into its arguments, which every process can read in the process list.
+        let spill = share_targets::spill_text(&target, item)
+            .and_then(|text| share_targets::write_spill(&share_targets::spill_dir()?, text));
+        let argv = share_targets::launch_argv(&target, item, spill.as_deref());
+        let (prog, args) = argv.split_first().ok_or_else(not_started)?;
+        // Read off the main thread: X11 apps get the scale the session exported.
+        let env = crate::kit::user_scale_env();
+        let mut child = match Command::new(prog)
+            .args(args)
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => {
+                if let Some(p) = &spill {
+                    let _ = std::fs::remove_file(p);
+                }
+                return Err(not_started());
+            }
+        };
+        // Reaped when it ends, off this thread's business; the text file goes with it.
+        let _ = std::thread::Builder::new()
+            .name("wol-reap".into())
+            .spawn(move || {
+                let _ = child.wait();
+                if let Some(p) = spill {
+                    let _ = std::fs::remove_file(p);
+                }
+            });
+        if let Some(path) = share_targets::usage_path() {
+            share_targets::record(&path, id);
+        }
+        Ok(())
     }
 
     fn copy_file(&self, path: &Path) -> bool {
@@ -135,12 +172,15 @@ impl Session for Desktop {
 
     fn open_with(&self, path: &Path) -> Result<bool, String> {
         use gtk::gio::prelude::*;
-        // Read off the main thread: X11 apps get the scale the session exported.
+        // Read off the main thread: X11 apps get the scale the session exported, and the apps
+        // the person picked for this kind before come first.
         let env = crate::kit::user_scale_env();
+        let first = gtk::glib::MainContext::new().block_on(crate::open_with::added_for(path));
         let path = path.to_owned();
         let (tx, rx) = std::sync::mpsc::channel::<Result<bool, String>>();
         gtk::glib::MainContext::default().invoke(move || {
-            let apps = apps_for(&path);
+            let mut apps = crate::open_with::promote(apps_for(&path), app_id, &first);
+            apps.truncate(MAX_CHOICES);
             if apps.is_empty() {
                 let _ = tx.send(Err(crate::copy::OPEN_WITH_NONE.into()));
                 return;
@@ -148,27 +188,27 @@ impl Session for Desktop {
             let name = path
                 .file_name()
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-            let mut labels = vec!["Cancel".to_owned()];
-            labels.extend(apps.iter().map(|a| a.display_name().to_string()));
-            let d = gtk::AlertDialog::builder()
-                .modal(true)
-                .message(format!("Open \u{201c}{name}\u{201d} With"))
-                .detail(crate::copy::OPEN_WITH_DETAIL)
-                .buttons(labels.iter().map(String::as_str).collect::<Vec<_>>())
-                .cancel_button(0)
-                .build();
-            let cancel = gtk::gio::Cancellable::NONE;
-            d.choose(None::<&gtk::Window>, cancel, move |r| {
-                let picked = r.ok().and_then(|i| usize::try_from(i).ok()?.checked_sub(1));
-                let got = match picked.and_then(|i| apps.get(i)) {
-                    None => Ok(false),
-                    Some(a) => {
+            let tiles = apps
+                .iter()
+                .map(|a| share_sheet::Tile {
+                    name: a.display_name().to_string(),
+                    icon: app_icon_name(a),
+                })
+                .collect();
+            share_sheet::open(&share_sheet::View::open(&name, tiles), move |c| {
+                let got = match c {
+                    Choice::Target(i) if i < apps.len() => {
+                        let a = &apps[i];
                         let file = gtk::gio::File::for_path(&path);
                         let ctx = crate::kit::data::launch_context(&env);
-                        a.launch(&[file], Some(&ctx))
-                            .map(|()| true)
+                        let done = a.launch(&[file], Some(&ctx));
+                        if done.is_ok() {
+                            crate::open_with::remember(&path, &app_id(a));
+                        }
+                        done.map(|()| true)
                             .map_err(|_| crate::copy::OPEN_WITH_NOT_OPENED.to_owned())
                     }
+                    _ => Ok(false),
                 };
                 let _ = tx.send(got);
             });
@@ -205,26 +245,13 @@ impl Session for Desktop {
     }
 
     fn share(&self, title: &str, text: &str) -> Option<ShareTo> {
-        let (title, preview) = (title.to_owned(), preview(text));
-        let (tx, rx) = std::sync::mpsc::channel();
-        gtk::glib::MainContext::default().invoke(move || {
-            let d = gtk::AlertDialog::builder()
-                .modal(true)
-                .message(title.as_str())
-                .detail(preview.as_str())
-                .buttons(["Cancel", "Save\u{2026}", "Copy"])
-                .cancel_button(0)
-                .default_button(2)
-                .build();
-            let cancel = gtk::gio::Cancellable::NONE;
-            d.choose(None::<&gtk::Window>, cancel, move |r| {
-                let _ = tx.send(r.ok());
-            });
-        });
-        match rx.recv().ok().flatten() {
-            Some(1) => Some(ShareTo::File),
-            Some(2) => Some(ShareTo::Clipboard),
-            _ => None,
+        let targets = share_targets::find(&Item::text(title, text));
+        let view = share_sheet::View::text(title, &preview(text), tiles(&targets));
+        match ask_sheet(view)? {
+            Choice::Target(i) => targets.get(i).map(|t| ShareTo::Target(t.id.clone())),
+            Choice::Save => Some(ShareTo::File),
+            Choice::Copy => Some(ShareTo::Clipboard),
+            Choice::OpenWith | Choice::Cancel => None,
         }
     }
 
@@ -240,7 +267,29 @@ impl Session for Desktop {
     }
 }
 
-/// The apps that open `path`'s kind of file, the recommended first, at most [`MAX_CHOICES`].
+/// The tiles of the share sheet for these targets.
+fn tiles(targets: &[share_targets::Target]) -> Vec<share_sheet::Tile> {
+    targets
+        .iter()
+        .map(|t| share_sheet::Tile {
+            name: t.name.clone(),
+            icon: t.icon.clone(),
+        })
+        .collect()
+}
+
+/// Show the share sheet and wait for the person's choice (None: the shell went away).
+fn ask_sheet(view: share_sheet::View) -> Option<Choice> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    gtk::glib::MainContext::default().invoke(move || {
+        share_sheet::open(&view, move |c| {
+            let _ = tx.send(c);
+        });
+    });
+    rx.recv().ok()
+}
+
+/// The apps that open `path`'s kind of file, the recommended first.
 fn apps_for(path: &Path) -> Vec<gtk::gio::AppInfo> {
     use gtk::gio::prelude::*;
     let (kind, _) = gtk::gio::content_type_guess(Some(path), None);
@@ -253,8 +302,28 @@ fn apps_for(path: &Path) -> Vec<gtk::gio::AppInfo> {
             apps.push(a);
         }
     }
-    apps.truncate(MAX_CHOICES);
     apps
+}
+
+/// The desktop id of an app (`org.example.Viewer.desktop`).
+fn app_id(a: &gtk::gio::AppInfo) -> String {
+    use gtk::gio::prelude::*;
+    a.id().map_or_else(String::new, |i| i.to_string())
+}
+
+/// The icon to draw for an app: the first themed name, or the file of a picture icon.
+fn app_icon_name(a: &gtk::gio::AppInfo) -> String {
+    use gtk::gio::prelude::*;
+    let Some(icon) = a.icon() else {
+        return String::new();
+    };
+    match icon.downcast_ref::<gtk::gio::ThemedIcon>() {
+        Some(t) => t
+            .names()
+            .first()
+            .map_or_else(String::new, |n| n.to_string()),
+        None => IconExt::to_string(&icon).map_or_else(String::new, |s| s.to_string()),
+    }
 }
 
 /// Put `text` on the clipboard, as `kind` (plain text when None). On stdin: an argument would
@@ -280,14 +349,16 @@ fn copy(text: &str, kind: Option<&str>) -> bool {
 }
 
 /// Where shared text goes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShareTo {
     Clipboard,
     File,
+    /// An app that takes it: its desktop id (`share_targets`).
+    Target(String),
 }
 
 /// Where a shared file goes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileTo {
     /// A link to it on the clipboard.
     Clipboard,
@@ -295,6 +366,8 @@ pub enum FileTo {
     Copy,
     /// The app the person picks next opens it.
     App,
+    /// An app that takes it: its desktop id (`share_targets`).
+    Target(String),
 }
 
 /// Move `path` to the person's Trash: its name there (what the Files Trash shows and what puts
@@ -333,8 +406,9 @@ fn share_file(s: &dyn Session, path: &Path) -> Result<&'static str, String> {
     let name = path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    match s.share_file(&name) {
+    match s.share_file(path) {
         None => Ok("cancelled"),
+        Some(FileTo::Target(id)) => s.deliver(&id, &Item::file(path)).map(|()| "opened"),
         Some(FileTo::Clipboard) => s
             .copy_file(path)
             .then_some("copied")
@@ -383,6 +457,7 @@ fn preview(text: &str) -> String {
 fn share(s: &dyn Session, title: &str, text: &str) -> Result<&'static str, String> {
     match s.share(title, text) {
         None => Ok("cancelled"),
+        Some(ShareTo::Target(id)) => s.deliver(&id, &Item::text(title, text)).map(|()| "opened"),
         Some(ShareTo::Clipboard) => s
             .set_clipboard(text)
             .then_some("copied")
@@ -685,6 +760,8 @@ mod tests {
         sound: bool,
         share_to: Option<ShareTo>,
         file_to: Option<FileTo>,
+        /// A share target that does not start.
+        app_down: bool,
         dir: PathBuf,
         /// What the chooser does: Some(true) opens, Some(false) cancels, None has no app.
         opens: Option<bool>,
@@ -705,7 +782,7 @@ mod tests {
             self.sound.then_some((40, false))
         }
         fn share(&self, _: &str, _: &str) -> Option<ShareTo> {
-            self.share_to
+            self.share_to.clone()
         }
         fn search(&self, text: &str) -> Vec<(String, String)> {
             vec![(text.to_uppercase(), "Application".into())]
@@ -745,9 +822,17 @@ mod tests {
                 && std::fs::write(bin.join("info").join(format!("{name}.trashinfo")), note).is_ok()
                 && std::fs::rename(path, bin.join("files").join(&name)).is_ok()
         }
-        fn share_file(&self, name: &str) -> Option<FileTo> {
+        fn share_file(&self, path: &Path) -> Option<FileTo> {
+            let name = path.file_name().unwrap().to_string_lossy();
             self.set.borrow_mut().push(format!("sheet {name}"));
-            self.file_to
+            self.file_to.clone()
+        }
+        fn deliver(&self, id: &str, item: &Item) -> Result<(), String> {
+            self.set.borrow_mut().push(format!("deliver {id} {item:?}"));
+            if self.app_down {
+                return Err("That app could not start. Try another one.".into());
+            }
+            Ok(())
         }
         fn copy_file(&self, path: &Path) -> bool {
             self.set
@@ -878,6 +963,68 @@ mod tests {
             assert!(f.set.borrow().is_empty(), "no sheet for {bad:?}");
         }
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_shared_file_goes_to_the_app_the_person_picked() {
+        let dir = scratch("share-target");
+        let pic = dir.join("home/Pictures/a.jpg");
+        std::fs::write(&pic, b"picture").unwrap();
+        let ask = || Ask::ShareFile {
+            path: pic.display().to_string(),
+        };
+        let to = |app_down| Fake {
+            file_to: Some(FileTo::Target("notes.desktop".into())),
+            app_down,
+            dir: dir.clone(),
+            ..Fake::default()
+        };
+        let f = to(false);
+        assert_eq!(answer(&f, ask()), Ok(Some(json!({ "done": "opened" }))));
+        let log = f.set.borrow();
+        assert_eq!(log[0], "sheet a.jpg");
+        assert!(
+            log[1].starts_with("deliver notes.desktop File { path: "),
+            "{log:?}"
+        );
+        assert!(
+            log[1].contains("a.jpg") && log[1].contains("image/jpeg"),
+            "{log:?}"
+        );
+        assert_eq!(
+            answer(&to(true), ask()),
+            Err("That app could not start. Try another one.".into())
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn shared_text_goes_to_the_app_and_a_lone_link_is_a_link() {
+        let ask = |text: &str| Ask::Share {
+            title: "Page".into(),
+            text: text.into(),
+        };
+        let f = Fake {
+            share_to: Some(ShareTo::Target("mail.desktop".into())),
+            ..Fake::default()
+        };
+        assert_eq!(
+            answer(&f, ask("some words")),
+            Ok(Some(json!({ "done": "opened" })))
+        );
+        assert_eq!(
+            answer(&f, ask("https://example.org/a")),
+            Ok(Some(json!({ "done": "opened" })))
+        );
+        let log = f.set.borrow();
+        assert_eq!(
+            log[0],
+            "deliver mail.desktop Text { title: \"Page\", text: \"some words\" }"
+        );
+        assert_eq!(
+            log[1],
+            "deliver mail.desktop Url { url: \"https://example.org/a\", title: \"Page\" }"
+        );
     }
 
     #[test]

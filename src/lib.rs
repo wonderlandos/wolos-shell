@@ -38,6 +38,7 @@ pub mod search;
 pub mod search_sem;
 pub mod sessions;
 pub mod setup;
+pub mod share_targets;
 pub mod shortcut_sheet;
 pub mod snap;
 pub mod software_update;

@@ -114,6 +114,11 @@ copy.trash_not_moved	That could not be moved to the Trash.	Не удалось �
 copy.share_only_files	Only a file can be shared.	Поделиться можно только файлом.	c274fdc8
 copy.clipboard_unchanged	The clipboard could not be changed.	Не удалось изменить буфер обмена.	87b2db6b
 copy.copy_not_saved	That copy could not be saved.	Не удалось сохранить эту копию.	7534faf1
+copy.share_text_detail	Choose where this goes.	Выберите, куда это отправить.	75a1f895
+copy.share_no_apps	No app here takes this. You can still copy it or save it.	Здесь нет приложения, которое это принимает. Можно скопировать или сохранить.	0fd3c811
+copy.share_text_long	That text is longer than 24 KiB. Share a shorter part.	Этот текст больше 24 KiB. Поделитесь его частью покороче.	7984dc0f
+copy.share_text_odd	That text has characters that cannot be shared.	В этом тексте есть символы, которые нельзя передать.	4bbcaff3
+copy.share_app_not_started	That app could not start. Try another one.	Это приложение не удалось запустить. Попробуйте другое.	196307dd
 installer.secure_boot_title	Change One Startup Setting First	Сначала измените одну настройку загрузки	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	Безопасная загрузка этого компьютера доверяет только Windows, поэтому WolOS пока не может запуститься.	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	WolOS установлена, но ключ восстановления прочитать не удалось. Нажмите «Повторить»: «Перезагрузить» станет доступна, когда ключ будет показан.	87ec9bf0

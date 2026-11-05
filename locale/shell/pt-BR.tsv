@@ -114,6 +114,11 @@ copy.trash_not_moved	That could not be moved to the Trash.	Não foi possível mo
 copy.share_only_files	Only a file can be shared.	Só um arquivo pode ser compartilhado.	c274fdc8
 copy.clipboard_unchanged	The clipboard could not be changed.	Não foi possível alterar a área de transferência.	87b2db6b
 copy.copy_not_saved	That copy could not be saved.	Não foi possível salvar essa cópia.	7534faf1
+copy.share_text_detail	Choose where this goes.	Escolha para onde isto vai.	75a1f895
+copy.share_no_apps	No app here takes this. You can still copy it or save it.	Nenhum app aqui aceita isto. Você ainda pode copiar ou salvar.	0fd3c811
+copy.share_text_long	That text is longer than 24 KiB. Share a shorter part.	Esse texto tem mais de 24 KiB. Compartilhe uma parte menor.	7984dc0f
+copy.share_text_odd	That text has characters that cannot be shared.	Esse texto tem caracteres que não podem ser compartilhados.	4bbcaff3
+copy.share_app_not_started	That app could not start. Try another one.	Esse app não pôde ser iniciado. Tente outro.	196307dd
 installer.secure_boot_title	Change One Startup Setting First	Mude antes um ajuste de inicialização	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	A Inicialização Segura deste computador só confia no Windows, então o WolOS ainda não consegue iniciar.	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	O WolOS está instalado, mas não foi possível ler a chave de recuperação. Clique em Tentar de novo: Reiniciar espera até a chave aparecer.	87ec9bf0
