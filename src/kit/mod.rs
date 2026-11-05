@@ -259,95 +259,6 @@ fn command(argv: &[String], env: &[(String, String)]) -> Option<std::process::Co
     Some(c)
 }
 
-#[cfg(test)]
-mod budget_tests {
-    fn argv(a: &[&str]) -> Vec<String> {
-        a.iter().map(|s| s.to_string()).collect()
-    }
-
-    /// A program file the launch can find by its path.
-    fn program(dir: &std::path::Path, name: &str) -> String {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::create_dir_all(dir).unwrap();
-        let p = dir.join(name);
-        std::fs::write(&p, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        p.to_string_lossy().into_owned()
-    }
-
-    /// Discord from the Dock starts in its budget scope behind `wolos-mm exec-merge --`, every
-    /// program by its path; with Memory Saver off, or Discord excluded, or any other app, the argv
-    /// is untouched.
-    #[test]
-    fn budgeted_apps_start_in_their_scope_only_while_the_saver_is_on() {
-        let dir = std::env::temp_dir().join(format!("wol-kit-budget-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let discord = program(&dir.join("bin"), "discord");
-        let (d, env) = super::launch_plan(argv(&[&discord, "--x"]), &dir, true);
-        assert_eq!(
-            d[..5],
-            ["/usr/bin/wolos-mm", "exec-merge", "--", "/bin/sh", "-c"],
-            "{d:?}"
-        );
-        assert!(d[5].contains("--unit=app-discord-$$.scope"), "{d:?}");
-        assert!(d[5].starts_with("exec '/usr/bin/systemd-run' "), "{d:?}");
-        assert_eq!(d[6..], ["sh".to_owned(), discord.clone(), "--x".to_owned()]);
-        assert!(env.is_empty(), "Electron's shipped rows set no variable");
-        // No wolos-mm on this machine: the same launch without the prefix.
-        let (d, _) = super::launch_plan(argv(&[&discord]), &dir, false);
-        assert_eq!(d[..2], ["/bin/sh", "-c"], "{d:?}");
-        let other = argv(&["gnome-text-editor"]);
-        assert_eq!(super::launch_plan(other.clone(), &dir, true).0, other);
-        let mut p = wol_core::memsaver::Prefs::default();
-        p.set_excluded("discord", true);
-        wol_core::memsaver::save(&dir, &p).unwrap();
-        assert_eq!(
-            super::launch_plan(argv(&[&discord]), &dir, true).0,
-            argv(&[&discord])
-        );
-        p.set_excluded("discord", false);
-        p.enabled = false;
-        wol_core::memsaver::save(&dir, &p).unwrap();
-        assert_eq!(
-            super::launch_plan(argv(&[&discord]), &dir, true).0,
-            argv(&[&discord])
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// A WebKitGTK browser has no budget: it starts where it always did, behind the prefix of its
-    /// class, by its path. A bare name that is nowhere in PATH gets no prefix (exec-merge would
-    /// refuse it).
-    #[test]
-    fn a_known_engine_gets_its_runtime_prefix_by_path() {
-        let dir = std::env::temp_dir().join(format!("wol-kit-runtime-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let mini = program(&dir.join("bin"), "MiniBrowser");
-        let (a, env) = super::launch_plan(argv(&[&mini, "https://discord.com/login"]), &dir, true);
-        assert_eq!(
-            a,
-            argv(&[
-                "/usr/bin/wolos-mm",
-                "exec-merge",
-                "--",
-                &mini,
-                "https://discord.com/login"
-            ])
-        );
-        assert!(env.is_empty());
-        let bare = argv(&["MiniBrowser-not-installed-here"]);
-        assert_eq!(super::launch_plan(bare.clone(), &dir, true).0, bare);
-        let mut p = wol_core::memsaver::Prefs::default();
-        p.enabled = false;
-        wol_core::memsaver::save(&dir, &p).unwrap();
-        assert_eq!(
-            super::launch_plan(argv(&[&mini]), &dir, true).0,
-            argv(&[&mini])
-        );
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
-
 /// What `wol-x11-env` exports to the systemd user manager after every scale change (audit X1-2).
 /// The shell's own environment is from session start and stays without them on purpose (GTK 4
 /// layer surfaces), so every launch reads them fresh and hands them to the app.
@@ -439,6 +350,91 @@ pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A program file the launch can find by its path.
+    fn program(dir: &std::path::Path, name: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    /// Discord from the Dock starts in its budget scope behind `wolos-mm exec-merge --`, every
+    /// program by its path; with Memory Saver off, or Discord excluded, or any other app, the argv
+    /// is untouched.
+    #[test]
+    fn budgeted_apps_start_in_their_scope_only_while_the_saver_is_on() {
+        let dir = std::env::temp_dir().join(format!("wol-kit-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let discord = program(&dir.join("bin"), "discord");
+        let (d, env) = launch_plan(argv(&[&discord, "--x"]), &dir, true);
+        assert_eq!(
+            d[..5],
+            ["/usr/bin/wolos-mm", "exec-merge", "--", "/bin/sh", "-c"],
+            "{d:?}"
+        );
+        assert!(d[5].contains("--unit=app-discord-$$.scope"), "{d:?}");
+        assert!(d[5].starts_with("exec '/usr/bin/systemd-run' "), "{d:?}");
+        assert_eq!(d[6..], ["sh".to_owned(), discord.clone(), "--x".to_owned()]);
+        assert!(env.is_empty(), "Electron's shipped rows set no variable");
+        // No wolos-mm on this machine: the same launch without the prefix.
+        let (d, _) = launch_plan(argv(&[&discord]), &dir, false);
+        assert_eq!(d[..2], ["/bin/sh", "-c"], "{d:?}");
+        let other = argv(&["gnome-text-editor"]);
+        assert_eq!(launch_plan(other.clone(), &dir, true).0, other);
+        let mut p = wol_core::memsaver::Prefs::default();
+        p.set_excluded("discord", true);
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(
+            launch_plan(argv(&[&discord]), &dir, true).0,
+            argv(&[&discord])
+        );
+        p.set_excluded("discord", false);
+        p.enabled = false;
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(
+            launch_plan(argv(&[&discord]), &dir, true).0,
+            argv(&[&discord])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A WebKitGTK browser has no budget: it starts where it always did, behind the prefix of its
+    /// class, by its path. A bare name that is nowhere in PATH gets no prefix (exec-merge would
+    /// refuse it).
+    #[test]
+    fn a_known_engine_gets_its_runtime_prefix_by_path() {
+        let dir = std::env::temp_dir().join(format!("wol-kit-runtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mini = program(&dir.join("bin"), "MiniBrowser");
+        let (a, env) = launch_plan(argv(&[&mini, "https://discord.com/login"]), &dir, true);
+        assert_eq!(
+            a,
+            argv(&[
+                "/usr/bin/wolos-mm",
+                "exec-merge",
+                "--",
+                &mini,
+                "https://discord.com/login"
+            ])
+        );
+        assert!(env.is_empty());
+        let bare = argv(&["MiniBrowser-not-installed-here"]);
+        assert_eq!(launch_plan(bare.clone(), &dir, true).0, bare);
+        let p = wol_core::memsaver::Prefs {
+            enabled: false,
+            ..Default::default()
+        };
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(launch_plan(argv(&[&mini]), &dir, true).0, argv(&[&mini]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The bar's clock must never panic: without a local zone the UTC fallback is a real calendar.
     #[test]

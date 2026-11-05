@@ -13,6 +13,7 @@ pub struct Input {
     helper: std::process::Child,
 }
 
+// The helper and the X server are children of the test: both are killed and reaped when it ends.
 impl Drop for Input {
     fn drop(&mut self) {
         let _ = self.helper.kill();
@@ -95,12 +96,11 @@ pub fn start(base: u32) -> Option<Input> {
     if ready.as_deref() != Some("ready") {
         return None;
     }
-    // SAFETY: called by the including binary's only test, before gtk::init: no other thread of
-    // this process reads the environment yet (Rust 2024 makes set_var unsafe for that reason).
-    unsafe {
-        std::env::set_var("GDK_BACKEND", "x11");
-        std::env::set_var("DISPLAY", &display);
-    }
+    // Before gtk::init, through the one `set_var` of the tests (`broadway.rs`, included beside this).
+    crate::broadway::set_env(&[
+        ("GDK_BACKEND", "x11".as_ref()),
+        ("DISPLAY", display.as_ref()),
+    ]);
     Some(input)
 }
 

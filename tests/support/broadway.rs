@@ -29,7 +29,7 @@ pub fn start(base: u32) -> Option<Display> {
 }
 
 /// [`start`], and `XDG_CONFIG_HOME` pointed at `config` when given (a test that saves settings
-/// and must not touch the real ones), in the same single `unsafe` block.
+/// and must not touch the real ones), through the same [`set_env`].
 pub fn start_with_config(base: u32, config: Option<&Path>) -> Option<Display> {
     let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
     // A candidate looked free when it was checked and may not be when broadwayd binds it (another
@@ -61,16 +61,26 @@ pub fn start_with_config(base: u32, config: Option<&Path>) -> Option<Display> {
                 .any(|l| l.starts_with("Listening on"));
             ready.then_some((d, display))
         })?;
+    set_env(&[
+        ("GDK_BACKEND", "broadway".as_ref()),
+        ("BROADWAY_DISPLAY", display.as_ref()),
+    ]);
+    if let Some(c) = config {
+        set_env(&[("XDG_CONFIG_HOME", c.as_ref())]);
+    }
+    Some(d)
+}
+
+/// Sets the process environment for the toolkit before `gtk::init`: the one `set_var` of the tests
+/// (a second display, the real-input X server of `xinput.rs`, goes through it too).
+pub fn set_env(vars: &[(&str, &std::ffi::OsStr)]) {
     // SAFETY: called by the including binary's only test, before gtk::init: no other thread of
     // this process reads the environment yet (Rust 2024 makes set_var unsafe for that reason).
     unsafe {
-        std::env::set_var("GDK_BACKEND", "broadway");
-        std::env::set_var("BROADWAY_DISPLAY", &display);
-        if let Some(c) = config {
-            std::env::set_var("XDG_CONFIG_HOME", c);
+        for (k, v) in vars {
+            std::env::set_var(k, v);
         }
     }
-    Some(d)
 }
 
 /// Runs the default main context for `ms`: it blocks between events and wakes for its own timer,
