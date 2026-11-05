@@ -1,0 +1,2 @@
+Box.app-window.page.vertical [0,0 480x52]
+  DrawingArea.progress-ring [40,4 24x24]

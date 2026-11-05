@@ -1,0 +1,4 @@
+Box.app-window.page.vertical [0,0 480x34]
+  ProgressBar.horizontal.meter.tone-success [24,4 432x6]
+    Gizmo [24,4 432x6]
+      Gizmo.left [23,3 218x8]

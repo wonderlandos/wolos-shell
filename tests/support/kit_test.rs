@@ -130,6 +130,8 @@ pub struct Tester {
     pub out: PathBuf,
     pub golden: PathBuf,
     pub update: bool,
+    /// The variant the stylesheet is applied for: applying it again is a second of nothing.
+    themed: std::cell::Cell<Option<bool>>,
 }
 
 impl Tester {
@@ -165,11 +167,15 @@ impl Tester {
             out,
             golden,
             update: std::env::var_os("WOL_GOLDEN_UPDATE").is_some(),
+            themed: std::cell::Cell::new(None),
         })
     }
 
     /// The Kit stylesheet on the given theme, with the density rules.
     pub fn theme(&self, variant: Variant) {
+        if self.themed.replace(Some(variant == Variant::Light)) == Some(variant == Variant::Light) {
+            return;
+        }
         let id = if variant == Variant::Light {
             "wol-light"
         } else {
@@ -317,7 +323,7 @@ impl Mounted {
     /// snapshot diff reads in a review.
     pub fn tree(&self) -> String {
         fn lines(n: &shell::layout::Node, depth: usize, out: &mut String) {
-            let leaf = n.path.rsplit(" › ").next().unwrap_or(&n.path);
+            let leaf = sorted_classes(n.path.rsplit(" › ").next().unwrap_or(&n.path));
             let r = n.rect;
             out.push_str(&format!(
                 "{}{leaf} [{},{} {}x{}]{}\n",
@@ -464,6 +470,17 @@ impl Mounted {
         }
         bad
     }
+}
+
+/// `Box.vertical.page.app-window` with its classes in alphabetical order: GTK keeps a node's classes
+/// in the order their names were first seen by the process, which depends on which cases ran before
+/// (a run of one component printed `page.app-window`, a full run `app-window.page`).
+fn sorted_classes(leaf: &str) -> String {
+    let mut parts = leaf.split('.');
+    let head = parts.next().unwrap_or("");
+    let mut classes: Vec<&str> = parts.collect();
+    classes.sort_unstable();
+    std::iter::once(head).chain(classes).collect::<Vec<_>>().join(".")
 }
 
 fn pixels(t: &gdk::Texture) -> (i32, i32, Vec<u8>) {

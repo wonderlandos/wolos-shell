@@ -1,0 +1,5 @@
+Box.app-window.page.vertical [0,0 480x54]
+  SearchEntry.search.search-field [24,4 254x26]
+    Image [33,5 16x24]
+    Text [55,5 214x24]
+      Label "Search" [55,5 214x24]
