@@ -1,0 +1,2 @@
+Box.app-window.page.vertical [0,0 480x48]
+  Label.badge "3".tone-text [24,4 23x20]

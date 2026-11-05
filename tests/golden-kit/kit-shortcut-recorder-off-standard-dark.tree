@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x82]
+  Box.vertical [24,4 432x54]
+    Box.card-list.vertical [24,4 432x54]
+      Box.horizontal.list-row [25,5 430x52]
+        Box.vertical [37,21 282x20]
+          Label "Show Search" [37,21 282x20]
+        Button.shortcut-recorder.text-button [331,19 112x24]
+          Label.dim-label "Off" [340,21 94x20]

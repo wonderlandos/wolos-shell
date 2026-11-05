@@ -1,0 +1,3 @@
+Box.app-window.page.vertical [0,0 480x52]
+  Button.btn.btn-destructive.text-button [24,4 61x24]
+    Label "Install" [36,4 37x24]

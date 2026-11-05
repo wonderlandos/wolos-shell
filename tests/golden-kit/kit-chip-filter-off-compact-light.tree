@@ -1,5 +1,5 @@
-Box.vertical.page.app-window [0,0 480x48]
-  Box.horizontal.chip-set [24,4 69x20]
-    ToggleButton.toggle.chip.chip-filter [24,4 69x20]
+Box.app-window.page.vertical [0,0 480x48]
+  Box.chip-set.horizontal [24,4 69x20]
+    ToggleButton.chip.chip-filter.toggle [24,4 69x20]
       Box.horizontal [32,4 53x20]
         Label "Installed" [32,4 53x20]

@@ -1,5 +1,5 @@
-Box.vertical.page.app-window [0,0 480x56]
+Box.app-window.page.vertical [0,0 480x56]
   Box.horizontal.section-header [24,4 432x28]
     Label.heading "Recently Added" [24,4 357x28]
-    Button.text-button.btn.btn-plain [389,6 67x24]
+    Button.btn.btn-plain.text-button [389,6 67x24]
       Label "See All" [401,6 43x24]

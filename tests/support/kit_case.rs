@@ -36,6 +36,8 @@ pub struct Built {
     pub probe: gtk::Widget,
     pub log: Log,
     pub done: Rc<RefCell<Option<Done>>>,
+    /// The state is a state of the keyboard focus (a recorder listening): its picture keeps the focus.
+    pub holds_focus: bool,
 }
 
 impl Built {
@@ -46,7 +48,13 @@ impl Built {
             probe: probe.as_ref().clone(),
             log: Rc::default(),
             done: Rc::default(),
+            holds_focus: false,
         }
+    }
+    /// The picture of this state is taken with the focus where the case put it.
+    pub fn holding_focus(mut self) -> Built {
+        self.holds_focus = true;
+        self
     }
     /// Keeps `x` alive as long as the case.
     pub fn keeping(mut self, x: impl std::any::Any) -> Built {
@@ -300,8 +308,11 @@ fn component_cases(t: &Tester, c: &Component, only: Option<&str>, run: &mut Run)
                 // The picture is of the state as built, before the case acts on it.
                 if (c.picture)(state) {
                     // At rest: a freshly presented window hands the focus to its first control
-                    // (a field drew its ring and selected its text in the picture).
-                    m.unfocus();
+                    // (a field drew its ring and selected its text in the picture), except a state
+                    // that is the focus itself: a recorder listening ends when it loses the focus.
+                    if !b.holds_focus {
+                        m.unfocus();
+                    }
                     run.bad.extend(m.golden(t, &name));
                 }
                 one_case(t, c, &spec, state, frame, &b, &m, &name, run);
@@ -369,11 +380,12 @@ fn one_case(
     }
     // At standard density the control is the probe's own size (sizes.regular); the control height
     // of the other densities is held here.
-    if c.control && f.density != Density::Standard {
-        if let Some(want) = dim(spec, &["density", dn, "control"]) {
-            let (_, _, _, ph) = m.rect(&b.probe);
-            run.hold(id, &format!("{dn}.control"), ph, want);
-        }
+    if c.control
+        && f.density != Density::Standard
+        && let Some(want) = dim(spec, &["density", dn, "control"])
+    {
+        let (_, _, _, ph) = m.rect(&b.probe);
+        run.hold(id, &format!("{dn}.control"), ph, want);
     }
 
     // The layout rules of HIG section 6.

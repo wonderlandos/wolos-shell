@@ -385,6 +385,8 @@ label.assistant-caption { color: var(--dim); font-size: 12px; }
 label.assistant-status { color: var(--dim); font-size: 12px; }
 label.assistant-status.problem,
 label.assistant-caption.problem { color: var(--danger); }
+/* The line under a form row that says what is wrong (assistant::problem_line). */
+label.assistant-problem { color: var(--danger); }
 scrolledwindow.assistant-list { background: var(--card); border: 1px solid var(--line); border-radius: var(--glass-radius-s); }
 /* Theme picker (ui/theme_picker.rs): the card gallery scrolls inside its glass panel. */
 scrolledwindow.theme-gallery { background: none; }

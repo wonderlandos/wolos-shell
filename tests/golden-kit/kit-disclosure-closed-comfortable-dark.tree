@@ -1,4 +1,4 @@
-Box.vertical.page.app-window [0,0 480x76]
+Box.app-window.page.vertical [0,0 480x76]
   Expander.disclosure [24,4 432x48]
     Box.vertical [24,4 432x48]
       Box.horizontal [24,4 432x48]

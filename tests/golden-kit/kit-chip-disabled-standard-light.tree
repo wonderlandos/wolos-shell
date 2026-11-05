@@ -1,5 +1,5 @@
-Box.vertical.page.app-window [0,0 480x52]
-  Box.horizontal.chip-set [24,4 137x24]
+Box.app-window.page.vertical [0,0 480x52]
+  Box.chip-set.horizontal [24,4 137x24]
     Button.chip.chip-assist [24,4 137x24]
       Box.horizontal [32,4 121x24]
         Image [32,8 16x16]

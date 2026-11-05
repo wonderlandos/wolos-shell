@@ -1,0 +1,6 @@
+Box.app-window.page.vertical [0,0 480x104]
+  Box.gauge.vertical [24,4 56x76]
+    Overlay [24,4 56x56]
+      DrawingArea.gauge-ring.tone-accent [24,4 56x56]
+      Label.gauge-value-medium "60%" [37,22 30x20]
+    Label.may-ellipsize "Memory".secondary [24,64 56x16]

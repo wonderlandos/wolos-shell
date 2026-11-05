@@ -1,5 +1,5 @@
-Box.vertical.page.app-window [0,0 480x230]
-  ListView.view.tree [24,4 432x202]
+Box.app-window.page.vertical [0,0 480x230]
+  ListView.tree.view [24,4 432x202]
     ListItemWidget.activatable [29,9 422x32]
       TreeExpander [37,9 406x32]
         BuiltinIcon [37,9 16x32]

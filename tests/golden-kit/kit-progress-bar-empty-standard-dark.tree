@@ -1,0 +1,3 @@
+Box.app-window.page.vertical [0,0 480x34]
+  ProgressBar.horizontal [24,4 432x6]
+    Gizmo.empty [24,4 432x6]

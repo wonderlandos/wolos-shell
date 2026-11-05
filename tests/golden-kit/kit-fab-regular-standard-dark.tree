@@ -1,4 +1,4 @@
-Box.vertical.page.app-window [0,0 480x68]
+Box.app-window.page.vertical [0,0 480x68]
   Button.fab [416,4 40x40]
     Box.horizontal [428,4 16x40]
       Image [428,16 16x16]

@@ -1,5 +1,5 @@
-Box.vertical.page.app-window [0,0 480x175]
-  Box.vertical.glass-panel [48,28 226x99]
+Box.app-window.page.vertical [0,0 480x175]
+  Box.glass-panel.vertical [48,28 226x99]
     Box.vertical [61,41 200x73]
       Button.menu-item [61,41 200x24]
         Box.horizontal [73,43 176x20]

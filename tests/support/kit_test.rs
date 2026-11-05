@@ -329,7 +329,7 @@ impl Mounted {
     /// snapshot diff reads in a review.
     pub fn tree(&self) -> String {
         fn lines(n: &shell::layout::Node, depth: usize, out: &mut String) {
-            let leaf = n.path.rsplit(" › ").next().unwrap_or(&n.path);
+            let leaf = sorted_classes(n.path.rsplit(" › ").next().unwrap_or(&n.path));
             let r = n.rect;
             out.push_str(&format!(
                 "{}{leaf} [{},{} {}x{}]{}\n",
@@ -476,6 +476,20 @@ impl Mounted {
         }
         bad
     }
+}
+
+/// `Box.vertical.page.app-window` with its classes in alphabetical order: GTK keeps a node's classes
+/// in the order their names were first seen by the process, which depends on which cases ran before
+/// (a run of one component printed `page.app-window`, a full run `app-window.page`).
+fn sorted_classes(leaf: &str) -> String {
+    let mut parts = leaf.split('.');
+    let head = parts.next().unwrap_or("");
+    let mut classes: Vec<&str> = parts.collect();
+    classes.sort_unstable();
+    std::iter::once(head)
+        .chain(classes)
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 fn pixels(t: &gdk::Texture) -> (i32, i32, Vec<u8>) {
