@@ -68,8 +68,14 @@ pub struct Client {
     pub address: String,
     pub class: String,
     pub title: String,
-    /// 0 = most recently focused.
-    #[serde(rename = "focusHistoryID", default = "far")]
+    /// 0 = most recently focused. hyprctl says -1 for a window outside the focus history (never
+    /// focused: a `nofocus` window, a tooltip surface); it reads as the farthest, never as the
+    /// most recent one (QA-A10-SD-04: Minimise handed it the keyboard, the switcher put it first).
+    #[serde(
+        rename = "focusHistoryID",
+        default = "far",
+        deserialize_with = "focus_id"
+    )]
     pub focus: i64,
     #[serde(default)]
     pub workspace: WorkspaceRef,
@@ -86,6 +92,12 @@ pub struct Client {
 
 fn far() -> i64 {
     i64::MAX
+}
+
+/// `focusHistoryID`: a negative id (not in the history) is [`far`].
+fn focus_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+    let n = <i64 as serde::Deserialize>::deserialize(d)?;
+    Ok(if n < 0 { far() } else { n })
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]

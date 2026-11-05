@@ -198,6 +198,18 @@ mod tests {
         assert_eq!(names, ["Browser", "Terminal", "Files"]);
     }
 
+    /// QA-A10-SD-04, the switcher's twin: a window with `focusHistoryID: -1` (never focused)
+    /// sorts last, not first.
+    #[test]
+    fn a_never_focused_window_sorts_last() {
+        let j = r#"[{"address":"0x1","class":"tip","title":"","focusHistoryID":-1},
+            {"address":"0x2","class":"foot","title":"~","focusHistoryID":1},
+            {"address":"0x3","class":"atlas","title":"a","focusHistoryID":0}]"#;
+        let got = apps(&crate::hypr::parse_clients(j), &[]);
+        let v: Vec<&str> = got.iter().map(|a| a.address.as_str()).collect();
+        assert_eq!(v, ["0x3", "0x2", "0x1"]);
+    }
+
     #[test]
     fn opens_only_on_a_readable_nonempty_client_list() {
         let one = r#"[{"address":"0x1","class":"foot","title":"~","focusHistoryID":0}]"#;

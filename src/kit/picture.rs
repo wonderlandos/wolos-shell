@@ -90,6 +90,13 @@ fn keep(key: Key, fresh: Fresh) {
 pub fn file_image(path: &str, size: i32) -> gtk::Image {
     let img = gtk::Image::new();
     img.set_pixel_size(size);
+    show_in(&img, path, size);
+    img
+}
+
+/// [`file_image`] into an image that exists (a Dock tile's, a row's): it keeps what it shows
+/// (a theme icon) until the picture arrives, and keeps it for good when the file is refused.
+pub fn show_in(img: &gtk::Image, path: &str, size: i32) {
     let (key, px) = ((path.to_owned(), size), size.saturating_mul(2));
     let known = recall(&key).map(|(t, m)| {
         img.set_paintable(Some(&t));
@@ -102,7 +109,7 @@ pub fn file_image(path: &str, size: i32) -> gtk::Image {
             img.set_paintable(Some(&fresh.0));
             keep(key, fresh);
         }
-        return img;
+        return;
     }
     let weak = img.downgrade();
     glib::spawn_future_local(async move {
@@ -114,7 +121,6 @@ pub fn file_image(path: &str, size: i32) -> gtk::Image {
             keep(key, fresh);
         }
     });
-    img
 }
 
 #[cfg(test)]

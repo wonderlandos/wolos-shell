@@ -1130,8 +1130,9 @@ impl Dock {
             if p.icon.starts_with('/')
                 && let Some(img) = tile_image(&t)
             {
-                // A web app's own icon file (wol_core::webapps::icon_path), not a theme name.
-                img.set_from_file(Some(p.icon));
+                // A web app's own icon file (wol_core::webapps::icon_path), not a theme name: a
+                // download, so bounded and off the GTK thread (QA-A10-SD-02).
+                crate::kit::picture::show_in(&img, p.icon, img.pixel_size());
             }
             let (tile, pp) = (t.clone(), p.clone());
             t.button.connect_clicked(move |_| clicked(&tile, &pp));

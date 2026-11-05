@@ -6,11 +6,23 @@
 //! (Settings: the action, its callback and status line; Control Center: the action and the tile
 //! it holds).
 use crate::system::ActionError;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 /// After this many wrong passwords in a row the sheet stops asking: every waiting change fails
 /// and its control flips back (QA 0.12.0 bug 4: the sheet looped forever).
 pub(crate) const MAX_REFUSALS: u32 = 3;
+
+/// Let-go Allows remembered: far more than can be out at once (one per typed password), so the
+/// sets stay small for a session that asks all day.
+const KEPT_ALLOWS: usize = 16;
+
+/// Adds Allow `n` to `set`, dropping the oldest past [`KEPT_ALLOWS`].
+fn mark(set: &mut BTreeSet<u32>, n: u32) {
+    set.insert(n);
+    while set.len() > KEPT_ALLOWS {
+        set.pop_first();
+    }
+}
 
 /// What the Authenticate sheet does with one answer.
 pub(crate) enum Next<W> {
@@ -34,11 +46,13 @@ pub(crate) struct AuthQueue<W> {
     attempt: u32,
     /// Retries sent with a typed password and not answered yet.
     checking: usize,
-    /// The Allow whose wrong password ended the sheet: its later answers fail at once too.
-    gave_up: u32,
-    /// The Allow the person cancelled while its retries were out ([`Self::cancel`]): a refusal
-    /// for it ends the change as `Cancelled`, not as a wrong password.
-    cancelled: u32,
+    /// The Allows let go (wrong passwords ended the sheet, [`Self::let_go`], [`Self::cancel`]):
+    /// their later refusals finish at once. One set, not one slot: two Allows can be out at once
+    /// and a second let-go forgot the first (QA-A10-SD-03). The last [`KEPT_ALLOWS`] only.
+    gave_up: BTreeSet<u32>,
+    /// The Allows the person cancelled while their retries were out ([`Self::cancel`]): a refusal
+    /// for one ends the change as `Cancelled`, not as a wrong password.
+    cancelled: BTreeSet<u32>,
 }
 
 impl<W> Default for AuthQueue<W> {
@@ -49,8 +63,8 @@ impl<W> Default for AuthQueue<W> {
             counted: 0,
             attempt: 0,
             checking: 0,
-            gave_up: 0,
-            cancelled: 0,
+            gave_up: BTreeSet::new(),
+            cancelled: BTreeSet::new(),
         }
     }
 }
@@ -72,13 +86,16 @@ impl<W> AuthQueue<W> {
         if retry.is_some() {
             self.checking = self.checking.saturating_sub(1);
         }
+        self.next(w, r, retry)
+    }
+    fn next(&mut self, w: W, r: Result<(), ActionError>, retry: Option<u32>) -> Next<W> {
         match r {
             Err(ActionError::NeedsAuth | ActionError::Denied)
-                if retry.is_some() && retry == Some(self.gave_up) =>
+                if retry.is_some_and(|n| self.gave_up.contains(&n)) =>
             {
                 // The person cancelled while the password was being checked: nothing was
                 // changed by them, so no "Incorrect password" (QA-A9-SHELL-01/02).
-                let why = if retry == Some(self.cancelled) {
+                let why = if retry.is_some_and(|n| self.cancelled.contains(&n)) {
                     ActionError::Cancelled
                 } else {
                     ActionError::Denied
@@ -95,7 +112,9 @@ impl<W> AuthQueue<W> {
                 self.waiting.push_back(w);
                 if self.refusals >= MAX_REFUSALS {
                     self.refusals = 0;
-                    self.gave_up = retry.unwrap_or_default();
+                    if let Some(n) = retry {
+                        mark(&mut self.gave_up, n);
+                    }
                     return Next::GiveUp(self.waiting.drain(..).collect());
                 }
                 Next::Ask(if retry.is_some() || e == ActionError::Denied {
@@ -124,8 +143,8 @@ impl<W> AuthQueue<W> {
     pub(crate) fn cancel(&mut self) -> Vec<W> {
         self.refusals = 0;
         if self.checking > 0 {
-            self.gave_up = self.attempt;
-            self.cancelled = self.attempt;
+            mark(&mut self.gave_up, self.attempt);
+            mark(&mut self.cancelled, self.attempt);
         }
         self.waiting.drain(..).collect()
     }
@@ -138,7 +157,7 @@ impl<W> AuthQueue<W> {
     /// instead of bringing the sheet back on whatever page is up then (QA-VIS2-35: it came back
     /// a minute later on Desktop & Dock with the old error line).
     pub(crate) fn let_go(&mut self, n: u32) {
-        self.gave_up = n;
+        mark(&mut self.gave_up, n);
     }
     pub(crate) fn len(&self) -> usize {
         self.waiting.len()
@@ -294,5 +313,60 @@ mod tests {
                 Next::Finish("remote", Err(ActionError::Denied))
             ));
         }
+    }
+
+    /// QA-A10-SD-03: two Allows out at once. Allow 1 (a slow install) was let go by AUTH_HOLD;
+    /// a second change asks, Allow 2 goes out and the person cancels while it is checked. Each
+    /// Allow keeps its own let-go: 2's refusal ends as Cancelled, 1's late refusal as Denied, and
+    /// neither re-asks (a single slot forgot 1 and reopened the sheet).
+    #[test]
+    fn a_cancel_of_a_later_allow_keeps_an_earlier_let_go() {
+        let mut q: AuthQueue<&'static str> = AuthQueue::default();
+        let _ = q.answered("install", Err(ActionError::NeedsAuth), None);
+        let (_, one) = q.allow();
+        q.sent(Some(one));
+        q.let_go(one);
+        let _ = q.answered("remote", Err(ActionError::NeedsAuth), None);
+        let (_, two) = q.allow();
+        q.sent(Some(two));
+        assert!(q.cancel().is_empty());
+        assert!(matches!(
+            q.answered("remote", Err(ActionError::Denied), Some(two)),
+            Next::Finish("remote", Err(ActionError::Cancelled))
+        ));
+        assert!(matches!(
+            q.answered("install", Err(ActionError::Denied), Some(one)),
+            Next::Finish("install", Err(ActionError::Denied))
+        ));
+        assert_eq!((q.len(), q.checking()), (0, 0));
+    }
+
+    /// QA-A10-SD-03, the mirror: a let-go of a later Allow keeps the cancel of an earlier one.
+    #[test]
+    fn a_later_let_go_keeps_an_earlier_cancel() {
+        let mut q: AuthQueue<&'static str> = AuthQueue::default();
+        let _ = q.answered("a", Err(ActionError::NeedsAuth), None);
+        let (_, one) = q.allow();
+        q.sent(Some(one));
+        let _ = q.cancel();
+        let _ = q.answered("b", Err(ActionError::NeedsAuth), None);
+        let (_, two) = q.allow();
+        q.sent(Some(two));
+        q.let_go(two);
+        assert!(matches!(
+            q.answered("a", Err(ActionError::Denied), Some(one)),
+            Next::Finish("a", Err(ActionError::Cancelled))
+        ));
+        assert!(matches!(
+            q.answered("b", Err(ActionError::Denied), Some(two)),
+            Next::Finish("b", Err(ActionError::Denied))
+        ));
+        assert_eq!((q.len(), q.checking()), (0, 0));
+        // The sets keep the last Allows only, however long the session.
+        for n in 3..100 {
+            q.let_go(n);
+        }
+        assert_eq!(q.gave_up.len(), KEPT_ALLOWS);
+        assert!(q.gave_up.contains(&99) && !q.gave_up.contains(&two));
     }
 }

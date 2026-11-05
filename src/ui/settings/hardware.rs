@@ -129,9 +129,9 @@ fn note_step(file: Option<&std::path::Path>, a: &Action) {
     }
 }
 
-/// Packages of this device that are installed now and that Fix installed here: what Undo Fix takes
-/// back. Firmware and driver packages both count; one the log does not name never does.
-pub(crate) fn undo_packages(d: &Device, fixed: &std::collections::BTreeSet<String>) -> Vec<String> {
+/// Packages of this device that are installed now and that Fix installed here. Firmware and
+/// driver packages both count; one the log does not name never does.
+fn fixed_here(d: &Device, fixed: &std::collections::BTreeSet<String>) -> Vec<String> {
     d.packages
         .iter()
         .chain(&d.firmware)
@@ -140,9 +140,32 @@ pub(crate) fn undo_packages(d: &Device, fixed: &std::collections::BTreeSet<Strin
         .collect()
 }
 
+/// What Undo Fix on `d` (one of `all`) takes back: [`fixed_here`], less any package another
+/// device of `all` has installed and lists as its own. Firmware packages are leaves, so pacman
+/// would remove a shared one without a word and the other device would stop (QA-A10-SD-05).
+pub(crate) fn undo_packages(
+    d: &Device,
+    all: &[Device],
+    fixed: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let used_elsewhere = |p: &String| {
+        all.iter().filter(|o| !std::ptr::eq(*o, d)).any(|o| {
+            !o.missing_packages.contains(p) && (o.packages.contains(p) || o.firmware.contains(p))
+        })
+    };
+    fixed_here(d, fixed)
+        .into_iter()
+        .filter(|p| !used_elsewhere(p))
+        .collect()
+}
+
 /// The steps Undo Fix takes: remove those packages.
-pub(crate) fn undo_actions(d: &Device, fixed: &std::collections::BTreeSet<String>) -> Vec<Action> {
-    undo_packages(d, fixed)
+pub(crate) fn undo_actions(
+    d: &Device,
+    all: &[Device],
+    fixed: &std::collections::BTreeSet<String>,
+) -> Vec<Action> {
+    undo_packages(d, all, fixed)
         .into_iter()
         .map(Action::PkgRemove)
         .collect()
@@ -170,7 +193,7 @@ fn subtitle(d: &Device, fixed: &std::collections::BTreeSet<String>) -> String {
                 .driver
                 .as_ref()
                 .map_or("Working".into(), |u| format!("Working · driver {u}"));
-            if undo_packages(d, fixed).is_empty() {
+            if fixed_here(d, fixed).is_empty() {
                 base
             } else {
                 format!("{base} · {}", crate::copy::visual::HW_ADDED_BY_FIX)
@@ -248,12 +271,13 @@ fn run_steps(
 fn device_row(
     e: &Rc<Env>,
     d: &Device,
+    all: &[Device],
     fixed: &std::collections::BTreeSet<String>,
     reload: &Rc<dyn Fn()>,
     status: &gtk::Label,
 ) -> gtk::Widget {
     let steps = fix_actions(d);
-    let undo = undo_actions(d, fixed);
+    let undo = undo_actions(d, all, fixed);
     let control = w::hbox(w::S1);
     if d.state != State::Ready && !steps.is_empty() {
         let (ctx, st, rl) = (e.ctx.clone(), status.clone(), reload.clone());
@@ -388,7 +412,7 @@ fn render(
     if !bad.is_empty() {
         let rows: Vec<gtk::Widget> = bad
             .iter()
-            .map(|d| device_row(e, d, &fixed, reload, status))
+            .map(|d| device_row(e, d, &hw.devices, &fixed, reload, status))
             .collect();
         into.append(&w::section("Needs Attention", &rows));
     }
@@ -401,7 +425,7 @@ fn render(
     if !ready.is_empty() {
         let rows: Vec<gtk::Widget> = ready
             .iter()
-            .map(|d| device_row(e, d, &fixed, reload, status))
+            .map(|d| device_row(e, d, &hw.devices, &fixed, reload, status))
             .collect();
         into.append(&w::section("Devices", &rows));
     }
@@ -610,26 +634,62 @@ mod tests {
         // Fix installed two; one of them is not installed now, one is shipped (never logged).
         let log = set(&["nvidia-open-dkms", "nvidia-utils", "linux-firmware-nvidia"]);
         assert_eq!(
-            undo_packages(&gpu, &log),
+            undo_packages(&gpu, &[], &log),
             ["nvidia-open-dkms", "linux-firmware-nvidia"],
             "installed now and logged"
         );
-        let acts = undo_actions(&gpu, &log);
+        let acts = undo_actions(&gpu, &[], &log);
         assert!(
             matches!(&acts[..], [Action::PkgRemove(a), Action::PkgRemove(b)]
                 if a == "nvidia-open-dkms" && b == "linux-firmware-nvidia"),
             "{acts:?}"
         );
         // Nothing logged: nothing to undo, so no menu.
-        assert!(undo_actions(&gpu, &set(&[])).is_empty());
+        assert!(undo_actions(&gpu, &[], &set(&[])).is_empty());
         // The log is about this device's packages only.
-        assert!(undo_actions(&Device::default(), &log).is_empty());
+        assert!(undo_actions(&Device::default(), &[], &log).is_empty());
         assert!(
             subtitle(&gpu, &log).ends_with("added by Fix"),
             "{}",
             subtitle(&gpu, &log)
         );
         assert_eq!(subtitle(&gpu, &set(&[])), "Working · driver nvidia");
+    }
+
+    /// QA-A10-SD-05: two devices share one firmware package (one split for a chip's Wi-Fi and
+    /// Bluetooth). Fix on the Wi-Fi installed and logged it; the Bluetooth works with it now.
+    /// Undo Fix on the Wi-Fi keeps it (removing it would stop the Bluetooth with no word), and
+    /// still takes back what only the Wi-Fi uses. Once no other device needs it, it goes.
+    #[test]
+    fn undo_fix_keeps_a_package_another_device_uses() {
+        let wifi = Device {
+            state: State::Ready,
+            packages: vec!["iwd-helper".into()],
+            firmware: vec!["linux-firmware-intel".into()],
+            ..Default::default()
+        };
+        let bt = Device {
+            kind: Kind::Bluetooth,
+            state: State::Ready,
+            firmware: vec!["linux-firmware-intel".into()],
+            ..Default::default()
+        };
+        let log = set(&["iwd-helper", "linux-firmware-intel"]);
+        let all = [wifi.clone(), bt.clone()];
+        assert_eq!(undo_packages(&all[0], &all, &log), ["iwd-helper"]);
+        assert!(
+            matches!(&undo_actions(&all[0], &all, &log)[..], [Action::PkgRemove(a)] if a == "iwd-helper")
+        );
+        // The Bluetooth row does not offer to remove it either: the Wi-Fi uses it.
+        assert!(undo_packages(&all[1], &all, &log).is_empty());
+        // A device that still lacks the package does not hold it.
+        let mut lacking = bt;
+        lacking.missing_packages = vec!["linux-firmware-intel".into()];
+        let all = [wifi, lacking];
+        assert_eq!(
+            undo_packages(&all[0], &all, &log),
+            ["iwd-helper", "linux-firmware-intel"]
+        );
     }
 
     /// The log of what Fix installed: a step that worked is added (installed) or dropped (removed),

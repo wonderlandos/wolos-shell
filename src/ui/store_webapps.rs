@@ -17,6 +17,9 @@ use crate::copy::visual::{
     STORE_WEBAPPS_NOT_MADE, STORE_WEBAPPS_NOT_REMOVED, STORE_WEBAPPS_OWN, STORE_WEBAPPS_OWN_HINT,
     STORE_WEBAPPS_REMOVE, STORE_WEBAPPS_ROW_OWN, STORE_WEBAPPS_TITLE,
 };
+use crate::copy::visual::{
+    STORE_WEBAPPS_DISK_FULL, STORE_WEBAPPS_GONE, STORE_WEBAPPS_NOT_WRITABLE,
+};
 use crate::kit::{form, widgets as w};
 use gtk::prelude::*;
 use std::cell::RefCell;
@@ -169,13 +172,59 @@ fn load() -> Listing {
     }
 }
 
-/// Runs a `wol` line; true when it exited 0. Blocks (the icon download is the slow part).
-fn run(argv: &[String]) -> bool {
+/// What a make (or, `removing`, a remove) that did not exit 0 tells the person: the verb's own
+/// reason when it is one of the sentences it gives (`wol: <message>` on stderr), else the
+/// generic one. `out` = exit status and stderr; None = it never answered.
+pub fn failure(out: Option<(i32, &str)>, removing: bool) -> String {
+    let generic = if removing {
+        STORE_WEBAPPS_NOT_REMOVED
+    } else {
+        STORE_WEBAPPS_NOT_MADE
+    };
+    let Some((_, err)) = out else {
+        return generic.into();
+    };
+    let Some(said) = err
+        .lines()
+        .rev()
+        .find_map(|l| l.trim().strip_prefix("wol: "))
+        .map(str::trim)
+    else {
+        return generic.into();
+    };
+    // The verb's own reasons (`webapps::Error`), in the page's words: a name taken (by a file
+    // that is not one of the listed web apps, so [`check`] could not see it), one already gone.
+    if let Some(n) = said
+        .strip_prefix("A web app named \"")
+        .and_then(|s| s.strip_suffix("\" already exists."))
+    {
+        return STORE_WEBAPPS_EXISTS.replace("{n}", n);
+    }
+    if removing && said.starts_with("There is no web app named ") {
+        return STORE_WEBAPPS_GONE.into();
+    }
+    // An OS error after the path (the verb prints `io::Error` as std writes it): say what it
+    // means for the person, not the errno. ENOSPC, EACCES, EROFS (the same numbers on Linux and
+    // the BSDs).
+    let os = |code: i32| said.contains(&std::io::Error::from_raw_os_error(code).to_string());
+    if !removing && os(28) {
+        return STORE_WEBAPPS_DISK_FULL.into();
+    }
+    if !removing && (os(13) || os(30)) {
+        return STORE_WEBAPPS_NOT_WRITABLE.into();
+    }
+    generic.into()
+}
+
+/// Runs a `wol` line; Err = the sentence for the status line ([`failure`]). Blocks (the icon
+/// download is the slow part).
+fn run(argv: &[String], removing: bool) -> Result<(), String> {
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
-    matches!(
-        wol_core::system::run_full(&a, None, CHANGE_WAIT),
-        Ok((0, _, _))
-    )
+    match wol_core::system::run_full(&a, None, CHANGE_WAIT) {
+        Ok((0, _, _)) => Ok(()),
+        Ok((code, _, err)) => Err(failure(Some((code, &err)), removing)),
+        Err(_) => Err(failure(None, removing)),
+    }
 }
 
 type Show = Rc<dyn Fn(Listing)>;
@@ -280,16 +329,17 @@ pub(super) fn page(sh: &Rc<Shared>) -> (gtk::Box, Show) {
             );
             let shown = form.name.trim().to_string();
             super::plugins::off_ui(
-                move || run(&argv),
-                move |ok| {
+                move || run(&argv, false),
+                move |done| {
                     make.set_sensitive(true);
                     make.set_label(STORE_WEBAPPS_MAKE);
-                    if ok {
-                        name.set_text("");
-                        address.set_text("");
-                        say(&status, &STORE_WEBAPPS_MADE.replace("{n}", &shown));
-                    } else {
-                        say(&status, STORE_WEBAPPS_NOT_MADE);
+                    match done {
+                        Ok(()) => {
+                            name.set_text("");
+                            address.set_text("");
+                            say(&status, &STORE_WEBAPPS_MADE.replace("{n}", &shown));
+                        }
+                        Err(why) => say(&status, &why),
                     }
                     if let Some(r) = reload.borrow().as_ref() {
                         r();
@@ -371,9 +421,9 @@ fn row_widget(r: &Row, status: &gtk::Label, reload: &Reload) -> gtk::Widget {
             let (st, rl) = (st.clone(), rl.clone());
             let argv = remove_argv(&id);
             super::plugins::off_ui(
-                move || run(&argv),
-                move |ok| {
-                    say(&st, if ok { "" } else { STORE_WEBAPPS_NOT_REMOVED });
+                move || run(&argv, true),
+                move |done| {
+                    say(&st, done.err().as_deref().unwrap_or(""));
                     if let Some(r) = rl.borrow().as_ref() {
                         r();
                     }
@@ -392,15 +442,13 @@ fn row_widget(r: &Row, status: &gtk::Label, reload: &Reload) -> gtk::Widget {
         more.as_ref().map(|m| m.upcast_ref()),
     );
     if r.icon.starts_with('/') {
-        // A picture file (the site's own icon, or one chosen): drawn at the row's icon size. Only
-        // a small one is read on the spot (the downloaded icons are at most `MAX_ICON_BYTES`, the
-        // Dock does the same); a large file of the person's keeps the generic icon.
-        let small = std::fs::metadata(&r.icon).is_ok_and(|m| m.len() <= webapps::MAX_ICON_BYTES);
+        // A picture file (the site's own icon, or one chosen): outside input, so it goes through
+        // `kit::picture` (bounded, decoded at the row's size off the GTK thread; QA-A10-SD-02: a
+        // 1 MiB PNG claiming 12000x12000 froze the Store). The generic icon until it arrives,
+        // and for good if the file is refused.
         let img = gtk::Image::from_icon_name(icon_name(&r.icon));
-        if small {
-            img.set_from_file(Some(&r.icon));
-        }
         img.set_pixel_size(w::ICON);
+        crate::kit::picture::show_in(&img, &r.icon, w::ICON);
         row.prepend(&img);
     }
     row.upcast()
@@ -546,5 +594,54 @@ mod tests {
             remove_argv("mail")[..4],
             ["wol", "webapp", "remove", "--json"]
         );
+    }
+
+    /// QA-A10-SD-06: a make or a remove that failed says why, from the verb's own reason
+    /// (`wol: <message>` on stderr): a name taken by a file that is not a web app, a full disk, a
+    /// folder that cannot be written, a web app already gone. A reason the page does not know,
+    /// or no answer, keeps the generic sentence; every sentence passes the copy lint.
+    #[test]
+    fn a_failed_change_says_why() {
+        let exists = webapps::Error::Exists("Mail".into()).to_string();
+        let gone = webapps::Error::NotFound("mail".into()).to_string();
+        let os = |n| std::io::Error::from_raw_os_error(n);
+        let full = format!(
+            "wol: /home/a/.local/share/applications/wol-webapp-mail.desktop: {}\n",
+            os(28)
+        );
+        let ro = format!("wol: web app profile folder: {}\n", os(13));
+        for (out, removing, want) in [
+            (
+                Some((65, format!("wol: {exists}\n"))),
+                false,
+                STORE_WEBAPPS_EXISTS.replace("{n}", "Mail"),
+            ),
+            (Some((1, full)), false, STORE_WEBAPPS_DISK_FULL.into()),
+            (Some((1, ro)), false, STORE_WEBAPPS_NOT_WRITABLE.into()),
+            (
+                Some((69, format!("noise\nwol: {gone}\n"))),
+                true,
+                STORE_WEBAPPS_GONE.into(),
+            ),
+            (
+                Some((1, "wol: something new\n".into())),
+                false,
+                STORE_WEBAPPS_NOT_MADE.into(),
+            ),
+            (
+                Some((1, String::new())),
+                true,
+                STORE_WEBAPPS_NOT_REMOVED.into(),
+            ),
+            (None, false, STORE_WEBAPPS_NOT_MADE.into()),
+        ] {
+            let got = failure(out.as_ref().map(|(c, e)| (*c, e.as_str())), removing);
+            assert_eq!(got, want, "{out:?}");
+            assert!(
+                crate::copy::lint(&got).is_empty(),
+                "{got}: {:?}",
+                crate::copy::lint(&got)
+            );
+        }
     }
 }

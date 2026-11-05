@@ -11,7 +11,7 @@ mod scan;
 use std::collections::BTreeMap;
 
 /// Calls that wait on another process, a socket or the disk.
-const BLOCKING: [&str; 27] = [
+const BLOCKING: [&str; 29] = [
     "hypr::request(",
     "hypr::clients(",
     // The typed requests in `shell::hypr` (R2A-17) wait on the compositor too.
@@ -37,6 +37,10 @@ const BLOCKING: [&str; 27] = [
     "packs::themes(",
     // A whole picture decoded (any size), and Machine calls that run systemctl or stat (S7-4/S7-7).
     "Pixbuf::from_file",
+    // A whole picture file decoded into an Image or a Texture (QA-A10-SD-02: Store > Web Apps
+    // and the Dock read a downloaded site icon on the spot; `kit::picture::file_image` is the way).
+    "set_from_file(",
+    "Texture::from_filename(",
     ".auto_updates(",
     ".boot_key_pending(",
     // `System::undo/history/boot_environments` read and write the journal and run the reloads
@@ -71,7 +75,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 41] = [
+const BASELINE: [(&str, usize); 44] = [
     // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
     // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
     // cannot follow a call into another file); each row only shrinks.
@@ -105,7 +109,12 @@ const BASELINE: [(&str, usize); 41] = [
     ("ui/first_login.rs", 2),
     ("widgets/weather.rs", 1),
     // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).
-    ("kit/assistant.rs", 1),
+    // + Texture::from_filename (QA-A10-SD-02 needle, counted 2026-11-05): the shipped illustration
+    // SVG of `surface`, an image file of the package, not outside input.
+    ("kit/assistant.rs", 2),
+    // Texture::from_filename (QA-A10-SD-02 needle, counted 2026-11-05): the MPRIS art file a media
+    // app names, outside input decoded on the spot; reported to the CTO as a kit::picture follow-up.
+    ("kit/controls.rs", 1),
     ("kit/data.rs", 1),
     // wallpaper_choice: one small config file at desktop build and on change.
     ("kit/pickers.rs", 1),
@@ -119,6 +128,9 @@ const BASELINE: [(&str, usize); 41] = [
     // (frozen 2026-11-02).
     ("kit/widgets.rs", 1),
     ("ui/analyze.rs", 1),
+    // Texture::from_filename (QA-A10-SD-02 needle, counted 2026-11-05): the screenshot the shell
+    // just took (thumbnail) and the one Markup opens, pictures of this screen it made itself.
+    ("ui/capture.rs", 2),
     // register_icons: the few small SVG files of a Kit window's named icons, read from the local theme
     // when the window is mounted (WOLKIT-1TO1; INT-2: a row, the page cannot draw an icon it has not read).
     ("ui/app_wolkit.rs", 1),
@@ -142,6 +154,10 @@ const BASELINE: [(&str, usize); 41] = [
     // local screenshot's Pixbuf::from_file_at_scale (S7-4 token, frozen 2026-11-02); a remote
     // screenshot is already decoded in `gio::spawn_blocking`.
     ("ui/store/details.rs", 2),
+    // Texture::from_filename (QA-A10-SD-02 needle, counted 2026-11-05): a tray item's icon given
+    // as a file path, outside input decoded on the spot; reported to the CTO as a kit::picture
+    // follow-up.
+    ("ui/tray_items.rs", 1),
 ];
 
 /// The name of the `fn` that encloses line `i` (0-based), if any.

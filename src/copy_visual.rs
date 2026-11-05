@@ -62,6 +62,14 @@ pub const STORE_WEBAPPS_EXISTS: &str =
 /// The make or the remove did not complete.
 pub const STORE_WEBAPPS_NOT_MADE: &str = "The web app was not made, so nothing changed. Try again.";
 pub const STORE_WEBAPPS_NOT_REMOVED: &str = "The web app was not removed. Try again.";
+/// The make stopped because the disk is full (QA-A10-SD-06).
+pub const STORE_WEBAPPS_DISK_FULL: &str =
+    "The web app was not made because the disk is full. Free some space, then try again.";
+/// The make could not write its files in this account's folders (QA-A10-SD-06).
+pub const STORE_WEBAPPS_NOT_WRITABLE: &str =
+    "The web app was not made because its folder cannot be changed. Nothing else changed.";
+/// The remove found no such web app: it was already removed (QA-A10-SD-06).
+pub const STORE_WEBAPPS_GONE: &str = "That web app was already removed.";
 /// The list could not be read.
 pub const STORE_WEBAPPS_NO_LIST: &str = "Your web apps could not be listed. Try again.";
 /// After a make; `{n}` is the name.
@@ -83,7 +91,7 @@ pub const STORE_PLUGINS_ADD_REFUSED: &str =
     "That file is not a plugin WolOS can add. Nothing was changed.";
 
 /// Every sentence above that is a sentence (not a title or a progress line).
-pub const ALL: [&str; 21] = [
+pub const ALL: [&str; 24] = [
     HW_DRIVER_OFF_NAMED,
     HW_NEEDS_DRIVER_NAMED,
     HW_NEEDS_FIRMWARE_NAMED,
@@ -100,6 +108,9 @@ pub const ALL: [&str; 21] = [
     STORE_WEBAPPS_EXISTS,
     STORE_WEBAPPS_NOT_MADE,
     STORE_WEBAPPS_NOT_REMOVED,
+    STORE_WEBAPPS_DISK_FULL,
+    STORE_WEBAPPS_NOT_WRITABLE,
+    STORE_WEBAPPS_GONE,
     STORE_WEBAPPS_NO_LIST,
     STORE_WEBAPPS_MADE,
     STORE_PLUGINS_UNSIGNED_DETAIL,

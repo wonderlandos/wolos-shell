@@ -1095,6 +1095,31 @@ mod tests {
         )));
     }
 
+    /// QA-A10-SD-04: hyprctl prints `focusHistoryID: -1` for a window outside the focus history
+    /// (never focused: a `nofocus` window, a tooltip surface). It is not the most recent one:
+    /// Minimise hands the keyboard to the window last used before the front one.
+    #[test]
+    fn a_window_outside_the_focus_history_does_not_get_the_keyboard() {
+        let ws = r#""workspace":{"id":1,"name":"1"},"size":[400,300]"#;
+        let j = format!(
+            r#"[{{"address":"0xa","class":"foot","title":"t","focusHistoryID":0,{ws}}},
+                {{"address":"0xt","class":"tip","title":"","focusHistoryID":-1,{ws}}},
+                {{"address":"0xb","class":"atlas","title":"t","focusHistoryID":1,{ws}}}]"#
+        );
+        let all = crate::hypr::parse_clients(&j);
+        assert_eq!(all.len(), 3);
+        assert_eq!(
+            next_focus(&all[0], &all, &|_| false).map(|c| c.address.as_str()),
+            Some("0xb")
+        );
+        assert_eq!(
+            batch(Act::Minimise, &all[0], &all, ZONE).as_deref(),
+            Some(
+                "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa;dispatch focuswindow address:0xb"
+            )
+        );
+    }
+
     #[test]
     fn fill_and_centre_respect_the_title_bar() {
         let front = c("0xa", "foot", "1");
