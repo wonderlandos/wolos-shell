@@ -9,7 +9,7 @@ use super::*;
 use wol_core::security::{self, Check, Enforcement};
 
 /// (capability, title, what it allows): `wol_core::consent::CAPABILITIES` in words.
-pub(crate) const KINDS: [(&str, &str, &str); 25] = [
+pub(crate) const KINDS: [(&str, &str, &str); 29] = [
     (
         "notifications",
         "Notifications",
@@ -134,6 +134,14 @@ pub(crate) const KINDS: [(&str, &str, &str); 25] = [
         "trash",
         "Move to Trash",
         "Can move your files to the Trash. You can put them back from there.",
+    ),
+    ("media", "Media Controls", crate::copy::PRIVACY_MEDIA),
+    ("recents", "Recent Files", crate::copy::PRIVACY_RECENTS),
+    ("print", "Printing", crate::copy::PRIVACY_PRINT),
+    (
+        "color-picker",
+        "Color Picker",
+        crate::copy::PRIVACY_COLOR_PICKER,
     ),
 ];
 
