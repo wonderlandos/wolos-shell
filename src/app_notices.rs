@@ -197,6 +197,8 @@ struct BusSide {
     ids: Arc<Mutex<Ids>>,
     /// False once the signal thread ended (the bus went away): open a new side.
     alive: Arc<AtomicBool>,
+    /// The bus address (None: the session bus), for the players apps publish.
+    address: Option<String>,
 }
 
 impl BusSide {
@@ -221,7 +223,12 @@ impl BusSide {
             signal_loop(signals, &i, &wold);
             a.store(false, Ordering::Relaxed);
         });
-        Ok(Self { proxy, ids, alive })
+        Ok(Self {
+            proxy,
+            ids,
+            alive,
+            address: dbus.map(str::to_owned),
+        })
     }
 
     fn alive(&self) -> bool {
@@ -274,6 +281,8 @@ pub fn run(wold: &Path, dbus: Option<&str>) -> Result<(), Stop> {
 fn bridge(s: std::os::unix::net::UnixStream, bus: &BusSide, wold: &Path) -> Result<(), Stop> {
     let (proxy, ids) = (&bus.proxy, &bus.ids);
     let uid = shared::sys::euid();
+    // The players apps publish (libwol 1.16): up while this subscription lasts.
+    let mut players = crate::app_media::Players::new(wold.to_path_buf(), bus.address.clone());
     // STANDARDS 7.1 "Line protocols" (R2C-18): every event line is bounded. The subscription has
     // no idle timeout: wold sends nothing while nothing happens, and a dropped subscription would
     // miss the next ask; the total is unbounded for the same reason (a session lasts days).
@@ -291,6 +300,9 @@ fn bridge(s: std::os::unix::net::UnixStream, bus: &BusSide, wold: &Path) -> Resu
             if u == uid {
                 crate::app_session::answer_later(wold.to_path_buf(), id, ask);
             }
+            continue;
+        }
+        if players.event(&event, uid) {
             continue;
         }
         if let Event::NotificationWithdrawn { uid: u, id } = event {
