@@ -9,8 +9,7 @@ use wol_core::memsaver::{self as ms, Prefs};
 
 /// What Memory Saver does, in plain words, with the memory it is saving right now.
 pub(crate) fn summary(enabled: bool, st: Option<&Status>) -> String {
-    const WHAT: &str =
-        "Apps you aren’t using give their memory back and get it back the moment you return.";
+    const WHAT: &str = crate::copy::settings::MEMSAVER_ABOUT;
     match st.filter(|s| enabled && s.enabled && s.saved > 0) {
         Some(s) => format!("Saving {} now. {WHAT}", ms::size(s.saved)),
         None => WHAT.to_string(),
@@ -113,7 +112,7 @@ pub(super) fn section() -> gtk::Box {
     let (nap, nap_line) = form::status_row(
         "",
         "App Nap",
-        "Pauses apps hidden for 10 minutes that aren’t playing sound. They may show notifications late.",
+        crate::copy::settings::MEMSAVER_NAP,
         &nap_toggle,
     );
     nap_line.set_wrap(true);
@@ -172,6 +171,7 @@ mod tests {
             saved,
             memory: 0,
             swap: 0,
+            pageouts: 0,
         }
     }
 
@@ -186,6 +186,24 @@ mod tests {
         assert!(
             s.starts_with("Saving 1.4 GB now. Apps you aren’t using"),
             "{s}"
+        );
+        // One switch, one sentence for what it turns on: giving memory back, sharing identical
+        // memory, and the budget's limit; no word of the mechanisms' own names.
+        let what = summary(true, None);
+        for part in [
+            "give their memory back",
+            "share identical memory",
+            "keeps to a limit",
+        ] {
+            assert!(what.contains(part), "{what}");
+        }
+        for jargon in ["KSM", "page-out", "fault", "cgroup", "zram", "swap", "MADV"] {
+            assert!(!what.contains(jargon), "{what}");
+        }
+        assert!(
+            crate::copy::lint(&s).is_empty(),
+            "{:?}",
+            crate::copy::lint(&s)
         );
         assert!(
             !summary(false, Some(&st)).contains("Saving"),
