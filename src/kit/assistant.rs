@@ -189,6 +189,7 @@ pub fn pager() -> gtk::Stack {
     // opacity until the window closes. Whatever the clock does, the page settles.
     s.connect_visible_child_notify(|s| {
         let weak = s.downgrade();
+        // fixed wait: the page transition plus a slack; the page is settling, nobody reads it yet.
         gtk::glib::timeout_add_local_once(
             std::time::Duration::from_millis(u64::from(PAGE_MS + SETTLE_SLACK_MS)),
             move || {
@@ -364,53 +365,7 @@ impl Card {
         // Not a Tab stop of its own: a focusable scroller was an empty ringed area before the
         // buttons and put every Tab count one off (QA-VIS2-3). Its fields still scroll into view.
         scroll.set_focusable(false);
-        // The bar of a scrolling card takes its width from the viewport (the scroller's least
-        // width does not include it, the horizontal policy being Never), and the content, never
-        // narrower than its own least width, ran under it: "6 of 7" and the ends of lines were
-        // cut. A card that still scrolls a moment after its last change (the first frame has the
-        // height of the screen before, and scrolls for an instant) is wide enough for both, and
-        // stays so until its page goes: wider, the content may stop scrolling, and a card that
-        // took the width back would scroll again.
-        {
-            let (card, sc, top) = (c.downgrade(), scroll.downgrade(), top.downgrade());
-            let pending = Rc::new(std::cell::Cell::new(false));
-            let judge = move || {
-                if pending.replace(true) {
-                    return;
-                }
-                let (card, sc, top, pending) =
-                    (card.clone(), sc.clone(), top.clone(), pending.clone());
-                glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
-                    pending.set(false);
-                    let (Some(card), Some(sc), Some(top)) =
-                        (card.upgrade(), sc.upgrade(), top.upgrade())
-                    else {
-                        return;
-                    };
-                    let a = sc.vadjustment();
-                    if sc.is_mapped() && a.page_size() > 0.0 && a.upper() > a.page_size() + 1.0 {
-                        // Content least width + the card's padding, border and margin (130)
-                        // + the bar.
-                        let bar = sc.vscrollbar().measure(gtk::Orientation::Horizontal, -1).0;
-                        bar_is(
-                            &card,
-                            top.measure(gtk::Orientation::Horizontal, -1).0 + 130 + bar,
-                        );
-                    }
-                });
-            };
-            let j2 = judge.clone();
-            scroll.vadjustment().connect_changed(move |_| judge());
-            scroll
-                .vadjustment()
-                .connect_notify_local(Some("upper"), move |_, _| j2());
-            let card = c.downgrade();
-            scroll.connect_unmap(move |_| {
-                if let Some(card) = card.upgrade() {
-                    bar_is(&card, 0);
-                }
-            });
-        }
+        scroll_width_follows_the_bar(&c, &scroll, &top);
         c.append(&scroll);
         let foot = w::hbox(S3);
         foot.add_css_class("assistant-foot");
@@ -502,6 +457,57 @@ impl Card {
         self.back.set_sensitive(!on);
     }
 }
+
+/// The bar of a scrolling card takes its width from the viewport (the scroller's least
+/// width does not include it, the horizontal policy being Never), and the content, never
+/// narrower than its own least width, ran under it: "6 of 7" and the ends of lines were
+/// cut. A card that still scrolls a moment after its last change (the first frame has the
+/// height of the screen before, and scrolls for an instant) is wide enough for both, and
+/// stays so until its page goes: wider, the content may stop scrolling, and a card that
+/// took the width back would scroll again.
+fn scroll_width_follows_the_bar(c: &gtk::Box, scroll: &gtk::ScrolledWindow, top: &gtk::Box) {
+    let (card, sc, top) = (c.downgrade(), scroll.downgrade(), top.downgrade());
+    let pending = Rc::new(std::cell::Cell::new(false));
+    let judge = move || {
+        if pending.replace(true) {
+            return;
+        }
+        let (card, sc, top, pending) = (card.clone(), sc.clone(), top.clone(), pending.clone());
+        // fixed wait: a settle delay (SCROLL_SETTLE); nobody reads anything while the layout settles.
+        glib::timeout_add_local_once(SCROLL_SETTLE, move || {
+            pending.set(false);
+            let (Some(card), Some(sc), Some(top)) = (card.upgrade(), sc.upgrade(), top.upgrade())
+            else {
+                return;
+            };
+            let a = sc.vadjustment();
+            if sc.is_mapped() && a.page_size() > 0.0 && a.upper() > a.page_size() + 1.0 {
+                // Content least width + the card's padding, border and margin (130)
+                // + the bar.
+                let bar = sc.vscrollbar().measure(gtk::Orientation::Horizontal, -1).0;
+                bar_is(
+                    &card,
+                    top.measure(gtk::Orientation::Horizontal, -1).0 + 130 + bar,
+                );
+            }
+        });
+    };
+    let j2 = judge.clone();
+    scroll.vadjustment().connect_changed(move |_| judge());
+    scroll
+        .vadjustment()
+        .connect_notify_local(Some("upper"), move |_, _| j2());
+    let card = c.downgrade();
+    scroll.connect_unmap(move |_| {
+        if let Some(card) = card.upgrade() {
+            bar_is(&card, 0);
+        }
+    });
+}
+
+/// How long a card's scrolling must have stayed the same before its width is judged.
+// fixed wait: a settle delay; nobody reads anything while the layout settles.
+const SCROLL_SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// The card's least height on a screen `screen` px tall: [`CARD`]'s, or what the screen has left
 /// after an S6 margin above and below (the header and body scroll then, the foot stays).

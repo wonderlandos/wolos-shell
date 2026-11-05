@@ -580,6 +580,7 @@ fn later<T: Send + 'static>(
     let done = Rc::new(Cell::new(false));
     {
         let (s, done) = (spinner.downgrade(), done.clone());
+        // fixed wait: a settle delay; the spinner shows only when the page takes longer than this.
         glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
             if let (false, Some(s)) = (done.get(), s.upgrade()) {
                 s.set_visible(true);
@@ -901,6 +902,7 @@ impl Ctx {
                 go(true);
             } else {
                 let (answered, ran) = (answered.clone(), ran.clone());
+                // fixed wait: "Checking…" shows only for a change nobody has answered by then; no one is reading yet.
                 glib::timeout_add_local_once(CHECKING_AFTER, move || {
                     if !answered.get() {
                         ran.set(true);
@@ -913,6 +915,7 @@ impl Ctx {
         let late = Rc::new(Cell::new(false));
         if let Some(st) = w.status.clone() {
             let answered = answered.clone();
+            // fixed wait: "Checking…" shows only for a change nobody has answered by then; no one is reading yet.
             glib::timeout_add_local_once(CHECKING_AFTER, move || {
                 if !answered.get() {
                     say(&st, crate::copy::CHECKING);
@@ -920,6 +923,7 @@ impl Ctx {
             });
         } else {
             let (answered, late, c) = (answered.clone(), late.clone(), Rc::downgrade(self));
+            // fixed wait: "Checking…" shows only for a change nobody has answered by then; no one is reading yet.
             glib::timeout_add_local_once(CHECKING_AFTER, move || {
                 let Some(c) = c.upgrade() else { return };
                 if !answered.get() {
