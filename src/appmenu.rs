@@ -659,6 +659,21 @@ pub fn same_class(a: &str, b: &str) -> bool {
     a == b || a.to_lowercase() == b.to_lowercase()
 }
 
+/// The window that gets the keyboard once `front` and the windows `gone` says go to the hidden
+/// desktop: the most recently used one still on `front`'s own desktop (a window of another desktop
+/// would switch desktops under the person). None = nothing is left there.
+pub fn next_focus<'a>(
+    front: &Client,
+    clients: &'a [Client],
+    gone: &dyn Fn(&Client) -> bool,
+) -> Option<&'a Client> {
+    clients
+        .iter()
+        .filter(|c| c.address != front.address && !gone(c))
+        .filter(|c| c.workspace.name != HIDDEN && c.workspace.id == front.workspace.id)
+        .min_by_key(|c| c.focus)
+}
+
 /// Compositor `[[BATCH]]` request for `a` on the frontmost window; None = nothing to do.
 pub fn batch(
     a: Act,
@@ -681,6 +696,15 @@ pub fn batch(
         BAR
     };
     let (zx, zy, zw, zh) = zone;
+    // Hiding the focused window leaves the keyboard on it (QA-WM-1): the next window is named.
+    let then_focus = |gone: &dyn Fn(&Client) -> bool, mut cmds: Vec<Dispatch>| {
+        if !cmds.is_empty()
+            && let Some(next) = next_focus(front, clients, gone)
+        {
+            cmds.push(Dispatch::FocusWindow(win(next)));
+        }
+        cmds
+    };
     let cmds: Vec<Dispatch> = match a {
         Act::About | Act::Manual | Act::Shortcuts => return None,
         Act::Settings => vec![Dispatch::SendShortcut {
@@ -688,12 +712,15 @@ pub fn batch(
             key: "comma".into(),
             window: front_win,
         }],
-        Act::Hide => clients
-            .iter()
-            .filter(|c| same_class(&c.class, &front.class))
-            .filter(hide)
-            .map(hide_cmd)
-            .collect(),
+        Act::Hide => then_focus(
+            &|c| same_class(&c.class, &front.class),
+            clients
+                .iter()
+                .filter(|c| same_class(&c.class, &front.class))
+                .filter(hide)
+                .map(hide_cmd)
+                .collect(),
+        ),
         Act::HideOthers => clients
             .iter()
             .filter(|c| !same_class(&c.class, &front.class))
@@ -710,7 +737,7 @@ pub fn batch(
             .filter(|c| same_class(&c.class, &front.class))
             .map(|c| Dispatch::KillWindow(win(c)))
             .collect(),
-        Act::Minimise => vec![hide_cmd(front)],
+        Act::Minimise => then_focus(&|c| c.address == front.address, vec![hide_cmd(front)]),
         // Zoom does nothing to a window in real full screen (the menu greys it out): the toggling
         // `fullscreen 1` dropped it to its floating box instead (audit3 R2A-13).
         Act::Zoom if front.fullscreen == 2 => return None,
@@ -837,6 +864,56 @@ mod tests {
         assert_eq!(parse_verb("fly"), None);
     }
 
+    /// QA-WM-1: a silent move to the hidden desktop leaves the keyboard on the window that went
+    /// (`hyprctl activewindow` = special:hidden, the menu bar still names the app, typing goes into
+    /// a window nobody can see). Minimise and Hide hand focus to the most recently used window left
+    /// on the same desktop, named by address, so a menu click or a stale focus cannot pick another.
+    #[test]
+    fn minimise_and_hide_focus_the_next_window_on_the_desktop() {
+        let mut front = c("0xa", "foot", "1");
+        front.focus = 0;
+        let other = |addr: &str, class: &str, ws: i64, focus: i64| {
+            let mut w = c(addr, class, &ws.to_string());
+            w.workspace.id = ws;
+            w.focus = focus;
+            w
+        };
+        front.workspace.id = 1;
+        let all = [
+            front.clone(),
+            other("0xb", "foot", 1, 3),
+            other("0xc", "atlas", 1, 1),
+            other("0xd", "nautilus", 2, 2),
+            other("0xe", "gimp", 1, 4),
+        ];
+        let b = |a| batch(a, &front, &all, ZONE).unwrap();
+        // Atlas (focus 1) is the next on desktop 1; Files on desktop 2 is more recent than the
+        // others but is another desktop: focusing it would switch desktops.
+        assert_eq!(
+            b(Act::Minimise),
+            "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa;dispatch focuswindow address:0xc"
+        );
+        // Hide: both foot windows go; the focus skips the foot window that is going too.
+        assert_eq!(
+            b(Act::Hide),
+            concat!(
+                "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa;",
+                "dispatch movetoworkspacesilent special:hidden,address:0xb;dispatch focuswindow address:0xc"
+            )
+        );
+        // Hide Others leaves the front window focused: nothing to hand over.
+        assert!(!b(Act::HideOthers).contains("focuswindow"));
+        // Nothing else on the desktop, or only windows already minimised: no focus command, the
+        // compositor leaves the desktop without a focused window.
+        let mut hidden = other("0xf", "gimp", -99, 1);
+        hidden.workspace.name = "special:hidden".into();
+        let alone = [front.clone(), hidden, other("0xd", "nautilus", 2, 2)];
+        assert_eq!(
+            batch(Act::Minimise, &front, &alone, ZONE).as_deref(),
+            Some("[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa")
+        );
+    }
+
     #[test]
     fn batches_target_windows_by_address() {
         let front = c("0xa", "foot", "1");
@@ -849,7 +926,10 @@ mod tests {
         let b = |a| batch(a, &front, &all, ZONE).unwrap();
         assert_eq!(
             b(Act::Hide),
-            "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa;dispatch movetoworkspacesilent special:hidden,address:0xb"
+            concat!(
+                "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa;",
+                "dispatch movetoworkspacesilent special:hidden,address:0xb;dispatch focuswindow address:0xc"
+            )
         );
         // Already hidden windows stay put.
         assert_eq!(
@@ -876,7 +956,7 @@ mod tests {
         );
         assert_eq!(
             b(Act::Minimise),
-            "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa"
+            "[[BATCH]]dispatch movetoworkspacesilent special:hidden,address:0xa;dispatch focuswindow address:0xb"
         );
         // Zoom names its window: `fullscreenstate` alone acts on whatever is focused. An
         // explicit internal mode, not the `fullscreen 1` toggle (audit3 R2A-13).

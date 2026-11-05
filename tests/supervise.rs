@@ -602,9 +602,10 @@ fn the_session_starts_the_supervised_shell() {
     assert_eq!(
         lines,
         // The first sign-in Setup runs first while the session's flag is there (ADR 0013), then the
-        // supervised shell whatever it returned.
+        // supervised shell whatever it returned: as the user unit that restarts a killed supervisor
+        // (QA-LIVE-21), bare only where there is no user manager.
         [
-            r#"exec-once = sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#
+            r#"exec-once = sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; dbus-update-activation-environment --systemd --all; systemctl --user start wolos-shell.service || exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#
         ]
     );
 }
