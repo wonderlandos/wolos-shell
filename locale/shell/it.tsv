@@ -50,6 +50,7 @@ copy.malware_full_note	Downloads about 115 MB once, then about 25 MB a day, and 
 copy.malware_scope	Checks downloads, new programs and removable disks for known malware. New malware can get past it, so be careful with unexpected files.	Controlla download, nuovi programmi e dischi rimovibili alla ricerca di malware noti. I malware nuovi possono sfuggire, quindi fai attenzione ai file inattesi.	e4244102
 copy.dock_downloads_empty	Nothing downloaded yet.	Ancora niente scaricato.	b5edd701
 copy.dock_tile_hint	New windows fill the screen side by side instead of floating.	Le nuove finestre riempiono lo schermo affiancate invece di fluttuare.	c2c0ec64
+copy.dock_snap_hint	Drag a window to a side, a corner or the top to fill that part of the screen. ⌘ and the arrow keys do the same.	Trascina una finestra su un lato, un angolo o in alto per riempire quella parte dello schermo. ⌘ e i tasti freccia fanno lo stesso.	27a6867d
 copy.dock_tiling_shortcuts_hint	Move, resize and focus tiled windows from the keyboard.	Sposta, ridimensiona e attiva le finestre affiancate dalla tastiera.	74be7c76
 copy.dock_add_app_empty	Open the app first, then add it here.	Prima apri l’app, poi aggiungila qui.	26fe2774
 copy.widget_no_room	No room. Remove a widget or pick a smaller size.	Non c’è spazio. Rimuovi un widget o scegli una dimensione più piccola.	a280e054

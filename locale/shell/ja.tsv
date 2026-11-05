@@ -50,6 +50,7 @@ copy.malware_full_note	Downloads about 115 MB once, then about 25 MB a day, and 
 copy.malware_scope	Checks downloads, new programs and removable disks for known malware. New malware can get past it, so be careful with unexpected files.	ダウンロード、新しいプログラム、リムーバブルディスクに既知のマルウェアがないか確認します。新しいマルウェアはすり抜けることがあるので、見覚えのないファイルには注意してください。	e4244102
 copy.dock_downloads_empty	Nothing downloaded yet.	まだ何もダウンロードしていません。	b5edd701
 copy.dock_tile_hint	New windows fill the screen side by side instead of floating.	新しいウインドウは浮かせずに、画面を左右に分けて並びます。	c2c0ec64
+copy.dock_snap_hint	Drag a window to a side, a corner or the top to fill that part of the screen. ⌘ and the arrow keys do the same.	ウインドウを画面の端、角、上部へドラッグすると、その部分いっぱいに広がります。⌘ と矢印キーでも同じ操作ができます。	27a6867d
 copy.dock_tiling_shortcuts_hint	Move, resize and focus tiled windows from the keyboard.	並べたウインドウの移動、サイズ変更、切り替えをキーボードで行います。	74be7c76
 copy.dock_add_app_empty	Open the app first, then add it here.	先にアプリを開いてから、ここに追加してください。	26fe2774
 copy.widget_no_room	No room. Remove a widget or pick a smaller size.	空きがありません。ウィジェットを削除するか、小さいサイズを選んでください。	a280e054

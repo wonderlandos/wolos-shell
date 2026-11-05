@@ -50,6 +50,7 @@ copy.malware_full_note	Downloads about 115 MB once, then about 25 MB a day, and 
 copy.malware_scope	Checks downloads, new programs and removable disks for known malware. New malware can get past it, so be careful with unexpected files.	What the check does, and what it cannot do.	
 copy.dock_downloads_empty	Nothing downloaded yet.	The Downloads stack with nothing in the folder.	40
 copy.dock_tile_hint	New windows fill the screen side by side instead of floating.	Settings > Desktop & Dock, Tile windows.	
+copy.dock_snap_hint	Drag a window to a side, a corner or the top to fill that part of the screen. ⌘ and the arrow keys do the same.	Settings > Desktop & Dock, Snap windows to screen edges.	
 copy.dock_tiling_shortcuts_hint	Move, resize and focus tiled windows from the keyboard.	Settings > Desktop & Dock, Tiling shortcuts.	
 copy.dock_add_app_empty	Open the app first, then add it here.	Keep Floating > Add App with no window open to pick.	61
 copy.widget_no_room	No room. Remove a widget or pick a smaller size.	Edit Widgets: the desktop grid has no free spot of that size.	
