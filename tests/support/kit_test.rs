@@ -130,6 +130,8 @@ pub struct Tester {
     pub out: PathBuf,
     pub golden: PathBuf,
     pub update: bool,
+    /// The variant the stylesheet is applied for: applying it again is a second of nothing.
+    themed: std::cell::Cell<Option<bool>>,
 }
 
 impl Tester {
@@ -165,11 +167,15 @@ impl Tester {
             out,
             golden,
             update: std::env::var_os("WOL_GOLDEN_UPDATE").is_some(),
+            themed: std::cell::Cell::new(None),
         })
     }
 
     /// The Kit stylesheet on the given theme, with the density rules.
     pub fn theme(&self, variant: Variant) {
+        if self.themed.replace(Some(variant == Variant::Light)) == Some(variant == Variant::Light) {
+            return;
+        }
         let id = if variant == Variant::Light {
             "wol-light"
         } else {
@@ -288,6 +294,12 @@ impl Mounted {
     /// Nobody has the keyboard: the picture of a state at rest, without a focus ring.
     pub fn unfocus(&self) {
         gtk::prelude::GtkWindowExt::set_focus(&self.win, None::<&gtk::Widget>);
+        // A field that took the focus selected its text (select on focus); at rest it shows none.
+        for w in self.all() {
+            if let Some(e) = w.dynamic_cast_ref::<gtk::Editable>() {
+                e.select_region(0, 0);
+            }
+        }
         self.settle();
     }
 

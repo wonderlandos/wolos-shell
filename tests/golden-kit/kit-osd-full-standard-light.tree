@@ -1,0 +1,7 @@
+Box.vertical.page.app-window [0,0 480x198]
+  Box.vertical.glass-panel.osd-pill [123,28 234x34]
+    Box.horizontal [132,37 216x16]
+      Image [132,37 16x16]
+      ProgressBar.horizontal [160,42 188x6]
+        Gizmo.full [160,42 188x6]
+          Gizmo.left [160,42 188x6]

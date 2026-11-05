@@ -1,0 +1,4 @@
+Box.vertical.page.app-window [0,0 480x53]
+  Box.vertical [24,4 432x25]
+    Box.horizontal [24,4 432x0]
+    Label.secondary.status-bar "12 items, 3 selected" [24,4 432x25]

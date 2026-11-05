@@ -1,0 +1,6 @@
+Box.vertical.page.app-window [0,0 480x60]
+  Box.horizontal.chip-set [24,4 145x32]
+    Button.chip.chip-assist [24,4 145x32]
+      Box.horizontal [36,4 121x32]
+        Image [36,12 16x16]
+        Label "Add to Calendar" [56,10 101x20]

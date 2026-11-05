@@ -1,0 +1,5 @@
+Box.vertical.page.app-window [0,0 480x48]
+  Box.horizontal.chip-set [24,4 135x20]
+    Button.chip.chip-suggestion [24,4 135x20]
+      Box.horizontal [32,4 119x20]
+        Label "Tomorrow morning" [32,4 119x20]

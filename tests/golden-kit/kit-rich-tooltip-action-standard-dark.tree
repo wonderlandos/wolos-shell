@@ -1,0 +1,6 @@
+Box.vertical.page.app-window [0,0 480x122]
+  Box.vertical.rich-tooltip [24,4 409x94]
+    Label.title "Memory Saver" [37,17 383x20]
+    Label.secondary "Apps you have not used for a while sleep and wake when you open them." [37,41 383x16]
+    Button.text-button.btn.btn-plain [37,61 96x24]
+      Label "Learn More" [49,61 72x24]

@@ -193,6 +193,11 @@ pub fn run_host() -> glib::ExitCode {
                                     source,
                                     key,
                                 },
+                                Act::Picked(widget, key) => FromHost::Picked {
+                                    window,
+                                    widget,
+                                    key,
+                                },
                             })
                         });
                         let view = View::new(&content, sink.clone());

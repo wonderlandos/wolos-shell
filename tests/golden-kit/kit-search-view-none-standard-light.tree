@@ -1,0 +1,7 @@
+Box.vertical.page.app-window [0,0 480x118]
+  Box.vertical.search-view [24,4 432x90]
+    SearchEntry.search-field.search [36,16 408x26]
+      Image [45,17 16x24]
+      Text [67,17 346x24]
+      Image [419,17 16x24]
+    Label.secondary.search-none "No apps match" [36,50 408x32]

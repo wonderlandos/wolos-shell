@@ -1,0 +1,6 @@
+Box.vertical.page.app-window [0,0 480x52]
+  Box.horizontal.breadcrumb [24,4 145x24]
+    Button.text-button.crumb [24,4 59x24]
+      Label "Settings" [28,4 51x24]
+    Image.crumb-separator [87,8 16x16]
+    Label.crumb-current.may-ellipsize "Network" [107,6 62x20]

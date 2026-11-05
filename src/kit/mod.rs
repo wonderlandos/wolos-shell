@@ -2,19 +2,26 @@
 //! Rust port of the React.Iara/IaraKit pieces the shell uses: layer surfaces, theme loading, glass widgets.
 pub mod anim;
 pub mod assistant;
+pub mod calendar;
 pub mod check;
+pub mod choice;
+pub mod collection;
 pub mod column;
 pub mod controls;
 pub mod data;
 pub mod fence;
 pub mod form;
+pub mod groups;
 pub mod lifetime;
 pub mod motion;
+pub mod navigation;
 pub mod patience;
 pub mod pickers;
 pub mod reveal;
+pub mod sheets;
 pub mod style;
 pub mod surface;
+pub mod text;
 pub mod toast;
 pub mod widgets;
 
