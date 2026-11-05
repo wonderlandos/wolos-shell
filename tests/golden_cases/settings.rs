@@ -216,6 +216,7 @@ pub fn checks() {
     terminal_shell_choice_is_saved_or_put_back();
     keyboard_offers_input_methods_only_for_languages_that_need_them();
     default_apps_write_the_choice_and_keep_the_file();
+    the_keyboard_returns_to_the_switch_after_the_password();
 }
 
 /// [`shell::system::Fake`], except that every action succeeds (Settings saves through actions).
@@ -530,6 +531,13 @@ fn modules_run_one_job_at_a_time() {
         .iter()
         .any(|s| s.is_visible() && s.is_spinning());
     assert!(spinning, "a spinner shows while it runs");
+    // QA-VIS2-41: the running row keeps row height (the spinner used to vexpand the row and push
+    // the list off the page).
+    let row = install.parent().expect("the job's line");
+    assert!(
+        !row.compute_expand(gtk::Orientation::Vertical),
+        "the running row asks for no free height"
+    );
     pump(300);
     // The run failed (Fake): the page reloaded and Install is offered again.
     assert!(button(&p, "Install").is_sensitive());
@@ -789,6 +797,50 @@ fn terminal_shell_choice_is_saved_or_put_back() {
         "a choice that could not be saved shows the saved shell again"
     );
     assert!(noted, "and says so");
+}
+
+/// QA-VIS2-34: the right password on the Authenticate sheet turns Remote Login on, the sheet's
+/// line is cleared, and the keyboard is back on the switch (it jumped to the sidebar's search
+/// when the focused password field collapsed with the sheet).
+fn the_keyboard_returns_to_the_switch_after_the_password() {
+    let a = ui::settings::content(
+        std::sync::Arc::new(super::regressions::AsksFirst { then: None }),
+        &ui::settings::Host::demo(),
+    );
+    let win = gtk::Window::builder()
+        .default_width(w::APP_SIZE.0)
+        .default_height(w::APP_SIZE.1)
+        .child(&a.root)
+        .build();
+    win.present();
+    a.open("Sharing");
+    pump(300);
+    let p = a.content.visible_child().expect("a page shows");
+    let s: gtk::Switch = on_row(&p, "Remote Login");
+    s.grab_focus();
+    s.set_active(true);
+    pump(100);
+    let root: gtk::Widget = a.root.clone().upcast();
+    let field = all::<gtk::PasswordEntry>(&root)
+        .into_iter()
+        .find(|f| {
+            f.ancestor(gtk::Revealer::static_type())
+                .and_downcast::<gtk::Revealer>()
+                .is_some_and(|r| r.reveals_child())
+        })
+        .expect("the Authenticate sheet is up");
+    field.set_text("secret");
+    field.emit_by_name::<()>("activate", &[]);
+    pump(300);
+    assert!(s.is_active() && s.state(), "Remote Login is on");
+    let focus = gtk::prelude::GtkWindowExt::focus(&win);
+    assert_eq!(
+        focus.as_ref(),
+        Some(s.upcast_ref::<gtk::Widget>()),
+        "the keyboard is on the switch, not {:?}",
+        focus.as_ref().map(|f| f.type_().name())
+    );
+    win.destroy();
 }
 
 /// Records every action it is asked to perform (and accepts it).

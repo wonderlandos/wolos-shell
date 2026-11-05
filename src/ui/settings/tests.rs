@@ -120,6 +120,8 @@ fn cancel_ends_every_waiting_change_quietly() {
                 a: Action::Wifi(true),
                 done: Rc::new(move |r| log.borrow_mut().push(r)),
                 status: None,
+                why: None,
+                started: None,
             }
         })
         .into();
@@ -185,6 +187,8 @@ fn waiting(a: Action, name: &'static str, log: &Log) -> Waiting {
         a,
         done: Rc::new(move |r| log.borrow_mut().push((name, r))),
         status: None,
+        why: None,
+        started: None,
     }
 }
 

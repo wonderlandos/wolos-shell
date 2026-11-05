@@ -178,6 +178,14 @@ fn zones() -> Vec<String> {
 /// The first screen on 4:3, 1366x768 and a screen smaller than the card (1280x800 at scale 2):
 /// the card keeps its size and the screen scrolls, the buttons stay reachable.
 fn add_fit(v: &mut Vec<Case>) {
+    // QA-DESIGN-17: the recovery key and Restart on the smallest screen the installer takes.
+    v.push(Case {
+        name: "installer-done-key-640x400".into(),
+        size: (640, 400),
+        class: "lock-window",
+        wallpaper: false,
+        build: Box::new(|| installer_at("done-key").root.clone()),
+    });
     for (sw, sh) in [(1024, 768), (1366, 768), (1024, 600), (640, 400)] {
         v.push(Case {
             name: format!("installer-begin-{sw}x{sh}"),
@@ -465,54 +473,82 @@ refuse UntypablePassword
     }
 }
 
+/// Every page the goldens draw, by the name [`at`] knows.
+const PAGES: [&str; 45] = [
+    "begin",
+    "language",
+    "zone",
+    "disk",
+    "method",
+    "method-erase",
+    "replace",
+    "alongside",
+    "manual",
+    "edit",
+    "edit-new",
+    "protect",
+    "protect-password",
+    "protect-off",
+    "account",
+    "summary-alongside",
+    "summary-windows",
+    "summary-erase",
+    "summary-unencrypted",
+    "summary-manual",
+    "summary-bitlocker",
+    "summary-choices",
+    "summary-offline",
+    "secure-boot",
+    "secure-boot-bitlocker",
+    "secure-boot-choice",
+    "secure-boot-choice-on",
+    "secure-boot-already-on",
+    "secure-boot-own-keys",
+    "secure-boot-own-keys-on",
+    "modules",
+    "modules-ticked",
+    "extras",
+    "extras-on",
+    "installing",
+    "done",
+    "done-windows",
+    "done-key",
+    "done-key-screen",
+    "done-secure-off",
+    "failed",
+    "failed-details",
+    "failed-refused",
+    "failed-erase",
+    "key-unread",
+];
+
+/// The installer the goldens draw at `page` (a disk with Windows and Linux, a blank one).
+fn installer_at(page: &str) -> Rc<Installer> {
+    let found = |disk| Found {
+        disk,
+        check: Check::default(),
+    };
+    let first = if page.ends_with("-windows") {
+        dual_small_esp()
+    } else {
+        dual()
+    };
+    let i = Installer::new(
+        &Hints::default(),
+        true,
+        true,
+        zones(),
+        Some(vec![found(first), found(blank())]),
+    );
+    i.with_flow(|f| {
+        f.pick_disk(0);
+        f.draft.set_full_name("Alice Liddell");
+    });
+    at(&i, page);
+    i
+}
+
 pub fn add(v: &mut Vec<Case>) {
-    const PAGES: [&str; 45] = [
-        "begin",
-        "language",
-        "zone",
-        "disk",
-        "method",
-        "method-erase",
-        "replace",
-        "alongside",
-        "manual",
-        "edit",
-        "edit-new",
-        "protect",
-        "protect-password",
-        "protect-off",
-        "account",
-        "summary-alongside",
-        "summary-windows",
-        "summary-erase",
-        "summary-unencrypted",
-        "summary-manual",
-        "summary-bitlocker",
-        "summary-choices",
-        "summary-offline",
-        "secure-boot",
-        "secure-boot-bitlocker",
-        "secure-boot-choice",
-        "secure-boot-choice-on",
-        "secure-boot-already-on",
-        "secure-boot-own-keys",
-        "secure-boot-own-keys-on",
-        "modules",
-        "modules-ticked",
-        "extras",
-        "extras-on",
-        "installing",
-        "done",
-        "done-windows",
-        "done-key",
-        "done-key-screen",
-        "done-secure-off",
-        "failed",
-        "failed-details",
-        "failed-refused",
-        "failed-erase",
-        "key-unread",
-    ];
     for (sw, sh, tag) in [(1280, 800, "1280"), (1024, 640, "1024")] {
         for page in PAGES {
             v.push(Case {
@@ -520,34 +556,239 @@ pub fn add(v: &mut Vec<Case>) {
                 size: (sw, sh),
                 class: "lock-window",
                 wallpaper: false,
-                build: Box::new(move || {
-                    let found = |disk| Found {
-                        disk,
-                        check: Check::default(),
-                    };
-                    let first = if page.ends_with("-windows") {
-                        dual_small_esp()
-                    } else {
-                        dual()
-                    };
-                    let i = Installer::new(
-                        &Hints::default(),
-                        true,
-                        true,
-                        zones(),
-                        Some(vec![found(first), found(blank())]),
-                    );
-                    i.with_flow(|f| {
-                        f.pick_disk(0);
-                        f.draft.set_full_name("Alice Liddell");
-                    });
-                    at(&i, page);
-                    i.root.clone()
-                }),
+                build: Box::new(move || installer_at(page).root.clone()),
             });
         }
     }
     add_fit(v);
     add_empty(v);
     add_done_live(v);
+}
+
+/// QA-DESIGN-17: on a 640x400 screen (the installer's minimum) every page keeps its foot, Back and
+/// Continue, inside the window: the card was 588 high and the foot was cut off with the recovery
+/// key of the last page.
+pub(super) fn every_page_keeps_its_buttons_on_a_640x400_screen() {
+    use gtk::prelude::*;
+    use shell::kit::assistant::{CARD, card_height};
+    assert_eq!(
+        card_height(1080),
+        CARD.1,
+        "a tall screen: the card's own height"
+    );
+    assert_eq!(card_height(400), 400 - 2 * shell::kit::widgets::S6);
+    assert_eq!(card_height(0), CARD.1, "no screen known yet");
+    let (sw, sh) = (640, 400);
+    let mut cut = Vec::new();
+    for page in PAGES {
+        let i = installer_at(page);
+        let frame = gtk::Overlay::new();
+        frame.set_child(Some(&i.root));
+        frame.set_size_request(sw, sh);
+        let win = gtk::Window::builder()
+            .decorated(false)
+            .default_width(sw)
+            .default_height(sh)
+            .child(&frame)
+            .build();
+        win.add_css_class("lock-window");
+        win.present();
+        super::pump(500);
+        let mut boxes: Vec<gtk::Box> = Vec::new();
+        super::find_type(&i.root, &mut boxes);
+        for f in boxes
+            .iter()
+            .filter(|b| b.has_css_class("assistant-foot") && b.is_mapped())
+        {
+            let r = f.compute_bounds(&win).expect("the foot has bounds");
+            if r.y() < 0.0 || r.y() + r.height() > win.height() as f32 + 0.5 {
+                cut.push(format!(
+                    "{page}: foot at y {}..{} in a {}-high window",
+                    r.y(),
+                    r.y() + r.height(),
+                    win.height()
+                ));
+            }
+        }
+        win.destroy();
+    }
+    assert!(cut.is_empty(), "feet off screen: {cut:#?}");
+}
+
+/// QA-VIS2-7/8: on Protect Your Files with Password chosen, Tab from the chosen row goes to the
+/// Password field, then Verify, then the foot; never to a hidden or empty widget, and never past
+/// the fields to Back (Space typed into the password then pressed Back or flipped the choice).
+pub(super) fn protect_tab_goes_through_the_password_fields() {
+    use gtk::prelude::*;
+    let i = installer_at("protect-password");
+    let win = gtk::Window::builder()
+        .decorated(false)
+        .default_width(1280)
+        .default_height(800)
+        .child(&i.root)
+        .build();
+    win.add_css_class("lock-window");
+    win.present();
+    win.set_focus_visible(true);
+    super::pump(500);
+    let mut buttons: Vec<gtk::Button> = Vec::new();
+    super::find_type(&i.root, &mut buttons);
+    let chosen = buttons
+        .iter()
+        .find(|b| {
+            b.has_css_class("assistant-choice") && b.is_mapped() && {
+                let mut l: Vec<gtk::Label> = Vec::new();
+                super::find_type(b.upcast_ref(), &mut l);
+                l.iter().any(|l| l.label() == "Password")
+            }
+        })
+        .expect("the Password row")
+        .clone();
+    chosen.grab_focus();
+    let mut path = Vec::new();
+    for _ in 0..5 {
+        win.child_focus(gtk::DirectionType::TabForward);
+        let f = gtk::prelude::GtkWindowExt::focus(&win).expect("something has the keyboard");
+        let what = f
+            .ancestor(gtk::PasswordEntry::static_type())
+            .and_then(|p| p.downcast::<gtk::PasswordEntry>().ok())
+            .and_then(|p| p.placeholder_text())
+            .map(|t| format!("field {t}"))
+            .or_else(|| {
+                f.downcast_ref::<gtk::Button>()
+                    .and_then(|b| b.label())
+                    .map(|l| format!("button {l}"))
+            })
+            .unwrap_or_else(|| format!("{} {:?}", f.type_().name(), f.css_classes()));
+        assert!(f.is_drawable(), "Tab landed on a hidden widget: {what}");
+        path.push(what);
+    }
+    win.destroy();
+    let at = |what: &str| path.iter().position(|p| p == what);
+    let (pw, verify, back) = (
+        at("field At least 8 characters"),
+        at("field Type it again"),
+        at("button Back"),
+    );
+    assert!(
+        pw.is_some() && pw < verify && verify < back,
+        "Tab goes through Password and Verify before Back: {path:?}"
+    );
+}
+
+/// QA-VIS2-3: no scroller of the assistant is a Tab stop of its own. The card's scroller and the
+/// screen's (`lock-fit`) took the keyboard before the buttons, an empty ringed area, so Tab,
+/// Tab, Shift-Tab, Shift-Tab, Return landed one stop off and started the live desktop on Welcome.
+/// Tab from Install WolOS goes to a button of the page, never to a scroller.
+pub(super) fn welcome_tab_stops_are_its_two_buttons() {
+    use gtk::prelude::*;
+    let i = installer_at("begin");
+    let win = gtk::Window::builder()
+        .decorated(false)
+        .default_width(1280)
+        .default_height(800)
+        .child(&i.root)
+        .build();
+    win.add_css_class("lock-window");
+    win.present();
+    win.set_focus_visible(true);
+    super::pump(500);
+    let mut scrollers: Vec<gtk::ScrolledWindow> = Vec::new();
+    super::find_type(&i.root, &mut scrollers);
+    let stops: Vec<String> = scrollers
+        .iter()
+        .filter(|s| s.is_mapped() && s.is_focusable())
+        .map(|s| format!("{:?}", s.css_classes()))
+        .collect();
+    let mut buttons: Vec<gtk::Button> = Vec::new();
+    super::find_type(&i.root, &mut buttons);
+    buttons
+        .iter()
+        .find(|b| b.label().as_deref() == Some("Install WolOS"))
+        .expect("Install WolOS")
+        .grab_focus();
+    let mut path = Vec::new();
+    for _ in 0..4 {
+        win.child_focus(gtk::DirectionType::TabForward);
+        path.push(
+            gtk::prelude::GtkWindowExt::focus(&win)
+                .map(|f| match f.downcast_ref::<gtk::Button>() {
+                    Some(b) => b.label().map(|l| l.to_string()).unwrap_or_default(),
+                    None => format!("{} {:?}", f.type_().name(), f.css_classes()),
+                })
+                .unwrap_or_default(),
+        );
+    }
+    win.destroy();
+    assert!(stops.is_empty(), "a scroller takes the keyboard: {stops:?}");
+    assert!(
+        path.iter()
+            .all(|p| p == "Install WolOS" || p == "Try WolOS" || p.is_empty()),
+        "Tab left the buttons of the page: {path:?}"
+    );
+}
+
+/// QA-VIS2-10: Continue on Create Your Account with no password says why, as Setup does, and
+/// puts the keyboard in that field.
+pub(super) fn account_without_a_password_says_why() {
+    use gtk::prelude::*;
+    let i = installer_at("account");
+    let win = gtk::Window::builder()
+        .decorated(false)
+        .default_width(1280)
+        .default_height(800)
+        .child(&i.root)
+        .build();
+    win.add_css_class("lock-window");
+    win.present();
+    super::pump(300);
+    i.type_into(Field::FullName, "Alice Liddell");
+    i.next();
+    super::pump(100);
+    let mut labels: Vec<gtk::Label> = Vec::new();
+    super::find_type(&i.root, &mut labels);
+    let said = labels
+        .iter()
+        .any(|l| l.is_mapped() && l.has_css_class("problem") && l.label() == "Choose a password.");
+    let in_field = gtk::prelude::GtkWindowExt::focus(&win)
+        .and_then(|f| f.ancestor(gtk::PasswordEntry::static_type()))
+        .and_then(|p| p.downcast::<gtk::PasswordEntry>().ok())
+        .is_some();
+    win.destroy();
+    assert!(said, "no 'Choose a password.' line after Continue");
+    assert!(in_field, "the keyboard moved to the password field");
+}
+
+/// QA-VIS2-12: the installer card is as tall on every page, so Back and Continue stay where the
+/// pointer left them (Apps was ~500 px, Music and Video Formats ~600). Only the two pages that
+/// carry a recovery key or a log may grow past [`CARD`]'s height.
+pub(super) fn the_card_is_as_tall_on_every_page() {
+    use gtk::prelude::*;
+    use shell::kit::assistant::CARD;
+    let grows = ["done-key-screen", "failed-details"];
+    let mut off = Vec::new();
+    for page in PAGES {
+        let i = installer_at(page);
+        let win = gtk::Window::builder()
+            .decorated(false)
+            .default_width(1280)
+            .default_height(1000)
+            .child(&i.root)
+            .build();
+        win.add_css_class("lock-window");
+        win.present();
+        super::pump(400);
+        let mut boxes: Vec<gtk::Box> = Vec::new();
+        super::find_type(&i.root, &mut boxes);
+        for b in boxes
+            .iter()
+            .filter(|b| b.has_css_class("assistant-card") && b.is_mapped())
+        {
+            if b.height() != CARD.1 && !grows.contains(&page) {
+                off.push(format!("{page}: {} high, not {}", b.height(), CARD.1));
+            }
+        }
+        win.destroy();
+    }
+    assert!(off.is_empty(), "cards of another height: {off:#?}");
 }

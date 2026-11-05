@@ -36,8 +36,10 @@ pub const SIDEBAR_WIDTH: i32 = 240;
 /// Default app window and the narrow size every app must fit (HIG §5).
 pub const APP_SIZE: (i32, i32) = (900, 600);
 pub const APP_NARROW: (i32, i32) = (480, 360);
-/// Below this window width the sidebar collapses.
-pub const NARROW: i32 = 640;
+/// Below this window width the sidebar collapses: it shows only while the content keeps at least
+/// the narrow window's width beside it (QA-DESIGN-19: at 640 the content had 400 px, less than a
+/// 480 window gives it with the sidebar collapsed).
+pub const NARROW: i32 = SIDEBAR_WIDTH + APP_NARROW.0;
 pub const LOCK_FIELD_WIDTH: i32 = 240;
 pub const LOCK_FIELD_HEIGHT: i32 = 40;
 /// Gap between the password field's peek glyph and the submit disc inside the lock pill.
@@ -404,12 +406,13 @@ pub fn caps_lock_note() -> gtk::Label {
     l
 }
 
+/// A spinning ICON_M spinner, centred in its slot. It never expands: inside a row it keeps the row
+/// at row height (QA-VIS2-41); a page that centres one in free space sets vexpand itself.
 pub fn spinner() -> gtk::Spinner {
     let s = gtk::Spinner::builder()
         .spinning(true)
         .halign(gtk::Align::Center)
         .valign(gtk::Align::Center)
-        .vexpand(true)
         .build();
     s.set_size_request(ICON_M, ICON_M);
     s
@@ -1570,10 +1573,30 @@ pub fn progress() -> gtk::ProgressBar {
     p
 }
 
-/// Sheet that slides down from the AppWindow toolbar (HIG §1), centred, fixed width.
+/// Sheet that slides down from the AppWindow toolbar (HIG §1), centred, fixed width. It belongs
+/// to the page it was opened from: Esc closes it, and so does going to another page (QA-VIS2-37:
+/// the New account sheet stayed through Hardware, Keyboard and Printers, under a new
+/// Authenticate sheet, and only its Cancel closed it). Sheets whose closing must end a change
+/// (the Authenticate sheet) are placed with [`toolbar_place`] and handle Esc themselves.
 pub fn toolbar_sheet(aw: &AppWindow, child: &impl IsA<gtk::Widget>) -> gtk::Revealer {
     let r = sheet(child);
     toolbar_place(aw, &r);
+    let weak = r.downgrade();
+    aw.content.connect_visible_child_notify(move |_| {
+        if let Some(r) = weak.upgrade() {
+            r.set_reveal_child(false);
+        }
+    });
+    let key = gtk::EventControllerKey::new();
+    let weak = r.downgrade();
+    key.connect_key_pressed(move |_, k, _, _| match weak.upgrade() {
+        Some(r) if k == gtk::gdk::Key::Escape && r.reveals_child() => {
+            r.set_reveal_child(false);
+            glib::Propagation::Stop
+        }
+        _ => glib::Propagation::Proceed,
+    });
+    aw.root.add_controller(key);
     r
 }
 

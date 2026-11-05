@@ -280,7 +280,8 @@ impl Card {
     ) -> Card {
         let c = w::glass_panel(S6);
         c.add_css_class("assistant-card");
-        c.set_size_request(CARD.0, CARD.1);
+        // The card has the glass panel's S6 margin all round (kit.css): [`card_height`] leaves it.
+        fit_card(&c, art.filter(|_| moment));
         c.set_halign(gtk::Align::Center);
         c.set_valign(gtk::Align::Center);
         // The title row is the entry: icon and title at the upper left, the step at the upper right.
@@ -288,7 +289,11 @@ impl Card {
         row.append(&w::app_icon(HEADER_ICON.get(), ART));
         let t = w::label(title, "large-title");
         t.set_hexpand(true);
-        t.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        // A title that does not fit the row goes on a second line, whole: the card's scrollbar
+        // (when the screen is short) takes 9 px from the row and cut "Change One Startup
+        // Setting First" to "...F..." at 1024x640.
+        t.set_wrap(true);
+        t.set_xalign(0.0);
         row.append(&t);
         let step = w::label("", "assistant-step");
         step.set_xalign(1.0);
@@ -336,8 +341,77 @@ impl Card {
         if moment {
             b.set_valign(gtk::Align::End);
         }
-        c.append(&head);
-        c.append(&b);
+        // The card grows with its content as far as the screen allows; header and body scroll
+        // inside it when the screen is shorter than that; the foot
+        // with Back and Continue stays on screen (QA-DESIGN-17: at 640x400 the card was cut off
+        // with no buttons and half a recovery key). A real scrollbar, only when it scrolls.
+        let top = w::vbox(S6);
+        top.append(&head);
+        top.append(&b);
+        b.set_vexpand(true);
+        let scroll = gtk::ScrolledWindow::builder()
+            .child(&top)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .overlay_scrolling(false)
+            .propagate_natural_height(true)
+            // The card is as wide as its content wants, as before the scroller: the scroller
+            // otherwise reports the content's least width and ellipsizes the title.
+            .propagate_natural_width(true)
+            .vexpand(true)
+            .build();
+        scroll.add_css_class("assistant-scroll");
+        // Not a Tab stop of its own: a focusable scroller was an empty ringed area before the
+        // buttons and put every Tab count one off (QA-VIS2-3). Its fields still scroll into view.
+        scroll.set_focusable(false);
+        // The bar of a scrolling card takes its width from the viewport (the scroller's least
+        // width does not include it, the horizontal policy being Never), and the content, never
+        // narrower than its own least width, ran under it: "6 of 7" and the ends of lines were
+        // cut. A card that still scrolls a moment after its last change (the first frame has the
+        // height of the screen before, and scrolls for an instant) is wide enough for both, and
+        // stays so until its page goes: wider, the content may stop scrolling, and a card that
+        // took the width back would scroll again.
+        {
+            let (card, sc, top) = (c.downgrade(), scroll.downgrade(), top.downgrade());
+            let pending = Rc::new(std::cell::Cell::new(false));
+            let judge = move || {
+                if pending.replace(true) {
+                    return;
+                }
+                let (card, sc, top, pending) =
+                    (card.clone(), sc.clone(), top.clone(), pending.clone());
+                glib::timeout_add_local_once(std::time::Duration::from_millis(250), move || {
+                    pending.set(false);
+                    let (Some(card), Some(sc), Some(top)) =
+                        (card.upgrade(), sc.upgrade(), top.upgrade())
+                    else {
+                        return;
+                    };
+                    let a = sc.vadjustment();
+                    if sc.is_mapped() && a.page_size() > 0.0 && a.upper() > a.page_size() + 1.0 {
+                        // Content least width + the card's padding, border and margin (130)
+                        // + the bar.
+                        let bar = sc.vscrollbar().measure(gtk::Orientation::Horizontal, -1).0;
+                        bar_is(
+                            &card,
+                            top.measure(gtk::Orientation::Horizontal, -1).0 + 130 + bar,
+                        );
+                    }
+                });
+            };
+            let j2 = judge.clone();
+            scroll.vadjustment().connect_changed(move |_| judge());
+            scroll
+                .vadjustment()
+                .connect_notify_local(Some("upper"), move |_, _| j2());
+            let card = c.downgrade();
+            scroll.connect_unmap(move |_| {
+                if let Some(card) = card.upgrade() {
+                    bar_is(&card, 0);
+                }
+            });
+        }
+        c.append(&scroll);
         let foot = w::hbox(S3);
         foot.add_css_class("assistant-foot");
         let back = w::button(crate::i18n::tr("Back"), w::Kind::Default, || {});
@@ -407,6 +481,19 @@ impl Card {
         }
     }
 
+    /// This card is `width` px wide (at most; [`card_width`]) instead of [`CARD`]'s.
+    pub fn widen(&self, width: i32) {
+        CARDS.with_borrow(|cards| {
+            for f in cards
+                .iter()
+                .filter(|f| f.card.upgrade().as_ref() == Some(&self.root))
+            {
+                f.width.set(width);
+                f.fit(SCREEN.get());
+            }
+        });
+    }
+
     /// Working: spinner on, buttons off (and back).
     pub fn set_busy(&self, on: bool) {
         self.busy.set_visible(on);
@@ -414,6 +501,128 @@ impl Card {
         self.next.set_sensitive(!on);
         self.back.set_sensitive(!on);
     }
+}
+
+/// The card's least height on a screen `screen` px tall: [`CARD`]'s, or what the screen has left
+/// after an S6 margin above and below (the header and body scroll then, the foot stays).
+pub fn card_height(screen: i32) -> i32 {
+    if screen <= 0 {
+        return CARD.1;
+    }
+    CARD.1.min(screen - 2 * S6).max(0)
+}
+
+thread_local! {
+    /// The screen height the cards were last shown on (0: not known yet), and every live card:
+    /// the pages of an assistant share one pager, whose hidden pages never map, so they all
+    /// follow the one that does (a hidden 588 page kept the pager 588 high).
+    static SCREEN: std::cell::Cell<(i32, i32)> = const { std::cell::Cell::new((0, 0)) };
+    static CARDS: std::cell::RefCell<Vec<Fitted>> = Default::default();
+}
+
+/// A live card and its moment art (decoration: the first thing to go on a short screen, so the
+/// recovery key of the last page needs no scroll).
+struct Fitted {
+    card: glib::WeakRef<gtk::Box>,
+    art: Option<glib::WeakRef<gtk::Widget>>,
+    /// The card's width: [`CARD`]'s, or what [`Card::widen`] asked for.
+    width: std::cell::Cell<i32>,
+    /// While the card scrolls, the width it needs for its content next to the scrollbar, else 0:
+    /// the bar takes its width from the viewport and the content (never narrower than its least
+    /// width) ran under it, cutting the step "6 of 7" and the end of the lines.
+    bar: std::cell::Cell<i32>,
+}
+
+impl Fitted {
+    /// At [`card_width`] and [`card_height`] of a screen `w` x `h` px; false once the card is gone.
+    fn fit(&self, (w, h): (i32, i32)) -> bool {
+        let Some(c) = self.card.upgrade() else {
+            return false;
+        };
+        c.set_size_request(
+            card_width(self.width.get().max(self.bar.get()), w),
+            card_height(h),
+        );
+        if let Some(a) = self.art.as_ref().and_then(|a| a.upgrade()) {
+            a.set_visible(h <= 0 || card_height(h) >= CARD.1);
+        }
+        true
+    }
+}
+
+/// `card` scrolls and needs `wide` px for its content and the bar (0: it does not scroll).
+/// True when that changed anything.
+fn bar_is(card: &gtk::Box, wide: i32) -> bool {
+    let mut changed = false;
+    CARDS.with_borrow(|cards| {
+        for f in cards
+            .iter()
+            .filter(|f| f.card.upgrade().as_ref() == Some(card))
+        {
+            if f.bar.replace(wide) != wide {
+                changed = true;
+                f.fit(SCREEN.get());
+            }
+        }
+    });
+    changed
+}
+
+/// Every live card at [`card_width`] and [`card_height`] of a screen `w` x `h` px.
+fn screen_is(w: i32, h: i32) {
+    if h <= 0 || SCREEN.replace((w, h)) == (w, h) {
+        return;
+    }
+    CARDS.with_borrow_mut(|cards| cards.retain(|c| c.fit((w, h))));
+}
+
+/// The width a card of `want` px gets on a screen `screen` px wide: `want`, or what the screen has
+/// left after an S6 margin each side, never under [`CARD`]'s.
+pub fn card_width(want: i32, screen: i32) -> i32 {
+    if screen <= 0 {
+        return want;
+    }
+    want.min(screen - 2 * S6).max(CARD.0)
+}
+
+/// A card of the key-screen page is this wide where the screen allows: its numbered steps read
+/// on one line each. (The card measured its content at the height the screen leaves; behind a
+/// scroller that wide natural width is lost, and the page wrapped and scrolled at 1280x800.)
+pub const CARD_WIDE: i32 = 850;
+
+/// [`CARD`]'s size, the height following the screen it is shown on ([`card_height`]): read
+/// once the window has its size (the first frame after the map), then at every resize.
+fn fit_card(c: &gtk::Box, art: Option<&gtk::Widget>) {
+    let f = Fitted {
+        card: c.downgrade(),
+        art: art.map(|a| a.downgrade()),
+        width: std::cell::Cell::new(CARD.0),
+        bar: std::cell::Cell::new(0),
+    };
+    f.fit(SCREEN.get());
+    CARDS.with_borrow_mut(|cards| cards.push(f));
+    let wired = std::cell::Cell::new(false);
+    c.connect_map(move |c| {
+        c.add_tick_callback(|c, _| {
+            match c
+                .root()
+                .map(|r| (r.width(), r.height()))
+                .filter(|s| s.1 > 0)
+            {
+                Some((w, h)) => {
+                    screen_is(w, h);
+                    glib::ControlFlow::Break
+                }
+                None => glib::ControlFlow::Continue,
+            }
+        });
+        if wired.replace(true) {
+            return;
+        }
+        if let Some(surface) = c.native().and_then(|n| n.surface()) {
+            surface.connect_layout(|_, w, h| screen_is(w, h));
+        }
+    });
 }
 
 /// One list row: optional leading icon, title, optional detail on the right.
@@ -636,7 +845,6 @@ pub fn waiting(text: &str) -> gtk::Box {
     b.set_vexpand(true);
     b.add_css_class("assistant-waiting");
     let s = w::spinner();
-    s.set_vexpand(false);
     b.append(&s);
     b.append(&w::centered(text, "assistant-subtitle"));
     b

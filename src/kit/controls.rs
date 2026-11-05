@@ -180,7 +180,6 @@ impl DetailPage {
         status.add_css_class("detail-status");
         let spinner = w::spinner();
         spinner.set_size_request(ICON, ICON);
-        spinner.set_vexpand(false);
         status.append(&spinner);
         let status_text = w::label("", "secondary");
         status_text.set_wrap(true);

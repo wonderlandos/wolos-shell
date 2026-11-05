@@ -149,7 +149,7 @@ fn job_button(
     run: impl Fn(Box<dyn FnOnce()>) + 'static,
 ) -> gtk::Widget {
     let line = w::hbox(w::S2);
-    let spin = w::spinner();
+    let spin = w::busy_spinner();
     let b = w::button(label, kind, || {});
     let running = |on: bool| {
         spin.set_visible(on);

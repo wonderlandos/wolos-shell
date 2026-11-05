@@ -4,11 +4,23 @@
 #[path = "golden_cases/wol_file.rs"]
 mod wol_file;
 
-use shell::ui::store::{PackageFile, TRUST_ROWS, capability_row, package_sheet};
+use shell::ui::store::{PackageFile, TRUST_MISSING, TRUST_ROWS, capability_row, package_sheet};
 use std::path::Path;
 
 fn read(p: &Path, records: &Path) -> PackageFile {
     PackageFile::read_with(p.to_str().unwrap(), &[wol_file::trusted()], records)
+}
+
+/// QA-STORE-40: a file moved or deleted after it was opened says so, not "damaged".
+#[test]
+fn a_file_that_is_gone_is_not_called_damaged() {
+    let d = wol_file::dir("gone");
+    let p = wol_file::write(&d, "Shredder.wol", wol_file::SHREDDER, None, true);
+    std::fs::remove_file(&p).unwrap();
+    let s = package_sheet(&read(&p, &d.join("no-records")));
+    assert_eq!(s.trust, TRUST_MISSING);
+    assert_eq!(s.install, None);
+    assert_eq!(s.name, "Shredder");
 }
 
 #[test]
@@ -79,7 +91,7 @@ fn every_capability_has_a_row_and_the_copy_is_clean() {
         clean(&format!("{l}."));
     }
     assert_eq!(capability_row("root"), None);
-    for (_, title, sentence) in TRUST_ROWS {
+    for (_, title, sentence) in TRUST_ROWS.into_iter().chain([TRUST_MISSING]) {
         clean(&format!("{title}."));
         clean(sentence);
     }

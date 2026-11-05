@@ -584,6 +584,26 @@ pub fn panes(query: &str) -> Vec<&'static str> {
     v
 }
 
+/// The hits by the pane that shows them, panes in order of first hit, a pane's pages in order
+/// of first hit: one section per pane (the results had two "General" headers, one for Software
+/// Update and one for General itself; QA-STORE-83).
+pub(super) fn by_pane(found: &[Hit]) -> Vec<(&'static str, Vec<&'static str>)> {
+    let mut out: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+    for h in found {
+        let pane = super::PAGES
+            .iter()
+            .copied()
+            .find(|x| *x == parent(h.page))
+            .unwrap_or(h.page);
+        match out.iter_mut().find(|(p, _)| *p == pane) {
+            Some((_, pages)) if !pages.contains(&h.page) => pages.push(h.page),
+            Some(_) => {}
+            None => out.push((pane, vec![h.page])),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     /// QA-LIVE-35: "Date" found "Update" (a substring); a query word starts a word now.
@@ -599,6 +619,33 @@ mod tests {
     }
 
     use super::*;
+
+    /// QA-STORE-83: a search whose hits are on a pane and on its subpages gets one header.
+    #[test]
+    fn results_have_one_section_per_pane() {
+        let found = hits("update");
+        // The old grouping made a section per page: two of them under General.
+        let mut general: Vec<&str> = found
+            .iter()
+            .map(|h| h.page)
+            .filter(|p| parent(p) == "General")
+            .collect();
+        general.sort();
+        general.dedup();
+        assert!(
+            general.len() >= 2,
+            "the case needs two General pages: {found:?}"
+        );
+        let sections = by_pane(&found);
+        assert_eq!(sections.iter().filter(|s| s.0 == "General").count(), 1);
+        assert_eq!(
+            sections
+                .iter()
+                .find(|s| s.0 == "General")
+                .map(|s| s.1.len()),
+            Some(general.len())
+        );
+    }
 
     #[test]
     fn every_page_is_indexed_once() {

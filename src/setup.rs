@@ -26,6 +26,9 @@ fn no_match() -> &'static str {
 fn hint_is_password() -> &'static str {
     tr("The hint can’t be the password.")
 }
+fn hint_rule() -> &'static str {
+    tr("Keep the hint short, without colons.")
+}
 
 pub const STEPS: [Step; 7] = [
     Step::Welcome,
@@ -495,7 +498,19 @@ impl Draft {
         if !self.hint.is_empty() && self.hint == self.password {
             return Some((Field::Hint, hint_is_password()));
         }
+        if self.hint_breaks_the_rule() {
+            return Some((Field::Hint, hint_rule()));
+        }
         None
+    }
+
+    /// The hint breaks the core rule for a hint (too long, a colon or a control character), the
+    /// rest of the form aside: a long hint greyed Continue with no sentence (QA-VIS1-3).
+    fn hint_breaks_the_rule(&self) -> bool {
+        let mut only_hint = self.account();
+        (only_hint.name, only_hint.full_name) = ("alice".into(), "Alice".into());
+        !self.hint.is_empty()
+            && wol_core::settings::users::validate_account(&only_hint) == Err("hint")
     }
 
     pub fn tone(&self) -> &'static str {
@@ -1019,9 +1034,23 @@ mod tests {
         assert_eq!(d.typing_problem(), None);
         d.set_name("Alice!");
         assert_eq!(d.typing_problem().map(|p| p.0), Some(Name));
+        d.set_name("white rabbit");
+        assert_eq!(
+            d.typing_problem().map(|p| p.0),
+            Some(Name),
+            "a space in the account name is flagged at the field while typing (QA-VIS2-16)"
+        );
         d.set_name("alice");
         d.hint = "curiouser".into();
         assert_eq!(d.typing_problem().map(|p| p.0), Some(Hint));
+        // QA-VIS1-3: a 90-character hint greyed Continue and no sentence said why.
+        d.hint = "x".repeat(90);
+        assert_eq!(d.typing_problem(), Some((Hint, hint_rule())));
+        assert!(d.account_problem().is_some());
+        d.hint = "the rabbit: white".into();
+        assert_eq!(d.typing_problem(), Some((Hint, hint_rule())));
+        d.hint = "rabbit".into();
+        assert_eq!(d.typing_problem(), None);
     }
 
     /// wol-login as the assistant sees it: records every job, answers from a script.

@@ -181,7 +181,7 @@ pub fn is_running(p: &Pin, classes: &std::collections::HashSet<String>) -> bool 
 }
 
 /// App-ids are mixed case (org.gnome.Nautilus); compare case-insensitively.
-fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
+pub(crate) fn pin_for<'a>(class: &str, pins: &'a [Pin]) -> Option<&'a Pin> {
     pins.iter().find(|p| {
         pin_classes(p).any(|c| c.eq_ignore_ascii_case(class)) || p.name.eq_ignore_ascii_case(class)
     })

@@ -40,18 +40,22 @@ impl Panel {
             .build();
         let history = Rc::new(RefCell::new(history));
         let render: LateRedraw = Default::default();
+        // Clear is off while the history is empty (QA-VIS1-22).
+        let clear = w::button("Clear", w::Kind::Default, || {});
         let draw: Rc<dyn Fn()> = {
-            let (list, history, search, render) = (
+            let (list, history, search, render, clear) = (
                 list.clone(),
                 history.clone(),
                 search.clone(),
                 render.clone(),
+                clear.clone(),
             );
             Rc::new(move || {
                 while let Some(c) = list.first_child() {
                     list.remove(&c);
                 }
                 let h = history.borrow();
+                clear.set_sensitive(!h.entries().is_empty());
                 let query = search.text();
                 let found = h.search(&query);
                 if h.entries().is_empty() {
@@ -67,7 +71,7 @@ impl Panel {
         };
         *render.borrow_mut() = Some(draw.clone());
         let (h2, r2) = (history.clone(), draw.clone());
-        head.append(&w::button("Clear", w::Kind::Default, move || {
+        clear.connect_clicked(move |_| {
             h2.borrow_mut().clear();
             r2();
             // The system selection goes with the history (QA-LN-16): `wl-paste` gave the last text back.
@@ -82,7 +86,8 @@ impl Panel {
                     let _ = cb2.set_content(None::<&gdk::ContentProvider>);
                 }
             });
-        }));
+        });
+        head.append(&clear);
         let r3 = draw.clone();
         search.connect_search_changed(move |_| r3());
         root.append(&head);

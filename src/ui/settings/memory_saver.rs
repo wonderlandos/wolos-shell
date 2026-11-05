@@ -31,8 +31,12 @@ pub(crate) fn app_line(a: &AppStatus) -> String {
     }
 }
 
-/// "discord" -> "Discord", "org.gnome.nautilus" -> "Nautilus".
+/// "discord" -> "Discord", "org.gnome.nautilus" -> "Files": a dock app by its WolOS name, any
+/// other by its id as words (QA-VIS2-43: the list read Foot, Nautilus, Settings, Store).
 pub(crate) fn app_title(id: &str) -> String {
+    if let Some(p) = crate::apps::pin_for(id, crate::apps::PINS) {
+        return p.name.into();
+    }
     let last = id.rsplit('.').next().unwrap_or(id).replace(['_', '-'], " ");
     let last = last.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut c = last.chars();
@@ -228,7 +232,10 @@ mod tests {
         assert_eq!(ids, vec!["code", "discord", "spotify"]);
         assert!(l[2].1.is_none(), "spotify is not open");
         assert_eq!(app_title("discord"), "Discord");
-        assert_eq!(app_title("org.gnome.nautilus"), "Nautilus");
+        assert_eq!(app_title("org.gnome.nautilus"), "Files");
+        assert_eq!(app_title("foot"), "Terminal");
+        assert_eq!(app_title("org.wolos.store"), "App Store");
+        assert_eq!(app_title("org.gnome.eog"), "Eog");
         assert_eq!(app_title("code_-_oss"), "Code oss");
     }
 }

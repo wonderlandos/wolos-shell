@@ -384,6 +384,7 @@ label.assistant-caption.problem { color: var(--danger); }
 scrolledwindow.assistant-list { background: var(--card); border: 1px solid var(--line); border-radius: var(--glass-radius-s); }
 /* Theme picker (ui/theme_picker.rs): the card gallery scrolls inside its glass panel. */
 scrolledwindow.theme-gallery { background: none; }
+scrolledwindow.assistant-scroll { background: none; }
 button.assistant-choice { border-radius: 0; padding: 0; margin: 0; min-height: 0; }
 button.assistant-choice + button.assistant-choice { background: linear-gradient(var(--line), var(--line)) center top / calc(100% - 24px) 1px no-repeat; }
 button.assistant-choice .list-row.assistant-row { min-height: 40px; padding: 0 12px; }

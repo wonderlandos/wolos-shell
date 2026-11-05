@@ -428,7 +428,6 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     text.append(&detail);
     let spin = w::spinner();
     spin.set_spinning(false);
-    spin.set_vexpand(false);
     let head = w::hbox(w::S3);
     head.add_css_class("list-row");
     head.add_css_class("hero-row");

@@ -38,6 +38,7 @@ copy.malware_trash_failed	It couldn’t be moved to the Trash. Try again.	Es kon
 copy.malware_allow_failed	It’s still stopped: WolOS couldn’t allow it. Try again.	Es ist weiterhin blockiert: WolOS konnte es nicht erlauben. Versuche es erneut.	a0df0c16
 copy.privacy_grants_read_only	These permissions can’t be changed from Settings on this computer yet.	Diese Berechtigungen lassen sich auf diesem Computer noch nicht in den Einstellungen ändern.	360276cb
 copy.checking	Checking…	Wird geprüft…	87f62cb7
+copy.no_notifications	No notifications	Keine Benachrichtigungen	2599c762
 copy.update_check	Couldn’t check for updates. Check that you’re online, then try again.	Nach Updates konnte nicht gesucht werden. Prüfe, ob du online bist, und versuche es erneut.	75e48833
 copy.update_restore_point	WolOS saves a restore point before updating.	WolOS legt vor jedem Update einen Wiederherstellungspunkt an.	aa4c4b65
 copy.config_not_applied	Changes Not Applied	Änderungen nicht übernommen	ee02ca56
@@ -358,6 +359,7 @@ installer.file_system	File system	Dateisystem	15c55918
 installer.size	Size	Größe	a6478e7c
 installer.delete	Delete	Entfernen	5797ea6a
 setup.the_hint_can_t_be_the	The hint can’t be the password.	Der Hinweis darf nicht das Passwort sein.	2e960def
+setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	Halte den Hinweis kurz, ohne Doppelpunkte.	1c337ecc
 setup.welcome	Welcome	Willkommen	588a5993
 setup.finish_secure_boot_setup	Finish Secure Boot Setup	Secure Boot fertig einrichten	b2e6edcc
 setup.language_region	Language & Region	Sprache und Region	ac7c8337
@@ -377,7 +379,6 @@ setup.enter_your_full_name	Enter your full name.	Gib deinen vollständigen Namen
 setup.use_lowercase_letters_and_digits_starting	Use lowercase letters and digits, starting with a letter.	Verwende Kleinbuchstaben und Ziffern und beginne mit einem Buchstaben.	0bbb58a6
 setup.choose_a_password	Choose a password.	Wähle ein Passwort.	0b8616ee
 setup.use_at_most_128_characters_none	Use at most 128 characters, none of them control characters.	Verwende höchstens 128 Zeichen, ohne Steuerzeichen.	231ca727
-setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	Halte den Hinweis kurz, ohne Doppelpunkte.	1c337ecc
 setup.remove_colons_from_the_name	Remove colons from the name.	Entferne die Doppelpunkte aus dem Namen.	16c7211d
 setup.choose_a_different_password	Choose a different password.	Wähle ein anderes Passwort.	df3affd3
 setup.enter_the_password_for_network	Enter the password for “{network}”.	Gib das Passwort für „{network}“ ein.	9514013f

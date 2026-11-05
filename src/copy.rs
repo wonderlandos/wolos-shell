@@ -608,6 +608,17 @@ pub fn remove(e: ActionError, name: &str) -> String {
     }
 }
 
+/// [`install`] / [`remove`] after a failed run: wol-admind's own sentence when it gave one for
+/// the failure (the disk full, a package that did not check), else the general words
+/// (QA-STORE-32: every package failure said "Check that you’re online").
+pub fn store_failed(e: ActionError, name: &str, installing: bool, said: Option<String>) -> String {
+    match (e, said.filter(|m| !m.trim().is_empty())) {
+        (ActionError::Failed, Some(m)) => m,
+        _ if installing => install(e, name),
+        _ => remove(e, name),
+    }
+}
+
 pub fn install(e: ActionError, name: &str) -> String {
     match e {
         ActionError::Denied | ActionError::NeedsAuth | ActionError::Cancelled => {
@@ -626,6 +637,38 @@ pub fn install(e: ActionError, name: &str) -> String {
             format!("{name} couldn’t be installed. Check that you’re online, then try again.")
         }
     }
+}
+
+/// Trust row of an install page whose file is gone (moved or deleted after it was opened): not
+/// "damaged" (QA-STORE-40).
+pub const TRUST_MISSING: (&str, &str, &str) = (
+    "dialog-warning-symbolic",
+    "File not found",
+    "The file was moved or deleted. Open it again from where it is now.",
+);
+
+/// The Notification Center with nothing in it.
+pub const NO_NOTIFICATIONS: &str = "No notifications";
+
+/// Under a banner that stands for a stack: how many more are behind it (QA-DESIGN-7: "1 more
+/// notifications").
+pub fn more_notifications(n: u32) -> String {
+    if n == 1 {
+        "1 more notification".into()
+    } else {
+        format!("{n} more notifications")
+    }
+}
+
+/// The Authenticate sheet's sentence for a Store install (an official or Flathub app: the
+/// Community tab's warning is only for the Community tab, QA-VIS2-47).
+pub fn install_why(name: &str) -> String {
+    format!("Enter your password to install {name} for everyone on this computer.")
+}
+
+/// The Authenticate sheet's sentence for a Store remove.
+pub fn remove_why(name: &str) -> String {
+    format!("Enter your password to remove {name} from this computer.")
 }
 
 /// Checking for updates found no answer.
@@ -1308,6 +1351,37 @@ mod tests {
         ] {
             assert!(super::install_refusal(&r, &d).contains("BitLocker"));
         }
+    }
+
+    /// QA-STORE-32: wol-admind's sentence for a failed install replaces "Check that you're online";
+    /// without one the general words stay, per kind of change.
+    #[test]
+    fn a_store_failure_keeps_admind_s_sentence() {
+        use crate::system::ActionError::*;
+        let said = Some("There is no room on the disk for Blender.".to_string());
+        assert_eq!(
+            super::store_failed(Failed, "Blender", true, said.clone()),
+            "There is no room on the disk for Blender."
+        );
+        assert_eq!(
+            super::store_failed(Failed, "Blender", true, None),
+            super::install(Failed, "Blender")
+        );
+        assert_eq!(
+            super::store_failed(Failed, "Blender", true, Some(" ".into())),
+            super::install(Failed, "Blender")
+        );
+        assert_eq!(
+            super::store_failed(Denied, "Blender", false, said),
+            super::remove(Denied, "Blender")
+        );
+    }
+
+    /// QA-DESIGN-7: one more is singular.
+    #[test]
+    fn more_notifications_counts_in_words() {
+        assert_eq!(super::more_notifications(1), "1 more notification");
+        assert_eq!(super::more_notifications(3), "3 more notifications");
     }
 
     /// Audit F10: a download the system refused is said as such, not as "did not finish".

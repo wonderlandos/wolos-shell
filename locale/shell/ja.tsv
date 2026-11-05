@@ -38,6 +38,7 @@ copy.malware_trash_failed	It couldn’t be moved to the Trash. Try again.	ゴミ
 copy.malware_allow_failed	It’s still stopped: WolOS couldn’t allow it. Try again.	停止したままです。WolOS は許可できませんでした。もう一度お試しください。	a0df0c16
 copy.privacy_grants_read_only	These permissions can’t be changed from Settings on this computer yet.	このコンピュータでは、これらの権限をまだ設定から変更できません。	360276cb
 copy.checking	Checking…	確認中…	87f62cb7
+copy.no_notifications	No notifications	通知はありません	2599c762
 copy.update_check	Couldn’t check for updates. Check that you’re online, then try again.	アップデートを確認できませんでした。オンラインになっているか確認して、もう一度お試しください。	75e48833
 copy.update_restore_point	WolOS saves a restore point before updating.	WolOS はアップデートの前に復元ポイントを保存します。	aa4c4b65
 copy.config_not_applied	Changes Not Applied	変更は適用されていません	ee02ca56
@@ -357,6 +358,7 @@ installer.file_system	File system	ファイルシステム	15c55918
 installer.size	Size	サイズ	a6478e7c
 installer.delete	Delete	削除	5797ea6a
 setup.the_hint_can_t_be_the	The hint can’t be the password.	ヒントにパスワードは使えません。	2e960def
+setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	ヒントはコロンを使わずに短くしてください。	1c337ecc
 setup.welcome	Welcome	ようこそ	588a5993
 setup.finish_secure_boot_setup	Finish Secure Boot Setup	セキュアブートの設定を完了	b2e6edcc
 setup.language_region	Language & Region	言語と地域	ac7c8337
@@ -376,7 +378,6 @@ setup.enter_your_full_name	Enter your full name.	氏名を入力してくださ�
 setup.use_lowercase_letters_and_digits_starting	Use lowercase letters and digits, starting with a letter.	小文字の英字と数字を使い、英字で始めてください。	0bbb58a6
 setup.choose_a_password	Choose a password.	パスワードを決めてください。	0b8616ee
 setup.use_at_most_128_characters_none	Use at most 128 characters, none of them control characters.	128 文字以内で、制御文字を含めないでください。	231ca727
-setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	ヒントはコロンを使わずに短くしてください。	1c337ecc
 setup.remove_colons_from_the_name	Remove colons from the name.	名前からコロンを取り除いてください。	16c7211d
 setup.choose_a_different_password	Choose a different password.	別のパスワードを選んでください。	df3affd3
 setup.enter_the_password_for_network	Enter the password for “{network}”.	「{network}」のパスワードを入力してください。	9514013f

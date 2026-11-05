@@ -251,6 +251,8 @@ fn screen_with(content: &impl IsA<gtk::Widget>, chrome: bool) -> gtk::Widget {
         .child(content)
         .build();
     fit.add_css_class("lock-fit");
+    // Not a Tab stop of its own (QA-VIS2-3): the controls inside scroll into view by themselves.
+    fit.set_focusable(false);
     scrim.append(&fit);
     o.add_overlay(&scrim);
     if chrome {

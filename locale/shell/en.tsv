@@ -38,6 +38,7 @@ copy.malware_trash_failed	It couldn’t be moved to the Trash. Try again.	Malwar
 copy.malware_allow_failed	It’s still stopped: WolOS couldn’t allow it. Try again.	Malware: Open Anyway did not work (the file stays stopped).	
 copy.privacy_grants_read_only	These permissions can’t be changed from Settings on this computer yet.	Under greyed consent switches when this build's wol-admind has no `consent` verb (QA-SET-39).	
 copy.checking	Checking…	A change with no answer yet (its status line, after a moment): the Authenticate sheet may be next, or the change is still being made.	15
+copy.no_notifications	No notifications	The Notification Center with nothing in it.	
 copy.update_check	Couldn’t check for updates. Check that you’re online, then try again.	Checking for updates found no answer.	
 copy.update_restore_point	WolOS saves a restore point before updating.	Under "N updates available" (Settings > Software Update and the App Store's Updates).	
 copy.config_not_applied	Changes Not Applied	Summary of the notice for a shell config file that does not load (live reload, SP-2).	33
@@ -358,6 +359,7 @@ installer.file_system	File system		22
 installer.size	Size		12
 installer.delete	Delete		11
 setup.the_hint_can_t_be_the	The hint can’t be the password.		50
+setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.		52
 setup.welcome	Welcome		25
 setup.finish_secure_boot_setup	Finish Secure Boot Setup		55
 setup.language_region	Language & Region		24
@@ -377,7 +379,6 @@ setup.enter_your_full_name	Enter your full name.		41
 setup.use_lowercase_letters_and_digits_starting	Use lowercase letters and digits, starting with a letter.		
 setup.choose_a_password	Choose a password.		33
 setup.use_at_most_128_characters_none	Use at most 128 characters, none of them control characters.		
-setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.		52
 setup.remove_colons_from_the_name	Remove colons from the name.		46
 setup.choose_a_different_password	Choose a different password.		40
 setup.enter_the_password_for_network	Enter the password for “{network}”.		52

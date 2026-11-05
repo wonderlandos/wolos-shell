@@ -38,6 +38,7 @@ copy.malware_trash_failed	It couldn’t be moved to the Trash. Try again.	Не �
 copy.malware_allow_failed	It’s still stopped: WolOS couldn’t allow it. Try again.	Он по-прежнему заблокирован: WolOS не удалось его разрешить. Повторите попытку.	a0df0c16
 copy.privacy_grants_read_only	These permissions can’t be changed from Settings on this computer yet.	Эти разрешения пока нельзя изменить в Настройках на этом компьютере.	360276cb
 copy.checking	Checking…	Проверка…	87f62cb7
+copy.no_notifications	No notifications	Нет уведомлений	2599c762
 copy.update_check	Couldn’t check for updates. Check that you’re online, then try again.	Не удалось проверить обновления. Убедитесь, что вы в сети, и повторите попытку.	75e48833
 copy.update_restore_point	WolOS saves a restore point before updating.	Перед обновлением WolOS сохраняет точку восстановления.	aa4c4b65
 copy.config_not_applied	Changes Not Applied	Изменения не применены	ee02ca56
@@ -360,6 +361,7 @@ installer.file_system	File system	Файловая система	15c55918
 installer.size	Size	Размер	a6478e7c
 installer.delete	Delete	Удалить	5797ea6a
 setup.the_hint_can_t_be_the	The hint can’t be the password.	Подсказка не может совпадать с паролем.	2e960def
+setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	Сделайте подсказку короткой, без двоеточий.	1c337ecc
 setup.welcome	Welcome	Добро пожаловать	588a5993
 setup.finish_secure_boot_setup	Finish Secure Boot Setup	Завершите настройку безопасной загрузки	b2e6edcc
 setup.language_region	Language & Region	Язык и регион	ac7c8337
@@ -379,7 +381,6 @@ setup.enter_your_full_name	Enter your full name.	Введите полное и�
 setup.use_lowercase_letters_and_digits_starting	Use lowercase letters and digits, starting with a letter.	Используйте строчные латинские буквы и цифры, начиная с буквы.	0bbb58a6
 setup.choose_a_password	Choose a password.	Придумайте пароль.	0b8616ee
 setup.use_at_most_128_characters_none	Use at most 128 characters, none of them control characters.	Не больше 128 символов, без управляющих символов.	231ca727
-setup.keep_the_hint_short_without_colons	Keep the hint short, without colons.	Сделайте подсказку короткой, без двоеточий.	1c337ecc
 setup.remove_colons_from_the_name	Remove colons from the name.	Уберите двоеточия из имени.	16c7211d
 setup.choose_a_different_password	Choose a different password.	Выберите другой пароль.	df3affd3
 setup.enter_the_password_for_network	Enter the password for “{network}”.	Введите пароль для «{network}».	9514013f

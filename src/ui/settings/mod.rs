@@ -55,6 +55,7 @@ mod search_rows;
 mod sharing;
 mod shortcuts;
 mod software_update;
+pub(crate) use software_update::{before_update, update_failed};
 mod sound;
 mod startup_security;
 mod storage;
@@ -573,6 +574,7 @@ fn later<T: Send + 'static>(
     render: impl FnOnce(&gtk::Box, T) + 'static,
 ) {
     let spinner = w::spinner();
+    spinner.set_vexpand(true);
     spinner.set_visible(false);
     into.append(&spinner);
     let done = Rc::new(Cell::new(false));
@@ -655,7 +657,20 @@ pub(crate) struct Waiting {
     a: Action,
     done: Done,
     status: Option<gtk::Label>,
+    /// What the sheet says this change needs the password for (None: the window's sentence).
+    /// The change owns it, not the sheet: one change's sentence stayed on the next one's sheet
+    /// (QA-VIS2-47: an official app's Get asked with the Community tab's warning).
+    why: Option<String>,
+    /// [`Ctx::act_asking`]'s hook: true once the change runs, false when it is back waiting
+    /// for the password.
+    started: Option<Started>,
 }
+
+/// Told true when a change runs (sent with the typed password, or on its way with none asked),
+/// false when it went back to waiting on the sheet. A control says "Installing…" or "Fixing…"
+/// only then, not on the click (QA-VIS2-46, QA-VIS2-39: the button said so before any
+/// password was asked, and Cancel could still end it).
+pub(crate) type Started = Rc<dyn Fn(bool)>;
 
 /// A change with no answer after this long ends as failed and its control goes back.
 const ANSWER_WITHIN: std::time::Duration = std::time::Duration::from_secs(30);
@@ -680,9 +695,11 @@ pub(crate) fn answer_within(a: &Action) -> Option<std::time::Duration> {
 
 /// A change with no answer after this long says "Checking…" on its status line (QA 0.12.0 bug 7).
 const CHECKING_AFTER: std::time::Duration = std::time::Duration::from_millis(300);
-/// The sheet stays up (busy) at most this long after Allow: a wrong password answers within it,
-/// a long change (an install) goes on under its status line.
-const AUTH_HOLD: std::time::Duration = std::time::Duration::from_secs(2);
+/// The sheet stays up (busy) at most this long after Allow: a wrong password answers within it
+/// (wol-admind answers a refusal after its fixed delay, so the hold is a second longer; at 2 s
+/// both raced), a long change (an install) goes on under its status line.
+const AUTH_HOLD: std::time::Duration =
+    std::time::Duration::from_millis(wol_core::admin::REFUSAL_DELAY_MS + 1000);
 
 /// The Authenticate sheet's queue, shared with the Control Center (`src/auth_queue.rs`).
 pub(crate) type AuthQueue = crate::auth_queue::AuthQueue<Waiting>;
@@ -700,17 +717,22 @@ pub(crate) struct Ctx {
     checking: gtk::Revealer,
     /// Such changes past [`CHECKING_AFTER`] with no answer yet.
     late: Cell<usize>,
+    /// The sheet's sentence for a change with no [`Waiting::why`] of its own.
+    why: String,
 }
 
 impl Ctx {
     /// Wires the Authenticate sheet; place it on `aw` after any other sheets.
     pub(crate) fn new(sys: Arc<dyn System>, who: &str) -> Rc<Self> {
+        let auth = w::authenticate_sheet(who);
+        let why = auth.why.text().to_string();
         let ctx = Rc::new(Ctx {
             sys,
-            auth: w::authenticate_sheet(who),
+            auth,
             queue: Default::default(),
             checking: w::sheet(&w::label(crate::copy::CHECKING, "secondary")),
             late: Cell::new(0),
+            why,
         });
         let c = ctx.clone();
         ctx.auth.allow.connect_clicked(move |_| c.allow());
@@ -735,9 +757,58 @@ impl Ctx {
         .flatten()
         .map(|x| x.downgrade())
         .collect();
+        // The keyboard goes back to the control that asked once the sheet goes: the focused
+        // password field turned unfocusable as the sheet collapsed and GTK put the focus on the
+        // first focusable widget, the sidebar's search (QA-VIS2-34). The sheet's last line goes
+        // with it (an old "Incorrect password" stayed for the next change).
+        // The last widget that had the keyboard outside the sheet: a pending switch goes
+        // insensitive (and loses the focus) before the sheet comes up.
+        let last: Rc<RefCell<Option<glib::WeakRef<gtk::Widget>>>> = Rc::default();
+        {
+            let (last, sheet, wired) = (
+                last.clone(),
+                self.auth.revealer.downgrade(),
+                Cell::new(false),
+            );
+            aw.root.connect_map(move |b| {
+                let Some(win) = b.root().and_downcast::<gtk::Window>() else {
+                    return;
+                };
+                if wired.replace(true) {
+                    return;
+                }
+                let (last, sheet) = (last.clone(), sheet.clone());
+                win.connect_focus_widget_notify(move |win| {
+                    let Some(f) = gtk::prelude::GtkWindowExt::focus(win) else {
+                        return;
+                    };
+                    if sheet.upgrade().is_none_or(|r| !f.is_ancestor(&r)) {
+                        *last.borrow_mut() = Some(f.downgrade());
+                    }
+                });
+            });
+        }
+        let asked_from: RefCell<Option<glib::WeakRef<gtk::Widget>>> = RefCell::default();
+        let c = Rc::downgrade(self);
         self.auth.revealer.connect_reveal_child_notify(move |r| {
+            let up = r.reveals_child();
             for x in behind.iter().filter_map(|x| x.upgrade()) {
-                x.set_sensitive(!r.reveals_child());
+                x.set_sensitive(!up);
+            }
+            if up {
+                *asked_from.borrow_mut() = last.borrow().clone();
+                return;
+            }
+            if let Some(c) = c.upgrade() {
+                c.auth.message.set_label("");
+            }
+            if let Some(f) = asked_from.take().and_then(|f| f.upgrade()) {
+                // After the page under it took input again.
+                glib::idle_add_local_once(move || {
+                    if f.is_mapped() && f.is_sensitive() {
+                        f.grab_focus();
+                    }
+                });
             }
         });
         // Escape while the Authenticate sheet is up cancels it, whatever has the focus.
@@ -758,19 +829,26 @@ impl Ctx {
             self.checking.set_reveal_child(on);
         }
     }
-    /// Says why the password is wanted; returns what the sheet said before.
-    pub(crate) fn set_why(&self, why: &str) -> String {
-        let was = self.auth.why.text().to_string();
-        self.auth.why.set_label(why);
-        was
-    }
     /// `a` off the UI thread; root actions ask for the password, then retry; `done` gets the final result.
     pub(crate) fn act(self: &Rc<Self>, a: Action, done: Rc<dyn Fn(Result<(), ActionError>)>) {
+        self.act_asking(a, None, None, done);
+    }
+    /// [`Self::act`], with the sheet saying `why` for this change and `started` told when it
+    /// runs (see [`Started`]).
+    pub(crate) fn act_asking(
+        self: &Rc<Self>,
+        a: Action,
+        why: Option<&str>,
+        started: Option<Started>,
+        done: Rc<dyn Fn(Result<(), ActionError>)>,
+    ) {
         self.run(
             Waiting {
                 a,
                 done,
                 status: None,
+                why: why.map(str::to_owned),
+                started,
             },
             None,
         );
@@ -795,6 +873,8 @@ impl Ctx {
                     }
                 }),
                 status: Some(status.clone()),
+                why: None,
+                started: None,
             },
             None,
         );
@@ -812,6 +892,23 @@ impl Ctx {
         let retry = pw.map(|(_, n)| n);
         self.queue.borrow_mut().sent(retry);
         let answered = Rc::new(Cell::new(false));
+        // Sent with the typed password: it runs now. Sent with none: it runs if no NeedsAuth
+        // came back within CHECKING_AFTER (wol-admind answers that at once).
+        let ran = Rc::new(Cell::new(false));
+        if let Some(go) = w.started.clone() {
+            if retry.is_some() {
+                ran.set(true);
+                go(true);
+            } else {
+                let (answered, ran) = (answered.clone(), ran.clone());
+                glib::timeout_add_local_once(CHECKING_AFTER, move || {
+                    if !answered.get() {
+                        ran.set(true);
+                        go(true);
+                    }
+                });
+            }
+        }
         // Counted in `late` once CHECKING_AFTER passed unanswered (no status line only).
         let late = Rc::new(Cell::new(false));
         if let Some(st) = w.status.clone() {
@@ -859,6 +956,11 @@ impl Ctx {
                 }
             }
             let status = w.status.clone();
+            if let (true, Some(go), Err(ActionError::NeedsAuth | ActionError::Denied)) =
+                (ran.get(), &w.started, r)
+            {
+                go(false);
+            }
             let next = c.queue.borrow_mut().answered(w, r, retry);
             match next {
                 Next::Finish(w, r) => {
@@ -888,12 +990,23 @@ impl Ctx {
             message.to_string()
         };
         self.auth.message.set_label(&text);
+        self.auth.why.set_label(&self.why_now());
         if !self.auth.revealer.reveals_child() {
             self.auth.revealer.set_reveal_child(true);
         }
         self.show_checking();
         if self.queue.borrow().checking() == 0 {
             self.auth.field.grab_focus();
+        }
+    }
+    /// The sheet's sentence for what waits now: the changes' own when they all have the same one,
+    /// else the window's.
+    fn why_now(&self) -> String {
+        let q = self.queue.borrow();
+        let mut whys = q.waiting().map(|w| w.why.as_deref());
+        match whys.next() {
+            Some(Some(first)) if whys.all(|x| x == Some(first)) => first.to_owned(),
+            _ => self.why.clone(),
         }
     }
     /// Once no retry is out: the sheet takes input again, or goes when nothing waits.
@@ -934,6 +1047,7 @@ impl Ctx {
         glib::timeout_add_local_once(AUTH_HOLD, move || {
             let Some(c) = c.upgrade() else { return };
             if c.queue.borrow().len() == 0 && c.queue.borrow().checking() > 0 {
+                c.queue.borrow_mut().let_go(n);
                 c.auth.set_busy(false);
                 c.auth.allow.set_sensitive(true);
                 c.auth.field.set_sensitive(true);
@@ -1427,18 +1541,13 @@ fn fill_results(env: &Rc<Env>, body: &gtk::Box, query: &str) {
         ));
         return;
     }
-    let mut pages: Vec<&'static str> = Vec::new();
-    for h in &found {
-        if !pages.contains(&h.page) {
-            pages.push(h.page);
-        }
-    }
-    for page in pages {
+    for (pane, pages) in search::by_pane(&found) {
         let rows: Vec<gtk::Widget> = found
             .iter()
-            .filter(|h| h.page == page)
+            .filter(|h| pages.contains(&h.page))
             .map(|h| {
                 // A row on a subpage names the subpage; the section already names the pane.
+                let page = h.page;
                 let (title, sub) = match h.row {
                     Some(r) if search::parent(page) != page => (r, page),
                     Some(r) => (r, ""),
@@ -1450,7 +1559,7 @@ fn fill_results(env: &Rc<Env>, body: &gtk::Box, query: &str) {
                 b.upcast()
             })
             .collect();
-        body.append(&w::section(search::parent(page), &rows));
+        body.append(&w::section(pane, &rows));
     }
 }
 
