@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! General: the way into About, Software Update, Storage, Login Items, Language & Region, Date &
+//! General: the way into About, Software Update, Storage, Login Items, Default Apps, Language & Region, Date &
 //! Time and Sharing (each a subpage with a back button), and the shell new terminal windows open
 //! in (`wol_core::terminal_shell`, journaled so the change can be undone).
 use super::*;
@@ -23,11 +23,18 @@ const GROUPS: [&[(&str, &str, &str)]; 4] = [
             "What uses your disk, and restore points",
         ),
     ],
-    &[(
-        "view-app-grid-symbolic",
-        "Login Items",
-        "Apps that open when you log in",
-    )],
+    &[
+        (
+            "view-app-grid-symbolic",
+            "Login Items",
+            "Apps that open when you log in",
+        ),
+        (
+            "emblem-default-symbolic",
+            "Default Apps",
+            "Which app opens links, mail, pictures and music",
+        ),
+    ],
     &[
         (
             "preferences-desktop-locale-symbolic",

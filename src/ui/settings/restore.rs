@@ -25,6 +25,7 @@ pub(crate) fn topic(what: &str) -> &str {
         "widgets" => "Widgets",
         "sound" => "Sound",
         "language" => "Language & Region",
+        "default apps" => "Default Apps",
         other => other,
     }
 }

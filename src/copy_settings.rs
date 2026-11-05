@@ -283,7 +283,7 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 74] = [
+pub const ALL: [&str; 85] = [
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -358,6 +358,17 @@ pub const ALL: [&str; 74] = [
     UPDATE_CHECKED_NOW,
     GENERAL_TERMINAL_SHELL,
     GENERAL_TERMINAL_SHELL_NOT_SAVED,
+    DEFAULT_APPS_ABOUT,
+    DEFAULT_APPS_NOT_SAVED,
+    DEFAULT_APPS_WEB_SUB,
+    DEFAULT_APPS_MAIL_SUB,
+    DEFAULT_APPS_FILES_SUB,
+    DEFAULT_APPS_IMAGES_SUB,
+    DEFAULT_APPS_MUSIC_SUB,
+    DEFAULT_APPS_VIDEO_SUB,
+    DEFAULT_APPS_PDF_SUB,
+    DEFAULT_APPS_TEXT_SUB,
+    DEFAULT_APPS_CALENDAR_SUB,
 ];
 
 // ---- General ----
@@ -368,6 +379,36 @@ pub const GENERAL_TERMINAL_SHELL: &str =
 /// The choice could not be saved: the menu shows the saved shell again.
 pub const GENERAL_TERMINAL_SHELL_NOT_SAVED: &str =
     "The shell couldn’t be changed. Try again in a moment.";
+
+// ---- General > Default Apps (E2E-OPEN) ----
+
+/// Footnote under the rows.
+pub const DEFAULT_APPS_ABOUT: &str = "These apps open your links, mail, pictures and music. For one file, use Open With in Files; it remembers your pick.";
+/// Menu entry shown while the current app is not one of the choices.
+pub const DEFAULT_APPS_NONE: &str = "Not chosen";
+/// The only entry of a row no installed app can serve.
+pub const DEFAULT_APPS_NO_APP: &str = "No app for this";
+/// The choice could not be saved: the menu shows the saved app again.
+pub const DEFAULT_APPS_NOT_SAVED: &str =
+    "The app couldn’t be changed. Check that your home folder has free space.";
+pub const DEFAULT_APPS_WEB: &str = "Web browser";
+pub const DEFAULT_APPS_WEB_SUB: &str = "Opens web links and web pages.";
+pub const DEFAULT_APPS_MAIL: &str = "Email";
+pub const DEFAULT_APPS_MAIL_SUB: &str = "Writes a message when you click an email address.";
+pub const DEFAULT_APPS_FILES: &str = "Files";
+pub const DEFAULT_APPS_FILES_SUB: &str = "Shows a folder when an app says “show in folder”.";
+pub const DEFAULT_APPS_IMAGES: &str = "Images";
+pub const DEFAULT_APPS_IMAGES_SUB: &str = "Opens pictures.";
+pub const DEFAULT_APPS_MUSIC: &str = "Music";
+pub const DEFAULT_APPS_MUSIC_SUB: &str = "Plays songs.";
+pub const DEFAULT_APPS_VIDEO: &str = "Video";
+pub const DEFAULT_APPS_VIDEO_SUB: &str = "Plays films and clips.";
+pub const DEFAULT_APPS_PDF: &str = "PDF documents";
+pub const DEFAULT_APPS_PDF_SUB: &str = "Reads PDF files.";
+pub const DEFAULT_APPS_TEXT: &str = "Text";
+pub const DEFAULT_APPS_TEXT_SUB: &str = "Edits plain text files.";
+pub const DEFAULT_APPS_CALENDAR: &str = "Calendar";
+pub const DEFAULT_APPS_CALENDAR_SUB: &str = "Opens calendar invitations and event files.";
 
 // ---- Network, Wi-Fi and sharing (B7) ----
 

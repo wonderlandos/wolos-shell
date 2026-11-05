@@ -11,6 +11,7 @@ use crate::kit::{
     surface::Spec,
     widgets as w,
 };
+use crate::open_with as ow;
 use gtk::{gio, glib, prelude::*};
 use shared::layout::{DockItem, Edge, Layout};
 use std::cell::RefCell;
@@ -194,6 +195,126 @@ fn clicked(t: &w::DockTile, p: &apps::Pin) {
             launched(t);
         }
     }
+}
+
+/// Starts programs like a tile click does (the app gets the session's X11 scale).
+fn launcher() -> Launch {
+    Rc::new(kit::spawn_app)
+}
+
+/// The desktop entry of a tile's app, once read (off the GTK thread, see [`load_entry`]).
+pub type Entry = Rc<RefCell<Option<Rc<ow::Handler>>>>;
+
+/// What starts a program: the shell's launcher, or a recorder in a test.
+pub type Launch = Rc<dyn Fn(&[String])>;
+
+/// An entry slot holding `h` (a tile whose app is already known).
+pub fn entry_of(h: Option<ow::Handler>) -> Entry {
+    Rc::new(RefCell::new(h.map(Rc::new)))
+}
+
+/// Reads the app's desktop entry for `p` and puts it in `entry`. A pin with no entry (the Apps
+/// launcher) keeps none: it takes no drop and has no menu.
+fn load_entry(entry: &Entry, p: &apps::Pin) {
+    let (entry, id, prog) = (
+        entry.clone(),
+        p.id,
+        p.exec.first().copied().unwrap_or_default(),
+    );
+    glib::spawn_future_local(async move {
+        *entry.borrow_mut() = ow::handler_for(id, prog).await.map(Rc::new);
+    });
+}
+
+/// The two things a tile does besides a click: take files ([`tile_drop_target`]) and offer the app's
+/// own actions ([`app_tile_menu`]), both through `launch`.
+pub fn wire_tile(t: &w::DockTile, entry: &Entry, launch: &Launch) {
+    tile_drop_target(t, entry, launch);
+    app_tile_menu(t, entry, launch);
+}
+
+/// The tile's app has an entry whose `Exec` takes files.
+fn accepts(entry: &Entry) -> bool {
+    entry.borrow().as_ref().is_some_and(|h| h.takes_files())
+}
+
+/// `files` were dropped on `tile`: starts its app with them ([`ow::Handler::launch`]) and bounces
+/// the icon like a click. False (the drop is refused) when the app takes no file or is unknown.
+pub fn dropped_on_tile(
+    entry: &Entry,
+    tile: &w::DockTile,
+    launch: &Launch,
+    files: &[gio::File],
+) -> bool {
+    let Some(h) = entry.borrow().clone().filter(|h| h.takes_files()) else {
+        return false;
+    };
+    let targets: Vec<ow::Target> = files
+        .iter()
+        .map(|f| ow::Target {
+            path: f.path().map(|p| p.to_string_lossy().into_owned()),
+            uri: f.uri().to_string(),
+        })
+        .collect();
+    if !h.usable(&targets) {
+        return false;
+    }
+    let runs = h.launch(&targets);
+    if runs.is_empty() {
+        return false;
+    }
+    if !tile.is_running() {
+        launched(tile);
+    }
+    runs.iter().for_each(|argv| launch(argv));
+    true
+}
+
+/// A file dropped on the tile opens with the tile's app: its `Exec` line with `%f %F %u %U`
+/// filled in ([`ow::expand_exec`]). An app whose line takes no file refuses the drop (the pointer
+/// shows it), so a file never lands on an app that would ignore it.
+fn tile_drop_target(t: &w::DockTile, entry: &Entry, launch: &Launch) {
+    let dt = gtk::DropTarget::new(
+        gtk::gdk::FileList::static_type(),
+        gtk::gdk::DragAction::COPY,
+    );
+    let e = entry.clone();
+    dt.connect_accept(move |_, _| accepts(&e));
+    let (e, tile, launch) = (entry.clone(), t.clone(), launch.clone());
+    dt.connect_drop(move |_, v, _, _| match v.get::<gtk::gdk::FileList>() {
+        Ok(list) => dropped_on_tile(&e, &tile, &launch, &list.files()),
+        Err(_) => false,
+    });
+    t.button.add_controller(dt);
+}
+
+/// The rows of the tile menu: one per `[Desktop Action]` of the app, each starting that action.
+fn menu_rows(h: &ow::Handler, launch: &Launch) -> Vec<w::MenuRow> {
+    h.jump_list()
+        .into_iter()
+        .map(|(name, argv)| {
+            let l = launch.clone();
+            let act: Box<dyn Fn()> = Box::new(move || l(&argv));
+            (name, None, act)
+        })
+        .collect()
+}
+
+/// Right-click: the app's own `[Desktop Action]` names (New Window, New Private Window). An app
+/// with none has no menu.
+fn app_tile_menu(t: &w::DockTile, entry: &Entry, launch: &Launch) {
+    let click = gtk::GestureClick::builder().button(3).build();
+    let (e, button, launch) = (entry.clone(), t.button.clone(), launch.clone());
+    click.connect_pressed(move |g, _, x, y| {
+        let Some(h) = e.borrow().clone() else { return };
+        let rows = menu_rows(&h, &launch);
+        if rows.is_empty() {
+            return;
+        }
+        g.set_state(gtk::EventSequenceState::Claimed);
+        kit::data::popup_menu(&button, x, y, rows);
+    });
+    t.button.add_controller(click);
 }
 
 /// CSS margin above the shelf (`.dock-shelf` margin-top in kit.css): room for tiles to lift and
@@ -1020,6 +1141,9 @@ impl Dock {
             tile_menu(&t.button, p.id, menu);
             let (tile, pp) = (t.clone(), p.clone());
             t.button.connect_clicked(move |_| clicked(&tile, &pp));
+            let entry = Rc::new(RefCell::new(None));
+            wire_tile(&t, &entry, &launcher());
+            load_entry(&entry, p);
             if after_apps {
                 let last = shelf
                     .tiles
@@ -1376,5 +1500,44 @@ mod attention_tests {
             .find(|l| l.starts_with("button.dock-tile.attention"))
             .expect("an .attention rule");
         assert!(rule.contains("infinite"), "{rule}: bounces until stopped");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const VIEWER: &str = "[Desktop Entry]\nType=Application\nName=Viewer\nExec=viewer --new %F\n\
+        Actions=win;priv;\n[Desktop Action win]\nName=New Window\nExec=viewer --window\n\
+        [Desktop Action priv]\nName=New Private Window\nExec=viewer --private\n";
+
+    fn handler(text: &str) -> ow::Handler {
+        ow::Handler::parse("v.desktop", "/p/v.desktop", text).expect("a desktop entry")
+    }
+
+    /// Only an app whose `Exec` takes files, and whose entry has been read, accepts a drop.
+    #[test]
+    fn only_an_app_that_takes_files_accepts_a_drop() {
+        assert!(accepts(&entry_of(Some(handler(VIEWER)))));
+        let plain = "[Desktop Entry]\nType=Application\nName=P\nExec=plain\n";
+        assert!(!accepts(&entry_of(Some(handler(plain)))));
+        assert!(!accepts(&entry_of(None)), "the Apps launcher has no entry");
+    }
+
+    /// The tile menu: a row per action, in the file's `Actions=` order, each starting its action.
+    #[test]
+    fn the_tile_menu_starts_the_actions_of_the_app() {
+        let started: Rc<RefCell<Vec<Vec<String>>>> = Rc::default();
+        let log = started.clone();
+        let launch: Launch = Rc::new(move |argv| log.borrow_mut().push(argv.to_vec()));
+        let rows = menu_rows(&handler(VIEWER), &launch);
+        assert_eq!(
+            rows.iter().map(|r| r.0.as_str()).collect::<Vec<_>>(),
+            ["New Window", "New Private Window"]
+        );
+        (rows[1].2)();
+        assert_eq!(*started.borrow(), [vec!["viewer", "--private"]]);
+        let plain = "[Desktop Entry]\nType=Application\nName=P\nExec=plain\n";
+        assert!(menu_rows(&handler(plain), &launch).is_empty());
     }
 }
