@@ -488,6 +488,10 @@ settings-notifications-narrow-dark	Show
 settings-notifications-narrow-light	Show
 settings-notifications-wide-dark	Show
 settings-notifications-wide-light	Show
+settings-opened-from-search-privacy-narrow-dark	Reset | Startup Security On, with this computer's enrolled key | Assistants & Automation What helpers and scripts may change
+settings-opened-from-search-privacy-narrow-light	Reset | Startup Security On, with this computer's enrolled key | Assistants & Automation What helpers and scripts may change
+settings-opened-from-search-privacy-wide-dark	Reset | Startup Security On, with this computer's enrolled key | Assistants & Automation What helpers and scripts may change
+settings-opened-from-search-privacy-wide-light	Reset | Startup Security On, with this computer's enrolled key | Assistants & Automation What helpers and scripts may change
 settings-printers-narrow-dark	Add Printer…
 settings-printers-narrow-light	Add Printer…
 settings-printers-wide-dark	Add Printer…

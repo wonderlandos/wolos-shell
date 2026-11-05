@@ -52,14 +52,13 @@ fn every_control_center_spawn_is_a_real_command() {
                 panic!("{argv:?}: only `wol shell` and `wol toggle` are spawned, not `wol {sub}`")
             }
             ["wol-settings", page] => {
-                assert!(
-                    shell::ui::settings::PAGES.contains(page),
-                    "{argv:?}: Settings has no page '{page}'"
-                );
+                // A page id (never a title a language changes), and a page Settings has.
+                let t = shell::ui::settings::ids::resolve(page)
+                    .unwrap_or_else(|| panic!("{argv:?}: Settings has no page '{page}'"));
                 assert_eq!(
-                    shell::ui::settings::canonical(page),
+                    shell::ui::settings::ids::arg(t.page, t.row),
                     *page,
-                    "{argv:?}: an old page name"
+                    "{argv:?}: not spelled as a page id"
                 );
             }
             [prog, ..] => assert!(installed(prog), "{argv:?}: {prog} is not installed"),
@@ -74,11 +73,11 @@ fn every_control_center_spawn_is_a_real_command() {
 fn settings_links_open_the_pane_they_are_named_after() {
     assert_eq!(
         shell::ui::control_center::WIFI_SETTINGS,
-        ["wol-settings", "Wi-Fi"]
+        ["wol-settings", "wifi"]
     );
     assert_eq!(
         shell::ui::control_center::SOUND_SETTINGS,
-        ["wol-settings", "Sound"]
+        ["wol-settings", "sound"]
     );
 }
 

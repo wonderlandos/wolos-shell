@@ -320,7 +320,12 @@ fn actions(
         }),
         end: Rc::new(|t, sig, done| feed::send(vec![t], sig, done)),
         switch: Rc::new(feed::switch_unit),
-        login_items: Rc::new(|| kit::spawn(&["wol-settings".to_owned(), "General".to_owned()])),
+        login_items: Rc::new(|| {
+            kit::spawn(&[
+                "wol-settings".to_owned(),
+                crate::ui::settings::ids::GENERAL.to_owned(),
+            ])
+        }),
         want: Rc::new(move |w| wants.set(w)),
         load_startup: load,
     }

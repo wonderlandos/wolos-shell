@@ -33,6 +33,28 @@ pub fn cases() -> Vec<Case> {
             });
         }
     }
+    // QA-SEARCH-1: the Search bar's result for 'privacy settings' (and a launch of `wol-settings
+    // privacy#screen-recording`) opens Settings on the Privacy pane with the Screen Recording
+    // section lit, not on the first pane.
+    for (tag, size) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
+        v.push(Case {
+            name: format!("settings-opened-from-search-privacy-{tag}"),
+            size,
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(|| {
+                let a = ui::settings::content(
+                    Arc::new(shell::system::Fake),
+                    &ui::settings::Host::demo(),
+                );
+                let args = ["wol-settings", "privacy#screen-recording"].map(String::from);
+                let target = ui::settings::requested(&args).expect("a page");
+                ui::settings::open_target(&a, &target);
+                pump(1200);
+                a.root.clone().upcast()
+            }),
+        });
+    }
     // S7-12: a list `wol` could not give is an error, not "no modules".
     v.push(Case {
         name: "settings-modules-error-wide".into(),

@@ -79,7 +79,13 @@ pub fn rows() -> Vec<(&'static str, &'static str, String)> {
     let mut v = Vec::new();
     for (page, titles) in all {
         for r in titles.into_iter().filter(|r| *r != page) {
-            v.push((page, r, row_text(page, r)));
+            // A row listed twice (by hand and from the pane's data) is one row.
+            if !v
+                .iter()
+                .any(|x: &(&str, &str, String)| x.0 == page && x.1 == r)
+            {
+                v.push((page, r, row_text(page, r)));
+            }
         }
     }
     v

@@ -49,15 +49,51 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
         }
     }
     v.extend(actions(crate::apps::is_live()));
-    // Every Settings page under the name Settings opens; a pane's search words find it too.
-    let open = |t: &str| vec!["wol-settings".into(), t.into()];
+    // Every Settings page, by its id (`wol-settings privacy`, never the title a language changes),
+    // found by its search words too; every row on a page opens Settings on that row (QA-SEARCH-1).
     for p in crate::ui::settings::SIDEBAR.iter().flat_map(|g| g.iter()) {
-        v.push(Item::new(p.title, SETTINGS, "wolos-settings", open(p.title)).with_words(p.words));
+        v.push(settings_page(p.title).with_words(p.words));
     }
     for t in crate::ui::settings::SUBPAGES {
-        v.push(Item::new(t, SETTINGS, "wolos-settings", open(t)));
+        v.push(settings_page(t));
+    }
+    for (page, row, _) in crate::ui::settings::meaning_rows() {
+        v.push(settings_row(page, row));
     }
     v
+}
+
+/// The Settings result for the page whose English title is `page`: opens `wol-settings <page id>`.
+pub fn settings_page(page: &str) -> Item {
+    Item::new(
+        page,
+        SETTINGS,
+        "wolos-settings",
+        crate::ui::settings::ids::argv(page, None),
+    )
+}
+
+/// The Settings result for `row` on `page` (English titles): opens Settings on that page,
+/// scrolled to the row and lit. Shown as `Row · Page`, found by the row's own title (the page's
+/// name would put every row of a page under a search for the page).
+pub fn settings_row(page: &str, row: &str) -> Item {
+    let mut it = Item::new(
+        &format!("{row} \u{b7} {page}"),
+        SETTINGS,
+        "wolos-settings",
+        crate::ui::settings::ids::argv(page, Some(row)),
+    );
+    it.lower = row.to_lowercase();
+    it.demoted()
+}
+
+/// Whether `it` is a [`settings_row`] (it carries a row id after `#`).
+pub fn is_settings_row(it: &Item) -> bool {
+    it.kind == SETTINGS
+        && it
+            .exec
+            .get(1)
+            .is_some_and(|a| a.contains(crate::ui::settings::ids::ROW_SEP))
 }
 
 /// The keyboard mode Search's surface is created with. Hyprland 0.56 hands the keyboard to a layer
@@ -756,25 +792,28 @@ mod tests {
     fn index_has_settings_pages_and_pins() {
         let idx = index(vec![]);
         assert!(
-            idx.iter().any(
-                |i| i.title == "Users & Groups" && i.exec == ["wol-settings", "Users & Groups"]
-            )
+            idx.iter()
+                .any(|i| i.title == "Users & Groups" && i.exec == ["wol-settings", "users"])
         );
         assert_eq!(search::search(&idx, "term", 1)[0].title, "Terminal");
     }
 
-    /// "Menu Bar & Dock" and "Hardware" opened Appearance: every Settings result is a page
-    /// Settings has, under the name it shows, and the pane's search words find it.
+    /// "Menu Bar & Dock" and "Hardware" opened Appearance: every Settings result opens a page
+    /// Settings has, by the page's id (QA-SEARCH-1: a title is a display string, a language changes
+    /// it), and the pane's search words find it.
     #[test]
     fn every_settings_result_opens_its_pane() {
-        use crate::ui::settings::{PAGES, SUBPAGES, canonical};
+        use crate::ui::settings::{PAGES, SUBPAGES, ids};
         let idx = index(vec![]);
-        let rows: Vec<&Item> = idx.iter().filter(|i| i.kind == SETTINGS).collect();
-        assert_eq!(rows.len(), PAGES.len() + SUBPAGES.len());
-        for r in &rows {
-            assert_eq!(r.exec, ["wol-settings", r.title.as_str()]);
-            assert_eq!(canonical(&r.title), r.title, "an old name");
-            assert!(PAGES.contains(&r.title.as_str()) || SUBPAGES.contains(&r.title.as_str()));
+        let pages: Vec<&Item> = idx
+            .iter()
+            .filter(|i| i.kind == SETTINGS && !is_settings_row(i))
+            .collect();
+        assert_eq!(pages.len(), PAGES.len() + SUBPAGES.len());
+        for r in &pages {
+            let id = ids::page_id(&r.title).expect("a page with an id");
+            assert_eq!(r.exec, ["wol-settings", id], "{}", r.title);
+            assert_ne!(r.exec[1], r.title, "the title is not the key: {}", r.title);
         }
         for (q, want) in [
             ("hardware", "Hardware"),
@@ -783,8 +822,80 @@ mod tests {
             ("wifi", "Wi-Fi"),
             ("storage", "Storage"),
         ] {
-            assert_eq!(search::search(&idx, q, 1)[0].title, want, "{q}");
+            // The first result opens that page (a row on it is the page, scrolled to).
+            let top = search::search(&idx, q, 1)[0];
+            let page = ids::resolve(&top.exec[1]).map(|t| t.page);
+            assert_eq!(page, Some(want), "{q}: {:?}", top.title);
         }
+    }
+
+    /// QA-SEARCH-1: a row of a page opens Settings on that row: the argument is `page-id#row-id`
+    /// and it resolves to the very row, whatever the title is called in a language.
+    #[test]
+    fn every_settings_row_result_lands_on_its_row() {
+        use crate::ui::settings::ids;
+        let idx = index(vec![]);
+        let rows: Vec<&Item> = idx.iter().filter(|i| is_settings_row(i)).collect();
+        assert!(rows.len() > 200, "{}", rows.len());
+        for r in &rows {
+            let t = ids::resolve(&r.exec[1]).unwrap_or_else(|| panic!("{:?}", r.exec));
+            let row = t.row.unwrap_or_else(|| panic!("no row in {:?}", r.exec));
+            assert_eq!(r.title, format!("{row} \u{b7} {}", t.page));
+        }
+        let rec = idx
+            .iter()
+            .find(|i| i.title == "Screen Recording \u{b7} Privacy & Security")
+            .expect("the Screen Recording row");
+        assert_eq!(rec.exec, ["wol-settings", "privacy#screen-recording"]);
+    }
+
+    /// QA-SEARCH-1 (lead, 2026-11-05): 'privacy settings' showed a Settings result that opened the
+    /// first pane. "settings" only names the place; the Privacy pane (or a row on it) comes first
+    /// and nothing offered for it opens Settings without a page.
+    #[test]
+    fn privacy_settings_opens_the_privacy_pane() {
+        use crate::ui::settings::ids;
+        let idx = index(vec![]);
+        for q in [
+            "privacy settings",
+            "Privacy Settings",
+            "settings privacy",
+            "privacy preferences",
+        ] {
+            let found = results_with(&idx, &files::Index::default(), q, None);
+            let top = found.first().unwrap_or_else(|| panic!("{q}: nothing"));
+            assert_eq!(top.kind, SETTINGS, "{q}: {:?}", top.title);
+            let t = ids::resolve(&top.exec[1]).unwrap_or_else(|| panic!("{q}: {:?}", top.exec));
+            assert_eq!(t.page, "Privacy & Security", "{q}");
+            assert!(
+                found.iter().all(|i| i.exec != ["wol-settings"]),
+                "{q}: a result opens the first pane: {found:?}"
+            );
+        }
+        // Alone, "settings" still finds Settings itself.
+        let alone = results_with(&idx, &files::Index::default(), "settings", None);
+        assert!(alone.iter().any(|i| i.exec == ["wol-settings"]));
+    }
+
+    /// A row found by its own title is the first result for it: 'screen recording' lands on the
+    /// row, not on the pane that has it.
+    #[test]
+    fn a_rows_own_name_lands_on_the_row() {
+        let idx = index(vec![]);
+        for (q, want) in [
+            ("output volume", "sound#output-volume"),
+            ("airplane mode", "network#airplane-mode"),
+            ("attested gaming", "startup-security#attested-gaming-mode"),
+            ("finish setup", "modules#finish-setup"),
+        ] {
+            let found = results_with(&idx, &files::Index::default(), q, None);
+            assert_eq!(found[0].exec, ["wol-settings", want], "{q}: {found:?}");
+        }
+        // Two pages have a Screen Recording row: both are offered, before the pane that mentions it.
+        let found = results_with(&idx, &files::Index::default(), "screen recording", None);
+        let at = |arg: &str| found.iter().position(|i| i.exec == ["wol-settings", arg]);
+        let (row, pane) = (at("privacy#screen-recording"), at("privacy"));
+        assert!(row.is_some() && row < pane, "{found:?}");
     }
 
     /// Apps and Settings first, files fill the list; never more than [`ROWS`].

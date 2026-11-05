@@ -500,7 +500,10 @@ fn status_target(tip: &str) -> String {
 /// row (QA-FDAY-5: Sleep and Restart were only on the Super+Esc panel): Sleep acts at once, like
 /// the session panel's; Restart…, Shut Down… and Log Out… open that panel on their question.
 pub const LOGO_MENU: &[(&str, &[&str])] = &[
-    ("About This Computer", &["wol-settings", "About"]),
+    (
+        "About This Computer",
+        &["wol-settings", crate::ui::settings::ids::ABOUT],
+    ),
     ("", &[]),
     ("System Settings…", &["wol-settings"]),
     ("App Store…", &["wol-store"]),

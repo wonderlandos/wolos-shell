@@ -79,7 +79,11 @@ impl Semantic {
     pub fn build(table: &Table, base: &[Item]) -> Semantic {
         let mut items: Vec<Item> = Vec::new();
         let mut parts: Vec<(String, String, String)> = Vec::new();
-        for it in base {
+        // The bar's own Settings rows are indexed below with the text they are found by.
+        for it in base
+            .iter()
+            .filter(|i| !crate::ui::searchbar::is_settings_row(i))
+        {
             parts.push((
                 format!("{}/{}", it.kind, it.title),
                 it.title.clone(),
@@ -88,18 +92,12 @@ impl Semantic {
             items.push(it.clone());
         }
         for (page, row, text) in crate::ui::settings::meaning_rows() {
-            let title = format!("{row} \u{b7} {page}");
             parts.push((
                 format!("{}/{page}/{row}", crate::ui::searchbar::SETTINGS),
                 row.to_string(),
                 text,
             ));
-            items.push(Item::new(
-                &title,
-                crate::ui::searchbar::SETTINGS,
-                "wolos-settings",
-                vec!["wol-settings".into(), page.into()],
-            ));
+            items.push(crate::ui::searchbar::settings_row(page, row));
         }
         let ins: Vec<ItemIn> = parts
             .iter()

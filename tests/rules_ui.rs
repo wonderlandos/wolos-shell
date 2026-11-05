@@ -120,6 +120,10 @@ const RULES: &[(&str, &str)] = &[
         "No fixed width above 600 px in code (set_size_request, set_width_request).",
     ),
     ("RU-050", "An icon-only button has a tooltip."),
+    (
+        "RU-051",
+        "A link that opens a Settings page names it by its page id (`wol-settings privacy`), never by a title: titles are translated and edited.",
+    ),
     ("RU-055", "No fixed width above 600 px in kit.css."),
     ("RU-056", "No !important in the stylesheets."),
     ("RU-057", "Braces balance in kit.css and contrast.css."),
@@ -1162,6 +1166,45 @@ fn ru_049_050_widths_and_icon_buttons() {
     );
 }
 
+/// RU-051 (QA-SEARCH-1, a "display string used as a key" class): `wol-settings <title>` opened the
+/// first pane when the title was not the one the window keyed by, and breaks the day a title is
+/// translated. Every spawn of `wol-settings` in the shell and its overlay config names a page id
+/// (`ui::settings::ids`), never an English page title.
+#[test]
+fn ru_051_settings_links_name_a_page_id() {
+    let titles: Vec<&str> = shell::ui::settings::ids::PAGE_IDS
+        .iter()
+        .map(|p| p.1)
+        .collect();
+    let mut found = Vec::new();
+    for s in scan::sources() {
+        for (i, l) in s.lines.iter().enumerate() {
+            if !l.contains("\"wol-settings\"") {
+                continue;
+            }
+            // The statement: this line and the next two (an argv array spans lines).
+            let window = s.lines[i..(i + 3).min(s.lines.len())].join(" ");
+            for t in &titles {
+                if window.contains(&format!("\"{t}\"")) {
+                    found.push(format!("{}:{}: {t}", s.path, i + 1));
+                }
+            }
+        }
+    }
+    // The desktop's own config (the menu bar's logo menu) is read at start.
+    let json = read(root().join("desktop/overlay/etc/wolos/shell.json"));
+    for (n, l) in json.lines().enumerate() {
+        if l.contains("\"wol-settings\"") {
+            for t in &titles {
+                if l.contains(&format!("\"{t}\"")) {
+                    found.push(format!("shell.json:{}: {t}", n + 1));
+                }
+            }
+        }
+    }
+    check("RU-051", found);
+}
+
 // ---------------------------------------------------------------- css
 
 fn strip_comments(css: &str) -> String {
@@ -1422,7 +1465,8 @@ fn pane_stems() -> Vec<String> {
     .iter()
     .map(|p| p.file_stem().unwrap().to_string_lossy().into_owned())
     // mod.rs is the shell of the panes, tests.rs their split-out unit tests: neither is a pane.
-    .filter(|s| s != "mod" && s != "tests")
+    // ids.rs (page and row ids of `wol-settings`) and reveal.rs (landing on a row) draw no page.
+    .filter(|s| !["mod", "tests", "ids", "reveal"].contains(&s.as_str()))
     .collect()
 }
 
