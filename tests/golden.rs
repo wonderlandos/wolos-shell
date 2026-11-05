@@ -842,6 +842,14 @@ fn cases() -> Vec<Case> {
                 }),
             });
         }
+        // QA-VIS2-48: a failed install says so under the toolbar (the sheet never opened).
+        v.push(Case {
+            name: format!("store-install-failed-{tag}"),
+            size: (sw, sh),
+            class: "preview-app",
+            wallpaper: false,
+            build: Box::new(regressions::store_after_a_failed_install),
+        });
         // A kit got before says Added: its packages are in the (injected) installed set.
         v.push(Case {
             name: format!("store-kits-added-{tag}"),
@@ -1771,10 +1779,24 @@ fn main() {
     displays_cases::checks();
     regressions::a_stalled_page_fade_settles();
     regressions::a_narrow_window_can_bring_the_sidebar_back();
+    regressions::a_640_window_collapses_the_sidebar();
     regressions::displays_coming_and_going_leave_nothing_behind();
     regressions::a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     regressions::return_belongs_to_the_button_with_the_keyboard_ring();
     regressions::the_dock_takes_a_new_layout();
+    regressions::store_get_waits_for_the_password();
+    regressions::a_failed_store_install_says_so();
+    regressions::two_gets_in_a_row_both_reach_the_system();
+    regressions::clear_is_off_while_there_is_nothing_to_clear();
+    regressions::the_store_window_shows_a_spinner_while_the_env_is_read();
+    regressions::the_community_tab_asks_only_from_its_button();
+    regressions::store_search_and_sidebar_agree();
+    regressions::a_page_sheet_closes_on_esc_and_on_another_page();
+    installer_cases::every_page_keeps_its_buttons_on_a_640x400_screen();
+    installer_cases::protect_tab_goes_through_the_password_fields();
+    installer_cases::welcome_tab_stops_are_its_two_buttons();
+    installer_cases::the_card_is_as_tall_on_every_page();
+    installer_cases::account_without_a_password_says_why();
     motion_cases::reduce_motion_snaps();
     regressions::an_app_tile_keeps_one_source_badge();
     focus_cases::sidebar_arrows_go_from_group_to_group();
@@ -1866,7 +1888,52 @@ fn main() {
                     c.size.1
                 ));
             }
+            // QA-DESIGN-17: the card scrolls only where the screen is too short for it. On
+            // 1280x800 and taller no installer or Setup page does (on HEAD none scrolled; a page
+            // that is as tall as the screen allows would show a scrollbar and cut its text).
+            if (name.starts_with("installer-") || name.starts_with("setup-"))
+                && c.size.0 >= 1280
+                && c.size.1 >= 800
+            {
+                let mut scrollers: Vec<gtk::ScrolledWindow> = Vec::new();
+                find_type(child.upcast_ref(), &mut scrollers);
+                for sc in scrollers
+                    .iter()
+                    .filter(|s| s.has_css_class("assistant-scroll") && s.is_mapped())
+                {
+                    if sc.vscrollbar().is_mapped() {
+                        issues.push(format!(
+                            "the card scrolls at {}x{} (content {:.0}, shown {:.0})",
+                            c.size.0,
+                            c.size.1,
+                            sc.vadjustment().upper(),
+                            sc.vadjustment().page_size()
+                        ));
+                    }
+                }
+            }
             let tex = render(&win);
+            // The content of a scrolling card is never wider than the viewport it is shown in
+            // (the bar took its width and the content ran under it, cutting "6 of 7").
+            if name.starts_with("installer-") || name.starts_with("setup-") {
+                let mut scrollers: Vec<gtk::ScrolledWindow> = Vec::new();
+                find_type(child.upcast_ref(), &mut scrollers);
+                for sc in scrollers
+                    .iter()
+                    .filter(|s| s.has_css_class("assistant-scroll") && s.is_mapped())
+                {
+                    let top = sc.child().and_then(|vp| vp.first_child());
+                    if let (Some(top), Some(vp)) = (top, sc.child())
+                        && top.width() > vp.width()
+                    {
+                        issues.push(format!(
+                            "card content {} px wide in a {} px viewport (under the scrollbar)",
+                            top.width(),
+                            vp.width()
+                        ));
+                    }
+                }
+            }
             // A golden must be the size it claims (height 1 = natural height).
             if (tex.width(), tex.height()) != c.size && (c.size.1 > 1 || tex.width() != c.size.0) {
                 issues.push(format!(

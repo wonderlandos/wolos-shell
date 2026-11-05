@@ -72,17 +72,25 @@ pub(crate) fn snapshot(m: &dyn Machine, after_fix: bool) -> HardwareSnapshot {
     }
 }
 
-/// Runs `steps` one after another; `done` gets the first error, or Ok after the last.
-fn run_steps(ctx: &Rc<Ctx>, mut steps: Vec<Action>, done: Rc<dyn Fn(Result<(), ActionError>)>) {
+/// Runs `steps` one after another; `started` hears when each runs (see [`super::Started`]);
+/// `done` gets the first error, or Ok after the last.
+fn run_steps(
+    ctx: &Rc<Ctx>,
+    mut steps: Vec<Action>,
+    started: super::Started,
+    done: Rc<dyn Fn(Result<(), ActionError>)>,
+) {
     if steps.is_empty() {
         return done(Ok(()));
     }
     let first = steps.remove(0);
-    let c = ctx.clone();
-    ctx.act(
+    let (c, go) = (ctx.clone(), started.clone());
+    ctx.act_asking(
         first,
+        None,
+        Some(started),
         Rc::new(move |r| match r {
-            Ok(()) => run_steps(&c, steps.clone(), done.clone()),
+            Ok(()) => run_steps(&c, steps.clone(), go.clone(), done.clone()),
             Err(e) => done(Err(e)),
         }),
     );
@@ -96,12 +104,15 @@ fn device_row(e: &Rc<Env>, d: &Device, reload: &Rc<dyn Fn()>, status: &gtk::Labe
     let (ctx, st, rl) = (e.ctx.clone(), status.clone(), reload.clone());
     let fix = w::button("Fix", w::Kind::Default, || {});
     fix.connect_clicked(move |b| {
+        // Off at once (one Fix at a time); "Fixing…" only once it runs, not before the password
+        // (QA-VIS2-39).
         b.set_sensitive(false);
-        b.set_label("Fixing…");
         let (st, rl, b) = (st.clone(), rl.clone(), b.clone());
+        let face = b.clone();
         run_steps(
             &ctx,
             steps.clone(),
+            Rc::new(move |on| face.set_label(if on { "Fixing…" } else { "Fix" })),
             Rc::new(move |r| match r {
                 Ok(()) => rl(),
                 Err(x) => {

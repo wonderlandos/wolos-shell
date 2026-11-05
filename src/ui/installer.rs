@@ -597,6 +597,10 @@ impl Installer {
             ack.set_active(false);
         }
         self.set_leave(install::done_may_leave(key.is_some(), false));
+        let wide = key_screen && chosen;
+        self.with_card(Step::Done, |c| {
+            c.widen(if wide { a::CARD_WIDE } else { a::CARD.0 })
+        });
         self.flow.borrow_mut().jump(Step::Done);
         self.show(Step::Done);
     }

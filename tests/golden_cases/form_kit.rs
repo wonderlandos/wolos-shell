@@ -187,4 +187,36 @@ pub(super) fn cases() -> Vec<Case> {
             aw.root.upcast()
         }),
     ]
+    .into_iter()
+    .chain(std::iter::once(Case {
+        // QA-VIS2-41: a row with a running job (spinner beside its button) on a page with free
+        // height below it keeps row height; the spinner used to vexpand and the row took all of it.
+        name: "kit-row-spinner".into(),
+        size: (w::APP_NARROW.0, 320),
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let p = w::vbox(w::S4);
+            p.add_css_class("page");
+            p.add_css_class("app-window");
+            let job = w::hbox(w::S2);
+            job.append(&w::spinner());
+            let b = w::button("Install", w::Kind::Primary, || {});
+            b.set_sensitive(false);
+            job.append(&b);
+            let rows = [
+                w::list_row(
+                    "view-app-grid-symbolic",
+                    "AI Assistants",
+                    "Installing",
+                    Some(job.upcast_ref()),
+                )
+                .upcast(),
+                w::list_row("view-app-grid-symbolic", "Craft Suite", "Not installed", None).upcast(),
+            ];
+            p.append(&w::section("Available", &rows));
+            p.upcast()
+        }),
+    }))
+    .collect()
 }

@@ -555,13 +555,36 @@ pub fn center_panel(
     head.append(&w::label("Notifications", "title"));
     head.append(&w::spacer());
     let l2 = list.clone();
-    head.append(&w::button("Clear", w::Kind::Default, move || {
-        for r in rows.borrow_mut().clear() {
-            l2.remove(&r);
+    // The list's children as a model: it tells when a note comes or goes. It lives as long as the
+    // Clear button holds it.
+    let children = list.observe_children();
+    let clear = w::button("Clear", w::Kind::Default, {
+        let children = children.clone();
+        move || {
+            let _alive = &children;
+            for r in rows.borrow_mut().clear() {
+                l2.remove(&r);
+            }
+            on_clear();
         }
-        on_clear();
-    }));
+    });
+    head.append(&clear);
     g.append(&head);
+    // Nothing to read or clear: say so, and Clear is off (QA-VIS1-12: an empty dark column with
+    // a live Clear button).
+    let empty = w::label(crate::copy::NO_NOTIFICATIONS, "secondary");
+    g.append(&empty);
+    let show = {
+        let (clear, empty) = (clear.downgrade(), empty.downgrade());
+        move |none: bool| {
+            if let (Some(clear), Some(empty)) = (clear.upgrade(), empty.upgrade()) {
+                clear.set_sensitive(!none);
+                empty.set_visible(none);
+            }
+        }
+    };
+    show(true);
+    children.connect_items_changed(move |m, _, _, _| show(m.n_items() == 0));
     g.append(
         &gtk::ScrolledWindow::builder()
             .child(&list)
@@ -766,7 +789,7 @@ pub fn banner_offering(n: &Note, count: u32, act: Rc<dyn Fn(&str)>, take: Rc<Tak
     }
     if count > 1 {
         text.append(&w::label(
-            &format!("{} more notifications", count - 1),
+            &crate::copy::more_notifications(count - 1),
             "banner-more",
         ));
     }

@@ -86,7 +86,39 @@ pub fn run() -> glib::ExitCode {
             .default_height(w::APP_SIZE.1)
             .decorated(false)
             .build();
-        let s = content(crate::system::default_system(), Env::read());
+        kit::snapshot_on_map(&win, "store");
+        show_when_ready(
+            &win,
+            arg.clone(),
+            file,
+            Env::read,
+            crate::system::default_system(),
+        );
+        win.present();
+    });
+    app.run_with_args::<&str>(&[])
+}
+
+/// Puts a spinner in `win` and builds the Store in it once `read` has run on a worker thread.
+/// `Env::read` waits for `flatpak list` up to 5 s: it ran before the window was shown and the
+/// Store was not on screen for that long after the dock click, and run on the GTK thread after
+/// it the spinner would not turn (QA-STORE-81, QA-STORE-34). `arg` is a page name, or with
+/// `file` a `.wol` package to open.
+pub fn show_when_ready(
+    win: &impl IsA<gtk::Window>,
+    arg: Option<String>,
+    file: bool,
+    read: impl FnOnce() -> Env + Send + 'static,
+    system: Rc<dyn System>,
+) {
+    let wait = w::spinner();
+    wait.set_halign(gtk::Align::Center);
+    wait.set_valign(gtk::Align::Center);
+    wait.set_vexpand(true);
+    win.set_child(Some(&wait));
+    let win = win.clone().upcast::<gtk::Window>();
+    crate::ui::maker::off_thread(read, move |env| {
+        let s = content(system, env);
         match &arg {
             Some(p) if file => s.open_package(
                 &std::fs::canonicalize(p).map_or_else(|_| p.clone(), |a| a.display().to_string()),
@@ -95,10 +127,7 @@ pub fn run() -> glib::ExitCode {
             None => {}
         }
         win.set_child(Some(&s.aw.root));
-        kit::snapshot_on_map(&win, "store");
-        win.present();
     });
-    app.run_with_args::<&str>(&[])
 }
 
 pub struct Store {
@@ -273,6 +302,8 @@ pub fn capability_row(id: &str) -> Option<(&'static str, &'static str)> {
     Some((icon, label))
 }
 
+pub use crate::copy::TRUST_MISSING;
+
 pub fn package_sheet(f: &PackageFile) -> PackageSheet {
     let file = std::path::Path::new(&f.path);
     let Ok(v) = &f.verified else {
@@ -281,7 +312,11 @@ pub fn package_sheet(f: &PackageFile) -> PackageSheet {
             name: stem.unwrap_or_default(),
             summary: String::new(),
             detail: String::new(),
-            trust: TRUST_ROWS[2],
+            trust: if file.exists() {
+                TRUST_ROWS[2]
+            } else {
+                TRUST_MISSING
+            },
             capabilities: vec![],
             install: None,
             button: "Install",
@@ -383,26 +418,55 @@ fn run_store_action(
     now_installed: bool,
     name: String,
 ) {
-    set(w::TileState::Installing);
     say(&sh.status, "");
-    let poll = poll_progress(progress, set.clone());
+    // "Installing…" and the progress only once it runs: before the password the button still
+    // says Get (QA-VIS2-46), and Cancel leaves it so.
+    let poll: Rc<RefCell<Option<glib::SourceId>>> = Default::default();
+    let started: crate::ui::settings::Started = {
+        let (set, poll) = (set.clone(), poll.clone());
+        Rc::new(move |on: bool| {
+            if let Some(id) = poll.borrow_mut().take() {
+                id.remove();
+            }
+            if on {
+                set(w::TileState::Installing);
+                let p = poll_progress(progress.clone(), set.clone());
+                *poll.borrow_mut() = p.borrow_mut().take();
+            } else {
+                set(w::TileState::Get);
+            }
+        })
+    };
+    let why = if now_installed {
+        crate::copy::install_why(&name)
+    } else {
+        crate::copy::remove_why(&name)
+    };
     let st = sh.status.clone();
-    sh.ctx.act(
+    sh.ctx.act_asking(
         action,
+        Some(&why),
+        Some(started),
         Rc::new(move |r: Result<(), ActionError>| {
             if let Some(id) = poll.borrow_mut().take() {
                 id.remove();
             }
             match r {
                 Ok(()) => installed.set(now_installed),
-                Err(e) => say(
-                    &st,
-                    &if now_installed {
-                        crate::copy::install(e, &name)
+                Err(e) => {
+                    // The sentence wol-admind gave for this kind of change, if any.
+                    use shared::admin::AdminAction as A;
+                    let kinds = if now_installed {
+                        [A::PkgInstall, A::FlatpakInstall]
                     } else {
-                        crate::copy::remove(e, &name)
-                    },
-                ),
+                        [A::PkgRemove, A::FlatpakRemove]
+                    };
+                    let said = kinds.into_iter().find_map(wol_core::controls::take_failure);
+                    say(
+                        &st,
+                        &crate::copy::store_failed(e, &name, now_installed, said),
+                    )
+                }
             }
             set(if installed.get() {
                 w::TileState::Open
@@ -719,16 +783,16 @@ fn ask_aur(sh: &Rc<Shared>, gate: &Rc<AurGate>) {
         return;
     }
     say(&sh.status, "");
-    let was = sh.ctx.set_why(AUR_WHY);
-    let (ctx, st, gate) = (sh.ctx.clone(), sh.status.clone(), gate.clone());
-    sh.ctx.act(
+    let (st, gate) = (sh.status.clone(), gate.clone());
+    sh.ctx.act_asking(
         Action::Admin(shared::admin::AdminRequest {
             action: shared::admin::AdminAction::AurOpen,
             args: vec![],
         }),
+        Some(AUR_WHY),
+        None,
         Rc::new(move |r: Result<(), ActionError>| {
             gate.asking.set(false);
-            ctx.set_why(&was);
             match r {
                 Ok(()) => gate.show_open(),
                 // Cancel (the sheet's `Cancelled`; `Denied` from a sheet that gave up): the tab
@@ -770,19 +834,19 @@ fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
     again.set_halign(gtk::Align::Start);
     locked.append(&again);
     p.append(&locked);
-    // Previews have no package search and nothing to unlock.
-    if sh.env.pkg_search {
-        let (sh2, g2) = (sh.clone(), gate.clone());
-        p.connect_map(move |_| ask_aur(&sh2, &g2));
-    }
+    // No sheet on arrival: Enter Password is the one way in. The tab used to open the
+    // Authenticate sheet over that same button, and Cancel left the two prompts disagreeing
+    // (QA-DESIGN-27); a sheet still up from it then greeted a Get elsewhere (QA-VIS2-47).
     let found = w::vbox(w::S2);
     let entry = gtk::SearchEntry::new();
     entry.set_placeholder_text(Some("Search community packages"));
     let (sh2, f3) = (sh.clone(), found.clone());
+    let latest = Rc::new(Latest::default());
     entry.connect_search_changed(move |e| {
         while let Some(c) = f3.first_child() {
             f3.remove(&c);
         }
+        let mine = latest.next();
         let term = e.text().trim().to_string();
         if term.is_empty() {
             return;
@@ -791,9 +855,14 @@ fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
         std::thread::spawn(move || {
             let _ = tx.send_blocking(crate::packages::aur_search(&term));
         });
-        let (sh, found) = (sh2.clone(), f3.clone());
+        let (sh, found, latest) = (sh2.clone(), f3.clone(), latest.clone());
         glib::spawn_future_local(async move {
             if let Ok(hits) = rx.recv().await {
+                // Only the newest search shows: a slow answer for an older term came after the
+                // newer one and both lists stayed (QA-STORE-33).
+                if !latest.is(mine) {
+                    return;
+                }
                 found.append(&grid(hits.iter().take(30).map(|h| aur_tile(&sh, h))));
             }
         });
@@ -803,6 +872,23 @@ fn aur_page(sh: &Rc<Shared>) -> (gtk::Box, Rc<AurGate>) {
     open.append(&legend());
     p.append(&open);
     (p, gate)
+}
+
+/// The newest of a series of searches typed one after another: an answer shows only while it is
+/// still the newest (QA-STORE-33: out-of-order answers were appended twice).
+#[derive(Default)]
+pub(crate) struct Latest(std::cell::Cell<u64>);
+
+impl Latest {
+    /// A new search starts: its token, and every older one is stale.
+    pub(crate) fn next(&self) -> u64 {
+        self.0.set(self.0.get() + 1);
+        self.0.get()
+    }
+    /// `token` is still the newest.
+    pub(crate) fn is(&self, token: u64) -> bool {
+        self.0.get() == token
+    }
 }
 
 /// What reading a package found: its state, its flags, each sentence, and the graph if drawn.
@@ -1228,7 +1314,9 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
                     }
                     (
                         crate::copy::updates_available(v.len()),
-                        crate::copy::UPDATE_RESTORE_POINT.into(),
+                        // One copy of WolOS keeps no restore point: say so, as Settings does
+                        // (QA-STORE-10: "saves a restore point" was a lie there).
+                        crate::ui::settings::before_update(None, one_copy()),
                     )
                 }
                 UpdateState::Installing => (
@@ -1259,7 +1347,13 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
                     Rc::new(move |r| {
                         show(match r {
                             Ok(()) => UpdateState::Installed,
-                            Err(e) => UpdateState::Failed(crate::copy::update(e).into()),
+                            // wol-admind's own sentence when it gave one (QA-STORE-10).
+                            Err(e) => UpdateState::Failed(crate::ui::settings::update_failed(
+                                e,
+                                wol_core::controls::take_failure(
+                                    shared::admin::AdminAction::PkgUpgrade,
+                                ),
+                            )),
                         })
                     }),
                 );
@@ -1288,6 +1382,11 @@ fn updates(sh: &Rc<Shared>) -> gtk::Box {
         });
     }
     p
+}
+
+/// This computer has one copy of WolOS (ADR 0023): updating changes the running system.
+fn one_copy() -> bool {
+    std::path::Path::new(wol_core::update::SINGLE_COPY).exists()
 }
 
 /// Search results: catalog hits now, `pacman -Ss` hits when they arrive.
@@ -1454,20 +1553,25 @@ fn fill_package(sh: &Rc<Shared>, page: &gtk::Box, f: Option<PackageFile>) {
             kit::spawn_app(&["gtk4-launch".into(), id.clone()]);
             return;
         }
+        // Off at once; "Installing…" only once it runs, not before the password (QA-VIS2-46).
         b.set_sensitive(false);
-        b.set_label("Installing…");
         say(&sh.status, "");
+        let face = b.clone();
+        let started: crate::ui::settings::Started =
+            Rc::new(move |on| face.set_label(if on { "Installing…" } else { label }));
         let (b, st, inst, name) = (
             b.clone(),
             sh.status.clone(),
             installed.clone(),
             s.name.clone(),
         );
-        sh.ctx.act(
+        sh.ctx.act_asking(
             Action::Admin(shared::admin::AdminRequest {
                 action: shared::admin::AdminAction::WolInstall,
                 args: vec![path.clone(), trust.into()],
             }),
+            Some(&crate::copy::install_why(&name)),
+            Some(started),
             Rc::new(move |r: Result<(), ActionError>| {
                 b.set_sensitive(true);
                 match r {
@@ -1626,24 +1730,43 @@ pub fn content(sys: Rc<dyn System>, env: Env) -> Store {
                 }
                 return;
             }
-            let (sh, results, content, timer2) =
-                (sh.clone(), results.clone(), content.clone(), timer.clone());
+            let (sh, results, content, timer2, side) = (
+                sh.clone(),
+                results.clone(),
+                content.clone(),
+                timer.clone(),
+                sidebar.clone(),
+            );
             *timer.borrow_mut() = Some(glib::timeout_add_local_once(
                 std::time::Duration::from_millis(250),
                 move || {
                     timer2.borrow_mut().take();
+                    // Results are no page of the sidebar: no row stays lit over them
+                    // (QA-STORE-78: 'Kits' over 'Results for gimp').
+                    side.unselect_all();
                     fill_search(&sh, &results, &term);
                     content.set_visible_child_name("Search");
                 },
             ));
         });
+        // Picking a page leaves the search: its old term did not stay in the field.
+        let field = search.downgrade();
+        aw.sidebar.connect_row_selected(move |_, row| {
+            if let (Some(_), Some(f)) = (row, field.upgrade())
+                && !f.text().is_empty()
+            {
+                f.set_text("");
+            }
+        });
     }
-    // The status sheet shows itself when there is something to say.
+    // The status sheet shows itself when there is something to say. The label's own `visible`
+    // (get_visible), not is_visible(): that is false while the collapsed sheet itself is hidden,
+    // so the sheet never opened and every failure was silent (QA-VIS2-48).
     if let Some(r) = status
         .ancestor(gtk::Revealer::static_type())
         .and_downcast::<gtk::Revealer>()
     {
-        status.connect_visible_notify(move |l| r.set_reveal_child(l.is_visible()));
+        status.connect_visible_notify(move |l| r.set_reveal_child(l.get_visible()));
     }
     Store {
         aur: aur_gate,

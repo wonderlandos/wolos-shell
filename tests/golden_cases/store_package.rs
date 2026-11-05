@@ -13,7 +13,7 @@ mod plugins_cases;
 pub fn cases() -> Vec<Case> {
     let mut v = plugins_cases::cases();
     for (sw, sh, tag) in [(900, 600, "wide"), (480, 360, "narrow")] {
-        for kind in ["signed", "unsigned", "damaged"] {
+        for kind in ["signed", "unsigned", "damaged", "missing"] {
             v.push(Case {
                 name: format!("store-package-{kind}-{tag}"),
                 size: (sw, sh),
@@ -26,6 +26,13 @@ pub fn cases() -> Vec<Case> {
                             wol_file::write(&d, "Shredder.wol", wol_file::SHREDDER, None, true)
                         }
                         "unsigned" => wol_file::write(&d, "Wike.wol", wol_file::WIKE, None, false),
+                        // QA-STORE-40: opened, then moved away: its own sentence, not "damaged".
+                        "missing" => {
+                            let p =
+                                wol_file::write(&d, "Shredder.wol", wol_file::SHREDDER, None, true);
+                            std::fs::remove_file(&p).expect("remove the file");
+                            p
+                        }
                         _ => wol_file::tampered(&wol_file::write(
                             &d,
                             "Shredder.wol",

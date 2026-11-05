@@ -57,6 +57,47 @@ pub(crate) fn listed(all: &[Entry], n: usize) -> Vec<&Entry> {
         .collect()
 }
 
+/// Moves of one control within this many seconds of the FIRST are one change to a person: a
+/// slider drag saves many times. A change every 9 s for ten minutes is many rows, not one.
+const BURST_SECS: u64 = 10;
+
+/// [`listed`] in bursts: consecutive changes with the same topic and actor, each within
+/// [`BURST_SECS`] of the one before, are one row (QA-VIS2-42: three slider moves were three
+/// identical rows). A burst is its changes newest first; at most `n` bursts.
+pub(crate) fn bursts(all: &[Entry], n: usize) -> Vec<Vec<&Entry>> {
+    let mut out: Vec<Vec<&Entry>> = Vec::new();
+    for e in listed(all, usize::MAX) {
+        match out.last_mut() {
+            Some(b)
+                if b.first().is_some_and(|o| {
+                    o.what == e.what && o.by == e.by && o.t.abs_diff(e.t) <= BURST_SECS
+                }) =>
+            {
+                b.push(e)
+            }
+            _ => out.push(vec![e]),
+        }
+    }
+    out.truncate(n);
+    out
+}
+
+/// Undoes a burst ([`bursts`]) with [`undo_all`]: the sentence to show when anything failed
+/// ("2 of 3 changes undone. …", QA-SET-5), and whether anything was undone (the pages refresh).
+pub(crate) fn undo_burst(
+    ids: &[u64],
+    mut undo: impl FnMut(u64) -> Result<(), String>,
+) -> (Option<String>, bool) {
+    let (mut failed, mut any) = (false, false);
+    let said = undo_all(ids, |id| {
+        let r = undo(id);
+        failed |= r.is_err();
+        any |= r.is_ok();
+        r
+    });
+    (failed.then_some(said), any)
+}
+
 /// A restore point's name in words (QA-SET-30). The slots are `wolos-a` and `wolos-b`: which one
 /// is not for the person to learn, only what each is for. The running system; the update that
 /// starts next time; the system as it was before the last update.
@@ -115,25 +156,26 @@ fn history(e: &Rc<Env>, into: &gtk::Box, status: &gtk::Label) {
     clear(into);
     let all = e.sys().history();
     let now = wol_core::journal::now();
-    let rows: Vec<gtk::Widget> = listed(&all, 8)
+    let rows: Vec<gtk::Widget> = bursts(&all, 8)
         .into_iter()
-        .map(|x| {
-            let (env, h, st, id) = (e.clone(), into.clone(), status.clone(), x.id);
+        .map(|burst| {
+            let x = burst[0];
+            let (env, h, st) = (e.clone(), into.clone(), status.clone());
+            let ids: Vec<u64> = burst.iter().map(|b| b.id).collect();
             let undo = w::button("Undo", w::Kind::Default, move || {
                 // `undo` also reloads what the change touched (`system::after_undo`, per topic).
-                match env.sys().undo(Some(id)) {
-                    Ok(_) => {
-                        say(&st, "");
-                        // The other open pages show the restored files too, as after the toast's
-                        // Undo; once this click is over, since this page is built again with them.
-                        let env = Rc::downgrade(&env);
-                        glib::idle_add_local_once(move || {
-                            if let Some(env) = env.upgrade() {
-                                env.refresh()
-                            }
-                        });
-                    }
-                    Err(m) => say(&st, &m),
+                // The whole burst, newest first, each one even after another failed.
+                let (said, any) = undo_burst(&ids, |id| env.sys().undo(Some(id)).map(drop));
+                say(&st, said.as_deref().unwrap_or(""));
+                if any {
+                    // The other open pages show the restored files too, as after the toast's
+                    // Undo; once this click is over, since this page is built again with them.
+                    let env = Rc::downgrade(&env);
+                    glib::idle_add_local_once(move || {
+                        if let Some(env) = env.upgrade() {
+                            env.refresh()
+                        }
+                    });
                 }
                 history(&env, &h, &st);
             });
@@ -265,6 +307,64 @@ mod tests {
             [2],
             "undo entries and undone changes are not offered again"
         );
+    }
+
+    /// QA-VIS2-42: three slider moves in a row are one row; another topic, another actor or a
+    /// pause makes a new one.
+    #[test]
+    fn a_burst_of_changes_is_one_row() {
+        let e = |id, t, what: &str, by: &str| Entry {
+            id,
+            t,
+            by: by.into(),
+            what: what.into(),
+            changes: vec![],
+            undoes: None,
+        };
+        let all = vec![
+            e(6, 1000, "shell", "settings"),
+            e(5, 995, "shell", "settings"),
+            e(4, 992, "shell", "settings"),
+            e(3, 991, "sound", "settings"),
+            e(2, 950, "shell", "settings"),
+            e(1, 949, "shell", "cli"),
+        ];
+        let rows: Vec<Vec<u64>> = bursts(&all, 8)
+            .iter()
+            .map(|b| b.iter().map(|x| x.id).collect())
+            .collect();
+        assert_eq!(rows, [vec![6, 5, 4], vec![3], vec![2], vec![1]]);
+        assert_eq!(bursts(&all, 2).len(), 2);
+        // The span counts from the first: one change every 9 s for ten minutes is many rows.
+        let slow: Vec<Entry> = (0..67u64)
+            .map(|i| e(100 - i, 10_000 - 9 * i, "shell", "settings"))
+            .collect();
+        let sizes: Vec<usize> = bursts(&slow, usize::MAX).iter().map(Vec::len).collect();
+        assert!(sizes.iter().all(|n| *n <= 2), "{sizes:?}");
+        assert!(sizes.len() > 30);
+    }
+
+    /// A burst undoes every change, each one even after another failed, and says "N of M".
+    #[test]
+    fn a_failed_undo_in_a_burst_does_not_stop_the_rest() {
+        let mut order = Vec::new();
+        let (said, any) = undo_burst(&[3, 2, 1], |id| {
+            order.push(id);
+            if id == 2 {
+                Err("Changed since.".into())
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(order, [3, 2, 1], "newest first, all tried");
+        assert!(any);
+        assert_eq!(
+            said.as_deref(),
+            Some("2 of 3 changes undone. Changed since.")
+        );
+        assert_eq!(undo_burst(&[2, 1], |_| Ok(())), (None, true));
+        let (said, any) = undo_burst(&[1], |_| Err("Nope.".into()));
+        assert_eq!((said.as_deref(), any), (Some("Nope."), false));
     }
 
     /// QA-SET-30: the names and dates of bootctl's slots, not ZFS-shaped ones.

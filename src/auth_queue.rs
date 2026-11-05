@@ -111,6 +111,17 @@ impl<W> AuthQueue<W> {
         self.refusals = 0;
         self.waiting.drain(..).collect()
     }
+    /// The changes waiting, in order.
+    pub(crate) fn waiting(&self) -> impl Iterator<Item = &W> {
+        self.waiting.iter()
+    }
+    /// The sheet for Allow `n` was let go while its retries were still out (an install goes on
+    /// under its status line): a refusal arriving for it later finishes the change as `Denied`
+    /// instead of bringing the sheet back on whatever page is up then (QA-VIS2-35: it came back
+    /// a minute later on Desktop & Dock with the old error line).
+    pub(crate) fn let_go(&mut self, n: u32) {
+        self.gave_up = n;
+    }
     pub(crate) fn len(&self) -> usize {
         self.waiting.len()
     }
@@ -165,5 +176,28 @@ mod tests {
         let _ = q.answered("night", Err(ActionError::NeedsAuth), None);
         assert_eq!(q.cancel(), ["night"]);
         assert_eq!(q.len(), 0);
+    }
+
+    /// QA-VIS2-35: once the sheet for an Allow was let go (the change runs on under its status
+    /// line), a refusal that arrives for it later ends the change as Denied: no sheet comes back.
+    /// A change asked after that still gets the sheet.
+    #[test]
+    fn a_late_refusal_after_the_sheet_went_does_not_bring_it_back() {
+        let mut q: AuthQueue<&'static str> = AuthQueue::default();
+        let _ = q.answered("remote", Err(ActionError::NeedsAuth), None);
+        let (all, n) = q.allow();
+        q.sent(Some(n));
+        q.let_go(n);
+        for w in all {
+            assert!(matches!(
+                q.answered(w, Err(ActionError::Denied), Some(n)),
+                Next::Finish("remote", Err(ActionError::Denied))
+            ));
+        }
+        assert_eq!((q.len(), q.checking()), (0, 0));
+        assert!(matches!(
+            q.answered("dock", Err(ActionError::NeedsAuth), None),
+            Next::Ask("")
+        ));
     }
 }

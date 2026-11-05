@@ -207,3 +207,15 @@ fn launch_arg_always_names_the_desktop_file() {
         assert!(!d.contains(' '), "{d}");
     }
 }
+
+/// QA-STORE-33: typing "ab" then "abc", the answer for "ab" arriving after the one for "abc" is
+/// stale and does not show.
+#[test]
+fn only_the_newest_search_shows() {
+    let l = Latest::default();
+    let (ab, abc) = (l.next(), l.next());
+    assert!(!l.is(ab), "the older term's answer is dropped");
+    assert!(l.is(abc));
+    let abcd = l.next();
+    assert!(!l.is(abc) && l.is(abcd));
+}

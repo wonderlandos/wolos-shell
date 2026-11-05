@@ -990,7 +990,12 @@ async fn refresh_fullscreen() {
 /// microphone, at 0 while muted, so the mute key is seen to have worked).
 pub fn osd_view(mic: bool, a: crate::status::Audio) -> (&'static str, u8) {
     if !mic {
-        return (crate::status::volume(a), a.volume.unwrap_or(0));
+        // Muted reads 0, like the microphone: the mute key's OSD drew the level it had (~95 %)
+        // under a muted icon (QA-VIS1-15).
+        return (
+            crate::status::volume(a),
+            if a.muted { 0 } else { a.volume.unwrap_or(0) },
+        );
     }
     let icon = crate::status::mic(a).unwrap_or("microphone-sensitivity-muted-symbolic");
     let level = if a.mic_muted { 0 } else { a.mic.unwrap_or(0) };
@@ -1110,6 +1115,19 @@ mod tests {
         assert_eq!(logind_session_id(Some("3")), "3");
         assert_eq!(logind_session_id(Some(" ")), "auto");
         assert_eq!(logind_session_id(None), "auto");
+    }
+
+    /// QA-VIS1-15: the mute key's OSD shows an empty bar, the volume key's the level.
+    #[test]
+    fn the_mute_osd_shows_zero() {
+        use crate::status::Audio;
+        let a = |muted| Audio {
+            volume: Some(95),
+            muted,
+            ..Default::default()
+        };
+        assert_eq!(osd_view(false, a(true)).1, 0);
+        assert_eq!(osd_view(false, a(false)).1, 95);
     }
 
     /// Audit5 S9-3: the mic-mute key shows the microphone, muted, not the speaker level.

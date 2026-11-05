@@ -314,3 +314,438 @@ pub(super) fn an_app_tile_keeps_one_source_badge() {
     t.set_source("");
     assert_eq!(t.source(), "", "an empty source hides it");
 }
+
+/// Changes [`AsksFirst`] was handed with a password.
+static SENT_WITH_PASSWORD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A System whose changes need the password: NeedsAuth with none, Ok with one (what wol-admind
+/// answers for an install the person is allowed to make).
+pub(super) struct AsksFirst {
+    /// What it answers once the password came: Ok, or this error.
+    pub(super) then: Option<shell::system::ActionError>,
+}
+
+impl shell::system::System for AsksFirst {
+    fn battery(&self) -> Option<shell::status::Battery> {
+        shell::system::Fake.battery()
+    }
+    fn audio(&self) -> shell::status::Audio {
+        shell::system::Fake.audio()
+    }
+    fn network(&self) -> shell::status::Network {
+        shell::system::Fake.network()
+    }
+    fn brightness(&self) -> Option<u8> {
+        shell::system::Fake.brightness()
+    }
+    fn perform(&self, _a: &shell::system::Action) -> Result<(), shell::system::ActionError> {
+        Err(shell::system::ActionError::NeedsAuth)
+    }
+    fn spawn_with(&self, _a: shell::system::Action, pw: Option<&str>) -> shell::system::Done {
+        let (tx, rx) = async_channel::bounded(1);
+        let _ = tx.try_send(match pw {
+            None => Err(shell::system::ActionError::NeedsAuth),
+            Some(_) => {
+                SENT_WITH_PASSWORD.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.then.map_or(Ok(()), Err)
+            }
+        });
+        rx
+    }
+}
+
+/// QA-VIS2-46/47: Get on an official app asks for the password with the install's own sentence
+/// (not the Community tab's warning) and its tile still offers Get until the password is given;
+/// then it installs.
+pub(super) fn store_get_waits_for_the_password() {
+    let (_s, root, get) = store_get_asked(None);
+    assert!(
+        get.is_visible() && get.label().as_deref() == Some("Get"),
+        "no Installing before the password"
+    );
+    give_password(&root);
+    // A tile hides its pill for the ring, the hero's button says Installing….
+    assert!(
+        !get.is_visible() || get.label().as_deref() != Some("Get"),
+        "Installing once the password went"
+    );
+    pump(100);
+    assert_eq!(get.label().as_deref(), Some("Open"), "installed");
+}
+
+/// QA-VIS2-48: an install that failed after the password says so in one sentence on the page
+/// (it went back to Get with no word while wol-admind logged the failure).
+pub(super) fn a_failed_store_install_says_so() {
+    let (_s, root, get) = store_get_asked(Some(shell::system::ActionError::Failed));
+    give_password(&root);
+    pump(100);
+    assert_eq!(get.label().as_deref(), Some("Get"), "offered again");
+    let mut labels: Vec<gtk::Label> = Vec::new();
+    find_type(&root, &mut labels);
+    let line = labels
+        .iter()
+        .find(|l| l.label().contains("couldn’t be installed"))
+        .expect("the failure's sentence");
+    let shown = line.is_visible()
+        && line
+            .ancestor(gtk::Revealer::static_type())
+            .and_downcast::<gtk::Revealer>()
+            .is_none_or(|r| r.reveals_child());
+    assert!(shown, "the sentence is shown");
+}
+
+/// A Store on [`AsksFirst`] (answering `then` after the password) where Get was clicked on an
+/// official app: the Authenticate sheet is up with the install's sentence. Returns the window
+/// and that Get button.
+fn store_get_asked(
+    then: Option<shell::system::ActionError>,
+) -> (ui::store::Store, gtk::Widget, gtk::Button) {
+    let s = ui::store::content(
+        Rc::new(AsksFirst { then }),
+        ui::store::Env {
+            data_dirs: vec![],
+            pkg_search: false,
+            flatpaks: vec![],
+            installed: Some(Default::default()),
+        },
+    );
+    s.aw.select("Discover");
+    pump(100);
+    let root: gtk::Widget = s.aw.root.clone().upcast();
+    let mut buttons: Vec<gtk::Button> = Vec::new();
+    find_type(&root, &mut buttons);
+    let get = buttons
+        .into_iter()
+        .find(|b| b.label().as_deref() == Some("Get") && b.is_visible() && b.is_sensitive())
+        .expect("a tile offers Get");
+    get.emit_clicked();
+    pump(500);
+    let mut labels: Vec<gtk::Label> = Vec::new();
+    find_type(&root, &mut labels);
+    let says = |t: &str| labels.iter().any(|l| l.label().starts_with(t));
+    assert!(
+        says("Enter your password to install "),
+        "the sheet names the install"
+    );
+    assert!(
+        !says("Community packages are not reviewed"),
+        "an official app is not warned about as a Community package"
+    );
+    (s, root, get)
+}
+
+/// Types a password into the Authenticate sheet that is up and presses Return.
+fn give_password(root: &gtk::Widget) {
+    let mut fields: Vec<gtk::PasswordEntry> = Vec::new();
+    find_type(root, &mut fields);
+    let field = fields
+        .into_iter()
+        .find(|f| {
+            f.ancestor(gtk::Revealer::static_type())
+                .and_downcast::<gtk::Revealer>()
+                .is_some_and(|r| r.reveals_child())
+        })
+        .expect("the sheet is up with its password field");
+    field.set_text("secret");
+    field.emit_by_name::<()>("activate", &[]);
+}
+
+/// QA-VIS2-37: a page's sheet (Users & Groups > Add User…) closes on Esc and when another page
+/// opens; it stayed through Hardware, Keyboard and Printers and only its Cancel closed it.
+pub(super) fn a_page_sheet_closes_on_esc_and_on_another_page() {
+    let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+    a.open("Users & Groups");
+    pump(300);
+    let root: gtk::Widget = a.root.clone().upcast();
+    let sheet = || {
+        let mut labels: Vec<gtk::Label> = Vec::new();
+        find_type(&root, &mut labels);
+        labels
+            .into_iter()
+            .find(|l| l.label() == "New account")
+            .and_then(|l| l.ancestor(gtk::Revealer::static_type()))
+            .and_downcast::<gtk::Revealer>()
+            .expect("the New account sheet")
+    };
+    let add = || {
+        let mut all: Vec<gtk::Button> = Vec::new();
+        find_type(&root, &mut all);
+        all.into_iter()
+            .find(|b| {
+                let mut l = Vec::new();
+                find_type::<gtk::Label>(b.upcast_ref(), &mut l);
+                b.label().as_deref() == Some("Add User…")
+                    || l.iter().any(|l| l.label() == "Add User…")
+            })
+            .expect("Add User…")
+    };
+    add().emit_clicked();
+    assert!(sheet().reveals_child(), "Add User… opens the sheet");
+    let esc = a
+        .root
+        .observe_controllers()
+        .iter::<glib::Object>()
+        .filter_map(|c| c.ok()?.downcast::<gtk::EventControllerKey>().ok())
+        .any(|k| {
+            k.emit_by_name::<bool>(
+                "key-pressed",
+                &[&gdk::Key::Escape, &9u32, &gdk::ModifierType::empty()],
+            )
+        });
+    assert!(esc, "Esc is taken");
+    assert!(!sheet().reveals_child(), "Esc closes the sheet");
+    add().emit_clicked();
+    assert!(sheet().reveals_child());
+    a.open("Hardware");
+    pump(50);
+    assert!(!sheet().reveals_child(), "another page closes the sheet");
+}
+
+/// The Store after a failed install of an official app (golden store-install-failed-*): its
+/// sentence under the toolbar, Get offered again.
+pub(super) fn store_after_a_failed_install() -> gtk::Widget {
+    let (s, root, _get) = store_get_asked(Some(shell::system::ActionError::Failed));
+    give_password(&root);
+    pump(400);
+    // The window outlives this function (the case renders it); the Store's state goes with it.
+    std::mem::forget(s);
+    root
+}
+
+/// QA-DESIGN-27: arriving on the Community tab asks for nothing (the sheet came up over the
+/// tab's own Enter Password button); that button is the way in.
+pub(super) fn the_community_tab_asks_only_from_its_button() {
+    let s = ui::store::content(
+        Rc::new(AsksFirst { then: None }),
+        ui::store::Env {
+            data_dirs: vec![],
+            pkg_search: true,
+            flatpaks: vec![],
+            installed: Some(Default::default()),
+        },
+    );
+    let root: gtk::Widget = s.aw.root.clone().upcast();
+    let win = gtk::Window::builder().child(&root).build();
+    win.present();
+    s.aw.open("Community");
+    pump(300);
+    let sheet_up = || {
+        let mut fields: Vec<gtk::PasswordEntry> = Vec::new();
+        find_type(&root, &mut fields);
+        fields.iter().any(|f| {
+            f.ancestor(gtk::Revealer::static_type())
+                .and_downcast::<gtk::Revealer>()
+                .is_some_and(|r| r.reveals_child())
+        })
+    };
+    assert!(!sheet_up(), "no sheet on arrival");
+    let mut buttons: Vec<gtk::Button> = Vec::new();
+    find_type(&root, &mut buttons);
+    buttons
+        .into_iter()
+        .find(|b| b.label().as_deref() == Some("Enter Password"))
+        .expect("Enter Password")
+        .emit_clicked();
+    pump(100);
+    assert!(sheet_up(), "Enter Password asks");
+    win.destroy();
+}
+
+/// QA-STORE-78: typed results leave no sidebar row lit ('Kits' stayed over 'Results for gimp'),
+/// and picking a page again empties the search field.
+pub(super) fn store_search_and_sidebar_agree() {
+    let s = ui::store::content(
+        Rc::new(shell::system::Fake),
+        ui::store::Env {
+            data_dirs: vec![],
+            pkg_search: false,
+            flatpaks: vec![],
+            installed: Some(Default::default()),
+        },
+    );
+    s.aw.select("Kits");
+    pump(50);
+    s.search.set_text("gimp");
+    pump(700);
+    assert_eq!(
+        s.aw.content.visible_child_name().as_deref(),
+        Some("Search"),
+        "the results show"
+    );
+    assert!(
+        s.aw.sidebar.selected_row().is_none(),
+        "no page row lit over the results"
+    );
+    s.aw.select("Play");
+    pump(400);
+    assert_eq!(s.search.text(), "", "a page picked leaves the search");
+    assert_eq!(s.aw.content.visible_child_name().as_deref(), Some("Play"));
+}
+
+/// QA-DESIGN-19: a 640-wide window (the smallest screen) collapses the sidebar: with it the content
+/// had 400 px, less than the 480 a narrow window gives it. At the default width it stays.
+pub(super) fn a_640_window_collapses_the_sidebar() {
+    for (width, collapsed) in [(640, true), (w::NARROW - 1, true), (w::APP_SIZE.0, false)] {
+        let a = ui::settings::content(Rc::new(shell::system::Fake), &ui::settings::Host::demo());
+        let frame = gtk::Overlay::new();
+        frame.set_child(Some(&a.root));
+        frame.set_size_request(width, 400);
+        let win = gtk::Window::builder()
+            .decorated(false)
+            .default_width(width)
+            .default_height(400)
+            .child(&frame)
+            .build();
+        win.present();
+        pump(300);
+        assert_eq!(
+            a.sidebar_toggle.is_visible(),
+            collapsed,
+            "{width} px: sidebar collapsed = {collapsed}"
+        );
+        win.destroy();
+    }
+}
+
+/// QA-STORE-65: two Gets within a moment share one password sheet and both reach wol-admind (the
+/// second ring used to reset to Get with no request behind it).
+pub(super) fn two_gets_in_a_row_both_reach_the_system() {
+    let s = ui::store::content(
+        Rc::new(AsksFirst { then: None }),
+        ui::store::Env {
+            data_dirs: vec![],
+            pkg_search: false,
+            flatpaks: vec![],
+            installed: Some(Default::default()),
+        },
+    );
+    s.aw.select("Discover");
+    pump(100);
+    let root: gtk::Widget = s.aw.root.clone().upcast();
+    let mut buttons: Vec<gtk::Button> = Vec::new();
+    find_type(&root, &mut buttons);
+    let gets: Vec<gtk::Button> = buttons
+        .into_iter()
+        .filter(|b| b.label().as_deref() == Some("Get") && b.is_visible() && b.is_sensitive())
+        .take(2)
+        .collect();
+    assert_eq!(gets.len(), 2, "two apps offer Get");
+    SENT_WITH_PASSWORD.store(0, std::sync::atomic::Ordering::SeqCst);
+    for g in &gets {
+        g.emit_clicked();
+        pump(30);
+    }
+    pump(400);
+    give_password(&root);
+    pump(400);
+    assert_eq!(
+        SENT_WITH_PASSWORD.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "both installs were sent"
+    );
+    for g in &gets {
+        assert_eq!(g.label().as_deref(), Some("Open"), "both ended installed");
+    }
+}
+
+/// The button labelled `text` under `root`.
+fn button_named(root: &gtk::Widget, text: &str) -> gtk::Button {
+    let mut all: Vec<gtk::Button> = Vec::new();
+    find_type(root, &mut all);
+    all.into_iter()
+        .find(|b| b.label().as_deref() == Some(text))
+        .unwrap_or_else(|| panic!("a button {text}"))
+}
+
+/// QA-VIS1-22 / QA-VIS1-12: Clear is off while the clipboard history and the Notification Center
+/// are empty (and the Center says so), on again with a note in them.
+pub(super) fn clear_is_off_while_there_is_nothing_to_clear() {
+    use shell::clipboard::History;
+    let mut h = History::with_pins(vec![]);
+    let p = ui::clipboard::Panel::new(History::with_pins(vec![]));
+    let root: gtk::Widget = p.root.clone().upcast();
+    assert!(
+        !button_named(&root, "Clear").is_sensitive(),
+        "empty clipboard history"
+    );
+    h.push("hello");
+    *p.history.borrow_mut() = h;
+    p.refresh();
+    assert!(button_named(&root, "Clear").is_sensitive(), "one entry");
+
+    let rows: Rc<std::cell::RefCell<ui::notify::Center<gtk::Box>>> = Default::default();
+    let (g, list) = ui::notify::center_panel(rows.clone(), || {});
+    let root: gtk::Widget = g.clone().upcast();
+    let mut labels: Vec<gtk::Label> = Vec::new();
+    find_type(&root, &mut labels);
+    let says = labels
+        .iter()
+        .find(|l| l.label() == "No notifications")
+        .expect("the empty sentence")
+        .clone();
+    assert!(says.is_visible() && !button_named(&root, "Clear").is_sensitive());
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    rows.borrow_mut().push(1, row.clone());
+    list.prepend(&row);
+    assert!(!says.is_visible() && button_named(&root, "Clear").is_sensitive());
+    button_named(&root, "Clear").emit_clicked();
+    assert!(says.is_visible() && !button_named(&root, "Clear").is_sensitive());
+}
+
+/// QA-STORE-81 / QA-STORE-34: the Store window has something to show at once (a spinner) while
+/// `Env::read` runs on a worker thread, and the Store takes its place when it is done. A slow
+/// read (here 400 ms; `flatpak list` waits up to 5 s) never holds the GTK thread: the main loop
+/// still runs during it.
+pub(super) fn the_store_window_shows_a_spinner_while_the_env_is_read() {
+    let win = gtk::Window::builder()
+        .default_width(900)
+        .default_height(600)
+        .build();
+    win.present();
+    let ticks = Rc::new(std::cell::Cell::new(0));
+    let t = ticks.clone();
+    let tick = glib::timeout_add_local(std::time::Duration::from_millis(20), move || {
+        t.set(t.get() + 1);
+        glib::ControlFlow::Continue
+    });
+    ui::store::show_when_ready(
+        &win,
+        None,
+        false,
+        || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            ui::store::Env {
+                data_dirs: vec![],
+                pkg_search: false,
+                flatpaks: vec![],
+                installed: Some(Default::default()),
+            }
+        },
+        Rc::new(shell::system::Fake),
+    );
+    assert!(
+        win.child().is_some_and(|c| c.is::<gtk::Spinner>()),
+        "a spinner until the read is done"
+    );
+    pump(200);
+    assert!(
+        ticks.get() >= 5,
+        "the GTK thread kept running: {} ticks",
+        ticks.get()
+    );
+    assert!(
+        win.child().is_some_and(|c| c.is::<gtk::Spinner>()),
+        "still reading"
+    );
+    pump(800);
+    tick.remove();
+    let store = win.child().expect("the Store");
+    assert!(
+        !store.is::<gtk::Spinner>(),
+        "the Store replaced the spinner"
+    );
+    let mut entries: Vec<gtk::SearchEntry> = Vec::new();
+    find_type(&store, &mut entries);
+    assert!(!entries.is_empty(), "it is the Store (has its search)");
+    win.destroy();
+}
