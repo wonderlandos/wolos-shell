@@ -113,8 +113,9 @@ pub const BASELINE: &[(&str, &str, usize, &str)] = &[
     (
         HEIGHT,
         "settings",
-        116,
-        "sidebar search 34 px (min-height 32 + border, 98); GTK's own MenuButton with no kit style is 34 px (18); +2: the Default Apps case (INT-2)",
+        118,
+        "sidebar search 34 px (min-height 32 + border, 100); GTK's own MenuButton with no kit style is 34 px (18); \
+         +2: the Default Apps case and +2: the case opened from a search result (INT-2, same sidebar search)",
     ),
     (
         HEIGHT,
