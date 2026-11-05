@@ -246,10 +246,11 @@ const BASELINE: &[(&str, usize)] = &[
 /// recorded under it, so no record is invented to fill it (qa100 step 0.4, A-7), and 0048 is not
 /// renumbered while its references (webapp docs, tests, the catalog) are still being edited by
 /// other lanes. It is dropped here when the hub-arch merge settles the numbering.
-/// 0052 (federate), 0053 (Atlas private and Tor tabs), 0054 (keyring) and the others up to 0056 are
-/// written on their own wave3 branches; 0057 (search by meaning) lands before them in this tree.
+/// 0054 (keyring) and 0055 are written on their own wave3 branches (0045, 0052, 0053 and 0056 have
+/// landed). 0058 is reserved for the Design System (main #9558) and is not written yet; 0059
+/// (experience) and 0060 (wolkit on WebGPU) landed before it.
 const RU_089_KNOWN_GAPS: &[&str] = &[
-    "0043", "0045", "0046", "0047", "0049", "0050", "0052", "0053", "0054", "0055", "0056",
+    "0043", "0046", "0047", "0049", "0050", "0054", "0055", "0058",
 ];
 
 fn baseline(id: &str) -> usize {
