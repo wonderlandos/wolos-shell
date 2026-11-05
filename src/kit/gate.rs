@@ -15,7 +15,8 @@
 //! phase. Endpoints are exact: frame 0 is the old picture, frame 1 the new one.
 //!
 //! Cost: the pictures are converted once (off the GTK thread) at [`MAX_WORK`] or less; a frame
-//! is one pass of arithmetic and table lookups per pixel, split over a few threads. Measured on
+//! is one pass of arithmetic and table lookups per pixel, split over a few threads, made on
+//! `Lane::Desktop` (`ui::panels::Frames`), never on the GTK thread. Measured on
 //! the lane (wolos-lane, 32 cores at load 22-32, release, 2026-11-04) at 1920x1080: the whole
 //! frame (morph step, snapshot, GSK's cairo renderer; `tests/gate_transition.rs`) 9.1-12.1 ms
 //! mean, 10.3-20.9 ms worst, over 39 frames; the morph alone 10.9-12.1 ms mean (`frame_cost`
@@ -117,6 +118,24 @@ struct Px {
     dh: i16,
     ring: u8,
     sun: u8,
+}
+
+thread_local! {
+    /// How many [`Morph::frame`]s this thread has made.
+    static MADE_HERE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+static MADE_ALL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// How many [`Morph::frame`]s every thread together has made so far (tests).
+pub fn frames_made() -> u32 {
+    MADE_ALL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// How many [`Morph::frame`]s the calling thread has made so far. A test reads it on the GTK
+/// thread before and after a transition: the difference must be 0 (QA-A7-9).
+pub fn frames_made_here() -> u32 {
+    MADE_HERE.with(std::cell::Cell::get)
 }
 
 /// Two gate pictures ready to move between.
@@ -285,7 +304,11 @@ impl Morph {
     }
 
     /// The picture at overall progress `t` (0 = old, 1 = new): tightly packed BGRA, opaque.
+    /// Blocking (about 10 ms at [`MAX_WORK`] over a few threads): never on the GTK thread while a
+    /// transition runs (`ui::panels` makes the frames on a worker; QA-A7-9).
     pub fn frame(&self, t: f32) -> Vec<u8> {
+        MADE_HERE.with(|n| n.set(n.get() + 1));
+        MADE_ALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut out = vec![0u8; self.w * self.h * 4];
         let (tr, td, ts) = (phase(t, RING), phase(t, DYE), phase(t, SUN));
         let threads = std::thread::available_parallelism()

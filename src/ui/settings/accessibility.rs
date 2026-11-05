@@ -16,6 +16,20 @@ const TIMEOUT_CHOICES: [&str; 4] = [
     "Until I dismiss them",
 ];
 
+/// A switch's `done`, after a saved change also offering its Undo (the journal entry of topic
+/// `accessibility`; QA-A7-11).
+fn undoable(done: Box<dyn FnOnce(bool)>) -> Box<dyn FnOnce(bool)> {
+    Box::new(move |ok| {
+        if ok {
+            changed_latest(TOPIC);
+        }
+        done(ok)
+    })
+}
+
+/// The journal topic of the switches that write their own record.
+const TOPIC: &str = "accessibility";
+
 pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let p = w::page("Accessibility");
     let status = status_label();
@@ -36,7 +50,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             "Increase contrast",
             "Darker borders and text that stands out more.",
             a.increase_contrast,
-            move |on, done| ctx.act_switch(Action::IncreaseContrast(on), &st, done),
+            move |on, done| ctx.act_switch(Action::IncreaseContrast(on), &st, undoable(done)),
         )
     };
     let larger = {
@@ -45,7 +59,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             "Larger text",
             copy::LARGER_TEXT_ABOUT,
             a.larger_text,
-            move |on, done| ctx.act_switch(Action::LargerText(on), &st, done),
+            move |on, done| ctx.act_switch(Action::LargerText(on), &st, undoable(done)),
         )
     };
     p.append(&w::section(
@@ -82,7 +96,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
                 now,
                 move |i, done| {
                     let p = Patience::ALL[i.min(Patience::ALL.len() - 1)];
-                    ctx.act_switch(Action::Timeouts(p), &st, done)
+                    ctx.act_switch(Action::Timeouts(p), &st, undoable(done))
                 },
             )
         }],

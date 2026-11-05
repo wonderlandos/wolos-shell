@@ -1008,3 +1008,52 @@ fn update_all_through_wopkg_updates_flatpaks() {
         Err(ActionError::Failed)
     );
 }
+
+/// QA-A7-11: the Accessibility switches that write their own file are journal entries on the
+/// topic `accessibility` (Undo toast, Restore, `wol history`); before, these two rows were the
+/// only Settings rows that could not be undone.
+#[test]
+fn accessibility_switches_are_journaled_and_undo() {
+    use shared::patience::Patience;
+    let d = std::env::temp_dir().join(format!("wol-a7-11-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let j = wol_core::journal::Journal::new(&d.join("state"), &d.join("config"));
+    let timeouts = d.join("config").join(shared::patience::FILE);
+
+    perform_accessibility(&Action::Timeouts(Patience::Five), &j).unwrap();
+    assert_eq!(std::fs::read_to_string(&timeouts).unwrap(), "5\n");
+    let e = j.entries();
+    assert_eq!(e.len(), 1);
+    assert_eq!(
+        (e[0].what.as_str(), e[0].by.as_str()),
+        ("accessibility", "settings")
+    );
+    j.undo(None, "settings", 9).unwrap();
+    assert!(!timeouts.exists(), "Undo puts the old choice back");
+
+    // Normal removes the file, and the entry can bring it back.
+    perform_accessibility(&Action::Timeouts(Patience::Double), &j).unwrap();
+    perform_accessibility(&Action::Timeouts(Patience::Normal), &j).unwrap();
+    assert!(!timeouts.exists());
+    j.undo(None, "settings", 10).unwrap();
+    assert_eq!(std::fs::read_to_string(&timeouts).unwrap(), "2\n");
+
+    perform_accessibility(&Action::IncreaseContrast(true), &j).unwrap();
+    assert!(
+        d.join("config")
+            .join(crate::kit::style::CONTRAST_FILE)
+            .exists()
+    );
+    assert_eq!(j.entries().last().unwrap().what, "accessibility");
+
+    // Larger text records `1.25`, off removes the record: the file the undo restores.
+    assert_eq!(
+        accessibility_files(&Action::LargerText(true)),
+        Some((wol_core::journal::LARGER_TEXT_FILE, Some("1.25\n".into())))
+    );
+    assert_eq!(
+        accessibility_files(&Action::LargerText(false)),
+        Some((wol_core::journal::LARGER_TEXT_FILE, None))
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

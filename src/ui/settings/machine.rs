@@ -313,7 +313,7 @@ impl Machine for Live {
             .set_hotspot(on.as_ref().map(|(n, p)| (n.as_str(), p.as_str())))
     }
     fn airplane(&self) -> Option<bool> {
-        let saved = wol_core::journal::state_home().join(wol_core::netconf::AIRPLANE_FILE);
+        let saved = wol_core::netconf::airplane_path(&wol_core::journal::state_home());
         self.controls()
             .airplane(self.os().read_text(&saved.to_string_lossy()).as_deref())
     }
