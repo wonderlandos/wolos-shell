@@ -126,9 +126,10 @@ pub const BASELINE: &[(&str, &str, usize, &str)] = &[
     (
         HEIGHT,
         "store",
-        58,
+        68,
         "sidebar search 34 px (54) and the store search page field 34 px (4): min-height 32 + border; \
-         +4: the install-failed and package-missing wide cases (INT-2, same sidebar search)",
+         +4: the install-failed and package-missing wide cases (INT-2, same sidebar search); \
+         +10: the Web Apps page (its sidebar search and the row menu buttons, GTK's own MenuButton at 34 px)",
     ),
     (
         GAP,
