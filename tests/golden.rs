@@ -2066,7 +2066,11 @@ fn main() {
                     "dark"
                 }
             );
-            if only.as_deref().is_some_and(|o| !name.contains(o)) {
+            // WOL_GOLDEN_ONLY: names or parts of names, comma separated (one run can re-bake several cases).
+            if only
+                .as_deref()
+                .is_some_and(|o| !o.split(',').any(|p| !p.is_empty() && name.contains(p)))
+            {
                 continue;
             }
             let win = gtk::Window::builder()
