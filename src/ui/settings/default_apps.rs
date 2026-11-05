@@ -105,6 +105,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let done = Rc::new(Cell::new(false));
     {
         let (s, done) = (spinner.downgrade(), done.clone());
+        // fixed wait: a settle delay, the spinner shows only when the read takes longer than this.
         glib::timeout_add_local_once(SPINNER_AFTER, move || {
             if let (false, Some(s)) = (done.get(), s.upgrade()) {
                 s.set_visible(true);

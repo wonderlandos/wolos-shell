@@ -175,6 +175,7 @@ impl Snap {
         let at = self.epoch.get() + 1;
         self.epoch.set(at);
         let weak = Rc::downgrade(self);
+        // fixed wait: the chooser is a preview that hides by itself; nobody reads it past the pointer.
         glib::timeout_add_local_once(std::time::Duration::from_millis(u64::from(ms)), move || {
             if let Some(s) = weak.upgrade()
                 && s.epoch.get() == at

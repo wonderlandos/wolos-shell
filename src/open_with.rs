@@ -835,25 +835,13 @@ pub async fn handler_for(id: &str, program: &str) -> Option<Handler> {
 
 // ---- Open With remembers ------------------------------------------------------------------------
 
-/// Writes `text` over `path` (a new file beside it, then a rename), creating the folder.
-fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+/// Writes `text` over `path` with the shared atomic writer (a new file beside it, then a rename),
+/// creating the folder.
+fn write_over(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    // A name of its own (process and counter): two writers never share a half-written file.
-    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let name = path.file_name().map(|f| f.to_string_lossy().into_owned());
-    let tmp = path.with_file_name(format!(
-        ".{}.{}.{n}.tmp",
-        name.unwrap_or_default(),
-        std::process::id()
-    ));
-    let done = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, path));
-    if done.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    done
+    shared::atomic::atomic_write(path, 0o644, text.as_bytes())
 }
 
 /// The apps the person's file offers first for the kind of `path` (its Added Associations, in
@@ -901,7 +889,7 @@ pub fn remember(path: &Path, app_id: &str) {
             let file = Path::new(&crate::kit::config_home()).join(FILE);
             let now = std::fs::read_to_string(&file).unwrap_or_default();
             if let Some(next) = remembered(&now, &mime, &app_id) {
-                let _ = write_atomic(&file, &next);
+                let _ = write_over(&file, &next);
             }
         });
 }
@@ -1595,8 +1583,8 @@ mod tests {
     fn a_write_replaces_the_file_whole() {
         let d = scratch("w");
         let f = d.join("sub/mimeapps.list");
-        write_atomic(&f, "one\n").unwrap();
-        write_atomic(&f, "two\n").unwrap();
+        write_over(&f, "one\n").unwrap();
+        write_over(&f, "two\n").unwrap();
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "two\n");
         assert_eq!(
             std::fs::read_dir(d.join("sub")).unwrap().count(),
@@ -1607,7 +1595,7 @@ mod tests {
         let writers: Vec<_> = (0..8)
             .map(|i| {
                 let f = f.clone();
-                std::thread::spawn(move || write_atomic(&f, &format!("writer {i}\n")).unwrap())
+                std::thread::spawn(move || write_over(&f, &format!("writer {i}\n")).unwrap())
             })
             .collect();
         writers.into_iter().for_each(|w| w.join().unwrap());

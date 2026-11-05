@@ -19,7 +19,7 @@
 //! `Lane::Desktop` (`ui::panels::Frames`), never on the GTK thread. Measured on
 //! the lane (wolos-lane, 32 cores at load 22-32, release, 2026-11-04) at 1920x1080: the whole
 //! frame (morph step, snapshot, GSK's cairo renderer; `tests/gate_transition.rs`) 9.1-12.1 ms
-//! mean, 10.3-20.9 ms worst, over 39 frames; the morph alone 10.9-12.1 ms mean (`frame_cost`
+//! mean, 10.3-20.9 ms worst, over 39 frames; the morph alone 10.9-12.1 ms mean (`a_frame_costs_less_than_the_sixty_hertz_budget`
 //! below, `--release -- --ignored`); preparing it 0.3-0.4 s once. A 4k display on the software
 //! renderer is over budget: GSK scaling the 1920x1080 frame up costs 14-15 ms by itself.
 use std::path::Path;
@@ -485,7 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn resample_averages() {
+    fn resampling_averages_the_pixels_and_caps_the_work_size() {
         let src: Vec<u8> = [[0u8, 0, 0, 255], [200, 100, 50, 255]]
             .iter()
             .flatten()
@@ -500,8 +500,8 @@ mod tests {
     /// --nocapture`). Prints the mean and worst of 36 frames (600 ms at 60 Hz) and the one-time
     /// preparation; fails over the 16 ms budget.
     #[test]
-    #[ignore]
-    fn frame_cost() {
+    #[ignore = "timing: run by hand in the release lane (the budget needs an unloaded machine)"]
+    fn a_frame_costs_less_than_the_sixty_hertz_budget() {
         let (w, h) = (1920, 1080);
         let grad = |k: u8| -> Vec<u8> {
             (0..w * h)

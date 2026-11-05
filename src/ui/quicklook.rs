@@ -424,6 +424,7 @@ fn hidden(q: &Rc<Q>) {
         return;
     }
     let (at, qq) = (q.idle.get(), q.clone());
+    // fixed wait: the previewer has been closed; it quits after this idle time, nobody is reading it.
     glib::timeout_add_seconds_local_once(ql::IDLE_EXIT_SECS, move || {
         if qq.idle.get() == at && !qq.win.is_visible() {
             qq.app.quit();
