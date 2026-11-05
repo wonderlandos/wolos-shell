@@ -14,6 +14,7 @@ pub mod form;
 pub mod gate;
 pub mod graph;
 pub mod groups;
+pub mod input_guard;
 pub mod lifetime;
 pub mod motion;
 pub mod navigation;

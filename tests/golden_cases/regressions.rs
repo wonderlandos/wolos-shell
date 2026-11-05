@@ -395,6 +395,54 @@ pub(super) fn a_failed_store_install_says_so() {
     assert!(shown, "the sentence is shown");
 }
 
+/// QA-STORE-59: each way an install ends without the app says why, in the system's own sentence
+/// (offline, disk full, a package that does not check, an update holding the lock, and a failure
+/// that names nothing), on the status sheet that is shown, and the tile offers Get again. The
+/// sentence is what wol-admind answered (`failed <message>`, the Store reads it with
+/// `wol_core::controls::take_failure`); before, every kind got the one guess "Check that you’re
+/// online", when it got a word at all.
+pub(super) fn every_failed_install_says_why() {
+    use wol_core::pkg_failure::{Cause, sentence, unknown};
+    let kinds = [
+        sentence(Cause::Download, true),
+        sentence(Cause::NoRoom, true),
+        sentence(Cause::Damaged, true),
+        sentence(Cause::UpdateRunning, true),
+        unknown(true),
+    ];
+    for said in kinds {
+        let (_s, root, get) = store_get_asked(Some(shell::system::ActionError::Failed));
+        wol_core::controls::note_failure(
+            shared::admin::AdminAction::PkgInstall,
+            Some(said.clone()),
+        );
+        give_password(&root);
+        pump(150);
+        assert_eq!(get.label().as_deref(), Some("Get"), "offered again: {said}");
+        let mut labels: Vec<gtk::Label> = Vec::new();
+        find_type(&root, &mut labels);
+        let line = labels
+            .iter()
+            .find(|l| l.has_css_class("store-status"))
+            .expect("the status line");
+        assert_eq!(line.label(), said);
+        let sheet = line
+            .ancestor(gtk::Revealer::static_type())
+            .and_downcast::<gtk::Revealer>()
+            .expect("the status sheet");
+        assert!(sheet.reveals_child() && line.is_visible(), "shown: {said}");
+        assert!(
+            !line.label().contains("online") || said.contains("download failed"),
+            "only a failed download blames the connection: {said}"
+        );
+        // Taken once: a later failure without a sentence does not repeat this one.
+        assert_eq!(
+            wol_core::controls::take_failure(shared::admin::AdminAction::PkgInstall),
+            None
+        );
+    }
+}
+
 /// A Store on [`AsksFirst`] (answering `then` after the password) where Get was clicked on an
 /// official app: the Authenticate sheet is up with the install's sentence. Returns the window
 /// and that Get button.

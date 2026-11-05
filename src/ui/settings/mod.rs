@@ -749,15 +749,17 @@ impl Ctx {
         // The Authenticate sheet is modal: while it is up the sidebar, the page and the toolbar
         // take no input (QA-LIVE-8: a click behind it navigated while the sheet stayed), and Esc
         // is Cancel wherever the focus is.
-        let behind: Vec<glib::WeakRef<gtk::Widget>> = [
-            w::content_overlay(aw).child(),
-            Some(aw.actions.clone().upcast()),
-            Some(aw.sidebar_toggle.clone().upcast()),
-        ]
-        .into_iter()
-        .flatten()
-        .map(|x| x.downgrade())
-        .collect();
+        let behind: Rc<Vec<glib::WeakRef<gtk::Widget>>> = Rc::new(
+            [
+                w::content_overlay(aw).child(),
+                Some(aw.actions.clone().upcast()),
+                Some(aw.sidebar_toggle.clone().upcast()),
+            ]
+            .into_iter()
+            .flatten()
+            .map(|x| x.downgrade())
+            .collect(),
+        );
         // The keyboard goes back to the control that asked once the sheet goes: the focused
         // password field turned unfocusable as the sheet collapsed and GTK put the focus on the
         // first focusable widget, the sidebar's search (QA-VIS2-34). The sheet's last line goes
@@ -789,28 +791,59 @@ impl Ctx {
                 });
             });
         }
-        let asked_from: RefCell<Option<glib::WeakRef<gtk::Widget>>> = RefCell::default();
+        let asked_from: Rc<RefCell<Option<glib::WeakRef<gtk::Widget>>>> = Rc::default();
+        // The page takes input again when the input that answered the sheet is over, not the
+        // moment the sheet goes (QA-STORE-60: a held Return repeated into the sidebar row that
+        // got the keyboard back, the second click of a double click opened the tile under Allow).
+        let guard = Rc::new(kit::input_guard::Guard::default());
+        let release: Rc<dyn Fn()> = {
+            let (sheet, asked_from, guard, behind) = (
+                self.auth.revealer.downgrade(),
+                asked_from.clone(),
+                Rc::downgrade(&guard),
+                behind.clone(),
+            );
+            Rc::new(move || {
+                let (Some(sheet), Some(guard)) = (sheet.upgrade(), guard.upgrade()) else {
+                    return;
+                };
+                if sheet.reveals_child() || !guard.quiet() {
+                    return;
+                }
+                let mut let_go = false;
+                for x in behind.iter().filter_map(|x| x.upgrade()) {
+                    let_go |= !x.is_sensitive();
+                    x.set_sensitive(true);
+                }
+                if !let_go {
+                    return;
+                }
+                if let Some(f) = asked_from.borrow_mut().take().and_then(|f| f.upgrade()) {
+                    // After the page under it took input again.
+                    glib::idle_add_local_once(move || {
+                        if f.is_mapped() && f.is_sensitive() {
+                            f.grab_focus();
+                        }
+                    });
+                }
+            })
+        };
+        guard.watch(&aw.root, release);
         let c = Rc::downgrade(self);
+        let guard = guard.clone();
         self.auth.revealer.connect_reveal_child_notify(move |r| {
-            let up = r.reveals_child();
-            for x in behind.iter().filter_map(|x| x.upgrade()) {
-                x.set_sensitive(!up);
-            }
-            if up {
+            if r.reveals_child() {
+                guard.up();
+                for x in behind.iter().filter_map(|x| x.upgrade()) {
+                    x.set_sensitive(false);
+                }
                 *asked_from.borrow_mut() = last.borrow().clone();
                 return;
             }
             if let Some(c) = c.upgrade() {
                 c.auth.message.set_label("");
             }
-            if let Some(f) = asked_from.take().and_then(|f| f.upgrade()) {
-                // After the page under it took input again.
-                glib::idle_add_local_once(move || {
-                    if f.is_mapped() && f.is_sensitive() {
-                        f.grab_focus();
-                    }
-                });
-            }
+            guard.down();
         });
         // Escape while the Authenticate sheet is up cancels it, whatever has the focus.
         let c = Rc::downgrade(self);

@@ -1057,3 +1057,27 @@ fn accessibility_switches_are_journaled_and_undo() {
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// QA-STORE-59: a failed Flathub install for this account leaves flatpak's reason as a sentence
+/// for the Store (it has no wol-admind to give one); a success clears it, and output that names
+/// no cause leaves nothing (the Store then says its general words).
+#[test]
+fn a_failed_flathub_install_keeps_the_reason() {
+    use shared::admin::AdminAction::FlatpakInstall;
+    use wol_core::controls::take_failure;
+    use wol_core::pkg_failure::{Cause, sentence};
+    let _ = take_failure(FlatpakInstall);
+    note_flatpak_install(
+        false,
+        "error: Failed to install org.x.App: Error writing to file: No space left on device\n",
+    );
+    assert_eq!(
+        take_failure(FlatpakInstall),
+        Some(sentence(Cause::NoRoom, true))
+    );
+    note_flatpak_install(false, "error: Unable to connect to dl.flathub.org\n");
+    note_flatpak_install(true, "");
+    assert_eq!(take_failure(FlatpakInstall), None, "a success clears it");
+    note_flatpak_install(false, "error: something else\n");
+    assert_eq!(take_failure(FlatpakInstall), None);
+}
