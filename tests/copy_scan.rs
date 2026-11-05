@@ -20,6 +20,7 @@ const COPY_FILES: [&str; 5] = [
     "copy_settings.rs",
     "copy_maker.rs",
     "copy_first_login.rs",
+    "copy_monitor.rs",
 ];
 
 /// Text on a line near one of these is a log or a programmer message, not on screen.

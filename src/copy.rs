@@ -25,6 +25,10 @@ pub mod maker;
 #[path = "copy_first_login.rs"]
 pub mod first_login;
 
+/// System Monitor's words (docs/modules/monitor.md): its pages hold none of their own.
+#[path = "copy_monitor.rs"]
+pub mod monitor;
+
 /// Fragments a user must never read (case-insensitive, at a word start; the [`WHOLE_WORD`] ones
 /// as whole words only), and what to do instead. Upstream projects are never named on screen
 /// (docs/THIRD-PARTY.md:4-5): the reasons starting "upstream:" mark them for RU-006.
