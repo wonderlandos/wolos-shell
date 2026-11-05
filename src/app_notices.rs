@@ -400,16 +400,13 @@ pub fn boot_notice(text: Option<&str>) -> Option<(&'static str, String)> {
 }
 
 /// Shows [`boot_notice`] once per session, a few seconds after the shell's notification server is
-/// up (a GTK timer; the post blocks, so it runs on its own thread); a shell restarted within the
-/// session does not show it again (a mark in the runtime dir). Call on the GTK thread.
+/// up (a GTK timer; the file is read and the post made on a thread of its own, both block); a shell
+/// restarted within the session does not show it again (a mark in the runtime dir). Call on the GTK
+/// thread.
 pub fn start_boot_notice() {
-    let Some((title, body)) = boot_notice(
-        std::fs::read_to_string(wol_core::seal::NOTICE)
-            .ok()
-            .as_deref(),
-    ) else {
+    if !std::path::Path::new(wol_core::seal::NOTICE).exists() {
         return;
-    };
+    }
     let mark = Some(gtk::glib::user_runtime_dir().join("boot-notice.shown"));
     if mark.as_ref().is_some_and(|m| m.exists()) {
         return;
@@ -419,16 +416,22 @@ pub fn start_boot_notice() {
     gtk::glib::timeout_add_seconds_local_once(BOOT_NOTICE_AFTER, move || {
         let posted = std::thread::Builder::new()
             .name("wol-boot-notice".into())
-            .spawn(move || match post_own(title, &body) {
-                Ok(()) => {
-                    if let Some(m) = &mark {
-                        let _ = std::fs::write(m, b"");
+            .spawn(move || {
+                let text = std::fs::read_to_string(wol_core::seal::NOTICE).ok();
+                let Some((title, body)) = boot_notice(text.as_deref()) else {
+                    return;
+                };
+                match post_own(title, &body) {
+                    Ok(()) => {
+                        if let Some(m) = &mark {
+                            let _ = std::fs::write(m, b"");
+                        }
                     }
-                }
-                Err(e) => {
-                    crate::diag::say!(
-                        "wol-shell: the startup notice could not be shown ({e}): {body}"
-                    )
+                    Err(e) => {
+                        crate::diag::say!(
+                            "wol-shell: the startup notice could not be shown ({e}): {body}"
+                        )
+                    }
                 }
             });
         if let Err(e) = posted {

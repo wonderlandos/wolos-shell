@@ -75,7 +75,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 44] = [
+const BASELINE: [(&str, usize); 45] = [
     // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
     // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
     // cannot follow a call into another file); each row only shrinks.
@@ -122,6 +122,9 @@ const BASELINE: [(&str, usize); 44] = [
     // are `file_image` (inside gio::spawn_blocking), notify's preload and a golden render
     // (QA-A9-SHELL-05).
     ("kit/picture.rs", 1),
+    // render_drivers: one read_dir of /dev/dri in `settle()`, the first call in each `main`,
+    // before GTK starts (no main loop yet to stall; FIX-DRYRUN-2 renderer policy, INT-4 row).
+    ("kit/renderer.rs", 1),
     // theme id file on the theme monitor's change signal: one line.
     ("kit/style.rs", 1),
     // Pixbuf::from_file_at_scale in the icon loader's closure, counted since the S7-4 token
