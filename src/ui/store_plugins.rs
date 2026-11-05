@@ -237,8 +237,13 @@ pub(crate) fn paths() -> Paths {
     }
 }
 
+/// The keys the plugin index and `.wolplug` downloads verify against: the WolOS keys folder and
+/// its `hub/` (the Hub's index key), never used for system updates (HUB-KEYDIR).
 pub(crate) fn keys() -> Vec<[u8; 32]> {
-    wol_core::package::read_keys(std::path::Path::new(shared::package::KEYS_DIR))
+    wol_core::package::read_keys_for(
+        std::path::Path::new(shared::package::KEYS_DIR),
+        wol_core::package::Purpose::Plugins,
+    )
 }
 
 /// This account's plugins (id, version), the ids that are on, and what those ask for beyond their
