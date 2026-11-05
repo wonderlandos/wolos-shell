@@ -3,20 +3,21 @@
 //! pages lives here, so `copy::lint` reads them and `tests/copy_scan.rs` keeps the surfaces free
 //! of their own. Pages pick a sentence by a fact, never build one.
 use crate::first_login::Page;
+use crate::i18n::n_;
 
 /// One sentence under each page title: what the page is for.
 pub fn subtitle(p: Page) -> &'static str {
     match p {
         Page::Privacy => {
-            "Choose what this computer may share. Nothing is sent unless you allow it."
+            n_("Choose what this computer may share. Nothing is sent unless you allow it.")
         }
-        Page::Look => "Choose how your desktop looks. It changes only your account.",
+        Page::Look => n_("Choose how your desktop looks. It changes only your account."),
         Page::Accounts => {
-            "Add the accounts you use on the web, if you want Mail and Calendar to use them."
+            n_("Add the accounts you use on the web, if you want Mail and Calendar to use them.")
         }
-        Page::Keyboard => "Choose the keyboard you type on, and a way to type other scripts.",
-        Page::Helper => "Choose whether assistants and scripts may help you with WolOS.",
-        Page::Done => "Your desktop is ready. Every choice you made is in System Settings.",
+        Page::Keyboard => n_("Choose the keyboard you type on, and a way to type other scripts."),
+        Page::Helper => n_("Choose whether assistants and scripts may help you with WolOS."),
+        Page::Done => n_("Your desktop is ready. Every choice you made is in System Settings."),
     }
 }
 

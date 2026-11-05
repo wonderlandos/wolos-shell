@@ -664,12 +664,13 @@ impl Login {
         stack.add_named(&tiles, Some("users"));
         let pw = w::vbox(w::S4);
         pw.append(&panel.root);
-        let (back_box, back) = action("go-previous-symbolic", "Back", || {});
+        let (back_box, back) = action("go-previous-symbolic", crate::i18n::tr("Back"), || {});
         pw.append(&back_box);
         stack.add_named(&pw, Some("password"));
         // No account can sign in: say so instead of an empty row (audit4 S3-7).
         if users.is_empty() {
             let (title, hint) = crate::copy::LOGIN_NO_ACCOUNTS;
+            let (title, hint) = (crate::i18n::tr(title), crate::i18n::tr(hint));
             stack.add_named(
                 &w::empty_state("system-users-symbolic", title, hint, None),
                 Some("none"),
@@ -813,7 +814,7 @@ pub fn caption(note: Option<&'static str>) -> (&'static str, bool) {
 /// refused while another account is signed in (wol-admind's rule, `user_level_ok`), and the lock
 /// screen cannot ask for more rights, so the caption names that way out (audit6 S6-5).
 pub fn restart_caption(taken: bool) -> (&'static str, bool) {
-    caption((!taken).then_some(crate::copy::LOCK_RESTART_REFUSED))
+    caption((!taken).then_some(crate::i18n::tr(crate::copy::LOCK_RESTART_REFUSED)))
 }
 
 /// What a power button's answer shows: nothing when it was taken.

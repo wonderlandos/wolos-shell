@@ -14,7 +14,8 @@ const HYPRLAND_CONF: &str =
     include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.conf");
 
 /// Classes code reads back (`has_css_class`, kit::check's layout-only list): not for styling.
-const HOOKS: [&str; 6] = [
+const HOOKS: [&str; 7] = [
+    "auth-sheet",
     "control",
     "device-row",
     "kit-reveal",

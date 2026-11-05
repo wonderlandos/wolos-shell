@@ -141,6 +141,11 @@ copy.print_refused	That file cannot be printed.	Esse arquivo não pode ser impre
 copy.print_only_files	Only a file can be printed.	Só é possível imprimir um arquivo.	d9bbfc6b
 copy.print_kind	That kind of file cannot be printed.	Esse tipo de arquivo não pode ser impresso.	9972b8b9
 copy.print_failed	That could not be printed.	Isso não pôde ser impresso.	044402eb
+copy.no_accounts	No Accounts	Nenhuma conta	8a77ef66
+copy.no_account_on_this_computer_can	No account on this computer can sign in here. Ask the person who looks after it for help.	Nenhuma conta neste computador pode entrar aqui. Peça ajuda a quem cuida dele.	40c930f7
+copy.this_computer_can_t_sleep_right	This computer can’t sleep right now. Try again.	Este computador não pode suspender agora. Tente de novo.	ff8d7209
+copy.this_computer_can_t_restart_right	This computer can’t restart right now. Try again.	Este computador não pode reiniciar agora. Tente de novo.	461676ad
+copy.this_computer_can_t_shut_down	This computer can’t shut down right now. Try again.	Este computador não pode desligar agora. Tente de novo.	567fa778
 installer.secure_boot_title	Change One Startup Setting First	Mude antes um ajuste de inicialização	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	A Inicialização Segura deste computador só confia no Windows, então o WolOS ainda não consegue iniciar.	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	O WolOS está instalado, mas não foi possível ler a chave de recuperação. Clique em Tentar de novo: Reiniciar espera até a chave aparecer.	87ec9bf0
@@ -410,6 +415,13 @@ language.menus_and_messages	Menus and messages.	Menus e mensagens.	c333785c
 language.input_sources	Input Sources	Fontes de entrada	84948e1d
 language.keyboard_layouts_you_type_with	Keyboard layouts you type with	Layouts de teclado que você usa	92c1c248
 kit.caps_lock_is_on	⇪ Caps Lock is on	⇪ Caps Lock ativado	51fded41
+kit.enter_password	Enter Password	Digite a senha	8063209e
+kit.unlock	Unlock	Desbloquear	9c799975
+login.incorrect_password	Incorrect password	Senha incorreta	c99da0c5
+login.your_password_can_t_be_checked	Your password can’t be checked right now. Try again, or restart.	Não foi possível verificar sua senha agora. Tente de novo ou reinicie.	5ae1aa15
+login.sleep	Sleep	Suspender	2fa62ca8
+login.shut_down	Shut Down	Desligar	0f92b45d
+login.hint_hint	Hint: {hint}	Dica: {hint}	5560e375
 login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords	Opcional, aparece depois de três senhas erradas	c5d6f057
 firstlogin.reports_hint	When something breaks, send a short report without your files.	Quando algo der errado, envie um relatório curto, sem os seus arquivos.	904acf64
 firstlogin.reports_not_yours	An administrator of this computer chooses this.	Quem administra este computador decide isto.	4d5eb4a1
@@ -426,3 +438,27 @@ firstlogin.ime_missing	To type Chinese, Japanese or Korean, add input methods.	P
 firstlogin.helper_hint	They ask before every change. Off, nothing reaches the system.	Eles perguntam antes de cada mudança. Desativados, nada chega ao sistema.	bec4b393
 firstlogin.helper_manual	The manual’s helper on the WolOS website asks before it downloads.	O assistente do manual no site do WolOS pergunta antes de baixar.	82df9984
 firstlogin.settings_row	Privacy, look, accounts, keyboard and helpers, a page each.	Privacidade, aparência, contas, teclado e assistentes, uma página para cada.	fcdc47f6
+firstlogin.choose_what_this_computer_may_share	Choose what this computer may share. Nothing is sent unless you allow it.	Escolha o que este computador pode compartilhar. Nada é enviado sem a sua permissão.	4ce2a627
+firstlogin.choose_how_your_desktop_looks_it	Choose how your desktop looks. It changes only your account.	Escolha a aparência da sua área de trabalho. Isso muda apenas a sua conta.	c12714a5
+firstlogin.add_the_accounts_you_use_on	Add the accounts you use on the web, if you want Mail and Calendar to use them.	Adicione as contas que você usa na web, se quiser que o Mail e o Calendar as usem.	cf0b4f47
+firstlogin.choose_the_keyboard_you_type_on	Choose the keyboard you type on, and a way to type other scripts.	Escolha o teclado que você usa e uma forma de digitar outros alfabetos.	efd1dd18
+firstlogin.choose_whether_assistants_and_scripts_may	Choose whether assistants and scripts may help you with WolOS.	Escolha se assistentes e scripts podem ajudar você no WolOS.	8f29bbc4
+firstlogin.your_desktop_is_ready_every_choice	Your desktop is ready. Every choice you made is in System Settings.	Sua área de trabalho está pronta. Todas as escolhas que você fez estão nos Ajustes do Sistema.	e1e1d54c
+firstlogin.privacy	Privacy	Privacidade	ebfa87e7
+firstlogin.your_look	Your Look	Sua aparência	ea5ae575
+firstlogin.online_accounts	Online Accounts	Contas on-line	5c7fe8b6
+firstlogin.keyboard_typing	Keyboard & Typing	Teclado e digitação	91da8a4d
+firstlogin.assistants	Assistants	Assistentes	60365f5c
+firstlogin.you_re_all_set	You’re All Set	Tudo pronto	00bc083f
+firstlogin.later	Later	Depois	f7f62b49
+firstlogin.send_error_reports	Send error reports	Enviar relatórios de erro	10c8ff32
+firstlogin.location_services	Location Services	Serviços de localização	7147e2be
+firstlogin.your_password	Your password	Sua senha	15253243
+firstlogin.day	Day	Dia	4954229d
+firstlogin.dusk	Dusk	Crepúsculo	44655688
+firstlogin.night	Night	Noite	8c9a1101
+firstlogin.mail	Mail	Mail	53707c4e
+firstlogin.open_mail	Open Mail	Abrir o Mail	7971b364
+firstlogin.other_scripts	Other scripts	Outros alfabetos	7ebc12f1
+firstlogin.open_modules	Open Modules	Abrir módulos	087b353c
+firstlogin.allow_assistants_and_scripts	Allow assistants and scripts	Permitir assistentes e scripts	69d42862

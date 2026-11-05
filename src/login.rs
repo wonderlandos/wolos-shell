@@ -27,11 +27,13 @@ impl Verdict {
     pub fn message(self) -> &'static str {
         match self {
             Verdict::Ok => "",
-            Verdict::Denied => "Incorrect password",
-            Verdict::Error => "Your password can’t be checked right now. Try again, or restart.",
-            Verdict::Unusable => crate::copy::LOGIN_UNUSABLE,
-            Verdict::NoDisplay => crate::copy::LOGIN_NO_DISPLAY,
-            Verdict::TextPassword => crate::copy::LOGIN_TEXT_PASSWORD,
+            Verdict::Denied => crate::i18n::tr("Incorrect password"),
+            Verdict::Error => {
+                crate::i18n::tr("Your password can’t be checked right now. Try again, or restart.")
+            }
+            Verdict::Unusable => crate::i18n::tr(crate::copy::LOGIN_UNUSABLE),
+            Verdict::NoDisplay => crate::i18n::tr(crate::copy::LOGIN_NO_DISPLAY),
+            Verdict::TextPassword => crate::i18n::tr(crate::copy::LOGIN_TEXT_PASSWORD),
         }
     }
 }
@@ -184,9 +186,9 @@ pub use shared::login::Power;
 
 pub fn power_label(p: Power) -> &'static str {
     match p {
-        Power::Sleep => "Sleep",
-        Power::Restart => "Restart",
-        Power::ShutDown => "Shut Down",
+        Power::Sleep => crate::i18n::tr("Sleep"),
+        Power::Restart => crate::i18n::tr("Restart"),
+        Power::ShutDown => crate::i18n::tr("Shut Down"),
     }
 }
 
@@ -209,7 +211,8 @@ pub const HINT_AFTER: u32 = 3;
 /// "Hint: …" once `failures` reaches [`HINT_AFTER`] and a non-blank hint exists.
 pub fn hint_message(failures: u32, hint: Option<&str>) -> Option<String> {
     let h = hint?.trim();
-    (failures >= HINT_AFTER && !h.is_empty()).then(|| format!("Hint: {h}"))
+    (failures >= HINT_AFTER && !h.is_empty())
+        .then(|| crate::i18n::tr_fill("Hint: {hint}", &[("hint", h)]))
 }
 
 /// Setup's hint field placeholder: what both screens do ([`wrong_password`]).

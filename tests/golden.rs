@@ -2018,6 +2018,8 @@ fn main() {
     ));
     locale_cases::pseudo_locale_leaves_no_english();
     locale_cases::picking_a_language_relabels_setup();
+    locale_cases::first_login_in_the_pseudo_locale_leaves_no_english();
+    locale_cases::login_and_lock_in_the_pseudo_locale_leave_no_english();
     setup_cases::account_tab_draws_one_ring();
     setup_cases::welcome_tab_rings_continue();
     setup_cases::validation_survives_back_forward();

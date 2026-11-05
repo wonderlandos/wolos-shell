@@ -11,3 +11,5 @@
 ../../src/kit/widgets.rs	kit
 ../../src/login.rs	login
 ../../src/copy_first_login.rs	firstlogin
+../../src/first_login.rs	firstlogin
+../../src/ui/first_login.rs	firstlogin

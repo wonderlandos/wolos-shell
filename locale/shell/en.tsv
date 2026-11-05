@@ -141,6 +141,11 @@ copy.print_refused	That file cannot be printed.	The same refusal for printing: h
 copy.print_only_files	Only a file can be printed.	Printing is for a file, never a folder.	
 copy.print_kind	That kind of file cannot be printed.	The kind of file CUPS cannot print.	
 copy.print_failed	That could not be printed.	The print dialog could not be shown or the file could not be sent.	
+copy.no_accounts	No Accounts		
+copy.no_account_on_this_computer_can	No account on this computer can sign in here. Ask the person who looks after it for help.		
+copy.this_computer_can_t_sleep_right	This computer can’t sleep right now. Try again.		
+copy.this_computer_can_t_restart_right	This computer can’t restart right now. Try again.		
+copy.this_computer_can_t_shut_down	This computer can’t shut down right now. Try again.		
 installer.secure_boot_title	Change One Startup Setting First	Sheet shown when this computer trusts only Windows at startup: honest, no jargon beyond the setting's own name. The image carries the signed first stage, so the one step left after the install is the firmware setting, then the key screen; never a second install (R2B-3).	46
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.		
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	Under the key-unread page's title: the install worked, the key is what is missing.	
@@ -409,6 +414,13 @@ language.menus_and_messages	Menus and messages.		27
 language.input_sources	Input Sources		20
 language.keyboard_layouts_you_type_with	Keyboard layouts you type with		52
 kit.caps_lock_is_on	⇪ Caps Lock is on		30
+kit.enter_password	Enter Password		
+kit.unlock	Unlock		
+login.incorrect_password	Incorrect password		
+login.your_password_can_t_be_checked	Your password can’t be checked right now. Try again, or restart.		
+login.sleep	Sleep		
+login.shut_down	Shut Down		
+login.hint_hint	Hint: {hint}		
 login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords		
 firstlogin.reports_hint	When something breaks, send a short report without your files.	Privacy: the error reports row.	
 firstlogin.reports_not_yours	An administrator of this computer chooses this.	Privacy: error reports belong to the whole computer; this account can't change them.	
@@ -425,3 +437,27 @@ firstlogin.ime_missing	To type Chinese, Japanese or Korean, add input methods.	K
 firstlogin.helper_hint	They ask before every change. Off, nothing reaches the system.	Helper: what the switch allows.	
 firstlogin.helper_manual	The manual’s helper on the WolOS website asks before it downloads.	Helper: the manual's own helper on the website.	
 firstlogin.settings_row	Privacy, look, accounts, keyboard and helpers, a page each.	Settings > General row: Setup was put off and can be finished there.	
+firstlogin.choose_what_this_computer_may_share	Choose what this computer may share. Nothing is sent unless you allow it.		
+firstlogin.choose_how_your_desktop_looks_it	Choose how your desktop looks. It changes only your account.		
+firstlogin.add_the_accounts_you_use_on	Add the accounts you use on the web, if you want Mail and Calendar to use them.		
+firstlogin.choose_the_keyboard_you_type_on	Choose the keyboard you type on, and a way to type other scripts.		
+firstlogin.choose_whether_assistants_and_scripts_may	Choose whether assistants and scripts may help you with WolOS.		
+firstlogin.your_desktop_is_ready_every_choice	Your desktop is ready. Every choice you made is in System Settings.		
+firstlogin.privacy	Privacy		
+firstlogin.your_look	Your Look		
+firstlogin.online_accounts	Online Accounts		
+firstlogin.keyboard_typing	Keyboard & Typing		
+firstlogin.assistants	Assistants		
+firstlogin.you_re_all_set	You’re All Set		
+firstlogin.later	Later		
+firstlogin.send_error_reports	Send error reports		
+firstlogin.location_services	Location Services		
+firstlogin.your_password	Your password		
+firstlogin.day	Day		
+firstlogin.dusk	Dusk		
+firstlogin.night	Night		
+firstlogin.mail	Mail		
+firstlogin.open_mail	Open Mail		
+firstlogin.other_scripts	Other scripts		
+firstlogin.open_modules	Open Modules		
+firstlogin.allow_assistants_and_scripts	Allow assistants and scripts		

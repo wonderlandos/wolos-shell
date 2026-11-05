@@ -33,6 +33,10 @@ struct Asking {
     watchers: Mutex<Vec<async_channel::Sender<()>>>,
     /// Answer nothing: the channel closes (a worker that died).
     dead: std::sync::atomic::AtomicBool,
+    /// A wrong password: the retries wait here until the test answers them, the way wol-admind
+    /// answers a refusal after its fixed delay (QA-A9-SHELL-01).
+    refuse: std::sync::atomic::AtomicBool,
+    retries: Mutex<Vec<async_channel::Sender<Result<(), ActionError>>>>,
 }
 
 impl System for Asking {
@@ -76,6 +80,9 @@ impl System for Asking {
             (Action::BtConnect(..), _) => self.held.lock().unwrap().push(tx),
             (_, None) => {
                 let _ = tx.try_send(Err(ActionError::NeedsAuth));
+            }
+            (_, Some(_)) if self.refuse.load(std::sync::atomic::Ordering::Relaxed) => {
+                self.retries.lock().unwrap().push(tx)
             }
             (_, Some(_)) => {
                 let _ = tx.try_send(Ok(()));
@@ -199,6 +206,63 @@ fn cancel_on_sharing_says_nothing_wrong(
     );
 }
 
+/// QA-A9-SHELL-01: Allow with a wrong password, then Esc (or a pane change) before wol-admind's
+/// refusal arrives: the sheet goes and stays gone when the refusal comes, no "Incorrect
+/// password" shows and the switch is back. Cancel the button waits for the check.
+fn cancel_during_the_check_does_not_bring_the_sheet_back(
+    a: &shell::kit::widgets::AppWindow,
+    root: &gtk::Widget,
+    sheet: &gtk::Revealer,
+    sys: &Asking,
+) {
+    use std::sync::atomic::Ordering::Relaxed;
+    for by_pane_change in [false, true] {
+        sys.refuse.store(true, Relaxed);
+        let power = flip_wifi(a, sheet);
+        let button = |name: &str| {
+            of::<gtk::Button>(sheet)
+                .into_iter()
+                .find(|b| b.label().as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("{name} on the sheet"))
+        };
+        button("Allow").emit_clicked();
+        broadway::pump(100);
+        assert_eq!(sys.retries.lock().unwrap().len(), 1, "the retry is out");
+        assert!(
+            !button("Cancel").is_sensitive(),
+            "Cancel waits for the check"
+        );
+        if by_pane_change {
+            open(a, "Keyboard");
+        } else {
+            assert!(press_esc(a), "Esc is the sheet's");
+        }
+        assert!(!sheet.reveals_child(), "the sheet goes");
+        // wol-admind's refusal arrives later.
+        let tx = sys.retries.lock().unwrap().pop().expect("the retry");
+        tx.try_send(Err(ActionError::Denied)).unwrap();
+        broadway::pump(100);
+        sys.refuse.store(false, Relaxed);
+        assert!(
+            !sheet.reveals_child(),
+            "the refusal does not bring the sheet back"
+        );
+        assert_eq!(
+            blames(root),
+            Vec::<String>::new(),
+            "nobody blames the password"
+        );
+        assert!(
+            power.is_active() && power.is_sensitive(),
+            "the switch is back"
+        );
+        assert!(
+            button("Cancel").is_sensitive(),
+            "the sheet takes input again"
+        );
+    }
+}
+
 /// QA-LIVE-8: a click behind the sheet navigated while it stayed up, and Esc did nothing once
 /// the focus was elsewhere.
 fn sheet_is_modal_esc_cancels(
@@ -253,6 +317,14 @@ fn act_without_status_shows_checking(
     assert!(!checking.reveals_child(), "not before a moment passed");
     broadway::pump(400);
     assert!(checking.reveals_child(), "a late change says Checking…");
+    // QA-A9-SHELL-03: it is a status line, not a sheet: Esc is nobody's here and a pane change
+    // leaves it alone (Esc hid it, and the indicator never came back for that change).
+    assert!(!press_esc(a), "Esc is not the Checking… line's");
+    assert!(checking.reveals_child(), "Esc leaves Checking… up");
+    assert!(
+        !checking.has_css_class("toolbar-sheet"),
+        "it is not a sheet"
+    );
     let tx = sys
         .held
         .lock()
@@ -454,6 +526,7 @@ fn cancel_has_no_incorrect_password() {
     cancel_on_sharing_says_nothing_wrong(&a, &root, &sheet);
     cancel_says_nothing_wrong(&a, &root, &sheet);
     sheet_is_modal_esc_cancels(&a, &root, &sheet);
+    cancel_during_the_check_does_not_bring_the_sheet_back(&a, &root, &sheet, &sys);
     sheets_close_on_esc_and_on_a_pane_change(&a, &root, &sheet);
     act_without_status_shows_checking(&a, &root, &sys);
     search_paste_capped_esc_clears(&a);

@@ -36,6 +36,9 @@ pub(crate) struct AuthQueue<W> {
     checking: usize,
     /// The Allow whose wrong password ended the sheet: its later answers fail at once too.
     gave_up: u32,
+    /// The Allow the person cancelled while its retries were out ([`Self::cancel`]): a refusal
+    /// for it ends the change as `Cancelled`, not as a wrong password.
+    cancelled: u32,
 }
 
 impl<W> Default for AuthQueue<W> {
@@ -47,6 +50,7 @@ impl<W> Default for AuthQueue<W> {
             attempt: 0,
             checking: 0,
             gave_up: 0,
+            cancelled: 0,
         }
     }
 }
@@ -72,7 +76,14 @@ impl<W> AuthQueue<W> {
             Err(ActionError::NeedsAuth | ActionError::Denied)
                 if retry.is_some() && retry == Some(self.gave_up) =>
             {
-                Next::Finish(w, Err(ActionError::Denied))
+                // The person cancelled while the password was being checked: nothing was
+                // changed by them, so no "Incorrect password" (QA-A9-SHELL-01/02).
+                let why = if retry == Some(self.cancelled) {
+                    ActionError::Cancelled
+                } else {
+                    ActionError::Denied
+                };
+                Next::Finish(w, Err(why))
             }
             Err(e @ (ActionError::NeedsAuth | ActionError::Denied)) => {
                 if let Some(n) = retry
@@ -106,9 +117,16 @@ impl<W> AuthQueue<W> {
         self.attempt = self.attempt.wrapping_add(1).max(1);
         (self.waiting.drain(..).collect(), self.attempt)
     }
-    /// Cancel: every waiting change (the surface ends each one).
+    /// Cancel: every waiting change (the surface ends each one). Retries still out with a typed
+    /// password cannot be called back, so the Allow they carry is let go: their late refusal
+    /// finishes each as `Cancelled` and never re-asks (QA-A9-SHELL-01 Settings, -02 the Control
+    /// Center panel hiding), the one rule for both surfaces.
     pub(crate) fn cancel(&mut self) -> Vec<W> {
         self.refusals = 0;
+        if self.checking > 0 {
+            self.gave_up = self.attempt;
+            self.cancelled = self.attempt;
+        }
         self.waiting.drain(..).collect()
     }
     /// The changes waiting, in order.
@@ -199,5 +217,82 @@ mod tests {
             q.answered("dock", Err(ActionError::NeedsAuth), None),
             Next::Ask("")
         ));
+    }
+
+    /// QA-A9-SHELL-01/02: Cancel (Esc, a pane change, the Control Center panel hiding) while the
+    /// typed password is still being checked lets that Allow go: the refusal that arrives later
+    /// ends the change as `Cancelled` (nothing changed, no "Incorrect password") and the sheet
+    /// does not come back with the cancelled change waiting behind it.
+    #[test]
+    fn cancel_while_checking_lets_the_allow_go() {
+        let mut q: AuthQueue<&'static str> = AuthQueue::default();
+        let _ = q.answered("remote", Err(ActionError::NeedsAuth), None);
+        let (all, n) = q.allow();
+        assert_eq!(all, ["remote"]);
+        q.sent(Some(n));
+        assert!(q.cancel().is_empty(), "the change is out with the password");
+        assert!(matches!(
+            q.answered("remote", Err(ActionError::Denied), Some(n)),
+            Next::Finish("remote", Err(ActionError::Cancelled))
+        ));
+        assert_eq!((q.len(), q.checking()), (0, 0));
+        // The next change asks again, and a wrong password then counts from zero.
+        assert!(matches!(
+            q.answered("dock", Err(ActionError::NeedsAuth), None),
+            Next::Ask("")
+        ));
+        assert_eq!(q.refusals, 0);
+    }
+
+    /// A cancel with no retry out is the plain one and leaves nothing to let go: the next Allow's
+    /// refusal asks again as before.
+    #[test]
+    fn cancel_with_nothing_checking_lets_nothing_go() {
+        let mut q: AuthQueue<&'static str> = AuthQueue::default();
+        let _ = q.answered("a", Err(ActionError::NeedsAuth), None);
+        assert_eq!(q.cancel(), ["a"]);
+        let _ = q.answered("b", Err(ActionError::NeedsAuth), None);
+        let (all, n) = q.allow();
+        q.sent(Some(n));
+        for w in all {
+            assert!(matches!(
+                q.answered(w, Err(ActionError::Denied), Some(n)),
+                Next::Ask(m) if m == ActionError::Denied.message()
+            ));
+        }
+    }
+
+    /// The sheet was cancelled while checking and the password was right: the change had already
+    /// been sent with it, so it ends as it ended (Ok); only a refusal becomes `Cancelled`.
+    #[test]
+    fn a_right_password_after_a_cancel_still_ends_the_change() {
+        let mut q: AuthQueue<&'static str> = AuthQueue::default();
+        let _ = q.answered("remote", Err(ActionError::NeedsAuth), None);
+        let (all, n) = q.allow();
+        q.sent(Some(n));
+        let _ = q.cancel();
+        for w in all {
+            assert!(matches!(
+                q.answered(w, Ok(()), Some(n)),
+                Next::Finish("remote", Ok(()))
+            ));
+        }
+    }
+
+    /// The let-go of a slow change (AUTH_HOLD) still ends a refusal as `Denied`: the person did
+    /// not cancel, the password was wrong.
+    #[test]
+    fn a_hold_let_go_still_reads_denied() {
+        let mut q: AuthQueue<&'static str> = AuthQueue::default();
+        let _ = q.answered("remote", Err(ActionError::NeedsAuth), None);
+        let (all, n) = q.allow();
+        q.sent(Some(n));
+        q.let_go(n);
+        for w in all {
+            assert!(matches!(
+                q.answered(w, Err(ActionError::Denied), Some(n)),
+                Next::Finish("remote", Err(ActionError::Denied))
+            ));
+        }
     }
 }

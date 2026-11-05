@@ -109,13 +109,16 @@ const BASELINE: [(&str, usize); 40] = [
     ("kit/data.rs", 1),
     // wallpaper_choice: one small config file at desktop build and on change.
     ("kit/pickers.rs", 1),
+    // kit::picture::decode_with, the one bounded picture decode: blocking by contract; its callers
+    // are `file_image` (inside gio::spawn_blocking), notify's preload and a golden render
+    // (QA-A9-SHELL-05).
+    ("kit/picture.rs", 1),
     // theme id file on the theme monitor's change signal: one line.
     ("kit/style.rs", 1),
     // Pixbuf::from_file_at_scale in the icon loader's closure, counted since the S7-4 token
     // (frozen 2026-11-02).
     ("kit/widgets.rs", 1),
     ("ui/analyze.rs", 1),
-    ("ui/app_view.rs", 1),
     // downloads_dir: user-dirs.dirs once when the Dock is built.
     ("ui/dock.rs", 1),
     ("ui/flatpak_consent.rs", 1),

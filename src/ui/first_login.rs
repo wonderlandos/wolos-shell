@@ -7,6 +7,7 @@ use crate::first_login::{
     Choices, Flow, Job, Marks, Next, OnlineAccount, PAGES, Page, keyboard_index, location_argv,
     location_of,
 };
+use crate::i18n::tr;
 use crate::kit::assistant::{self as a, Art, Card};
 use crate::kit::{self, reveal, widgets as w};
 use crate::setup::{APPEARANCES, Appearance, KEYBOARDS};
@@ -280,7 +281,7 @@ impl FirstLogin {
         card.back.set_visible(page != Page::Privacy);
         if page != Page::Done {
             let me = Rc::downgrade(self);
-            card.add_action(&w::button("Later", w::Kind::Plain, move || {
+            card.add_action(&w::button(tr("Later"), w::Kind::Plain, move || {
                 if let Some(s) = me.upgrade()
                     && !s.busy.get()
                 {
@@ -320,13 +321,13 @@ impl FirstLogin {
                 self.with_card(page, |c| c.say("", false));
                 self.pager.set_visible_child_name(p.id());
             }
-            Next::Stay(why) => self.with_card(page, |c| c.say(&why, true)),
+            Next::Stay(why) => self.with_card(page, |c| c.say(tr(&why), true)),
             Next::Password(why) => {
                 // Under the field, not at the foot: the foot holds Later and Continue.
                 self.with_card(page, |c| c.say("", false));
                 if let Some((row, e, line)) = &*self.report_row.borrow() {
                     let wrong = why != crate::copy::first_login::REPORTS_PASSWORD;
-                    line.set_label(&why);
+                    line.set_label(tr(&why));
                     line.set_visible(true);
                     if wrong {
                         line.add_css_class("problem");
@@ -395,17 +396,17 @@ impl FirstLogin {
                 })
                 .upcast()
             }
-            None => w::label(if facts.reports_on { "On" } else { "Off" }, "secondary").upcast(),
+            None => w::label(tr(if facts.reports_on { "On" } else { "Off" }), "secondary").upcast(),
         };
         rows.push(
             w::list_row(
                 "dialog-error-symbolic",
-                "Send error reports",
-                if d.reports.is_some() {
+                tr("Send error reports"),
+                tr(if d.reports.is_some() {
                     c::REPORTS_HINT
                 } else {
                     c::REPORTS_NOT_YOURS
-                },
+                }),
                 Some(&reports),
             )
             .upcast(),
@@ -419,15 +420,15 @@ impl FirstLogin {
         rows.push(
             w::list_row(
                 "find-location-symbolic",
-                "Location Services",
-                c::LOCATION_HINT,
+                tr("Location Services"),
+                tr(c::LOCATION_HINT),
                 Some(location.upcast_ref()),
             )
             .upcast(),
         );
         let body = w::vbox(w::S4);
         body.append(&w::section("", &rows));
-        let pw = w::password_field("Your password");
+        let pw = w::password_field(tr("Your password"));
         pw.add_css_class("assistant-field");
         let me = Rc::downgrade(self);
         pw.connect_changed(move |e| {
@@ -436,7 +437,7 @@ impl FirstLogin {
             }
         });
         let pw_row = w::vbox(w::S1);
-        pw_row.append(&a::form_row("Password", &pw));
+        pw_row.append(&a::form_row(tr("Password"), &pw));
         // Caps Lock is said in words under every password field (tests/password_peek.rs).
         let caps = w::caps_lock_note();
         caps.set_halign(gtk::Align::Start);
@@ -529,7 +530,7 @@ impl FirstLogin {
         use kit::pickers::{DYNAMIC, shipped_wallpaper};
         let pics: Vec<(String, std::path::PathBuf, &str)> = DYNAMIC
             .iter()
-            .zip(["Day", "Dusk", "Night"])
+            .zip([tr("Day"), tr("Dusk"), tr("Night")])
             .filter_map(|(n, name)| {
                 let f = shipped_wallpaper(n)?;
                 Some((f.display().to_string(), f, name))
@@ -566,7 +567,7 @@ impl FirstLogin {
             row.push(t);
         }
         body.append(&a::tile_row(&row));
-        body.append(&a::caption(crate::copy::first_login::LOOK_MORE));
+        body.append(&a::caption(tr(crate::copy::first_login::LOOK_MORE)));
         Card::new(
             Art::Icon("preferences-desktop-appearance-symbolic"),
             Page::Look.title(),
@@ -589,7 +590,7 @@ impl FirstLogin {
         use crate::copy::first_login as c;
         let body = w::vbox(w::S4);
         body.append(&self.accounts);
-        let mail = kit::form::button_row("Mail", c::ACCOUNTS_MAIL, "Open Mail", || {
+        let mail = kit::form::button_row(tr("Mail"), tr(c::ACCOUNTS_MAIL), tr("Open Mail"), || {
             if !fake() {
                 kit::spawn_app(&["geary".to_string()]);
             }
@@ -625,7 +626,7 @@ impl FirstLogin {
                 Some(_) => vec![
                     w::list_row(
                         "avatar-default-symbolic",
-                        crate::copy::first_login::ACCOUNTS_NONE,
+                        tr(crate::copy::first_login::ACCOUNTS_NONE),
                         "",
                         None,
                     )
@@ -634,7 +635,7 @@ impl FirstLogin {
                 None => vec![
                     w::list_row(
                         "dialog-error-symbolic",
-                        crate::copy::first_login::ACCOUNTS_UNREAD,
+                        tr(crate::copy::first_login::ACCOUNTS_UNREAD),
                         "",
                         None,
                     )
@@ -681,27 +682,32 @@ impl FirstLogin {
                 kit::spawn(&crate::setup::keyboard_command(KEYBOARDS[i].0));
             }
         });
-        body.append(&a::form_row("Keyboard", &kb));
-        let test = w::text_field("Type here to try the keyboard");
+        body.append(&a::form_row(tr("Keyboard"), &kb));
+        let test = w::text_field(tr("Type here to try the keyboard"));
         test.add_css_class("assistant-field");
-        body.append(&a::form_row("Try it", &test));
+        body.append(&a::form_row(tr("Try it"), &test));
         let ime: gtk::Widget = if facts.ime {
             w::list_row(
                 "input-keyboard-symbolic",
-                "Other scripts",
-                c::IME_READY,
+                tr("Other scripts"),
+                tr(c::IME_READY),
                 None,
             )
             .upcast()
         } else {
-            kit::form::button_row("Other scripts", c::IME_MISSING, "Open Modules", || {
-                if !fake() {
-                    kit::spawn(&[
-                        "wol-settings".to_string(),
-                        crate::ui::settings::ids::MODULES.to_string(),
-                    ]);
-                }
-            })
+            kit::form::button_row(
+                tr("Other scripts"),
+                tr(c::IME_MISSING),
+                tr("Open Modules"),
+                || {
+                    if !fake() {
+                        kit::spawn(&[
+                            "wol-settings".to_string(),
+                            crate::ui::settings::ids::MODULES.to_string(),
+                        ]);
+                    }
+                },
+            )
         };
         body.append(&w::section("", &[ime]));
         Card::new(
@@ -725,13 +731,13 @@ impl FirstLogin {
             "",
             &[w::list_row(
                 "wolos-assistant-symbolic",
-                "Allow assistants and scripts",
-                c::HELPER_HINT,
+                tr("Allow assistants and scripts"),
+                tr(c::HELPER_HINT),
                 Some(on.upcast_ref()),
             )
             .upcast()],
         ));
-        body.append(&a::caption(c::HELPER_MANUAL));
+        body.append(&a::caption(tr(c::HELPER_MANUAL)));
         Card::new(
             Art::Icon("wolos-assistant-symbolic"),
             Page::Helper.title(),
@@ -747,7 +753,7 @@ impl FirstLogin {
             Page::Done.subtitle(),
             &a::blank(),
         );
-        c.next.set_label("Get Started");
+        c.next.set_label(tr("Get Started"));
         c
     }
 }
@@ -755,6 +761,9 @@ impl FirstLogin {
 /// `wol-setup --first-login [--again]`: shows the setup when this account's sign-in calls for it
 /// (or always with `--again`, from Settings), else ends at once so the desktop starts.
 pub fn run(again: bool) -> glib::ExitCode {
+    // The person's language (LANG of their session), ADR 0045: without it every `tr` of the six
+    // pages reads English after a translated install Setup (QA-A7-1).
+    crate::i18n::init();
     let marks = Marks::here();
     if marks.done() || !(again || marks.due(crate::apps::is_live())) {
         return glib::ExitCode::SUCCESS;

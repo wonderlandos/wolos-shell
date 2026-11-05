@@ -72,8 +72,9 @@ struct Drawn {
 }
 
 fn image(source: &str, size: u16) -> gtk::Image {
+    // A picture file is outside input: decoded small and off the GTK thread (QA-A9-SHELL-05).
     let i = if source.starts_with('/') {
-        gtk::Image::from_file(source)
+        crate::kit::picture::file_image(source, i32::from(size))
     } else {
         w::icon(source, i32::from(size))
     };

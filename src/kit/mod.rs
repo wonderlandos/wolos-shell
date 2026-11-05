@@ -20,6 +20,7 @@ pub mod motion;
 pub mod navigation;
 pub mod patience;
 pub mod pickers;
+pub mod picture;
 pub mod render;
 pub mod reveal;
 pub mod sheets;

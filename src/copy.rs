@@ -1051,17 +1051,19 @@ pub const LOGIN_TEXT_PASSWORD: &str = "Your files open only with a password made
     after this computer.";
 /// Login window with no account that can sign in (audit4 S3-7): (title, hint).
 pub const LOGIN_NO_ACCOUNTS: (&str, &str) = (
-    "No Accounts",
-    "No account on this computer can sign in here. Ask the person who looks after it for help.",
+    crate::i18n::n_("No Accounts"),
+    crate::i18n::n_(
+        "No account on this computer can sign in here. Ask the person who looks after it for help.",
+    ),
 );
 
 /// A Sleep, Restart or Shut Down button whose request was not taken (audit4 S3-7, S3-9).
 pub fn power_refused(p: shared::login::Power) -> &'static str {
     use shared::login::Power;
     match p {
-        Power::Sleep => "This computer can’t sleep right now. Try again.",
-        Power::Restart => "This computer can’t restart right now. Try again.",
-        Power::ShutDown => "This computer can’t shut down right now. Try again.",
+        Power::Sleep => crate::i18n::tr("This computer can’t sleep right now. Try again."),
+        Power::Restart => crate::i18n::tr("This computer can’t restart right now. Try again."),
+        Power::ShutDown => crate::i18n::tr("This computer can’t shut down right now. Try again."),
     }
 }
 

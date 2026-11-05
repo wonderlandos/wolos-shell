@@ -141,6 +141,11 @@ copy.print_refused	That file cannot be printed.	そのファイルは印刷で�
 copy.print_only_files	Only a file can be printed.	印刷できるのはファイルだけです。	d9bbfc6b
 copy.print_kind	That kind of file cannot be printed.	この種類のファイルは印刷できません。	9972b8b9
 copy.print_failed	That could not be printed.	印刷できませんでした。	044402eb
+copy.no_accounts	No Accounts	アカウントなし	8a77ef66
+copy.no_account_on_this_computer_can	No account on this computer can sign in here. Ask the person who looks after it for help.	このコンピュータのどのアカウントも、ここではサインインできません。管理している人に相談してください。	40c930f7
+copy.this_computer_can_t_sleep_right	This computer can’t sleep right now. Try again.	このコンピュータは今はスリープできません。もう一度お試しください。	ff8d7209
+copy.this_computer_can_t_restart_right	This computer can’t restart right now. Try again.	このコンピュータは今は再起動できません。もう一度お試しください。	461676ad
+copy.this_computer_can_t_shut_down	This computer can’t shut down right now. Try again.	このコンピュータは今は シャットダウンできません。もう一度お試しください。	567fa778
 installer.secure_boot_title	Change One Startup Setting First	先に起動設定を 1 つ変更してください	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	このコンピュータのセキュアブートは Windows だけを信頼しているため、WolOS はまだ起動できません。	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	WolOS はインストールされましたが、リカバリーキーを読み取れませんでした。「再試行」をクリックしてください。キーが表示されるまで再起動は待機します。	87ec9bf0
@@ -408,6 +413,13 @@ language.menus_and_messages	Menus and messages.	メニューとメッセージ�
 language.input_sources	Input Sources	入力ソース	84948e1d
 language.keyboard_layouts_you_type_with	Keyboard layouts you type with	入力に使うキーボードレイアウト	92c1c248
 kit.caps_lock_is_on	⇪ Caps Lock is on	⇪ Caps Lock がオンです	51fded41
+kit.enter_password	Enter Password	パスワードを入力	8063209e
+kit.unlock	Unlock	ロック解除	9c799975
+login.incorrect_password	Incorrect password	パスワードが違います	c99da0c5
+login.your_password_can_t_be_checked	Your password can’t be checked right now. Try again, or restart.	今はパスワードを確認できません。もう一度お試しいただくか、再起動してください。	5ae1aa15
+login.sleep	Sleep	スリープ	2fa62ca8
+login.shut_down	Shut Down	シャットダウン	0f92b45d
+login.hint_hint	Hint: {hint}	ヒント: {hint}	5560e375
 login.optional_shown_after_three_wrong_passwords	Optional, shown after three wrong passwords	任意。パスワードを 3 回間違えると表示されます	c5d6f057
 firstlogin.reports_hint	When something breaks, send a short report without your files.	何かが壊れたとき、ファイルを含まない短いレポートを送ります。	904acf64
 firstlogin.reports_not_yours	An administrator of this computer chooses this.	このコンピュータの管理者が決めます。	4d5eb4a1
@@ -424,3 +436,27 @@ firstlogin.ime_missing	To type Chinese, Japanese or Korean, add input methods.	�
 firstlogin.helper_hint	They ask before every change. Off, nothing reaches the system.	変更のたびに確認します。オフにすると、システムには何も届きません。	bec4b393
 firstlogin.helper_manual	The manual’s helper on the WolOS website asks before it downloads.	WolOS の Web サイトにあるマニュアルのアシスタントは、ダウンロードの前に確認します。	82df9984
 firstlogin.settings_row	Privacy, look, accounts, keyboard and helpers, a page each.	プライバシー、外観、アカウント、キーボード、アシスタントを、1 ページずつ設定します。	fcdc47f6
+firstlogin.choose_what_this_computer_may_share	Choose what this computer may share. Nothing is sent unless you allow it.	このコンピュータが共有してよいものを選んでください。許可しない限り、何も送信されません。	4ce2a627
+firstlogin.choose_how_your_desktop_looks_it	Choose how your desktop looks. It changes only your account.	デスクトップの見た目を選んでください。変更されるのはお使いのアカウントだけです。	c12714a5
+firstlogin.add_the_accounts_you_use_on	Add the accounts you use on the web, if you want Mail and Calendar to use them.	Mail と Calendar で使いたい、ウェブ上のアカウントを追加してください。	cf0b4f47
+firstlogin.choose_the_keyboard_you_type_on	Choose the keyboard you type on, and a way to type other scripts.	使用するキーボードと、ほかの文字の入力方法を選んでください。	efd1dd18
+firstlogin.choose_whether_assistants_and_scripts_may	Choose whether assistants and scripts may help you with WolOS.	アシスタントやスクリプトによる WolOS のサポートを許可するか選んでください。	8f29bbc4
+firstlogin.your_desktop_is_ready_every_choice	Your desktop is ready. Every choice you made is in System Settings.	デスクトップの準備ができました。選んだ内容はすべてシステム設定にあります。	e1e1d54c
+firstlogin.privacy	Privacy	プライバシー	ebfa87e7
+firstlogin.your_look	Your Look	外観	ea5ae575
+firstlogin.online_accounts	Online Accounts	オンラインアカウント	5c7fe8b6
+firstlogin.keyboard_typing	Keyboard & Typing	キーボードと入力	91da8a4d
+firstlogin.assistants	Assistants	アシスタント	60365f5c
+firstlogin.you_re_all_set	You’re All Set	準備完了	00bc083f
+firstlogin.later	Later	あとで	f7f62b49
+firstlogin.send_error_reports	Send error reports	エラーレポートを送信	10c8ff32
+firstlogin.location_services	Location Services	位置情報サービス	7147e2be
+firstlogin.your_password	Your password	パスワード	15253243
+firstlogin.day	Day	昼	4954229d
+firstlogin.dusk	Dusk	夕暮れ	44655688
+firstlogin.night	Night	夜	8c9a1101
+firstlogin.mail	Mail	Mail	53707c4e
+firstlogin.open_mail	Open Mail	Mail を開く	7971b364
+firstlogin.other_scripts	Other scripts	ほかの文字	7ebc12f1
+firstlogin.open_modules	Open Modules	モジュールを開く	087b353c
+firstlogin.allow_assistants_and_scripts	Allow assistants and scripts	アシスタントとスクリプトを許可	69d42862

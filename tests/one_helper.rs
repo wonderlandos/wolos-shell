@@ -78,3 +78,29 @@ fn ui_thread_locals_only_shrink() {
         &THREAD_LOCAL,
     );
 }
+
+/// A window's toolbar sheets are closed by one closer (QA-A7-5: Settings and `toolbar_sheet`
+/// each wired an Esc and a pane-change closer; they agreed only by the order GTK ran them in).
+/// The closer reads the class `toolbar-sheet` back in `kit/widgets.rs`; no surface reads it.
+const SHEET_CLOSERS: [(&str, usize); 0] = [];
+
+#[test]
+fn toolbar_sheets_have_one_closer() {
+    // The class name is a string, so this reads the lines with their string contents.
+    let needle = "has_css_class(\"toolbar-sheet\")";
+    let actual: BTreeMap<String, usize> = scan::sources()
+        .into_iter()
+        .filter(|s| s.path != "kit/widgets.rs")
+        .map(|s| {
+            (
+                s.path,
+                s.lines.iter().map(|l| l.matches(needle).count()).sum(),
+            )
+        })
+        .collect();
+    scan::ratchet(
+        "has_css_class(\"toolbar-sheet\") outside kit/widgets.rs (QA-A7-5)",
+        &actual,
+        &SHEET_CLOSERS,
+    );
+}
