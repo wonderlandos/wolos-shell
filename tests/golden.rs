@@ -2013,7 +2013,6 @@ fn main() {
     setup_cases::drop_shelf_insets_are_even();
     regressions::effects_page_answers_after_it_is_built();
     settings_cases::checks();
-    settings_cases::larger_text_is_a_switch_and_grows_the_shell_text();
     displays_cases::checks();
     regressions::a_stalled_page_fade_settles();
     regressions::a_narrow_window_can_bring_the_sidebar_back();
@@ -2022,7 +2021,6 @@ fn main() {
     regressions::a_toggle_waits_for_its_change_and_reverts_when_it_fails();
     regressions::return_belongs_to_the_button_with_the_keyboard_ring();
     regressions::the_dock_takes_a_new_layout();
-    regressions::a_file_dropped_on_a_dock_tile_opens_with_its_app();
     regressions::store_get_waits_for_the_password();
     regressions::a_failed_store_install_says_so();
     regressions::two_gets_in_a_row_both_reach_the_system();
@@ -2036,6 +2034,11 @@ fn main() {
     installer_cases::welcome_tab_stops_are_its_two_buttons();
     installer_cases::the_card_is_as_tall_on_every_page();
     installer_cases::account_without_a_password_says_why();
+    // WD-SETTINGS: loads the kit sheet, so it runs after the checks that need the plain look (the
+    // installer card heights are measured without the sheet's padding).
+    settings_cases::larger_text_is_a_switch_and_grows_the_shell_text();
+    // E2E-OPEN: loads the kit sheet, so it runs after the checks that need the plain look.
+    regressions::a_file_dropped_on_a_dock_tile_opens_with_its_app();
     motion_cases::reduce_motion_snaps();
     regressions::an_app_tile_keeps_one_source_badge();
     regressions::installed_is_a_state_and_open_the_action();
