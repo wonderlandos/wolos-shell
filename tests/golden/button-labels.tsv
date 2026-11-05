@@ -12,10 +12,18 @@ analyze-off-dark	Cancel | Open Settings
 analyze-off-light	Cancel | Open Settings
 analyze-waiting-dark	Cancel | Open Settings
 analyze-waiting-light	Cancel | Open Settings
-app-window-design-parts-dark	General | Privacy | Photos | Music
-app-window-design-parts-light	General | Privacy | Photos | Music
-app-window-parts-dark	Cancel | Save
-app-window-parts-light	Cancel | Save
+app-window-design-parts-dark	
+app-window-design-parts-light	
+app-window-parts-dark	
+app-window-parts-flip-dark	
+app-window-parts-flip-light	
+app-window-parts-light	
+app-window-parts-w1280-dark	
+app-window-parts-w1280-light	
+app-window-parts-w480-dark	
+app-window-parts-w480-light	
+app-window-parts-w900-dark	
+app-window-parts-w900-light	
 approval-admin-caps-lock-dark	Deny | Allow
 approval-admin-caps-lock-light	Deny | Allow
 approval-admin-dark	Deny | Allow
@@ -342,6 +350,68 @@ kit-toggle-tile-dark	Night Shift | Increase Contrast | Screenshot
 kit-toggle-tile-light	Night Shift | Increase Contrast | Screenshot
 kit-usage-bar-dark	
 kit-usage-bar-light	
+kit-view-button-default-dark	
+kit-view-button-default-light	
+kit-view-card-elevated-dark	
+kit-view-card-elevated-light	
+kit-view-card-filled-dark	
+kit-view-card-filled-light	
+kit-view-card-outlined-dark	
+kit-view-card-outlined-light	
+kit-view-checkbox-mixed-dark	
+kit-view-checkbox-mixed-light	
+kit-view-checkbox-off-dark	
+kit-view-checkbox-off-light	
+kit-view-checkbox-on-dark	
+kit-view-checkbox-on-light	
+kit-view-chips-assist-dark	
+kit-view-chips-assist-light	
+kit-view-chips-filter-dark	
+kit-view-chips-filter-light	
+kit-view-chips-input-dark	
+kit-view-chips-input-light	
+kit-view-chips-suggestion-dark	
+kit-view-chips-suggestion-light	
+kit-view-disclosure-closed-dark	
+kit-view-disclosure-closed-light	
+kit-view-disclosure-open-dark	
+kit-view-disclosure-open-light	
+kit-view-divider-dark	
+kit-view-divider-light	
+kit-view-label-body-dark	
+kit-view-label-body-light	
+kit-view-label-caption-dark	
+kit-view-label-caption-light	
+kit-view-label-display-dark	
+kit-view-label-display-light	
+kit-view-label-large-dark	
+kit-view-label-large-light	
+kit-view-label-secondary-dark	
+kit-view-label-secondary-light	
+kit-view-label-title-dark	
+kit-view-label-title-light	
+kit-view-list-row-dark	
+kit-view-list-row-light	
+kit-view-progress-half-dark	
+kit-view-progress-half-light	
+kit-view-radio-group-dark	
+kit-view-radio-group-light	
+kit-view-slider-high-dark	
+kit-view-slider-high-light	
+kit-view-slider-low-dark	
+kit-view-slider-low-light	
+kit-view-switch-off-dark	
+kit-view-switch-off-light	
+kit-view-switch-on-dark	
+kit-view-switch-on-light	
+kit-view-tabs-primary-dark	
+kit-view-tabs-primary-light	
+kit-view-text-field-empty-dark	
+kit-view-text-field-empty-light	
+kit-view-text-field-filled-dark	
+kit-view-text-field-filled-light	
+kit-view-window-chrome-dark	
+kit-view-window-chrome-light	
 kit-wallpaper-tile-dark	wonderland-day | wonderland-dusk | wonderland-night
 kit-wallpaper-tile-light	wonderland-day | wonderland-dusk | wonderland-night
 lock-caps-lock-dark	→
@@ -582,6 +652,12 @@ settings-loginitems-narrow-dark	Add App…
 settings-loginitems-narrow-light	Add App…
 settings-loginitems-wide-dark	Add App…
 settings-loginitems-wide-light	Add App…
+settings-look-w1280-dark	
+settings-look-w1280-light	
+settings-look-w480-dark	
+settings-look-w480-light	
+settings-look-w900-dark	
+settings-look-w900-light	
 settings-malware-narrow-dark	Move to Trash | Open Anyway…
 settings-malware-narrow-light	Move to Trash | Open Anyway…
 settings-malware-wide-dark	Move to Trash | Open Anyway…
