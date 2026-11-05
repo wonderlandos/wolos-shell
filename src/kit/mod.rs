@@ -164,6 +164,7 @@ pub fn spawn_app(argv: &[String]) {
     let started = std::thread::Builder::new()
         .name("wol-launch".into())
         .spawn(move || {
+            let owned = budget_launch(owned, std::path::Path::new(&config_home()));
             let env = user_scale_env();
             match command(&owned, &env).map(|mut c| c.spawn()) {
                 Some(Ok(mut c)) => {
@@ -179,12 +180,63 @@ pub fn spawn_app(argv: &[String]) {
     }
 }
 
+/// An app with a memory budget (`wol_core::memsaver::budget`, Discord) starts in its own scope,
+/// its own files read afresh, with the lean engine switches (`budget::launch_sh`), while Memory
+/// Saver is on and the app is not excluded; anything else starts as it is.
+fn budget_launch(argv: Vec<String>, config_home: &std::path::Path) -> Vec<String> {
+    use wol_core::memsaver::{self, budget};
+    let Some(b) = argv.first().and_then(|a| budget::of_exec(a)) else {
+        return argv;
+    };
+    let prefs = memsaver::load(config_home);
+    if !prefs.enabled || prefs.exclude.iter().any(|e| e == b.app) {
+        return argv;
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        budget::evict(std::path::Path::new(&home), b);
+    }
+    budget::launch_sh(b, &argv)
+}
+
 /// argv as a command with `env` added; None for an empty argv.
 fn command(argv: &[String], env: &[(String, String)]) -> Option<std::process::Command> {
     let (p, a) = argv.split_first()?;
     let mut c = std::process::Command::new(p);
     c.args(a).envs(env.iter().map(|(k, v)| (k, v)));
     Some(c)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    /// Discord from the Dock starts in its budget scope; with Memory Saver off, or Discord
+    /// excluded, or any other app, the argv is untouched.
+    #[test]
+    fn budgeted_apps_start_in_their_scope_only_while_the_saver_is_on() {
+        let dir = std::env::temp_dir().join(format!("wol-kit-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let d = super::budget_launch(argv(&["/usr/bin/discord"]), &dir);
+        assert_eq!(d[..2], ["sh", "-c"], "{d:?}");
+        assert!(d[2].contains("--unit=app-discord-$$.scope"), "{d:?}");
+        assert_eq!(d[3..], ["sh", "/usr/bin/discord"]);
+        let other = argv(&["gnome-text-editor"]);
+        assert_eq!(super::budget_launch(other.clone(), &dir), other);
+        let mut p = wol_core::memsaver::Prefs::default();
+        p.set_excluded("discord", true);
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(
+            super::budget_launch(argv(&["discord"]), &dir),
+            argv(&["discord"])
+        );
+        p.set_excluded("discord", false);
+        p.enabled = false;
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(
+            super::budget_launch(argv(&["discord"]), &dir),
+            argv(&["discord"])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// What `wol-x11-env` exports to the systemd user manager after every scale change (audit X1-2).
