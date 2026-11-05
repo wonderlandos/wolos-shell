@@ -17,6 +17,11 @@ pub mod installer;
 #[path = "copy_settings.rs"]
 pub mod settings;
 
+/// Web Apps, Add Plugin From File and Hardware's Check Again / Undo Fix: the sentences of the
+/// surfaces that replaced a Terminal line.
+#[path = "copy_visual.rs"]
+pub mod visual;
+
 /// Plugin Maker's sentences (ADR 0031): its pages hold none of their own.
 #[path = "copy_maker.rs"]
 pub mod maker;

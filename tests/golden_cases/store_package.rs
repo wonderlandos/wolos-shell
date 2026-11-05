@@ -9,9 +9,17 @@ use std::sync::Arc;
 
 #[path = "store_plugins.rs"]
 mod plugins_cases;
+#[path = "store_webapps.rs"]
+mod webapps_cases;
+
+/// The behaviour checks of the pages this file holds.
+pub fn checks() {
+    webapps_cases::the_form_runs_the_terminal_verb();
+}
 
 pub fn cases() -> Vec<Case> {
     let mut v = plugins_cases::cases();
+    v.extend(webapps_cases::cases());
     for (sw, sh, tag) in [(900, 600, "wide"), (480, 360, "narrow")] {
         for kind in ["signed", "unsigned", "damaged", "missing"] {
             v.push(Case {
