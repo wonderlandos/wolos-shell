@@ -65,3 +65,33 @@ fn every_official_language_is_complete() {
         );
     }
 }
+
+/// QA-A7-10 / QA-A7-1: the language is English until a process calls `i18n::init()`, so each
+/// binary that shows text in the person's language starts it before its UI: the lock screen, the
+/// login window (their `tr` calls read English on every computer), and the first sign-in Setup,
+/// which is `wol-setup --first-login` (`ui::first_login::run`).
+#[test]
+fn every_process_that_shows_catalog_text_chooses_its_language() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for (file, ui_call) in [
+        ("bin/wol-lock.rs", "run_lock("),
+        ("bin/wol-loginwindow.rs", "run_login("),
+        ("bin/wol-shell.rs", "run_shell("),
+        ("bin/wol-settings.rs", "settings::run("),
+    ] {
+        let text = std::fs::read_to_string(src.join(file)).expect(file);
+        let init = text.find("i18n::init()").unwrap_or(usize::MAX);
+        let ui = text.find(ui_call).expect(ui_call);
+        assert!(init < ui, "{file}: i18n::init() before {ui_call}");
+    }
+    let text = std::fs::read_to_string(src.join("ui/first_login.rs")).expect("first_login");
+    let run = text.find("pub fn run(again: bool)").expect("run");
+    let (init, window) = (
+        text[run..].find("i18n::init()"),
+        text[run..].find("a::run("),
+    );
+    assert!(
+        init.is_some() && init < window,
+        "ui/first_login.rs: run() chooses the language before the window"
+    );
+}

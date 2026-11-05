@@ -691,8 +691,12 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
     row.append(&always);
     row.append(&allow);
     b.append(&row);
+    let revealer = sheet(&b);
+    // The window's sheet closer ([`toolbar_sheet`]) leaves this one to its owner: Esc is Cancel
+    // there, and a cancel ends the changes waiting behind it (QA-A7-5).
+    revealer.add_css_class(AUTH_SHEET);
     AuthSheet {
-        revealer: sheet(&b),
+        revealer,
         icon,
         title,
         why,
@@ -734,6 +738,8 @@ pub struct AppWindow {
     show_sidebar: Rc<dyn Fn(bool)>,
     /// Widest a page gets (0: the whole pane). Settings: one ruler of content, centred.
     column: Cell<(i32, (i32, i32))>,
+    /// The window's one Esc / pane-change closer for its [`toolbar_sheet`]s is wired.
+    sheets_wired: Cell<bool>,
 }
 
 impl AppWindow {
@@ -893,6 +899,7 @@ impl AppWindow {
             sidebar_toggle,
             show_sidebar,
             column: Cell::new((0, (0, 0))),
+            sheets_wired: Cell::new(false),
         }
     }
 
@@ -1276,7 +1283,7 @@ impl UserPanel {
         pill.set_halign(gtk::Align::Center);
         pill.set_size_request(LOCK_FIELD_WIDTH, LOCK_FIELD_HEIGHT);
         let field = gtk::PasswordEntry::builder()
-            .placeholder_text("Enter Password")
+            .placeholder_text(crate::i18n::tr("Enter Password"))
             .show_peek_icon(true)
             .hexpand(true)
             .valign(gtk::Align::Center)
@@ -1286,7 +1293,7 @@ impl UserPanel {
         pill.append(&field);
         let submit = gtk::Button::builder()
             .label("→")
-            .tooltip_text("Unlock")
+            .tooltip_text(crate::i18n::tr("Unlock"))
             .valign(gtk::Align::Center)
             .sensitive(false)
             .build();
@@ -1295,7 +1302,7 @@ impl UserPanel {
         let checking = gtk::Spinner::builder()
             .valign(gtk::Align::Center)
             .visible(false)
-            .tooltip_text("Checking…")
+            .tooltip_text(crate::i18n::tr(crate::copy::CHECKING))
             .build();
         checking.add_css_class("lock-checking");
         pill.append(&checking);
@@ -1573,40 +1580,95 @@ pub fn progress() -> gtk::ProgressBar {
     p
 }
 
+/// The class of the Authenticate sheet's revealer: its owner cancels it (Esc, a pane change);
+/// the window's sheet closer never hides it, and yields Esc while it is up.
+const AUTH_SHEET: &str = "auth-sheet";
+
 /// Sheet that slides down from the AppWindow toolbar (HIG §1), centred, fixed width. It belongs
 /// to the page it was opened from: Esc closes it, and so does going to another page (QA-VIS2-37:
 /// the New account sheet stayed through Hardware, Keyboard and Printers, under a new
-/// Authenticate sheet, and only its Cancel closed it). Sheets whose closing must end a change
-/// (the Authenticate sheet) are placed with [`toolbar_place`] and handle Esc themselves.
+/// Authenticate sheet, and only its Cancel closed it). The Esc and the pane change are the
+/// window's, wired once for every sheet of it ([`close_sheets_with_esc_and_pane_change`]); sheets
+/// whose closing must end a change (the Authenticate sheet) are placed with [`toolbar_place`] and
+/// handle Esc themselves.
 pub fn toolbar_sheet(aw: &AppWindow, child: &impl IsA<gtk::Widget>) -> gtk::Revealer {
     let r = sheet(child);
     toolbar_place(aw, &r);
-    let weak = r.downgrade();
+    if !aw.sheets_wired.replace(true) {
+        close_sheets_with_esc_and_pane_change(aw);
+    }
+    r
+}
+
+/// The one closer of a window's toolbar sheets (QA-A7-5: Settings and `toolbar_sheet` each had
+/// one, and they only agreed because of the order GTK ran them in): Esc closes the sheet on top
+/// and goes on to the focused control when none is open, and a pane change closes them all.
+/// Neither touches the Authenticate sheet ([`AUTH_SHEET`]): it is cancelled by its owner, and
+/// while it is up Esc is Cancel and nobody else's.
+fn close_sheets_with_esc_and_pane_change(aw: &AppWindow) {
+    let over = content_overlay(aw).downgrade();
+    let o = over.clone();
+    crate::kit::surface::on_escape_first(&aw.root, move || {
+        let Some(over) = o.upgrade() else {
+            return false;
+        };
+        if sheets_in(&over, true).next().is_some() {
+            return false;
+        }
+        let top = open_toolbar_sheets(&over).into_iter().next();
+        top.inspect(|sheet| sheet.set_reveal_child(false)).is_some()
+    });
     aw.content.connect_visible_child_notify(move |_| {
-        if let Some(r) = weak.upgrade() {
-            r.set_reveal_child(false);
+        if let Some(over) = over.upgrade() {
+            for sheet in open_toolbar_sheets(&over) {
+                sheet.set_reveal_child(false);
+            }
         }
     });
-    // Esc closes the sheet while it is up and goes on to the focused control otherwise.
-    let weak = r.downgrade();
-    crate::kit::surface::on_escape_first(&aw.root, move || {
-        weak.upgrade().is_some_and(|r| {
-            let up = r.reveals_child();
-            if up {
-                r.set_reveal_child(false);
-            }
-            up
-        })
-    });
-    r
+}
+
+/// The revealers over `overlay` that are open now and are (`auth`) or are not the Authenticate
+/// sheet, the one placed last (on top) first.
+fn sheets_in(overlay: &gtk::Overlay, auth: bool) -> impl Iterator<Item = gtk::Revealer> {
+    let mut open = Vec::new();
+    let mut child = overlay.first_child();
+    while let Some(c) = child {
+        if let Some(r) = c.downcast_ref::<gtk::Revealer>()
+            && r.has_css_class("toolbar-sheet")
+            && r.reveals_child()
+            && r.has_css_class(AUTH_SHEET) == auth
+        {
+            open.push(r.clone());
+        }
+        child = c.next_sibling();
+    }
+    open.into_iter().rev()
+}
+
+/// The toolbar sheets over `overlay` ([`content_overlay`]) that are open now, the one on top
+/// first: what Esc and a pane change close (not the Authenticate sheet).
+pub fn open_toolbar_sheets(overlay: &gtk::Overlay) -> Vec<gtk::Revealer> {
+    sheets_in(overlay, false).collect()
 }
 
 /// Places an existing sheet (e.g. [`AuthSheet::revealer`]) under the toolbar, over the content.
 pub fn toolbar_place(aw: &AppWindow, r: &gtk::Revealer) {
+    place_under_toolbar(aw, r);
+    r.add_css_class("toolbar-sheet");
+}
+
+/// Places a status line that looks like a sheet but is not one (the shared "Checking…"): it is
+/// under the toolbar like the sheets, and Esc and a pane change leave it alone (QA-A9-SHELL-03:
+/// it carried `toolbar-sheet`, so Esc hid it instead of the sheet under it).
+pub fn toolbar_status(aw: &AppWindow, r: &gtk::Revealer) {
+    place_under_toolbar(aw, r);
+    r.add_css_class("toolbar-status");
+}
+
+fn place_under_toolbar(aw: &AppWindow, r: &gtk::Revealer) {
     r.set_halign(gtk::Align::Center);
     r.set_valign(gtk::Align::Start);
     r.set_width_request(SHEET_WIDTH);
-    r.add_css_class("toolbar-sheet");
     // Overlay the content so opening a sheet never reflows the page.
     content_overlay(aw).add_overlay(r);
 }

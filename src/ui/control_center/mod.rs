@@ -550,7 +550,8 @@ impl Ui {
             then(r.is_ok());
         }
         match r {
-            Ok(()) => self.message.set_visible(false),
+            // Cancelled: the person chose that, so no sentence (the tile shows the host again).
+            Ok(()) | Err(ActionError::Cancelled) => self.message.set_visible(false),
             Err(e) => {
                 self.message.set_label(copy::action(e));
                 self.message.set_visible(true);
@@ -666,8 +667,9 @@ impl Ui {
             self.run(p, Some((pw.clone(), n)));
         }
     }
-    /// The panel went away: the waiting changes are dropped like a Cancel (not while a retry is
-    /// out, [`can_cancel`]) and the sheet is empty and closed.
+    /// The panel went away: the waiting changes are dropped like a Cancel (a retry still out is
+    /// let go by the queue: its late refusal finishes it and never asks again, QA-A9-SHELL-02)
+    /// and the sheet is empty and closed.
     fn dismiss_auth(&self) {
         self.cancel();
         self.auth.field.set_text("");
@@ -675,10 +677,6 @@ impl Ui {
     }
     /// Cancel: nothing changed, so no sentence; every waiting tile shows the host's state again.
     fn cancel(&self) {
-        // Retries are out: their late answers would re-queue and reopen the sheet.
-        if !can_cancel(&self.queue.borrow()) {
-            return;
-        }
         let all = self.queue.borrow_mut().cancel();
         self.auth.revealer.set_reveal_child(false);
         for p in all {
@@ -1136,12 +1134,6 @@ fn build(sys: Arc<dyn System>, prefs: ControlCenterPrefs) -> Rc<ControlCenter> {
     cc
 }
 
-/// Cancel is for a sheet nobody is checking a password on: a retry still out would answer
-/// `Denied` after the person left and open the sheet again with "Incorrect password".
-fn can_cancel(q: &AuthQueue<Pend>) -> bool {
-    q.checking() == 0
-}
-
 /// The Wi-Fi circle works only where the host has Wi-Fi to switch.
 fn wifi_tile_usable(radio: Option<bool>) -> bool {
     radio.is_some()
@@ -1429,10 +1421,11 @@ mod tests {
         }
     }
 
-    /// Cancel while a typed password is being checked does nothing (the late Denied would reopen
-    /// the sheet); once the answers are in, it works.
+    /// QA-A9-SHELL-02: the panel hides (or Esc) while a typed password is being checked: the
+    /// late refusal finishes the change as `Cancelled` and never asks again, so the next visit
+    /// opens with no sheet and Allow has nothing of the old visit to run.
     #[test]
-    fn cancel_waits_for_the_check() {
+    fn a_late_refusal_after_a_cancel_finishes_and_never_asks() {
         let mut q: AuthQueue<Pend> = AuthQueue::default();
         let p = |a| Pend {
             a,
@@ -1448,11 +1441,18 @@ mod tests {
         let (all, n) = q.allow();
         for w in all {
             q.sent(Some(n));
-            assert!(!can_cancel(&q), "a retry is out");
-            let _ = answer(&mut q, w, Err(ActionError::Denied), Some(n));
+            // dismiss_auth(): the queue is told while the retry is out.
+            assert!(q.cancel().is_empty());
+            assert!(matches!(
+                answer(&mut q, w, Err(ActionError::Denied), Some(n)),
+                Next::Finish(_, Err(ActionError::Cancelled))
+            ));
         }
-        assert!(can_cancel(&q), "answered: Cancel works again");
-        assert_eq!(q.cancel().len(), 1);
+        assert_eq!((q.len(), q.checking()), (0, 0));
+        assert!(
+            q.allow().0.is_empty(),
+            "nothing of the old visit is left to run"
+        );
     }
 
     /// QA-SHADOW-61: no Wi-Fi adapter = the circle does nothing and says so.

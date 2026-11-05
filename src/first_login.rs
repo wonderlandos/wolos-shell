@@ -39,17 +39,17 @@ pub const PAGES: [Page; 6] = [
 impl Page {
     pub fn title(self) -> &'static str {
         match self {
-            Page::Privacy => "Privacy",
-            Page::Look => "Your Look",
-            Page::Accounts => "Online Accounts",
-            Page::Keyboard => "Keyboard & Typing",
-            Page::Helper => "Assistants",
-            Page::Done => "You’re All Set",
+            Page::Privacy => crate::i18n::tr("Privacy"),
+            Page::Look => crate::i18n::tr("Your Look"),
+            Page::Accounts => crate::i18n::tr("Online Accounts"),
+            Page::Keyboard => crate::i18n::tr("Keyboard & Typing"),
+            Page::Helper => crate::i18n::tr("Assistants"),
+            Page::Done => crate::i18n::tr("You’re All Set"),
         }
     }
 
     pub fn subtitle(self) -> &'static str {
-        crate::copy::first_login::subtitle(self)
+        crate::i18n::tr(crate::copy::first_login::subtitle(self))
     }
 
     /// Stack page name (and golden name part).

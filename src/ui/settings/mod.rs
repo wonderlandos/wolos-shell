@@ -508,37 +508,67 @@ fn save_entry(what: &str, rel: &str, text: Option<&str>) -> std::io::Result<Opti
 /// when a save recorded nothing (QA 0.12.0 bug 9).
 type ChangeHook = Rc<dyn Fn(&str, u64)>;
 
+/// The Settings window's way to hear of journaled changes: its Undo toast's hook, and which
+/// entries of the journal it has heard of already (QA-A9-SHELL-04).
+struct Changed {
+    hook: ChangeHook,
+    /// The newest entry the journal held when the window opened: every save of this window
+    /// recorded a later one, so an older entry is never "the change that was just saved".
+    baseline: u64,
+    /// Per topic, the newest entry the toast was offered.
+    offered: HashMap<String, u64>,
+}
+
 thread_local! {
-    /// The Settings window's hook for journaled changes (its Undo toast); unset elsewhere.
-    static CHANGED: RefCell<Option<ChangeHook>> = const { RefCell::new(None) };
+    /// The Settings window's journal hook; unset elsewhere.
+    static CHANGED: RefCell<Option<Changed>> = const { RefCell::new(None) };
 }
 
 /// Tells the window that the journaled change `id` (`what`, as in the journal) was just saved.
 fn changed(what: &str, id: u64) {
-    if let Some(f) = CHANGED.with(|c| c.borrow().clone()) {
+    let hook = CHANGED.with(|c| {
+        let mut c = c.borrow_mut();
+        let c = c.as_mut()?;
+        let seen = c.offered.entry(what.to_owned()).or_default();
+        *seen = (*seen).max(id);
+        Some(c.hook.clone())
+    });
+    if let Some(f) = hook {
         f(what, id)
     }
 }
 
 /// [`changed`] for a save made in `wol_core` (desktop prefs, shortcuts, sound fragments), whose
-/// entry id does not come back: Settings' newest entry about `what`, if any.
+/// entry id does not come back: the entry Settings recorded about `what` since the window opened
+/// or since the last one offered. A save that recorded nothing (the file already held it) finds
+/// none, so no toast offers to undo an older change.
 fn changed_latest(what: &str) {
-    if CHANGED.with(|c| c.borrow().is_none()) {
+    let Some(after) = CHANGED.with(|c| {
+        c.borrow()
+            .as_ref()
+            .map(|c| c.baseline.max(c.offered.get(what).copied().unwrap_or(0)))
+    }) else {
         return;
-    }
+    };
     let j = wol_core::journal::Journal::for_config(&PathBuf::from(kit::config_home()));
-    if let Some(id) = latest_entry(&j.entries(), what) {
+    if let Some(id) = latest_entry(&j.entries(), what, after) {
         changed(what, id)
     }
 }
 
-/// The id of the newest entry Settings recorded about `what` (oldest-first `entries`), never an
-/// undo's own entry.
-fn latest_entry(entries: &[wol_core::journal::Entry], what: &str) -> Option<u64> {
+/// The id of the newest entry Settings recorded about `what` after entry `after` (oldest-first
+/// `entries`): never an undo's own entry, never one that was undone since.
+fn latest_entry(entries: &[wol_core::journal::Entry], what: &str, after: u64) -> Option<u64> {
     entries
         .iter()
         .rev()
-        .find(|e| e.what == what && e.by == "settings" && e.undoes.is_none())
+        .find(|e| {
+            e.id > after
+                && e.what == what
+                && e.by == "settings"
+                && e.undoes.is_none()
+                && !wol_core::journal::is_undone(entries, e.id)
+        })
         .map(|e| e.id)
 }
 
@@ -744,7 +774,7 @@ impl Ctx {
         ctx
     }
     pub(crate) fn place(self: &Rc<Self>, aw: &w::AppWindow) {
-        w::toolbar_place(aw, &self.checking);
+        w::toolbar_status(aw, &self.checking);
         w::toolbar_place(aw, &self.auth.revealer);
         // The Authenticate sheet is modal: while it is up the sidebar, the page and the toolbar
         // take no input (QA-LIVE-8: a click behind it navigated while the sheet stayed), and Esc
@@ -1021,6 +1051,7 @@ impl Ctx {
         }
         self.auth.set_busy(false);
         self.auth.allow.set_sensitive(true);
+        self.auth.cancel.set_sensitive(true);
         self.auth.field.set_sensitive(true);
         if q.len() == 0 {
             self.auth.revealer.set_reveal_child(false);
@@ -1041,6 +1072,9 @@ impl Ctx {
         self.auth.message.set_label("");
         self.auth.set_busy(true);
         self.auth.allow.set_sensitive(false);
+        // The Cancel button waits for the check like the Control Center's; Esc and a pane change
+        // still end the sheet, and the queue lets this Allow go (QA-A9-SHELL-01).
+        self.auth.cancel.set_sensitive(false);
         self.auth.field.set_sensitive(false);
         for w in all {
             self.run(w, Some((pw.clone(), n)));
@@ -1054,14 +1088,19 @@ impl Ctx {
                 c.queue.borrow_mut().let_go(n);
                 c.auth.set_busy(false);
                 c.auth.allow.set_sensitive(true);
+                c.auth.cancel.set_sensitive(true);
                 c.auth.field.set_sensitive(true);
                 c.auth.revealer.set_reveal_child(false);
                 c.show_checking();
             }
         });
     }
+    /// The one Cancel (button, Esc, a pane change): the waiting changes end as `Cancelled`; a
+    /// retry still being checked is let go by the queue, so its late refusal ends it the same
+    /// way and the sheet does not come back (QA-A9-SHELL-01).
     fn cancel(&self) {
         let all = self.queue.borrow_mut().cancel();
+        self.auth.field.set_text("");
         self.auth.revealer.set_reveal_child(false);
         cancelled(all);
         self.show_checking();
@@ -1343,33 +1382,15 @@ fn build(sys: Arc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, 
     undo_toast(&aw, &env);
     aw.content
         .connect_visible_child_name_notify(move |s| ensure(s));
-    // A sheet belongs to the pane it was opened on (QA-VIS2-37: the New account sheet stayed
-    // through Hardware, Keyboard and Printers while an Authenticate sheet opened over it): the
-    // Authenticate sheet is cancelled (its switches flip back), the others close.
+    // A sheet belongs to the pane it was opened on (QA-VIS2-37): the Authenticate sheet is
+    // cancelled here (its switches flip back); the others close with the window's one closer
+    // (`kit::widgets::toolbar_sheet`, with Esc).
     {
-        let (ctx, over) = (Rc::downgrade(&env.ctx), w::content_overlay(&aw));
+        let ctx = Rc::downgrade(&env.ctx);
         aw.content.connect_visible_child_name_notify(move |_| {
             if let Some(ctx) = ctx.upgrade() {
                 ctx.cancel();
             }
-            for sheet in open_sheets(&over) {
-                sheet.set_reveal_child(false);
-            }
-        });
-    }
-    // Escape closes the sheet on top. Not while the Authenticate sheet is up: that one is Cancel
-    // (`Ctx::place`), whichever of the two Escape handlers GTK runs first.
-    {
-        let (ctx, over) = (Rc::downgrade(&env.ctx), w::content_overlay(&aw));
-        kit::surface::on_escape_first(&aw.root, move || {
-            if ctx
-                .upgrade()
-                .is_none_or(|c| c.auth.revealer.reveals_child())
-            {
-                return false;
-            }
-            let top = open_sheets(&over).into_iter().next();
-            top.inspect(|sheet| sheet.set_reveal_child(false)).is_some()
         });
     }
 
@@ -1621,7 +1642,19 @@ fn undo_toast(aw: &w::AppWindow, env: &Rc<Env>) {
             });
         })
     };
-    CHANGED.with(|c| *c.borrow_mut() = Some(hook));
+    let baseline = wol_core::journal::Journal::for_config(&PathBuf::from(kit::config_home()))
+        .entries()
+        .iter()
+        .map(|e| e.id)
+        .max()
+        .unwrap_or(0);
+    CHANGED.with(|c| {
+        *c.borrow_mut() = Some(Changed {
+            hook,
+            baseline,
+            offered: HashMap::new(),
+        })
+    });
     // The toast lives as long as the window's widgets.
     let keep = toast.clone();
     aw.root.connect_destroy(move |_| {
@@ -1719,6 +1752,17 @@ pub fn windows_section(
     desktop_dock::windows(&env)
 }
 
+/// Applies `f` to the prefs; the topic the save is journaled under (a language-only change is
+/// `language`), or None when `f` changed nothing: nothing to save and nothing to journal.
+fn edit_prefs(
+    cur: &mut wol_core::hyprprefs::DesktopPrefs,
+    f: impl FnOnce(&mut wol_core::hyprprefs::DesktopPrefs),
+) -> Option<&'static str> {
+    let before = cur.clone();
+    f(cur);
+    (*cur != before).then(|| wol_core::hyprprefs::journal_topic(&before, cur))
+}
+
 /// Desktop prefs shared by every pane that edits them: one saved file, one apply path.
 pub(crate) struct Desk {
     ctx: Rc<Ctx>,
@@ -1745,13 +1789,9 @@ impl Desk {
         f: impl FnOnce(&mut wol_core::hyprprefs::DesktopPrefs),
         failed: impl FnOnce() + 'static,
     ) {
-        let before = self.get();
-        f(&mut self.cur.borrow_mut());
-        if *self.cur.borrow() == before {
+        let Some(what) = edit_prefs(&mut self.cur.borrow_mut(), f) else {
             return;
-        }
-        // The topic the save is journaled under (a language-only change is `language`).
-        let what = wol_core::hyprprefs::journal_topic(&before, &self.get());
+        };
         let (st, me, failed) = (status.clone(), self.clone(), RefCell::new(Some(failed)));
         self.ctx.act(
             Action::Desktop(Box::new(self.get())),
@@ -1776,9 +1816,13 @@ impl Desk {
         f: impl FnOnce(&mut wol_core::hyprprefs::DesktopPrefs),
         done: Box<dyn FnOnce(bool)>,
     ) {
-        let before = self.get();
-        f(&mut self.cur.borrow_mut());
-        let what = wol_core::hyprprefs::journal_topic(&before, &self.get());
+        // Already what the switch says (the prefs moved under the page): nothing to save, and
+        // the switch settles (QA-A9-SHELL-04: the save recorded nothing, and the Undo toast
+        // named an older entry).
+        let Some(what) = edit_prefs(&mut self.cur.borrow_mut(), f) else {
+            say(status, "");
+            return done(true);
+        };
         let (st, me, done) = (status.clone(), self.clone(), RefCell::new(Some(done)));
         self.ctx.act(
             Action::Desktop(Box::new(self.get())),
@@ -1838,6 +1882,10 @@ impl Keys {
     ) -> Result<(), wol_core::shortcuts::Refused> {
         let mut o = self.overrides();
         f(&mut o)?;
+        // Nothing moved: nothing to save, and no entry for the Undo toast to find.
+        if o == self.overrides() {
+            return Ok(());
+        }
         *self.over.borrow_mut() = o.clone();
         let (st, me) = (status.clone(), self.clone());
         self.ctx.act(
@@ -1888,25 +1936,6 @@ struct Sheets {
     user: gtk::Revealer,
     /// Users & Groups > Change Password.
     password: gtk::Revealer,
-}
-
-/// The toolbar sheets over `overlay` ([`w::content_overlay`]) that are open now, the one on top
-/// first (the last one placed is on top). Escape closes the first; a pane change closes them all
-/// (QA-VIS2-37).
-fn open_sheets(overlay: &gtk::Overlay) -> Vec<gtk::Revealer> {
-    let mut open = Vec::new();
-    let mut child = overlay.first_child();
-    while let Some(c) = child {
-        if let Some(r) = c.downcast_ref::<gtk::Revealer>()
-            && r.has_css_class("toolbar-sheet")
-            && r.reveals_child()
-        {
-            open.push(r.clone());
-        }
-        child = c.next_sibling();
-    }
-    open.reverse();
-    open
 }
 
 /// Replace a toolbar sheet's body.

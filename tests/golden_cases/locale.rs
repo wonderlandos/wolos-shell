@@ -117,3 +117,102 @@ pub(super) fn picking_a_language_relabels_setup() {
         "{texts:?}"
     );
 }
+
+/// Labels on screen that are plain English in the pseudo-locale: a text the code never sent
+/// through `tr`.
+fn plain_english(root: &gtk::Widget, also_names: &[&str]) -> Vec<String> {
+    let mut labels: Vec<gtk::Label> = Vec::new();
+    find_type(root, &mut labels);
+    labels
+        .iter()
+        .map(|l| l.text().to_string())
+        .filter(|t| {
+            !t.trim().is_empty()
+                && !t.starts_with('[')
+                && !is_a_name(t)
+                && !also_names.contains(&t.as_str())
+        })
+        .collect()
+}
+
+/// QA-A7-1: the first sign-in Setup in `xx` shows no plain English on any of its six pages (the
+/// password row of Privacy included): a pt-BR person who finished a translated install Setup
+/// reads the same language here. The names are the sample online account of a golden render
+/// and the language-independent choices.
+pub(super) fn first_login_in_the_pseudo_locale_leaves_no_english() {
+    use shell::first_login::{Choices, PAGES, Page};
+    shell::i18n::set_lang(Lang::Xx);
+    let facts = ui::first_login::Facts {
+        choices: Choices {
+            reports: Some(true),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let s = ui::first_login::FirstLogin::with(std::sync::Arc::new(shell::system::Fake), &facts);
+    s.show(Page::Privacy);
+    s.ask_password();
+    let mut plain = plain_english(&s.root, &["Google", "alice@example.com"]);
+    plain.extend(PAGES.iter().flat_map(|p| {
+        // The titles and sentences are asked for in the pseudo-locale too.
+        [p.title(), p.subtitle()]
+            .into_iter()
+            .filter(|t| !t.starts_with('['))
+            .map(str::to_owned)
+    }));
+    shell::i18n::set_lang(Lang::En);
+    assert!(
+        plain.is_empty(),
+        "first sign-in text not in the catalog: {plain:?}"
+    );
+}
+
+/// QA-A7-10: the login window and the lock screen in `xx`: the power row, Back, the account
+/// message and the sentences the password panel says are all in the catalog.
+pub(super) fn login_and_lock_in_the_pseudo_locale_leave_no_english() {
+    use shell::login::{Power, Verdict};
+    shell::i18n::set_lang(Lang::Xx);
+    let none = ui::lock::Login::new(&[]);
+    let some = ui::lock::Login::new(&[("alice".into(), "alice".into())]);
+    // The clock's date line (the formatter is not Setup's text) and the avatar's initial are not
+    // sentences of the catalog.
+    let names = ["alice", "A", "Monday, 26 October"];
+    let mut plain = plain_english(&none.root, &names);
+    plain.extend(plain_english(&some.root, &names));
+    let said = [
+        Verdict::Denied.message(),
+        Verdict::Error.message(),
+        Verdict::Unusable.message(),
+        Verdict::NoDisplay.message(),
+        Verdict::TextPassword.message(),
+        shell::login::power_label(Power::Sleep),
+        shell::login::power_label(Power::Restart),
+        shell::login::power_label(Power::ShutDown),
+        shell::copy::power_refused(Power::Sleep),
+        shell::copy::power_refused(Power::Restart),
+        shell::copy::power_refused(Power::ShutDown),
+    ];
+    plain.extend(
+        said.into_iter()
+            .filter(|t| !t.starts_with('['))
+            .map(str::to_owned),
+    );
+    let hint = shell::login::hint_message(3, Some("white rabbit")).unwrap_or_default();
+    if !hint.starts_with('[') {
+        plain.push(hint);
+    }
+    let field = some
+        .panel
+        .field
+        .placeholder_text()
+        .unwrap_or_default()
+        .to_string();
+    if !field.starts_with('[') {
+        plain.push(field);
+    }
+    shell::i18n::set_lang(Lang::En);
+    assert!(
+        plain.is_empty(),
+        "login window and lock text not in the catalog: {plain:?}"
+    );
+}

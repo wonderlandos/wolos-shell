@@ -17,6 +17,9 @@ use std::sync::Mutex;
 #[derive(Default)]
 struct Asking {
     sent: Mutex<Vec<(Action, Option<String>)>>,
+    /// Retries with a typed password wait here for the test to refuse them, the way wol-admind
+    /// answers a wrong password after its fixed delay (QA-A9-SHELL-02).
+    retries: Mutex<Vec<async_channel::Sender<Result<(), ActionError>>>>,
 }
 
 impl System for Asking {
@@ -38,7 +41,11 @@ impl System for Asking {
     fn spawn_with(&self, a: Action, pw: Option<&str>) -> Done {
         self.sent.lock().unwrap().push((a, pw.map(String::from)));
         let (tx, rx) = async_channel::bounded(1);
-        let _ = tx.try_send(Err(ActionError::NeedsAuth));
+        if pw.is_some() {
+            self.retries.lock().unwrap().push(tx);
+        } else {
+            let _ = tx.try_send(Err(ActionError::NeedsAuth));
+        }
         rx
     }
 }
@@ -156,5 +163,48 @@ fn escape_and_hide_drop_the_authenticate_sheet() {
         before,
         "Allow ran nothing from the visit before"
     );
+    refusal_after_the_panel_hid(&win, &sys, &sheet);
     win.close();
+}
+
+/// QA-A9-SHELL-02: a wrong password is out (wol-admind refuses after its delay) and the panel
+/// hides. The late refusal must not ask again inside the hidden panel: the next open shows no
+/// sheet and Allow sends nothing.
+fn refusal_after_the_panel_hid(win: &gtk::Window, sys: &Asking, sheet: &gtk::Revealer) {
+    night_shift(win).emit_clicked();
+    broadway::pump(200);
+    assert!(sheet.reveals_child(), "the tile asks for the password");
+    let allow = || {
+        of::<gtk::Button>(sheet)
+            .into_iter()
+            .find(|b| of::<gtk::Label>(b).iter().any(|l| l.label() == "Allow"))
+            .expect("Allow")
+    };
+    allow().emit_clicked();
+    broadway::pump(100);
+    assert_eq!(
+        sys.retries.lock().unwrap().len(),
+        1,
+        "the wrong password is out"
+    );
+    win.set_visible(false);
+    broadway::pump(100);
+    let tx = sys.retries.lock().unwrap().pop().expect("the retry");
+    tx.try_send(Err(ActionError::Denied)).unwrap();
+    broadway::pump(100);
+    assert!(
+        !sheet.reveals_child(),
+        "the refusal does not reopen the sheet"
+    );
+    win.present();
+    broadway::pump(200);
+    assert!(!sheet.reveals_child(), "no stale sheet on the next open");
+    let before = sys.sent.lock().unwrap().len();
+    allow().emit_clicked();
+    broadway::pump(200);
+    assert_eq!(
+        sys.sent.lock().unwrap().len(),
+        before,
+        "Allow ran nothing from the visit before"
+    );
 }

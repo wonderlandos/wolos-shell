@@ -657,8 +657,6 @@ pub fn image_hint(hints: &HashMap<String, OwnedValue>) -> String {
 
 /// Shorter side (px) a banner picture or a file icon is decoded at: 2x the thumbnail, for HiDPI.
 pub const THUMB_PX: i32 = 2 * w::ICON_L;
-/// Biggest picture file a banner decodes (audit4 S3-3: any app can name any file).
-pub const THUMB_FILE_MAX: u64 = 64 * 1024 * 1024;
 /// Decoded thumbnails kept: every Notification Center row's picture, and a few more.
 const THUMBS_KEPT: usize = CENTER_MAX + 8;
 
@@ -668,17 +666,11 @@ static THUMBS: Mutex<Vec<(String, gtk::gdk::Texture)>> = Mutex::new(Vec::new());
 
 /// Decodes the picture at `path` with its shorter side at most [`THUMB_PX`] (the banner covers
 /// its box with it) and its longer side at most [`THUMB_LONG_MAX`]; None for a file that
-/// is missing, not a regular file, bigger than [`THUMB_FILE_MAX`] or not a picture. Blocking:
+/// is missing, not a regular file, over the picture limits of [`crate::kit::picture`] or not a picture.
+/// Blocking:
 /// called off the UI thread ([`preload_thumbs`]), or for a golden render.
 pub fn decode_thumb(path: &str) -> Option<gtk::gdk::Texture> {
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > THUMB_FILE_MAX {
-        return None;
-    }
-    let (_, w, h) = gtk::gdk_pixbuf::Pixbuf::file_info(path)?;
-    let (box_w, box_h) = thumb_box(w, h);
-    let pb = gtk::gdk_pixbuf::Pixbuf::from_file_at_scale(path, box_w, box_h, true).ok()?;
-    Some(gtk::gdk::Texture::for_pixbuf(&pb))
+    crate::kit::picture::decode_with(path, thumb_box)
 }
 
 /// Longest side of a decoded thumbnail (a panorama keeps a short side under [`THUMB_PX`]).

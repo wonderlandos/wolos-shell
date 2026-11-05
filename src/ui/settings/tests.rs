@@ -348,9 +348,67 @@ fn the_undo_toast_targets_the_changes_own_entry() {
         e(3, "desktop", "cli", None),
         e(4, "desktop", "settings", Some(1)),
     ];
-    assert_eq!(latest_entry(&all, "desktop"), Some(1));
-    assert_eq!(latest_entry(&all, "sound"), Some(2));
-    assert_eq!(latest_entry(&all, "theme"), None);
+    // Entry 1 was undone by 4 (an undo's own entry is never offered either).
+    assert_eq!(latest_entry(&all, "desktop", 0), None);
+    let live = [&all[..], &[e(5, "desktop", "settings", None)]].concat();
+    assert_eq!(latest_entry(&live, "desktop", 0), Some(5));
+    assert_eq!(latest_entry(&all, "sound", 0), Some(2));
+    assert_eq!(latest_entry(&all, "theme", 0), None);
+}
+
+/// QA-A9-SHELL-04: the toast's fallback named an entry the journal already counts as undone
+/// (`wol undo` in a terminal reverted the desktop change; a later save that recorded nothing
+/// then offered "Desktop changed · Undo", and Undo answered it can't be undone).
+#[test]
+fn the_toast_never_offers_an_undone_change() {
+    use wol_core::journal::Entry;
+    let e = |id, by: &str, undoes| Entry {
+        id,
+        t: 0,
+        by: by.into(),
+        what: "desktop".into(),
+        changes: vec![],
+        undoes,
+    };
+    let all = [e(1, "settings", None), e(2, "cli", Some(1))];
+    assert_eq!(latest_entry(&all, "desktop", 0), None);
+}
+
+/// QA-A9-SHELL-04: a change that changes nothing is not a change (no save, so no journal entry
+/// for the toast to find); a real one names its journal topic.
+#[test]
+fn an_edit_that_changes_nothing_has_no_topic() {
+    let mut p = wol_core::hyprprefs::DesktopPrefs::default();
+    let on = p.snap;
+    assert_eq!(edit_prefs(&mut p, |d| d.snap = on), None);
+    assert_eq!(edit_prefs(&mut p, |d| d.snap = !on), Some("desktop"));
+    assert_eq!(
+        edit_prefs(&mut p, |d| d.language = Some("pt-BR".into())),
+        Some("language")
+    );
+}
+
+/// A save that recorded nothing finds no entry newer than the ones the window already knows: it
+/// does not fall back to an older change of the same topic that is still live (QA 0.12.0 bug 9
+/// on the `wol_core` path); the entry the next real save records is found.
+#[test]
+fn a_save_that_recorded_nothing_finds_no_older_change() {
+    use wol_core::journal::Entry;
+    let e = |id| Entry {
+        id,
+        t: 0,
+        by: "settings".into(),
+        what: "desktop".into(),
+        changes: vec![],
+        undoes: None,
+    };
+    let mut all = vec![e(1), e(2)];
+    // The window opened with entry 2 in the journal.
+    assert_eq!(latest_entry(&all, "desktop", 2), None);
+    all.push(e(3));
+    assert_eq!(latest_entry(&all, "desktop", 2), Some(3));
+    // Heard of: the next save that records nothing is not entry 3 again.
+    assert_eq!(latest_entry(&all, "desktop", 3), None);
 }
 
 #[test]

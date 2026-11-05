@@ -14,6 +14,7 @@ pub mod lifetime;
 pub mod motion;
 pub mod patience;
 pub mod pickers;
+pub mod picture;
 pub mod render;
 pub mod reveal;
 pub mod style;

@@ -334,7 +334,7 @@ button.preview-tile:checked label { font-weight: 600; }
 button.swatch { border-radius: 999px; padding: 2px; }
 button.swatch:checked { box-shadow: 0 0 0 2px var(--line); }
 image.accent-icon { color: var(--accent-ink); }
-.toolbar-sheet .sheet { margin-top: 8px; }
+.toolbar-sheet .sheet, .toolbar-status .sheet { margin-top: 8px; }
 .swatch-row { padding: 4px 0; }
 scale.slider.row-slider trough { min-height: 16px; background: linear-gradient(var(--control), var(--control)) center / 100% 4px no-repeat; border-radius: 0; }
 scale.slider.row-slider highlight { min-height: 16px; background: linear-gradient(var(--accent), var(--accent)) center / 100% 4px no-repeat; border-radius: 0; }
