@@ -38,7 +38,7 @@ const NOT_ON_SCREEN: [&str; 9] = [
 ];
 
 /// Sentence literals outside copy.rs, per file. Only shrinks.
-const BASELINE: [(&str, usize); 44] = [
+const BASELINE: [(&str, usize); 43] = [
     ("app_session.rs", 13),
     ("login.rs", 1),
     ("packages.rs", 22),
