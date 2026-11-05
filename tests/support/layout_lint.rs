@@ -65,7 +65,8 @@ pub const BASELINE: &[(&str, &str, usize, &str)] = &[
         EDGE,
         "store",
         12,
-        "Get buttons in scrolled pages (hero banner, app tiles) end 4-6 px above the window's bottom edge at rest; +2: the install-failed narrow case (INT-2, same hero banner)",
+        "Get buttons in scrolled pages (hero banner, app tiles) end 4-6 px above the window's bottom edge at rest; \
+         +2: the install-failed narrow case (INT-2, same hero banner)",
     ),
     (
         HEIGHT,
@@ -125,7 +126,8 @@ pub const BASELINE: &[(&str, &str, usize, &str)] = &[
         HEIGHT,
         "store",
         58,
-        "sidebar search 34 px (54) and the store search page field 34 px (4): min-height 32 + border; +4: the install-failed and package-missing wide cases (INT-2, same sidebar search)",
+        "sidebar search 34 px (54) and the store search page field 34 px (4): min-height 32 + border; \
+         +4: the install-failed and package-missing wide cases (INT-2, same sidebar search)",
     ),
     (
         GAP,
