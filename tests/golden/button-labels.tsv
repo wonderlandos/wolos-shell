@@ -550,10 +550,10 @@ settings-general-shells-wide-dark	About Name, kernel, processor and memory | Sof
 settings-general-shells-wide-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
 settings-general-wide-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
 settings-general-wide-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
-settings-hardware-narrow-dark	Fix | Fix
-settings-hardware-narrow-light	Fix | Fix
-settings-hardware-wide-dark	Fix | Fix
-settings-hardware-wide-light	Fix | Fix
+settings-hardware-narrow-dark	Check Again | Fix | Fix
+settings-hardware-narrow-light	Check Again | Fix | Fix
+settings-hardware-wide-dark	Check Again | Fix | Fix
+settings-hardware-wide-light	Check Again | Fix | Fix
 settings-ipsettings-narrow-dark	Automatic | Manual | Apply
 settings-ipsettings-narrow-light	Automatic | Manual | Apply
 settings-ipsettings-wide-dark	Automatic | Manual | Apply
@@ -832,22 +832,22 @@ store-play-narrow-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-play-narrow-light	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-play-wide-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-play-wide-light	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
-store-plugins-attention-dark	Create Plugin… | Allow | Turn Off | Needs WolOS 0.13
-store-plugins-attention-light	Create Plugin… | Allow | Turn Off | Needs WolOS 0.13
-store-plugins-empty-dark	Create Plugin…
-store-plugins-empty-light	Create Plugin…
-store-plugins-list-narrow-dark	Create Plugin… | Update to 1.3 | Turn Off | Turn On | Get | Get
-store-plugins-list-narrow-light	Create Plugin… | Update to 1.3 | Turn Off | Turn On | Get | Get
-store-plugins-list-wide-dark	Create Plugin… | Update to 1.3 | Turn Off | Turn On | Get | Get
-store-plugins-list-wide-light	Create Plugin… | Update to 1.3 | Turn Off | Turn On | Get | Get
-store-plugins-loading-dark	Create Plugin…
-store-plugins-loading-light	Create Plugin…
-store-plugins-narrow-dark	Create Plugin… | Try Again
-store-plugins-narrow-light	Create Plugin… | Try Again
-store-plugins-offline-dark	Create Plugin… | Try Again
-store-plugins-offline-light	Create Plugin… | Try Again
-store-plugins-wide-dark	Create Plugin… | Try Again
-store-plugins-wide-light	Create Plugin… | Try Again
+store-plugins-attention-dark	Create Plugin… | Add From File… | Allow | Turn Off | Needs WolOS 0.13
+store-plugins-attention-light	Create Plugin… | Add From File… | Allow | Turn Off | Needs WolOS 0.13
+store-plugins-empty-dark	Create Plugin… | Add From File…
+store-plugins-empty-light	Create Plugin… | Add From File…
+store-plugins-list-narrow-dark	Create Plugin… | Add From File… | Update to 1.3 | Turn Off | Turn On | Get | Get
+store-plugins-list-narrow-light	Create Plugin… | Add From File… | Update to 1.3 | Turn Off | Turn On | Get | Get
+store-plugins-list-wide-dark	Create Plugin… | Add From File… | Update to 1.3 | Turn Off | Turn On | Get | Get
+store-plugins-list-wide-light	Create Plugin… | Add From File… | Update to 1.3 | Turn Off | Turn On | Get | Get
+store-plugins-loading-dark	Create Plugin… | Add From File…
+store-plugins-loading-light	Create Plugin… | Add From File…
+store-plugins-narrow-dark	Create Plugin… | Add From File… | Try Again
+store-plugins-narrow-light	Create Plugin… | Add From File… | Try Again
+store-plugins-offline-dark	Create Plugin… | Add From File… | Try Again
+store-plugins-offline-light	Create Plugin… | Add From File… | Try Again
+store-plugins-wide-dark	Create Plugin… | Add From File… | Try Again
+store-plugins-wide-light	Create Plugin… | Add From File… | Try Again
 store-search-flathub-narrow-dark	Get | Get | Open | Get
 store-search-flathub-narrow-light	Get | Get | Open | Get
 store-search-flathub-wide-dark	Get | Get | Open | Get
@@ -866,6 +866,12 @@ store-versions-narrow-dark	Remove | Update | Roll Back
 store-versions-narrow-light	Remove | Update | Roll Back
 store-versions-wide-dark	Remove | Update | Roll Back
 store-versions-wide-light	Remove | Update | Roll Back
+store-webapps-empty-dark	Choose… | Make Web App
+store-webapps-empty-light	Choose… | Make Web App
+store-webapps-list-narrow-dark	Choose… | Make Web App
+store-webapps-list-narrow-light	Choose… | Make Web App
+store-webapps-list-wide-dark	Choose… | Make Web App
+store-webapps-list-wide-light	Choose… | Make Web App
 store-work-narrow-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-work-narrow-light	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-work-wide-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get

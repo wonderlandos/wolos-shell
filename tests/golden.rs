@@ -2011,6 +2011,7 @@ fn main() {
     setup_cases::row_buttons_ring_inside_the_row();
     setup_cases::empty_desktop_renders_a_node();
     setup_cases::drop_shelf_insets_are_even();
+    package_cases::checks();
     regressions::effects_page_answers_after_it_is_built();
     settings_cases::checks();
     displays_cases::checks();

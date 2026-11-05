@@ -362,8 +362,123 @@ fn remove(id: &str) -> bool {
     .is_some()
 }
 
+/// What `wol plugin add` said.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Added {
+    /// Added; the plugin's id.
+    Done(String),
+    /// Not signed by the plugin index: it needs the person's yes (`--yes`).
+    NotSigned,
+    /// Not a plugin WolOS can add, or it did not run.
+    Refused,
+}
+
+/// `wol plugin add --json [--yes] -- <file>`: the Terminal's verb, with the file after `--` so a
+/// name that starts with dashes is a file.
+pub fn add_argv(file: &str, yes: bool) -> Vec<String> {
+    let mut v: Vec<String> = ["wol", "plugin", "add", "--json"]
+        .into_iter()
+        .map(String::from)
+        .collect();
+    if yes {
+        v.push("--yes".into());
+    }
+    v.extend(["--".into(), file.into()]);
+    v
+}
+
+/// The answer of that line: exit 0 with the id in its JSON; exit 64 (usage) is the verb refusing
+/// an unsigned file without `--yes`; anything else is a file it will not add.
+pub fn added(code: i32, out: &str) -> Added {
+    match code {
+        0 => serde_json::from_str::<serde_json::Value>(out)
+            .ok()
+            .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(String::from))
+            .map_or(Added::Refused, Added::Done),
+        64 => Added::NotSigned,
+        _ => Added::Refused,
+    }
+}
+
+/// Runs the add line. Blocks.
+fn add_file(file: &str, yes: bool) -> Added {
+    let argv = add_argv(file, yes);
+    let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+    match wol_core::system::run_full(&a, None, std::time::Duration::from_secs(60)) {
+        Ok((code, out, _)) => added(code, &out),
+        Err(_) => Added::Refused,
+    }
+}
+
+/// Add From File…: pick a `.wolplug`; a signed one is added, an unsigned one asks first.
+fn add_from_file(sh: &Rc<Shared>, anchor: &gtk::Button, reload: &Rc<dyn Fn(bool)>) {
+    let (sh, reload, anchor2) = (sh.clone(), reload.clone(), anchor.clone());
+    crate::kit::pickers::choose_file_of(
+        anchor,
+        STORE_PLUGINS_ADD_FILE,
+        STORE_PLUGINS_ADD_FILE_KIND,
+        &["wolplug"],
+        move |path| {
+            let file = path.display().to_string();
+            let (sh2, reload2, anchor3, file2) =
+                (sh.clone(), reload.clone(), anchor2.clone(), file.clone());
+            off_ui(
+                move || add_file(&file, false),
+                move |r| after_add(&sh2, &anchor3, &reload2, &file2, r),
+            );
+        },
+    );
+}
+
+fn after_add(
+    sh: &Rc<Shared>,
+    anchor: &gtk::Button,
+    reload: &Rc<dyn Fn(bool)>,
+    file: &str,
+    r: Added,
+) {
+    match r {
+        Added::Done(id) => {
+            say(&sh.status, &STORE_PLUGINS_ADDED.replace("{id}", &id));
+            reload(false);
+        }
+        Added::Refused => say(&sh.status, STORE_PLUGINS_ADD_REFUSED),
+        Added::NotSigned => {
+            let d = gtk::AlertDialog::builder()
+                .modal(true)
+                .message(STORE_PLUGINS_UNSIGNED_TITLE)
+                .detail(STORE_PLUGINS_UNSIGNED_DETAIL)
+                .buttons([
+                    crate::i18n::tr(STORE_PLUGINS_ADD_CANCEL),
+                    STORE_PLUGINS_ADD_ANYWAY,
+                ])
+                .cancel_button(0)
+                .default_button(0)
+                .build();
+            let win = anchor.root().and_downcast::<gtk::Window>();
+            let (sh, reload, anchor, file) =
+                (sh.clone(), reload.clone(), anchor.clone(), file.to_string());
+            d.choose(win.as_ref(), gtk::gio::Cancellable::NONE, move |c| {
+                if c == Ok(1) {
+                    let (sh2, reload2, anchor2, file2) =
+                        (sh.clone(), reload.clone(), anchor.clone(), file.clone());
+                    off_ui(
+                        move || add_file(&file, true),
+                        move |r| after_add(&sh2, &anchor2, &reload2, &file2, r),
+                    );
+                }
+            });
+        }
+    }
+}
+
 // ---- Page ----
 
+use crate::copy::visual::{
+    STORE_PLUGINS_ADD_ANYWAY, STORE_PLUGINS_ADD_CANCEL, STORE_PLUGINS_ADD_FILE,
+    STORE_PLUGINS_ADD_FILE_KIND, STORE_PLUGINS_ADD_REFUSED, STORE_PLUGINS_ADDED,
+    STORE_PLUGINS_UNSIGNED_DETAIL, STORE_PLUGINS_UNSIGNED_TITLE,
+};
 use crate::copy::{
     STORE_NOT_FINISHED as FAILED, STORE_PLUGIN_ALLOW, STORE_PLUGIN_ASKS_MORE,
     STORE_PLUGIN_ASKS_NOTHING, STORE_PLUGIN_ASKS_TO, STORE_PLUGIN_BY, STORE_PLUGIN_GET,
@@ -376,7 +491,7 @@ use crate::copy::{
 };
 
 /// Runs `work` off the UI thread, then `done(result)` on it.
-fn off_ui<T: Send + 'static>(
+pub(super) fn off_ui<T: Send + 'static>(
     work: impl FnOnce() -> T + Send + 'static,
     done: impl FnOnce(T) + 'static,
 ) {
@@ -400,10 +515,15 @@ pub(super) fn page(sh: &Rc<Shared>) -> (gtk::Box, Rc<dyn Fn(Listing)>) {
     let intro = w::label(INTRO, "secondary");
     intro.set_wrap(true);
     p.append(&intro);
-    p.append(&crate::ui::maker::launch_button(
+    let buttons = w::hbox(w::S2);
+    buttons.set_halign(gtk::Align::Start);
+    buttons.append(&crate::ui::maker::launch_button(
         STORE_PLUGINS_CREATE,
         &crate::ui::maker::ARGV,
     ));
+    let add = w::button(STORE_PLUGINS_ADD_FILE, w::Kind::Default, || {});
+    buttons.append(&add);
+    p.append(&buttons);
     let body = w::vbox(w::S6);
     p.append(&body);
     let show: Rc<std::cell::RefCell<Option<Show>>> = Default::default();
@@ -426,6 +546,10 @@ pub(super) fn page(sh: &Rc<Shared>) -> (gtk::Box, Rc<dyn Fn(Listing)>) {
         Rc::new(move |l: Listing| fill(&sh, &body, l, &reload))
     };
     *show.borrow_mut() = Some(f.clone());
+    {
+        let (sh, reload) = (sh.clone(), reload.clone());
+        add.connect_clicked(move |b| add_from_file(&sh, b, &reload));
+    }
     f(Listing::Loading);
     if sh.env.pkg_search {
         // Every time the page is shown, not only the first (QA-PLUG-56: a plugin made or removed
@@ -921,5 +1045,58 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Add From File runs the Terminal's `wol plugin add`, the file after `--`; the exit code
+    /// tells signed (0 with the id), not signed (64: asks first, then `--yes`) and refused.
+    #[test]
+    fn add_from_file_is_the_terminal_verb() {
+        assert_eq!(
+            add_argv("/home/a/Downloads/clock.wolplug", false),
+            [
+                "wol",
+                "plugin",
+                "add",
+                "--json",
+                "--",
+                "/home/a/Downloads/clock.wolplug"
+            ]
+        );
+        assert_eq!(
+            add_argv("--odd.wolplug", true),
+            [
+                "wol",
+                "plugin",
+                "add",
+                "--json",
+                "--yes",
+                "--",
+                "--odd.wolplug"
+            ]
+        );
+        assert_eq!(
+            added(0, r#"{"id":"alice.clock","version":"1.0","signed":true}"#),
+            Added::Done("alice.clock".into())
+        );
+        assert_eq!(
+            added(0, "not json"),
+            Added::Refused,
+            "success without an id is no success"
+        );
+        assert_eq!(added(64, ""), Added::NotSigned);
+        for code in [1, 65, 66, 69, 77, -1] {
+            assert_eq!(added(code, ""), Added::Refused, "{code}");
+        }
+        for s in [
+            crate::copy::visual::STORE_PLUGINS_ADDED.replace("{id}", "alice.clock"),
+            crate::copy::visual::STORE_PLUGINS_ADD_REFUSED.into(),
+            crate::copy::visual::STORE_PLUGINS_UNSIGNED_DETAIL.into(),
+        ] {
+            assert!(
+                crate::copy::lint(&s).is_empty(),
+                "{s}: {:?}",
+                crate::copy::lint(&s)
+            );
+        }
     }
 }

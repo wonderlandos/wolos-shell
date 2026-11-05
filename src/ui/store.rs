@@ -21,6 +21,8 @@ pub const PAGES: [&str; 8] = [
 
 #[path = "store_plugins.rs"]
 pub mod plugins;
+#[path = "store_webapps.rs"]
+pub mod webapps;
 
 mod details;
 use details::fill_details;
@@ -145,6 +147,8 @@ pub struct Store {
     pub aur: Rc<AurGate>,
     /// Shows a listing on the Plugins page.
     show_plugins: Rc<dyn Fn(plugins::Listing)>,
+    /// Shows a listing on the Web Apps page.
+    show_webapps: Rc<dyn Fn(webapps::Listing)>,
 }
 
 impl Store {
@@ -195,6 +199,10 @@ impl Store {
     pub fn show_plugins(&self, l: plugins::Listing) {
         (self.show_plugins)(l);
         self.aw.select("Plugins");
+    }
+    /// Shows a listing on the Web Apps page (goldens).
+    pub fn show_webapps(&self, l: webapps::Listing) {
+        (self.show_webapps)(l);
     }
 
     /// Install page for an already checked file (goldens).
@@ -1724,6 +1732,8 @@ pub fn content(sys: Arc<dyn System>, env: Env) -> Store {
         "Updates",
         &updates(&sh),
     );
+    let (webapps_page, show_webapps) = webapps::page(&sh);
+    aw.source_item("applications-internet-symbolic", "Web Apps", &webapps_page);
     let (aur, aur_gate) = aur_page(&sh);
     aw.source_item("package-x-generic-symbolic", "Community", &aur);
     let results = w::vbox(w::S6);
@@ -1863,6 +1873,7 @@ pub fn content(sys: Arc<dyn System>, env: Env) -> Store {
     Store {
         aur: aur_gate,
         show_plugins,
+        show_webapps,
         aw,
         search,
         show_results,
