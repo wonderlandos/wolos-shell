@@ -167,6 +167,10 @@ pub fn button(text: &str, kind: Kind, clicked: impl Fn() + 'static) -> gtk::Butt
         Kind::Destructive => "btn-destructive",
         Kind::Plain => "btn-plain",
     });
+    // A push button keeps its control height wherever it sits: a box child fills the box's height
+    // by default, which stretched buttons to a tall neighbour (a wrapped installer status line, a
+    // toolbar) and glued them to the edges (RU-700, RU-702).
+    b.set_valign(gtk::Align::Center);
     b.connect_clicked(move |_| clicked());
     b
 }
@@ -323,6 +327,7 @@ pub fn search_field(placeholder: &str) -> gtk::SearchEntry {
         .placeholder_text(placeholder)
         .build();
     s.add_css_class("search-field");
+    s.set_valign(gtk::Align::Center);
     s
 }
 
@@ -741,11 +746,17 @@ impl AppWindow {
         bar.add_css_class("toolbar");
         let sidebar_toggle = icon_button("go-previous-symbolic", "Show Sidebar", || {});
         sidebar_toggle.set_visible(false);
+        sidebar_toggle.set_valign(gtk::Align::Center);
         if with_sidebar {
             bar.append(&sidebar_toggle);
         }
         bar.append(&spacer());
         let actions = hbox(S2);
+        // Whatever an app puts on the bar (and the sidebar toggle) keeps its own control height on
+        // the bar's centre line, 8 px clear of its edges (RU-700, RU-703): a box child fills the
+        // bar's height by default, which stretched System Monitor's End Process and Filter field to
+        // the bar's top and bottom.
+        actions.set_valign(gtk::Align::Center);
         bar.append(&actions);
         let handle = gtk::WindowHandle::builder().child(&bar).build();
         root.append(&handle);

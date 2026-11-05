@@ -213,6 +213,34 @@ const RULES: &[(&str, &str)] = &[
         "Docs prose spells Wi-Fi and Bluetooth as the glossary does.",
     ),
     ("RU-099", "Docs use no emoji."),
+    (
+        "RU-700",
+        "A control sits at least 8 px inside every edge of the nearest container that draws a background (toolbar, card, list row, window).",
+    ),
+    (
+        "RU-701",
+        "Every widget lies inside its parent's allocation, a control's own parts too (scrolled content excepted).",
+    ),
+    (
+        "RU-702",
+        "A button, field, drop-down, menu button or switch is one of the scaffold control heights (24, 28, 36 or 40 px).",
+    ),
+    (
+        "RU-703",
+        "A control in a toolbar or header bar sits on the bar's vertical centre.",
+    ),
+    (
+        "RU-704",
+        "A search field in a toolbar is at most 320 px wide and is the last item, at the bar's right padding.",
+    ),
+    (
+        "RU-705",
+        "Two controls side by side in a horizontal box are 8 or 12 px apart and never touch (segmented groups excepted).",
+    ),
+    (
+        "RU-706",
+        "A disabled destructive button is drawn in the dim control style, never a pale red.",
+    ),
 ];
 
 /// Violations tolerated today per rule (absent = 0). Only shrinks.
@@ -1886,6 +1914,23 @@ fn rules_table_is_sound() {
     for (id, _) in BASELINE {
         assert!(ids.contains(id), "{id}: baseline for an unknown rule");
     }
+}
+
+/// RU-700 to RU-706 are measured on every golden case (`tests/support/layout_lint.rs`, run and
+/// ratcheted by `tests/golden.rs`): the lint's ids are exactly these rows.
+#[test]
+fn ru_700_to_706_are_the_layout_lint() {
+    let lint = include_str!("support/layout_lint.rs");
+    for id in [
+        "RU-700", "RU-701", "RU-702", "RU-703", "RU-704", "RU-705", "RU-706",
+    ] {
+        assert!(
+            lint.contains(&format!("\"{id}\"")),
+            "{id}: tests/support/layout_lint.rs does not measure it"
+        );
+    }
+    let measured = lint.matches("\"RU-7").count();
+    assert_eq!(measured, 7, "layout_lint.rs has a rule this table lacks");
 }
 
 #[test]

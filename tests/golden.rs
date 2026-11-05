@@ -27,12 +27,16 @@ mod font_cases;
 mod form_kit;
 #[path = "golden_cases/installer.rs"]
 mod installer_cases;
+#[path = "support/layout_lint.rs"]
+mod layout_lint;
 #[path = "golden_cases/locale.rs"]
 mod locale_cases;
 #[path = "golden_cases/maker.rs"]
 mod maker_cases;
 #[path = "golden_cases/menubar.rs"]
 mod menubar_cases;
+#[path = "golden_cases/monitor.rs"]
+mod monitor_cases;
 #[path = "golden_cases/motion.rs"]
 mod motion_cases;
 #[path = "golden_cases/offers.rs"]
@@ -1393,6 +1397,7 @@ fn cases() -> Vec<Case> {
     v.extend(tray_cases::cases());
     v.extend(menubar_cases::cases());
     v.extend(motion_cases::cases());
+    v.extend(monitor_cases::cases());
     for (tag, (sw, _)) in [("wide", w::APP_SIZE), ("narrow", w::APP_NARROW)] {
         v.push(Case {
             name: format!("settings-malware-{tag}"),
@@ -1933,6 +1938,7 @@ fn main() {
     let mut labels = read_labels(&labels_file);
     let only = std::env::var("WOL_GOLDEN_ONLY").ok();
     let mut failures = Vec::new();
+    let mut lint_all: Vec<layout_lint::Violation> = Vec::new();
     // What the checks above logged is theirs: left in WARNINGS it would fail the first case of
     // the loop (menubar-light, or whichever WOL_GOLDEN_ONLY picks) for a reason it never had.
     let setup = WARNINGS.with_borrow_mut(std::mem::take);
@@ -1960,6 +1966,8 @@ fn main() {
             // Once, with the kit stylesheet on: a golden in the fallback type locks the wrong glyphs.
             font_cases::ui_family_is_inter();
             regressions::shortcut_sheet_rows_are_whole();
+            // The layout lint fires on a bar built to break each rule (and not on one built right).
+            layout_lint::self_check(render);
         }
         for c in cases() {
             let name = format!(
@@ -2035,6 +2043,13 @@ fn main() {
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             issues.extend(untitled_icon_buttons(win.upcast_ref()));
             issues.extend(host_icons(win.upcast_ref()));
+            // Layout lint (RU-700..RU-706): counted per rule and surface against its BASELINE at
+            // the end of the run, not per case.
+            let lint = layout_lint::lint(&name, &win, Some(&tex));
+            for v in &lint {
+                eprintln!("{name}: {} {}: {}", v.rule, v.path, v.detail);
+            }
+            lint_all.extend(lint);
             let said = button_labels(win.upcast_ref()).join(" | ");
             if update_labels {
                 labels.insert(name.clone(), said);
@@ -2083,6 +2098,34 @@ fn main() {
     }
     if update_labels {
         write_labels(&labels_file, &labels);
+    }
+    // The lint's findings, one per line (case, rule, widget path, numbers), for the baseline table.
+    let report = out.join("layout-lint.tsv");
+    std::fs::write(
+        &report,
+        lint_all
+            .iter()
+            .map(|v| format!("{}\t{}\t{}\t{}\n", v.case, v.rule, v.path, v.detail))
+            .collect::<String>(),
+    )
+    .unwrap();
+    println!(
+        "layout lint: {} violations ({})",
+        lint_all.len(),
+        report.display()
+    );
+    let (over, lower) = layout_lint::ratchet(&lint_all);
+    // A run of some cases (WOL_GOLDEN_ONLY) counts fewer findings: only a full run says what to lower.
+    if only.is_none() {
+        for l in &lower {
+            eprintln!("note: layout lint {l}");
+        }
+    }
+    for o in &over {
+        eprintln!("layout lint over its baseline: {o}");
+    }
+    if !over.is_empty() {
+        failures.push(format!("layout lint ({} rows over baseline)", over.len()));
     }
     drop(broadway);
     let _ = std::fs::remove_dir_all(cfg);

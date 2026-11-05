@@ -188,9 +188,10 @@ scale.slider slider { background: white; min-width: 16px; min-height: 16px; marg
 .segmented { background: var(--control); border-radius: 8px; padding: 4px; }
 .segmented button { background: none; border: none; box-shadow: none; min-height: 24px; padding: 0 8px; border-radius: 4px; color: var(--text); }
 .segmented button:checked { background: var(--card); box-shadow: var(--elev-1); }
+/* Fields and drop-downs are the 24 px control (RU-702): 22 inside the 1 px border. */
 entry.search-field, entry.text-field, entry.text-field, entry.search-field {
-  background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 8px; min-height: 24px; padding: 0 8px; box-shadow: none; }
-dropdown.dropdown > button { background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 8px; min-height: 24px; padding: 0 8px; box-shadow: none; }
+  background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 8px; min-height: 22px; padding: 0 8px; box-shadow: none; }
+dropdown.dropdown > button { background: var(--control); color: var(--text); border: 1px solid var(--line); border-radius: 8px; min-height: 22px; padding: 0 8px; box-shadow: none; }
 .dim-icon { color: var(--dim); }
 .empty-state { padding: 40px; }
 .empty-state label.large-title { font-size: 24px; line-height: 36px; font-weight: 600; letter-spacing: 0; }
@@ -213,6 +214,10 @@ button.row-button:hover { background: var(--control); }
 .app-window { background: var(--surface); }
 .app-window label { color: var(--text); }
 .toolbar { min-height: 40px; padding: 0 16px; background: linear-gradient(var(--line), var(--line)) center bottom / calc(100% - 24px) 1px no-repeat, var(--glass); }
+/* GTK's theme styles every `.toolbar` as its old tool bar: buttons 1 px apart from everything
+   (`.toolbar > :not(.linked) > button { margin: 1px }`), which made 10 px gaps and, with the bar's
+   stretch, 38 px buttons. The kit bar's controls keep the kit's own size and gaps (RU-702, RU-705). */
+.toolbar button { margin: 0; }
 .traffic-lights { margin-left: 16px; }
 /* WolOS window buttons: a quiet circle, the glyph (close, minimise, zoom) shows while the pointer is over the group,
    and only the button under the pointer takes the accent (pressed: a shade deeper). */
@@ -253,6 +258,8 @@ button.hit.selected label { color: var(--accent-text); }
 .force-quit-list { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); padding: 4px; }
 .force-quit-list > label { padding: 16px 8px; }
 .force-quit button.btn:disabled { opacity: 0.45; }
+/* A destructive button that cannot be pressed is off, not a pale warning: the dim control look (RU-706). */
+button.btn-destructive:disabled { background: var(--control); color: var(--text); }
 
 /* ---- Notifications / OSD / session ---- */
 /* 344 px outer width: 318 + 2 x 12 padding + 2 x 1 border. */
@@ -604,3 +611,14 @@ button.device-button:focus:focus-visible, button.row-button:focus:focus-visible,
 .note-widget { padding: 4px; }
 .note-text, .note-text > text { background: transparent; color: inherit; }
 .note-text { font-size: 1.05em; }
+
+/* ---- System Monitor (kit/graph.rs, ui/monitor): graph cards and the process list ---- */
+.graph-grid { color: var(--line); }
+.graph-series { min-height: 0; }
+.graph-tile { padding: 12px; }
+.process-frame { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); box-shadow: var(--elev-1); padding: 4px 0; }
+.process-frame > box.process-row { min-height: 32px; border-bottom: 1px solid var(--line); }
+listview.process-list, listview.process-list > row { background: none; }
+listview.process-list > row:selected { background: alpha(var(--accent), 0.18); border-radius: 8px; }
+.process-row { min-height: 28px; padding: 0 12px; }
+button.process-twist { min-width: 16px; min-height: 16px; padding: 0; }

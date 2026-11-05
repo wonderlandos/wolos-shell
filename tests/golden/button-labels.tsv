@@ -352,6 +352,42 @@ menubar-plugin-dark	Files | Window | CPU 12% MEM 41% | Mon 26 Oct 14:05
 menubar-plugin-light	Files | Window | CPU 12% MEM 41% | Mon 26 Oct 14:05
 menubar-recording-dark	Files | Window | Mon 26 Oct 14:05
 menubar-recording-light	Files | Window | Mon 26 Oct 14:05
+monitor-apps-1280-dark	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-apps-1280-light	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-apps-empty-dark	
+monitor-apps-empty-light	
+monitor-apps-narrow-dark	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-apps-narrow-light	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-disks-1280-dark	
+monitor-disks-1280-light	
+monitor-disks-narrow-dark	
+monitor-disks-narrow-light	
+monitor-network-1280-dark	
+monitor-network-1280-light	
+monitor-network-narrow-dark	
+monitor-network-narrow-light	
+monitor-overview-1280-dark	
+monitor-overview-1280-light	
+monitor-overview-first-second-dark	
+monitor-overview-first-second-light	
+monitor-overview-narrow-dark	
+monitor-overview-narrow-light	
+monitor-processes-1280-dark	End Process
+monitor-processes-1280-light	End Process
+monitor-processes-narrow-dark	End Process
+monitor-processes-narrow-light	End Process
+monitor-processes-no-match-dark	End Process
+monitor-processes-no-match-light	End Process
+monitor-quit-paused-dark	Quit | Force Quit | Quit | Quit | Quit | Quit | Cancel | Force Quit
+monitor-quit-paused-light	Quit | Force Quit | Quit | Quit | Quit | Quit | Cancel | Force Quit
+monitor-startup-1280-dark	Open Login Items
+monitor-startup-1280-light	Open Login Items
+monitor-startup-loading-dark	Open Login Items
+monitor-startup-loading-light	Open Login Items
+monitor-startup-narrow-dark	Open Login Items
+monitor-startup-narrow-light	Open Login Items
+monitor-startup-not-read-dark	Open Login Items
+monitor-startup-not-read-light	Open Login Items
 motion-controlcenter-open-dark	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode On | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
 motion-controlcenter-open-light	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode Off | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
 motion-dock-hover-dark	
