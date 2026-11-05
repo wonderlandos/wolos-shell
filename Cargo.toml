@@ -29,6 +29,10 @@ wol_lua = { path = "../wol-lua", package = "wol-lua" }
 wopkg = { path = "../wopkg" }
 # Search by meaning (docs/modules/search.md): Settings, the Search bar, `wol help`.
 wolsem = { path = "../wolsem" }
+# Kit app windows draw through libWolkit (ui::app_wolkit, WOLKIT-1TO1): the page, the view raise and
+# the CPU reference rasteriser; no wgpu (gpu off) and no native window (native off).
+wolkit = { path = "../wolkit", default-features = false }
+wolkit-render = { path = "../wolkit-render", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 async-channel = "2"

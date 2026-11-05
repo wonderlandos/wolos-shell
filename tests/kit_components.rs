@@ -31,6 +31,10 @@ const KNOWN: &[(&str, &str, i32)] = &[
     // `switch.toggle { min-height: 24px; padding: 2px }` draws 28 (DS-GTK-1: min-height 20).
     ("switch", "standard.sizes.regular.height", 28),
     ("switch", "comfortable.sizes.regular.height", 28),
+    // WOLKIT-1TO1: the spec is the approved 36 (GAP-TABLE M2); Kit windows draw it through
+    // libWolkit by default. GtkSwitch is two thumbs wide, so this GTK fallback draws 44.
+    ("switch", "standard.sizes.regular.width", 44),
+    ("switch", "comfortable.sizes.regular.width", 44),
 ];
 
 type Done = Box<dyn FnOnce(bool)>;

@@ -60,9 +60,20 @@ mod widget_cases;
 #[path = "golden_cases/wol_file.rs"]
 mod wol_file;
 
-const WALL: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../design/wallpapers/wonderland-dusk.svg"
+macro_rules! wall {
+    () => {
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../design/wallpapers/wonderland-dusk.svg"
+        )
+    };
+}
+const WALL: &str = wall!();
+/// The golden windows' own rules on top of the theme (a case that re-applies a theme passes it).
+const EXTRA_CSS: &str = concat!(
+    "window.preview { background: url(\"file://",
+    wall!(),
+    "\") center / cover; } window.preview-app { background: none; }"
 );
 /// Max share of pixels allowed to differ (any channel > 24) before a golden fails.
 const TOLERANCE: f64 = 0.005;
@@ -2071,10 +2082,7 @@ fn main() {
             }),
             false,
         );
-        let extra = format!(
-            "window.preview {{ background: url(\"file://{WALL}\") center / cover; }} window.preview-app {{ background: none; }}"
-        );
-        kit::style::apply(&t, &extra);
+        kit::style::apply(&t, EXTRA_CSS);
         if variant == Variant::Light {
             pin_icon_search_path();
             // Once, with the kit stylesheet on: a golden in the fallback type locks the wrong glyphs.
