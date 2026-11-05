@@ -19,6 +19,10 @@ pub enum Verb {
     Call,
     /// `status`: surfaces, panels and their open state, as one JSON line.
     Status,
+    /// `snap-preview ...` and `snap-layouts ...` from the compositor plugin while a window is
+    /// dragged to a screen edge or rests on its zoom button; the target is the whole line, read
+    /// with [`crate::snap::Line::of`].
+    Snap,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -121,6 +125,13 @@ pub fn parse(line: &str) -> Option<Command> {
             target: json.into(),
         });
     }
+    let trimmed = line.trim();
+    if trimmed.starts_with("snap-preview ") || trimmed.starts_with("snap-layouts ") {
+        return crate::snap::Line::of(trimmed).map(|_| Command {
+            verb: Verb::Snap,
+            target: trimmed.into(),
+        });
+    }
     let mut w = line.split_whitespace();
     let verb = match w.next()?.to_ascii_lowercase().as_str() {
         "toggle" => Verb::Toggle,
@@ -171,6 +182,34 @@ mod tests {
         for bad in ["", "toggle", "reload x", "fly osd", "show a b"] {
             assert_eq!(parse(bad), None, "{bad}");
         }
+    }
+
+    /// wol-hypr's snap lines (`snap-preview`, `snap-layouts`) are commands of their own, kept whole;
+    /// a malformed one is no command.
+    #[test]
+    fn snap_lines_from_the_compositor_are_commands() {
+        for line in [
+            "snap-preview off\n",
+            "snap-preview eDP-1 left 12 40 622 684\n",
+            "snap-layouts eDP-1 0x5a1 640 14\n",
+        ] {
+            let c = parse(line).unwrap_or_else(|| panic!("{line}"));
+            assert_eq!((c.verb, c.target.as_str()), (Verb::Snap, line.trim()));
+        }
+        for bad in [
+            "snap-preview",
+            "snap-preview eDP-1 left 1 2 3",
+            "snap-layouts eDP-1 x 1 2",
+        ] {
+            assert_eq!(parse(bad), None, "{bad}");
+        }
+        assert_eq!(
+            parse("show snap-preview"),
+            Some(Command {
+                verb: Verb::Show,
+                target: "snap-preview".into()
+            })
+        );
     }
 
     /// `approve <json>`: a helper's admin request for the approval sheet; JSON kept verbatim.

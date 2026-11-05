@@ -15,6 +15,7 @@ pub(super) mod rows {
     pub const BATTERY: &str = "Show battery percentage";
     pub const DATE: &str = "Show date";
     pub const TILE: &str = "Tile windows";
+    pub const SNAP: &str = "Snap windows to screen edges";
     pub const ARRANGEMENT: &str = "Arrangement";
     pub const GAPS: &str = "Space between windows";
     pub const SHORTCUTS: &str = "Tiling shortcuts";
@@ -264,6 +265,16 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
     for x in [&arrangement, &gaps, picture.upcast_ref()] {
         x.set_visible(d.tiling);
     }
+    // Edge and corner drags, the layouts chooser: for floating windows, tiling on or off.
+    let (dk2, st2) = (desk.clone(), status.clone());
+    let snap = form::pending_toggle_row(
+        rows::SNAP,
+        crate::copy::DOCK_SNAP_HINT,
+        d.snap,
+        move |on, done| {
+            dk2.set_switch(&st2, |p| p.snap = on, Box::new(done));
+        },
+    );
     let (dk, st, m, a, g, pic) = (
         desk.clone(),
         status.clone(),
@@ -297,6 +308,7 @@ pub(super) fn windows(e: &Rc<Env>) -> gtk::Widget {
             picture.upcast(),
             arrangement,
             gaps,
+            snap,
         ],
     ));
     more.append(&floating(desk, &status));

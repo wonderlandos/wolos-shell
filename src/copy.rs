@@ -965,6 +965,20 @@ pub fn session_confirm(action: &str, secs: u32) -> Option<(&'static str, String,
 pub const DOCK_DOWNLOADS_EMPTY: &str = "Nothing downloaded yet.";
 /// Settings > Desktop & Dock, Tile windows.
 pub const DOCK_TILE_HINT: &str = "New windows fill the screen side by side instead of floating.";
+/// Settings > Desktop & Dock, Snap windows to screen edges.
+pub const DOCK_SNAP_HINT: &str = "Drag a window to a side, a corner or the top to fill that part of the screen. ⌘ and the arrow keys do the same.";
+/// Tooltip of a place in the snap layouts chooser (`crate::snap::ZONES`); empty for any other word.
+pub fn snap_zone(zone: &str) -> &'static str {
+    match zone {
+        "left" => "Left half",
+        "right" => "Right half",
+        "top-left" => "Top left",
+        "top-right" => "Top right",
+        "bottom-left" => "Bottom left",
+        "bottom-right" => "Bottom right",
+        _ => "",
+    }
+}
 /// Settings > Desktop & Dock, Tiling shortcuts.
 pub const DOCK_TILING_SHORTCUTS_HINT: &str =
     "Move, resize and focus tiled windows from the keyboard.";
@@ -1284,6 +1298,7 @@ mod tests {
         for s in [
             DOCK_DOWNLOADS_EMPTY,
             DOCK_TILE_HINT,
+            DOCK_SNAP_HINT,
             DOCK_TILING_SHORTCUTS_HINT,
             DOCK_ADD_APP_EMPTY,
             WIDGET_NO_ROOM,
@@ -1293,6 +1308,15 @@ mod tests {
         ] {
             assert!(lint(s).is_empty(), "{s}: {:?}", lint(s));
         }
+    }
+
+    #[test]
+    fn every_snap_place_has_a_tooltip_that_passes_the_lint() {
+        for z in crate::snap::ZONES {
+            let t = snap_zone(z);
+            assert!(!t.is_empty() && lint(t).is_empty(), "{z}: {t}");
+        }
+        assert_eq!(snap_zone("zoom"), "");
     }
 
     #[test]
