@@ -59,10 +59,10 @@ pub const PINS: &[Pin] = &[
         class: "",
     },
     Pin {
-        id: "org.gnome.Shotwell",
+        id: "org.wolos.gallery",
         name: "Photos",
         icon: "wolos-photos",
-        exec: &["shotwell"],
+        exec: &["wol-gallery"],
         class: "",
     },
     Pin {
