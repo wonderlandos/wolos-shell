@@ -414,6 +414,8 @@ pub fn start_boot_notice() {
     if mark.as_ref().is_some_and(|m| m.exists()) {
         return;
     }
+    // fixed wait: a settle delay before the notice is posted (the shell's notification server
+    // comes up first); nothing is on screen for the person to read while it runs.
     gtk::glib::timeout_add_seconds_local_once(BOOT_NOTICE_AFTER, move || {
         let posted = std::thread::Builder::new()
             .name("wol-boot-notice".into())
