@@ -187,6 +187,8 @@ pub fn run_shell() -> glib::ExitCode {
                 *late.borrow_mut() = handlers;
                 mark(t0, "panels");
                 fence::guard("file index", searchbar::keep_file_index);
+                // Auto light/dark: the strip and the other toolkits follow the clock too.
+                fence::guard("appearance", crate::appearance_sync::follow);
                 fence::guard("phones", crate::phones::watch);
                 fence::guard("setup", apply_setup);
             });

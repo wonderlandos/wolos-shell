@@ -4,6 +4,7 @@ pub mod alerts;
 pub mod app_host;
 pub mod app_notices;
 pub mod app_session;
+pub mod appearance_sync;
 pub mod appmenu;
 pub mod apps;
 pub(crate) mod auth_queue;
