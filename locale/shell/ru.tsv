@@ -1,6 +1,7 @@
 # WolOS text: shell, Русский (ru). Write the translation in the third column; leave the hash alone.
 # Translators: docs/l10n/README.md and docs/l10n/RULES-ru.md. Columns:
 # key	source	text	hash
+copy.help_search_manual	Search the manual…	Искать в руководстве…	94ce53d8
 copy.install_blank	This disk is empty, so there’s nothing to install alongside. Use Erase Disk.	Этот диск пуст, поэтому установить рядом не с чем. Выберите «Стереть диск».	9d62424a
 copy.install_recovery_note	Write this key down and keep it safe. It opens your disk if your password or security chip stops working.	Запишите этот ключ и храните его в надёжном месте. Он открывает диск, если пароль или чип безопасности перестанут работать.	a810c173
 copy.install_point_of_no_return	Back up anything you need first. These changes can’t be undone.	Сначала сохраните резервную копию всего нужного. Эти изменения нельзя отменить.	f0e88da3
