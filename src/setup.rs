@@ -479,7 +479,7 @@ impl Draft {
         }
         match rules {
             Ok(()) => None,
-            Err("hint") => Some((Field::Hint, tr("Keep the hint short, without colons."))),
+            Err("hint") => Some((Field::Hint, hint_rule())),
             Err("full name") => Some((Field::FullName, tr("Remove colons from the name."))),
             Err(_) => Some((Field::Password, tr("Choose a different password."))),
         }

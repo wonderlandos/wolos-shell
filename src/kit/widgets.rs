@@ -1587,16 +1587,17 @@ pub fn toolbar_sheet(aw: &AppWindow, child: &impl IsA<gtk::Widget>) -> gtk::Reve
             r.set_reveal_child(false);
         }
     });
-    let key = gtk::EventControllerKey::new();
+    // Esc closes the sheet while it is up and goes on to the focused control otherwise.
     let weak = r.downgrade();
-    key.connect_key_pressed(move |_, k, _, _| match weak.upgrade() {
-        Some(r) if k == gtk::gdk::Key::Escape && r.reveals_child() => {
-            r.set_reveal_child(false);
-            glib::Propagation::Stop
-        }
-        _ => glib::Propagation::Proceed,
+    crate::kit::surface::on_escape_first(&aw.root, move || {
+        weak.upgrade().is_some_and(|r| {
+            let up = r.reveals_child();
+            if up {
+                r.set_reveal_child(false);
+            }
+            up
+        })
     });
-    aw.root.add_controller(key);
     r
 }
 
