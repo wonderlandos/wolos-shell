@@ -7,7 +7,7 @@ use gtk::{gio, glib, prelude::*};
 use wol_core::malware::{self, Analysis, Full};
 
 /// Where Settings keeps the switch.
-const SETTINGS: [&str; 2] = ["wol-settings", "Privacy & Security"];
+const SETTINGS: [&str; 2] = ["wol-settings", crate::ui::settings::ids::PRIVACY];
 /// Findings listed in the window; the sentence above them still covers all of them.
 const MAX_ROWS: usize = 6;
 

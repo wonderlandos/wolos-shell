@@ -7,8 +7,8 @@
 //! (what `wol update status` prints), never a number the shell works out by itself.
 use wol_core::update::check::Updates;
 
-/// Settings pane the badge opens (`wol-settings <pane title>`, as Control Center does).
-pub const OPEN: &[&str] = &["wol-settings", "Software Update"];
+/// Settings page the badge opens (`wol-settings <page id>`, as Control Center does).
+pub const OPEN: &[&str] = &["wol-settings", crate::ui::settings::ids::SOFTWARE_UPDATE];
 /// Highest number drawn on the badge; more shows as "99+".
 pub const MAX_SHOWN: usize = 99;
 /// Icon for the badge button (Adwaita).
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn the_click_opens_software_update() {
-        assert_eq!(OPEN, ["wol-settings", "Software Update"]);
+        assert_eq!(OPEN, ["wol-settings", "software-update"]);
     }
 
     /// ST6-4: a plugin update is found by the background check, not only by opening the Store:

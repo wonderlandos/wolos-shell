@@ -441,10 +441,18 @@ pub fn capped(q: &str) -> &str {
 }
 
 fn words(q: &str) -> Vec<String> {
-    capped(q)
+    let all: Vec<String> = capped(q)
         .split_whitespace()
         .map(str::to_lowercase)
-        .collect()
+        .collect();
+    // "privacy settings" in Settings: "settings" names where the person is, not what they want
+    // (QA-SEARCH-1). Alone ("settings") it stays a word.
+    let real: Vec<String> = all
+        .iter()
+        .filter(|w| !crate::search::is_settings_filler(w))
+        .cloned()
+        .collect();
+    if real.is_empty() { all } else { real }
 }
 
 /// Every word of `q` starts a word of `hay`, with or without its hyphens (`wifi` finds `Wi-Fi`;

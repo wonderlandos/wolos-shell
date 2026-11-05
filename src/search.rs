@@ -44,6 +44,9 @@ pub struct Item {
     /// The app's desktop id without `.desktop` for an installed app, "" for anything else: what
     /// the row hands the Dock (drag it there, or Keep in Dock; `apps::keep_in_dock`).
     pub app: String,
+    /// Ranks taken off a hit: a Settings row (a thing on a page) ranks below an app, an action
+    /// or the page itself that match the same way ([`Item::demoted`]).
+    pub demote: u8,
 }
 
 impl Item {
@@ -56,7 +59,15 @@ impl Item {
             exec,
             words: String::new(),
             app: String::new(),
+            demote: 0,
         }
+    }
+
+    /// A hit on this item ranks one lower than the same hit on a first-class item: 'screenshot'
+    /// finds the Take Screenshot action before the Screenshot row of Control Center's page.
+    pub fn demoted(mut self) -> Self {
+        self.demote = 1;
+        self
     }
 
     /// An installed app's row: the Dock can keep it by `id` ([`Item::app`]).
@@ -78,6 +89,13 @@ impl Item {
     }
 
     fn rank(&self, q: &str) -> u8 {
+        match self.rank_hit(q) {
+            0 => 0,
+            r => r.saturating_sub(self.demote).max(1),
+        }
+    }
+
+    fn rank_hit(&self, q: &str) -> u8 {
         let r = self.rank_one(q);
         if r >= 2 {
             return r;
@@ -86,8 +104,15 @@ impl Item {
         // match on its own, as a prefix, a word start or a substring, of the title or the search
         // words (QA-LN-4: only the whole text was tried, as one prefix).
         let words: Vec<&str> = q.split_whitespace().collect();
-        if words.len() > 1 && words.iter().all(|w| self.rank_one(w) >= 2) {
-            return 2;
+        if words.len() > 1 {
+            // "privacy settings": on a Settings result "settings" only names the place (QA-SEARCH-1).
+            let settings = self.kind == crate::ui::searchbar::SETTINGS;
+            let mut real = words
+                .iter()
+                .filter(|w| !(settings && is_settings_filler(w)));
+            if real.clone().next().is_some() && real.all(|w| self.rank_one(w) >= 2) {
+                return 2;
+            }
         }
         r
     }
@@ -99,6 +124,28 @@ impl Item {
         }
         r
     }
+}
+
+/// Words a person adds to say where to look, not what to find: "privacy settings", "ajustes de
+/// som". On a Settings result they match nothing and cost nothing (when another word remains).
+pub const SETTINGS_FILLER: [&str; 12] = [
+    "settings",
+    "setting",
+    "preferences",
+    "preference",
+    "prefs",
+    "options",
+    "ajustes",
+    "ajuste",
+    "configurações",
+    "configuracoes",
+    "preferências",
+    "preferencias",
+];
+
+/// Whether `w` (lowercase) is one of [`SETTINGS_FILLER`].
+pub fn is_settings_filler(w: &str) -> bool {
+    SETTINGS_FILLER.contains(&w)
 }
 
 /// Shortest query matched against search words (shorter ones match half of Settings).

@@ -247,7 +247,10 @@ impl Board {
                         "Change Wallpaper…".to_string(),
                         None,
                         Box::new(|| {
-                            crate::kit::spawn(&["wol-settings".into(), "Wallpaper".into()])
+                            crate::kit::spawn(&[
+                                "wol-settings".into(),
+                                crate::ui::settings::ids::WALLPAPER.into(),
+                            ])
                         }),
                     ),
                 ],

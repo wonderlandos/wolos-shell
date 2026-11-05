@@ -51,11 +51,11 @@ const SCREENSHOT: &[&str] = &["wol", "shell", "show", "screenshot"];
 /// Record tile: the capture toolbar in Record Entire Screen mode.
 const RECORD: &[&str] = &["wol", "shell", "show", crate::ui::capture::RECORD];
 /// "Wi-Fi Settings…" on the Wi-Fi page: the Wi-Fi pane (live it opened Network, the wired one).
-pub const WIFI_SETTINGS: &[&str] = &["wol-settings", "Wi-Fi"];
+pub const WIFI_SETTINGS: &[&str] = &["wol-settings", crate::ui::settings::ids::WIFI];
 /// "Sound Settings…" on the Sound page.
-pub const SOUND_SETTINGS: &[&str] = &["wol-settings", "Sound"];
+pub const SOUND_SETTINGS: &[&str] = &["wol-settings", crate::ui::settings::ids::SOUND];
 /// "Displays Settings…" on the Display page.
-pub const DISPLAY_SETTINGS: &[&str] = &["wol-settings", "Displays"];
+pub const DISPLAY_SETTINGS: &[&str] = &["wol-settings", crate::ui::settings::ids::DISPLAYS];
 
 /// Stack page names.
 pub const PAGES: [&str; 6] = ["main", "wifi", "bluetooth", "sound", "focus", "display"];

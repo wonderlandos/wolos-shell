@@ -696,7 +696,10 @@ impl FirstLogin {
         } else {
             kit::form::button_row("Other scripts", c::IME_MISSING, "Open Modules", || {
                 if !fake() {
-                    kit::spawn(&["wol-settings".to_string(), "Modules".to_string()]);
+                    kit::spawn(&[
+                        "wol-settings".to_string(),
+                        crate::ui::settings::ids::MODULES.to_string(),
+                    ]);
                 }
             })
         };

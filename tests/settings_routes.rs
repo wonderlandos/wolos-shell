@@ -15,11 +15,11 @@ fn args(a: &[&str]) -> Vec<String> {
 fn the_wifi_tile_opens_the_wifi_pane() {
     assert_eq!(
         shell::ui::control_center::WIFI_SETTINGS,
-        ["wol-settings", "Wi-Fi"]
+        ["wol-settings", "wifi"]
     );
     assert_eq!(
         shell::ui::control_center::SOUND_SETTINGS,
-        ["wol-settings", "Sound"]
+        ["wol-settings", "sound"]
     );
     for argv in [
         shell::ui::control_center::WIFI_SETTINGS,
@@ -42,6 +42,25 @@ fn every_launch_argument_routes_to_a_real_page() {
         Some("Desktop & Dock")
     );
     assert_eq!(requested_page(&args(&["wol-settings"])), None);
+}
+
+/// QA-SEARCH-1: a launch names its page by id, and a row after `#`; the id reaches the same page
+/// as the title does, and an unknown id is no page (Settings opens as it was).
+#[test]
+fn a_launch_by_page_id_reaches_its_page_and_row() {
+    for (id, title) in shell::ui::settings::ids::PAGE_IDS {
+        assert_eq!(requested_page(&args(&["wol-settings", id])), Some(title));
+    }
+    let t = shell::ui::settings::requested(&args(&["wol-settings", "privacy#screen-recording"]))
+        .unwrap();
+    assert_eq!(
+        (t.page, t.row),
+        ("Privacy & Security", Some("Screen Recording"))
+    );
+    assert_eq!(
+        requested_page(&args(&["wol-settings", "no-such-page"])),
+        None
+    );
 }
 
 /// The running instance must see each launch's arguments: GApplication only forwards them with

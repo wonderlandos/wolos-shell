@@ -906,7 +906,7 @@ mod tests {
                 "WolOS has 1 update ready."
             ]
         );
-        let open = ["wol-settings", "Software Update"]
+        let open = ["wol-settings", "software-update"]
             .map(String::from)
             .to_vec();
         assert_eq!(b.then, [("default", Then::Run(open))]);
@@ -961,7 +961,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         assert_eq!(
             crate::software_update::OPEN,
-            ["wol-settings", "Software Update"],
+            ["wol-settings", "software-update"],
             "the banner's click goes to the page"
         );
     }

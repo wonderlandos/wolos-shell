@@ -34,6 +34,7 @@ mod dns_over_tls;
 mod effects;
 mod general;
 mod hardware;
+pub mod ids;
 mod ip_settings;
 mod keyboard;
 mod language;
@@ -50,6 +51,7 @@ mod printers;
 mod privacy;
 mod proxy;
 mod restore;
+pub mod reveal;
 mod search;
 mod search_rows;
 mod sharing;
@@ -76,7 +78,7 @@ pub use sound::{
     apply_scale_plan, live as sound_live, scale_plan, system_percent,
 };
 
-/// One sidebar pane: its title (also the `wol-settings <title>` name), icon and search words.
+/// One sidebar pane: its title (what the sidebar shows; `wol-settings` takes its id, [`ids::PAGE_IDS`]), icon and search words.
 pub struct Pane {
     pub title: &'static str,
     pub icon: &'static str,
@@ -264,7 +266,7 @@ pub const PAGES: [&str; 25] = [
     "Restore",
 ];
 
-/// Pages without a sidebar row, reached from a pane (`wol-settings "Storage"` works too).
+/// Pages without a sidebar row, reached from a pane (`wol-settings storage` opens one).
 pub const SUBPAGES: [&str; 13] = [
     shortcuts::TITLE,
     startup_security::TITLE,
@@ -308,16 +310,23 @@ pub fn search(query: &str) -> Vec<&'static str> {
     search::panes(query)
 }
 
-/// The page `wol-settings [page]` asks for, under today's name; None for the window as it was.
-pub fn requested_page(args: &[String]) -> Option<&str> {
-    args.get(1).map(|p| canonical(p))
+/// The page `wol-settings [page[#row]]` asks for, under today's name (the English title the window
+/// keys its panes by); None for the window as it was, or for a name that is no page. The name is
+/// a page id (`privacy`; [`ids`]); an older title or alias works too.
+pub fn requested_page(args: &[String]) -> Option<&'static str> {
+    requested(args).map(|t| t.page)
+}
+
+/// [`requested_page`] and the row, if the launch names one (`privacy#screen-recording`).
+pub fn requested(args: &[String]) -> Option<ids::Target> {
+    args.get(1).and_then(|a| ids::resolve(a))
 }
 
 thread_local! {
     /// The one Settings window's content, once built.
     static WINDOW: RefCell<Option<Rc<w::AppWindow>>> = const { RefCell::new(None) };
     /// A page asked for while the window was still being built.
-    static PENDING: RefCell<Option<String>> = const { RefCell::new(None) };
+    static PENDING: RefCell<Option<ids::Target>> = const { RefCell::new(None) };
     static BUILDING: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -336,7 +345,7 @@ pub fn run() -> glib::ExitCode {
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        present(app, requested_page(&args).map(str::to_owned));
+        present(app, requested(&args));
         glib::ExitCode::SUCCESS
     });
     let code = app.run();
@@ -350,10 +359,10 @@ pub fn run() -> glib::ExitCode {
 
 /// Shows the Settings window on `page` (built on the first call; host facts read off the UI
 /// thread, so a slow `hostname` never blanks the launch).
-fn present(app: &gtk::Application, page: Option<String>) {
+fn present(app: &gtk::Application, page: Option<ids::Target>) {
     if let Some(aw) = WINDOW.with_borrow(|w| w.clone()) {
-        if let Some(p) = &page {
-            aw.open(p);
+        if let Some(t) = &page {
+            open_target(&aw, t);
         }
         if let Some(win) = app.active_window() {
             win.present();
@@ -381,8 +390,8 @@ fn present(app: &gtk::Application, page: Option<String>) {
             .decorated(false)
             .build();
         let aw = Rc::new(content(crate::system::default_system(), &host));
-        if let Some(p) = PENDING.take() {
-            aw.open(&p);
+        if let Some(t) = PENDING.take() {
+            open_target(&aw, &t);
         }
         win.set_child(Some(&aw.root));
         kit::snapshot_on_map(&win, "settings");
@@ -391,6 +400,14 @@ fn present(app: &gtk::Application, page: Option<String>) {
         BUILDING.set(false);
         drop(hold);
     });
+}
+
+/// Shows `t`: the page, and the row on it when `t` names one.
+pub fn open_target(aw: &w::AppWindow, t: &ids::Target) {
+    aw.open(t.page);
+    if let Some(row) = t.row {
+        reveal::row(&aw.content, row);
+    }
 }
 
 /// Host facts shown by the panes (injected so golden renders do not depend on the build machine).
@@ -1187,6 +1204,11 @@ impl Env {
         let o = self.open.clone();
         move || o(name)
     }
+    /// [`opener`](Self::opener) for a page-and-row link (`privacy#screen-recording`, [`ids::arg`]).
+    pub(crate) fn opener_arg(self: &Rc<Self>, arg: String) -> impl Fn() + 'static {
+        let o = self.open.clone();
+        move || o(&arg)
+    }
 }
 
 type Build = Box<dyn FnOnce() -> gtk::Widget>;
@@ -1272,19 +1294,27 @@ fn build(sys: Arc<dyn System>, host: &Host) -> (w::AppWindow, gtk::SearchEntry, 
             let (Some(sidebar), Some(content)) = (side.upgrade(), stack.upgrade()) else {
                 return;
             };
-            let name = canonical(name);
+            // A page id, an older name or a title, with the row after `#` (ids).
+            let target = ids::resolve(name);
+            let page = target.map_or_else(|| canonical(name), |t| t.page);
             let mut i = 0;
+            let mut shown = false;
             while let Some(r) = sidebar.row_at_index(i) {
-                if r.widget_name() == name {
+                if r.widget_name() == page {
                     sidebar.select_row(Some(&r));
-                    content.set_visible_child_name(name);
-                    return;
+                    content.set_visible_child_name(page);
+                    shown = true;
+                    break;
                 }
                 i += 1;
             }
-            if content.child_by_name(name).is_some() {
+            if !shown && content.child_by_name(page).is_some() {
                 sidebar.unselect_all();
-                content.set_visible_child_name(name);
+                content.set_visible_child_name(page);
+                shown = true;
+            }
+            if let (true, Some(row)) = (shown, target.and_then(|t| t.row)) {
+                reveal::row(&content, row);
             }
         })
     };
@@ -1591,7 +1621,8 @@ fn fill_results(env: &Rc<Env>, body: &gtk::Box, query: &str) {
                     None => (page, ""),
                 };
                 let b = form::nav_row(icon_of(page), title, sub);
-                let open = env.opener(page);
+                // A row hit lands on the row, a pane hit on the page.
+                let open = env.opener_arg(ids::arg(page, h.row));
                 b.connect_clicked(move |_| open());
                 b.upcast()
             })
