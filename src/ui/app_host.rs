@@ -3,7 +3,7 @@
 //! account only) and starts one `wol-kit-host` per app connection, so each app's windows carry
 //! its own window class and a misbehaving app takes down only its own host. The host draws the
 //! app's view trees with Kit parts (`ui::app_view`) and sends what the person does back.
-use super::app_view::{Act, Chrome, Sink, View, app_frame};
+use super::app_view::{Act, AppView, Chrome, Sink, app_frame};
 use crate::app_host::{Session, Step, gtk_app_id, read_line, socket_path};
 use crate::kit;
 use gtk::{gio, glib, prelude::*};
@@ -103,7 +103,7 @@ pub fn listen() {
 /// One open app window.
 struct Win {
     window: gtk::ApplicationWindow,
-    view: View,
+    view: AppView,
     chrome: Chrome,
 }
 
@@ -172,30 +172,8 @@ pub fn run_host() -> glib::ExitCode {
                         toolbar,
                     }) => {
                         let s = send.clone();
-                        let sink = Sink::new(move |a| {
-                            s(match a {
-                                Act::Clicked(widget) => FromHost::Clicked { window, widget },
-                                Act::Edited(widget, text) => FromHost::Edited {
-                                    window,
-                                    widget,
-                                    text,
-                                },
-                                Act::Toggled(widget, on) => {
-                                    FromHost::Toggled { window, widget, on }
-                                }
-                                Act::Slid(widget, value) => FromHost::Slid {
-                                    window,
-                                    widget,
-                                    value,
-                                },
-                                Act::Chose(source, key) => FromHost::Chose {
-                                    window,
-                                    source,
-                                    key,
-                                },
-                            })
-                        });
-                        let view = View::new(&content, sink.clone());
+                        let sink = Sink::new(move |a| s(from_act(window, a)));
+                        let view = AppView::new(&content, sink.clone());
                         let aw = app_frame(&view);
                         let win = gtk::ApplicationWindow::builder()
                             .application(&app)
@@ -203,6 +181,9 @@ pub fn run_host() -> glib::ExitCode {
                             .decorated(false)
                             .build();
                         win.add_css_class("app");
+                        if let Some((w, h)) = view.natural_size() {
+                            win.set_default_size(w, h);
+                        }
                         win.set_child(Some(&aw.root));
                         let chrome = Chrome::new(&win, &aw, sink);
                         chrome.update(&app, &menus, toolbar.as_ref());
@@ -255,4 +236,32 @@ pub fn run_host() -> glib::ExitCode {
         });
     });
     app.run_with_args::<&str>(&[])
+}
+
+/// What the person did in `window`, as the message the app hears.
+fn from_act(window: u32, a: Act) -> FromHost {
+    match a {
+        Act::Clicked(widget) => FromHost::Clicked { window, widget },
+        Act::Edited(widget, text) => FromHost::Edited {
+            window,
+            widget,
+            text,
+        },
+        Act::Toggled(widget, on) => FromHost::Toggled { window, widget, on },
+        Act::Slid(widget, value) => FromHost::Slid {
+            window,
+            widget,
+            value,
+        },
+        Act::Chose(source, key) => FromHost::Chose {
+            window,
+            source,
+            key,
+        },
+        Act::Picked(widget, key) => FromHost::Picked {
+            window,
+            widget,
+            key,
+        },
+    }
 }

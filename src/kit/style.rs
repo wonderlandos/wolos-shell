@@ -72,9 +72,7 @@ pub fn install(extra: &'static str) {
                     css.push_str(CONTRAST_CSS);
                 }
                 provider.load_from_string(&scale_text_css(&css, text_scale()));
-                if let Some(s) = gtk::Settings::default() {
-                    s.set_gtk_application_prefer_dark_theme(t.variant == theme::Variant::Dark);
-                }
+                set_variant(&t);
             }
         }
     };
@@ -549,9 +547,73 @@ pub fn apply(t: &theme::Theme, extra: &str) {
         // Larger text applies to the fixed sheet too (goldens, previews): same rule as `install`.
         p.load_from_string(&scale_text_css(&theme::stylesheet(t, extra), text_scale()));
     });
+    set_variant(t);
+}
+
+/// GTK's dark preference follows the theme, and the look watchers (libWolkit windows) hear of it.
+fn set_variant(t: &theme::Theme) {
     if let Some(s) = gtk::Settings::default() {
         s.set_gtk_application_prefer_dark_theme(t.variant == theme::Variant::Dark);
     }
+    set_look(t);
+}
+
+/// What a renderer outside GTK needs of the live theme: light or dark and the accent. The
+/// libWolkit Kit host (`ui::app_wolkit`) draws with it and redraws when it changes, so a Kit
+/// window drawn by wolkit follows the system theme exactly when the GTK parts do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Look {
+    pub dark: bool,
+    /// 0xRRGGBB.
+    pub accent: u32,
+}
+
+type LookFn = Box<dyn Fn(Look) -> bool>;
+
+thread_local! {
+    static LOOK: RefCell<Option<Look>> = const { RefCell::new(None) };
+    static LOOK_WATCH: RefCell<Vec<LookFn>> = const { RefCell::new(Vec::new()) };
+}
+
+fn look_of(t: &theme::Theme) -> Look {
+    let dark = t.variant == theme::Variant::Dark;
+    let accent = t
+        .tokens
+        .get("accent")
+        .and_then(|h| u32::from_str_radix(h.trim().trim_start_matches('#').get(..6)?, 16).ok())
+        .unwrap_or(0x7452f5);
+    Look { dark, accent }
+}
+
+/// Records the theme just loaded and tells every watcher when the look changed.
+fn set_look(t: &theme::Theme) {
+    let next = look_of(t);
+    if LOOK.with(|l| l.replace(Some(next))) == Some(next) {
+        return;
+    }
+    // A watcher may add another (a window opening while the theme changes): take the list out.
+    let watchers = LOOK_WATCH.with(|w| std::mem::take(&mut *w.borrow_mut()));
+    let kept: Vec<LookFn> = watchers.into_iter().filter(|f| f(next)).collect();
+    LOOK_WATCH.with(|w| {
+        let mut w = w.borrow_mut();
+        let added = std::mem::take(&mut *w);
+        *w = kept;
+        w.extend(added);
+    });
+}
+
+/// The look of the theme loaded last (before any: the default theme of GTK's dark preference).
+pub fn look() -> Look {
+    LOOK.with(|l| *l.borrow()).unwrap_or_else(|| {
+        let dark =
+            gtk::Settings::default().is_some_and(|s| s.is_gtk_application_prefer_dark_theme());
+        look_of(&theme::resolve(None, dark))
+    })
+}
+
+/// Calls `f` on every later change of the look until it returns false (its window is gone).
+pub fn on_look(f: impl Fn(Look) -> bool + 'static) {
+    LOOK_WATCH.with(|w| w.borrow_mut().push(Box::new(f)));
 }
 
 #[cfg(test)]

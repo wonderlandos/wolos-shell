@@ -19,6 +19,8 @@ pub enum Act {
     Slid(u32, f64),
     /// Menu or toolbar id, and the key chosen.
     Chose(u32, String),
+    /// A radio group, chip set or tabs, and the key picked.
+    Picked(u32, String),
 }
 
 /// Receives [`Act`]s; quiet while the view itself sets values.
@@ -35,7 +37,7 @@ impl Sink {
         })
     }
 
-    fn act(&self, a: Act) {
+    pub(crate) fn act(&self, a: Act) {
         if !self.quiet.get() {
             (self.send)(a);
         }
@@ -192,6 +194,22 @@ fn draw(node: &Node, sink: &Rc<Sink>) -> Drawn {
             slider(*min, *max, *value, id.clone(), sink).upcast()
         }
         Node::Image { source, size } => image(source, *size).upcast(),
+        // WOLKIT-1TO1 stopgap: the design-system nodes (DS-COMPONENTS) are drawn by libWolkit, the
+        // default path (`ui::app_wolkit`); the GTK fallback names them. On merge take the Kit parts
+        // DS-COMPONENTS draws here (`kit::choice`, `kit::navigation`, `kit::collection`).
+        Node::Checkbox { .. }
+        | Node::RadioGroup { .. }
+        | Node::Chips { .. }
+        | Node::Tabs { .. }
+        | Node::Progress { .. }
+        | Node::Divider
+        | Node::Card { .. }
+        | Node::Disclosure { .. } => d::text(
+            "This part is drawn by libWolkit (WOL_KIT_RENDER is gtk).",
+            role(Role::Secondary),
+            d::Tone::Dim,
+        )
+        .upcast(),
     };
     Drawn {
         node: node.clone(),
@@ -318,6 +336,14 @@ fn patch(d: &mut Drawn, new: &Node, sink: &Rc<Sink>) -> Option<gtk::Widget> {
             }
         }
         Node::Spacer | Node::Image { .. } => {}
+        Node::Checkbox { .. }
+        | Node::RadioGroup { .. }
+        | Node::Chips { .. }
+        | Node::Tabs { .. }
+        | Node::Progress { .. }
+        | Node::Divider
+        | Node::Card { .. }
+        | Node::Disclosure { .. } => {}
     }
     d.node = new.clone();
     None
@@ -328,6 +354,54 @@ pub struct View {
     root: gtk::Box,
     drawn: RefCell<Drawn>,
     sink: Rc<Sink>,
+}
+
+/// How an app window's tree is drawn: by libWolkit (the default, [`super::app_wolkit`]) or with
+/// GTK widgets ([`View`], the `WOL_KIT_RENDER=gtk` fallback and the Lua desktop widgets).
+pub enum AppView {
+    Wolkit(super::app_wolkit::Host, gtk::Box),
+    Gtk(View),
+}
+
+impl AppView {
+    /// The default path; GTK widgets when the flag says so or the Kit fonts are missing.
+    pub fn new(node: &Node, sink: Rc<Sink>) -> AppView {
+        if super::app_wolkit::enabled()
+            && let Some(h) = super::app_wolkit::Host::new(node, sink.clone())
+        {
+            let root = w::vbox(0);
+            root.add_css_class("app-view");
+            root.append(&h.area);
+            return AppView::Wolkit(h, root);
+        }
+        AppView::Gtk(View::new(node, sink))
+    }
+
+    pub fn widget(&self) -> &gtk::Box {
+        match self {
+            AppView::Wolkit(_, root) => root,
+            AppView::Gtk(v) => v.widget(),
+        }
+    }
+
+    pub fn update(&self, node: &Node) {
+        match self {
+            AppView::Wolkit(h, _) => h.update(node),
+            AppView::Gtk(v) => v.update(node),
+        }
+    }
+
+    pub fn is_wolkit(&self) -> bool {
+        matches!(self, AppView::Wolkit(..))
+    }
+
+    /// The size a window of this view opens at, when the view says (libWolkit draws it).
+    pub fn natural_size(&self) -> Option<(i32, i32)> {
+        match self {
+            AppView::Wolkit(h, _) => Some(h.natural),
+            AppView::Gtk(_) => None,
+        }
+    }
 }
 
 impl View {
@@ -410,6 +484,14 @@ impl Chrome {
         *self.drawn.borrow_mut() = (menus.to_vec(), toolbar.cloned());
         self.menus(app, menus);
         self.tools(toolbar);
+        if let Some(head) = self.actions.ancestor(gtk::WindowHandle::static_type())
+            && head
+                .parent()
+                .is_some_and(|p| p.has_css_class("wolkit-frame"))
+        {
+            // Drawn by libWolkit, the window has no GTK title row until the app has tools.
+            head.set_visible(toolbar.is_some_and(|t| !t.tools.is_empty()));
+        }
     }
 
     fn menus(&self, app: &gtk::Application, menus: &[Menu]) {
@@ -504,8 +586,19 @@ impl Chrome {
 pub const APP_MAX_HEIGHT: i32 = 640;
 
 /// An app window's content: the Kit app frame around the view.
-pub fn app_frame(view: &View) -> w::AppWindow {
+pub fn app_frame(view: &AppView) -> w::AppWindow {
     let aw = w::AppWindow::new(false, false);
+    if view.is_wolkit() {
+        // The page draws the whole window, title row and divider included (one rasteriser, so
+        // the window is the web page's pixels); the GTK title row comes back only for an app's
+        // toolbar ([`Chrome::update`]).
+        aw.root.add_css_class("wolkit-frame");
+        if let Some(head) = aw.root.first_child() {
+            head.set_visible(false);
+        }
+        aw.content.add_named(view.widget(), Some("main"));
+        return aw;
+    }
     let body = view.widget();
     body.set_margin_top(w::S4);
     body.set_margin_bottom(w::S4);

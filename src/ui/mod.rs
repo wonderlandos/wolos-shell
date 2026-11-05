@@ -3,6 +3,7 @@
 pub mod analyze;
 pub mod app_host;
 pub mod app_view;
+pub mod app_wolkit;
 pub mod approval;
 pub mod capture;
 pub mod clipboard;
