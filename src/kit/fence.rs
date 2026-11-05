@@ -173,7 +173,7 @@ pub fn keep_on_bus_loss(c: &gtk::gio::DBusConnection) {
                 .next()
                 .and_then(|a| a.rsplit('/').next().map(str::to_owned))
                 .unwrap_or_else(|| "wolos".into());
-            eprintln!("{}", bus_lost_line(&me));
+            crate::diag::say!("{}", bus_lost_line(&me));
         }
     });
 }

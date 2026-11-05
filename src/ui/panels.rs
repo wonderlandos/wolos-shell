@@ -10,7 +10,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 /// Pixel width a wallpaper SVG is rendered at before the window knows its size.
-const WALLPAPER_WIDTH: i32 = 1920;
+const WALLPAPER_RENDER_PX: i32 = 1920;
 /// Seconds between two looks at the clock for the Dynamic wallpaper.
 const DYNAMIC_TICK: u32 = 60;
 
@@ -41,7 +41,7 @@ pub fn dress_wallpaper(win: &gtk::Window) {
             .map(|w| (w.width(), w.height(), w.scale_factor()));
         let aspect = size.map_or(16.0 / 9.0, |(w, h, _)| f64::from(w) / f64::from(h));
         // The picture at the display's pixel width (1920 until the window has a size).
-        let width = size.map_or(WALLPAPER_WIDTH, |(w, _, s)| w * s);
+        let width = size.map_or(WALLPAPER_RENDER_PX, |(w, _, s)| w * s);
         let now = crate::kit::pickers::desktop_wallpaper_for(aspect);
         if *shown.borrow() == now {
             return;
@@ -114,8 +114,14 @@ pub fn dress_wallpaper(win: &gtk::Window) {
 /// differ. Blocking (the downloads, the parameter file, the conversion): off the GTK thread.
 pub fn morph_between(from: &gdk::Texture, to: &gdk::Texture) -> Option<kit::gate::Morph> {
     use std::path::Path;
-    let (w, h) = (from.width() as usize, from.height() as usize);
-    if (w, h) != (to.width() as usize, to.height() as usize) || w == 0 || h == 0 {
+    let size = |t: &gdk::Texture| {
+        Some((
+            usize::try_from(t.width()).ok()?,
+            usize::try_from(t.height()).ok()?,
+        ))
+    };
+    let (w, h) = size(from)?;
+    if (w, h) != size(to)? || w == 0 || h == 0 {
         return None;
     }
     let (ww, wh) = kit::gate::work_size(w, h);
@@ -141,8 +147,8 @@ pub fn morph_between(from: &gdk::Texture, to: &gdk::Texture) -> Option<kit::gate
 /// One frame of a morph as a texture.
 fn morph_frame(m: &kit::gate::Morph, t: f32) -> gdk::MemoryTexture {
     gdk::MemoryTexture::new(
-        m.w as i32,
-        m.h as i32,
+        i32::try_from(m.w).unwrap_or(i32::MAX),
+        i32::try_from(m.h).unwrap_or(i32::MAX),
         gdk::MemoryFormat::B8g8r8a8Premultiplied,
         &glib::Bytes::from_owned(m.frame(t)),
         m.w * 4,

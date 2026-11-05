@@ -45,10 +45,16 @@ impl Facts {
         let user = std::env::var("USER").unwrap_or_default();
         let admin = std::fs::read_to_string("/etc/group")
             .is_ok_and(|g| wol_core::admin::is_admin(&user, u32::MAX, &g));
-        let location = std::process::Command::new("gsettings")
+        let location = match std::process::Command::new("gsettings")
             .args(["get", "org.gnome.system.location", "enabled"])
             .output()
-            .is_ok_and(|o| location_of(&String::from_utf8_lossy(&o.stdout)));
+        {
+            Ok(o) => location_of(&String::from_utf8_lossy(&o.stdout)),
+            Err(e) => {
+                crate::diag::say!("wol-setup: location is off, gsettings did not run: {e}");
+                false
+            }
+        };
         let saved = kit::style::active_id();
         let (mode, accent) = wol_core::theme::accent::split(saved.as_deref());
         let prefs = wol_core::hyprprefs::load_desktop(std::path::Path::new(&kit::config_home()));
@@ -80,10 +86,16 @@ async fn save(sys: Arc<dyn System>, job: Job, choices: Choices) -> Result<(), Ac
             if let Some(on) = location {
                 let ok = gtk::gio::spawn_blocking(move || {
                     let argv = location_argv(on);
-                    std::process::Command::new(&argv[0])
+                    match std::process::Command::new(&argv[0])
                         .args(&argv[1..])
                         .status()
-                        .is_ok_and(|s| s.success())
+                    {
+                        Ok(s) => s.success(),
+                        Err(e) => {
+                            crate::diag::say!("wol-setup: {} did not run: {e}", argv[0]);
+                            false
+                        }
+                    }
                 })
                 .await
                 .unwrap_or(false);
@@ -181,7 +193,7 @@ pub struct FirstLogin {
     cards: RefCell<Vec<(Page, Card)>>,
     /// The Privacy page's password row (hidden until error reports ask), its field and the line
     /// under it.
-    password: RefCell<Option<(gtk::Box, gtk::PasswordEntry, gtk::Label)>>,
+    report_row: RefCell<Option<(gtk::Box, gtk::PasswordEntry, gtk::Label)>>,
     accounts: gtk::Box,
     busy: Cell<bool>,
 }
@@ -202,7 +214,7 @@ impl FirstLogin {
             marks: Marks::here(),
             flow: RefCell::new(Flow::new(facts.choices.clone())),
             cards: Default::default(),
-            password: Default::default(),
+            report_row: Default::default(),
             accounts: w::vbox(w::S2),
             busy: Cell::new(false),
         });
@@ -314,7 +326,7 @@ impl FirstLogin {
             Next::Password(why) => {
                 // Under the field, not at the foot: the foot holds Later and Continue.
                 self.with_card(page, |c| c.say("", false));
-                if let Some((row, e, line)) = &*self.password.borrow() {
+                if let Some((row, e, line)) = &*self.report_row.borrow() {
                     let wrong = why != crate::copy::first_login::REPORTS_PASSWORD;
                     line.set_label(&why);
                     line.set_visible(true);
@@ -362,7 +374,7 @@ impl FirstLogin {
             s.busy.set(false);
             s.with_card(page, |c| c.set_busy(false));
             if r.is_ok()
-                && let Some((row, ..)) = &*s.password.borrow()
+                && let Some((row, ..)) = &*s.report_row.borrow()
             {
                 row.set_visible(false);
             }
@@ -427,6 +439,10 @@ impl FirstLogin {
         });
         let pw_row = w::vbox(w::S1);
         pw_row.append(&a::form_row("Password", &pw));
+        // Caps Lock is said in words under every password field (tests/password_peek.rs).
+        let caps = w::caps_lock_note();
+        caps.set_halign(gtk::Align::Start);
+        pw_row.append(&a::form_row("", &caps));
         let line = a::caption("");
         line.set_halign(gtk::Align::Start);
         line.set_xalign(0.0);
@@ -434,7 +450,7 @@ impl FirstLogin {
         pw_row.append(&a::form_row("", &line));
         pw_row.set_visible(false);
         body.append(&pw_row);
-        *self.password.borrow_mut() = Some((pw_row, pw, line));
+        *self.report_row.borrow_mut() = Some((pw_row, pw, line));
         Card::new(
             Art::Icon("preferences-system-privacy-symbolic"),
             Page::Privacy.title(),

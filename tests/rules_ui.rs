@@ -165,7 +165,10 @@ const RULES: &[(&str, &str)] = &[
         "RU-077",
         "Every golden case declared with a literal name has its light and dark PNG.",
     ),
-    ("RU-078", "The golden folder holds only PNG files."),
+    (
+        "RU-078",
+        "The golden folder holds only PNG files and the button-label manifest (button-labels.tsv).",
+    ),
     (
         "RU-080",
         "Every docs/modules/*.md starts with a single # title.",
@@ -228,6 +231,10 @@ const BASELINE: &[(&str, usize)] = &[
     ("RU-050", 1),
     ("RU-060", 2),
     ("RU-062", 15),
+    // One sentence over: the key screen's last step (wol_core::boot::key_screen_steps, QA-DOC-29) is
+    // 150 characters; the core and this copy must say the same words, and the pointer to Enroll key
+    // from disk and the file name is what a person who missed the screen needs.
+    ("RU-001", 1),
     // +2 (INT-1): setup-welcome-focus-1280 light/dark draw the welcome art of setup-welcome-1280.
     ("RU-073", 8),
     ("RU-074", 8),
@@ -246,11 +253,11 @@ const BASELINE: &[(&str, usize)] = &[
 /// recorded under it, so no record is invented to fill it (qa100 step 0.4, A-7), and 0048 is not
 /// renumbered while its references (webapp docs, tests, the catalog) are still being edited by
 /// other lanes. It is dropped here when the hub-arch merge settles the numbering.
-/// 0052 (federate), 0053 (Atlas private and Tor tabs), 0054 (keyring) and the others up to 0056 are
-/// written on their own wave3 branches; 0057 (search by meaning) lands before them in this tree.
-const RU_089_KNOWN_GAPS: &[&str] = &[
-    "0043", "0045", "0046", "0047", "0049", "0050", "0052", "0053", "0054", "0055", "0056",
-];
+/// 0045 (i18n), 0052 (federate), 0053 (Atlas private and Tor tabs), 0054 (keyring), 0055 (TLS
+/// policy) and 0056 (wol-tor) landed with their branches in the 0.13 integration and are dropped.
+/// 0058 sits between search by meaning (0057) and the experience (0059): no branch carries a record
+/// under that number, so, like 0043, none is invented to fill it (INT-2; main may name it).
+const RU_089_KNOWN_GAPS: &[&str] = &["0043", "0046", "0047", "0049", "0050", "0058"];
 
 fn baseline(id: &str) -> usize {
     BASELINE.iter().find(|b| b.0 == id).map_or(0, |b| b.1)
@@ -1399,7 +1406,9 @@ fn ru_070_to_073_golden_files() {
     check(
         "RU-078",
         fs.iter()
-            .filter(|f| !f.ends_with(".png"))
+            // The labels every case's buttons carry, one line per case (shell-polish): the
+            // manifest a changed label fails against even when the pixels still agree.
+            .filter(|f| !f.ends_with(".png") && !f.ends_with("button-labels.tsv"))
             .cloned()
             .collect(),
     );

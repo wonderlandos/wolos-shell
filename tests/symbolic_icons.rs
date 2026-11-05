@@ -101,6 +101,8 @@ fn every_requested_wolos_app_icon_ships() {
                         ]
                         .contains(t)
                         && !t.starts_with("wolos-module-")
+                        // The Moon Gate pictures (design/brand/wallpapers), not icons.
+                        && !t.starts_with("wolos-gate-")
                         && !t.ends_with("-symbolic")
                         // A prefix a test checks names against (`"wolos-kit-"`), not a name.
                         && !t.ends_with('-')

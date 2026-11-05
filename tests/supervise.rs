@@ -601,7 +601,11 @@ fn the_session_starts_the_supervised_shell() {
         .collect();
     assert_eq!(
         lines,
-        [r#"exec-once = sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#]
+        // The first sign-in Setup runs first while the session's flag is there (ADR 0013), then the
+        // supervised shell whatever it returned.
+        [
+            r#"exec-once = sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#
+        ]
     );
 }
 

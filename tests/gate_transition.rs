@@ -55,6 +55,7 @@ fn luma(px: &[u8], w: usize, fx: f32, fy: f32, h: usize) -> f32 {
 
 fn start_broadway() -> impl Drop {
     struct Kill(std::process::Child);
+    // Drop: kills the private broadwayd the test started.
     impl Drop for Kill {
         fn drop(&mut self) {
             let _ = self.0.kill();

@@ -349,7 +349,7 @@ fn tell<F: std::future::Future<Output = ()> + 'static>(q: &Rc<Q>, f: impl FnOnce
 fn visible(q: &Rc<Q>, on: bool) {
     tell(q, move |b| async move {
         if let Err(e) = b.set_visible(on).await {
-            eprintln!("wol-quicklook: Visible: {e}");
+            crate::diag::say!("wol-quicklook: Visible: {e}");
         }
     });
 }
@@ -480,7 +480,7 @@ fn build(app: &gtk::Application, standalone: bool) -> Rc<Q> {
             if let Some(d) = direction(key) {
                 tell(&qq, move |b| async move {
                     if let Err(e) = b.selection(d).await {
-                        eprintln!("wol-quicklook: SelectionEvent: {e}");
+                        crate::diag::say!("wol-quicklook: SelectionEvent: {e}");
                     }
                 });
                 return glib::Propagation::Stop;
@@ -492,7 +492,7 @@ fn build(app: &gtk::Application, standalone: bool) -> Rc<Q> {
                 if let Some(uri) = uri {
                     tell(&qq, move |b| async move {
                         if let Err(e) = b.navigate(&uri).await {
-                            eprintln!("wol-quicklook: NavigateTo: {e}");
+                            crate::diag::say!("wol-quicklook: NavigateTo: {e}");
                         }
                     });
                     qq.win.set_visible(false);
@@ -547,7 +547,7 @@ pub fn run() -> glib::ExitCode {
                             let _ = qs.bus.set(b);
                         }
                         Err(e) => {
-                            eprintln!("wol-quicklook: {}: {e}", ql::NAME);
+                            crate::diag::say!("wol-quicklook: {}: {e}", ql::NAME);
                             app2.quit();
                         }
                     }

@@ -14,7 +14,7 @@ pub struct Confirm {
     body: gtk::Label,
     ok: gtk::Button,
     cancel: gtk::Button,
-    action: Rc<RefCell<Option<Action>>>,
+    on_confirm: Rc<RefCell<Option<Action>>>,
 }
 
 impl Confirm {
@@ -32,16 +32,16 @@ impl Confirm {
         row.append(&w::spacer());
         b.append(&row);
         let revealer = w::toolbar_sheet(aw, &b);
-        let action: Rc<RefCell<Option<Action>>> = Rc::default();
+        let on_confirm: Rc<RefCell<Option<Action>>> = Rc::default();
         let cancel = {
-            let (r, a) = (revealer.clone(), action.clone());
+            let (r, a) = (revealer.clone(), on_confirm.clone());
             w::button(crate::copy::monitor::CANCEL, w::Kind::Default, move || {
                 a.borrow_mut().take();
                 r.set_reveal_child(false);
             })
         };
         let ok = {
-            let (r, a) = (revealer.clone(), action.clone());
+            let (r, a) = (revealer.clone(), on_confirm.clone());
             w::button("", w::Kind::Destructive, move || {
                 r.set_reveal_child(false);
                 // Taken out first: the action may ask again.
@@ -63,7 +63,7 @@ impl Confirm {
             body,
             ok,
             cancel,
-            action,
+            on_confirm,
         })
     }
 
@@ -74,7 +74,7 @@ impl Confirm {
         self.ok.set_label(button);
         self.ok.set_visible(true);
         self.cancel.set_label(crate::copy::monitor::CANCEL);
-        *self.action.borrow_mut() = Some(Box::new(then));
+        *self.on_confirm.borrow_mut() = Some(Box::new(then));
         self.revealer.set_reveal_child(true);
         self.ok.grab_focus();
     }
@@ -85,7 +85,7 @@ impl Confirm {
         self.body.set_text(body);
         self.ok.set_visible(false);
         self.cancel.set_label(crate::copy::monitor::CLOSE);
-        self.action.borrow_mut().take();
+        self.on_confirm.borrow_mut().take();
         self.revealer.set_reveal_child(true);
         self.cancel.grab_focus();
     }

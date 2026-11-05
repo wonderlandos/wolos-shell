@@ -21,6 +21,8 @@ use wol_core::desktop::Entry as Raw;
 pub const MAX_TARGETS: usize = 8;
 /// Bytes of text a `mailto:` body carries.
 const MAX_BODY: usize = 4000;
+/// A spill file older than this is stale and removed with the next one written.
+const SPILL_KEEP: std::time::Duration = std::time::Duration::from_secs(600);
 const MAILTO: &str = "x-scheme-handler/mailto";
 /// Entries kept in the usage file.
 const MAX_USAGE: usize = 200;
@@ -572,7 +574,7 @@ pub fn write_spill(dir: &Path, text: &str) -> Option<PathBuf> {
         .create(dir)
         .ok()?;
     if let Ok(rd) = std::fs::read_dir(dir) {
-        let old = std::time::Duration::from_secs(600);
+        let old = SPILL_KEEP;
         for f in rd.flatten() {
             let stale = f
                 .metadata()

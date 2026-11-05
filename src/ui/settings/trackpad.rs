@@ -86,7 +86,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
             let (dk2, sc) = (dk.clone(), sc.clone());
             dk.set_or(
                 &st,
-                |p| p.scroll_lines = v.round() as u32,
+                |p| p.scroll_lines = u32::try_from(v.round() as i64).unwrap_or(1),
                 move || {
                     if let Some(s) = sc.upgrade() {
                         s.set_value(f64::from(dk2.get().scroll_lines));

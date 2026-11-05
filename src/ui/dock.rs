@@ -229,8 +229,14 @@ fn load_entry(entry: &Entry, p: &apps::Pin) {
 /// The two things a tile does besides a click: take files ([`tile_drop_target`]) and offer the app's
 /// own actions ([`app_tile_menu`]), both through `launch`.
 pub fn wire_tile(t: &w::DockTile, entry: &Entry, launch: &Launch) {
+    wire_tile_with(t, entry, launch, "", Menu::None);
+}
+
+/// [`wire_tile`] with the Dock's own row in the same right-click menu: Keep in Dock on a running
+/// app, Remove from Dock on a kept one (`id` is the app). One menu per tile, never two.
+fn wire_tile_with(t: &w::DockTile, entry: &Entry, launch: &Launch, id: &'static str, menu: Menu) {
     tile_drop_target(t, entry, launch);
-    app_tile_menu(t, entry, launch);
+    app_tile_menu(t, entry, launch, id, menu);
 }
 
 /// The tile's app has an entry whose `Exec` takes files.
@@ -300,14 +306,28 @@ fn menu_rows(h: &ow::Handler, launch: &Launch) -> Vec<w::MenuRow> {
         .collect()
 }
 
-/// Right-click: the app's own `[Desktop Action]` names (New Window, New Private Window). An app
-/// with none has no menu.
-fn app_tile_menu(t: &w::DockTile, entry: &Entry, launch: &Launch) {
-    let click = gtk::GestureClick::builder().button(3).build();
+/// Right-click: the app's own `[Desktop Action]` names (New Window, New Private Window), then the
+/// Dock's row for the tile (`menu`: Keep in Dock / Remove from Dock). A tile with neither has no
+/// menu, and the click is left to whoever else wants it.
+fn app_tile_menu(t: &w::DockTile, entry: &Entry, launch: &Launch, id: &'static str, menu: Menu) {
+    let keep = match menu {
+        Menu::None => None,
+        Menu::Remove => Some((REMOVE_FROM_DOCK, false)),
+        Menu::Keep => Some((KEEP_IN_DOCK, true)),
+    };
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_SECONDARY);
     let (e, button, launch) = (entry.clone(), t.button.clone(), launch.clone());
     click.connect_pressed(move |g, _, x, y| {
-        let Some(h) = e.borrow().clone() else { return };
-        let rows = menu_rows(&h, &launch);
+        let mut rows = e
+            .borrow()
+            .clone()
+            .map(|h| menu_rows(&h, &launch))
+            .unwrap_or_default();
+        if let Some((label, keep)) = keep {
+            let act: Box<dyn Fn()> = Box::new(move || keep_later(id.to_string(), keep));
+            rows.push((label.to_string(), None, act));
+        }
         if rows.is_empty() {
             return;
         }
@@ -810,31 +830,6 @@ pub fn dropped(v: &glib::Value) -> bool {
     true
 }
 
-/// Right-click on a kept app's tile: Remove from Dock; on a running app's: Keep in Dock.
-fn tile_menu(button: &gtk::Button, id: &'static str, menu: Menu) {
-    let (label, keep) = match menu {
-        Menu::None => return,
-        Menu::Remove => (REMOVE_FROM_DOCK, false),
-        Menu::Keep => (KEEP_IN_DOCK, true),
-    };
-    let click = gtk::GestureClick::new();
-    click.set_button(gtk::gdk::BUTTON_SECONDARY);
-    let b = button.clone();
-    click.connect_pressed(move |_, _, x, y| {
-        kit::data::popup_menu(
-            &b,
-            x,
-            y,
-            vec![(
-                label.to_string(),
-                None,
-                Box::new(move || keep_later(id.to_string(), keep)),
-            )],
-        );
-    });
-    button.add_controller(click);
-}
-
 /// The image of a Dock tile (its first child's first child).
 fn tile_image(t: &w::DockTile) -> Option<gtk::Image> {
     t.button.child()?.first_child().and_downcast::<gtk::Image>()
@@ -1138,11 +1133,10 @@ impl Dock {
                 // A web app's own icon file (wol_core::webapps::icon_path), not a theme name.
                 img.set_from_file(Some(p.icon));
             }
-            tile_menu(&t.button, p.id, menu);
             let (tile, pp) = (t.clone(), p.clone());
             t.button.connect_clicked(move |_| clicked(&tile, &pp));
             let entry = Rc::new(RefCell::new(None));
-            wire_tile(&t, &entry, &launcher());
+            wire_tile_with(&t, &entry, &launcher(), p.id, menu);
             load_entry(&entry, p);
             if after_apps {
                 let last = shelf

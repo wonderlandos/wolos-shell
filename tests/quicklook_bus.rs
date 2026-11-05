@@ -9,6 +9,7 @@ use shell::quicklook::{Bus, Event, IFACE, NAME, PATH};
 use std::io::BufRead;
 
 struct Daemon(std::process::Child, String);
+// Drop: kills the daemon the test started.
 impl Drop for Daemon {
     fn drop(&mut self) {
         let _ = self.0.kill();

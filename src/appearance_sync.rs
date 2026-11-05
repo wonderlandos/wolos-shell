@@ -76,16 +76,14 @@ pub fn follow() {
 /// `wol theme apply` on its own thread; a failure leaves the strip as it was (apply says why on
 /// its standard error, which the session log keeps).
 fn run_apply() {
+    let mut cmd = std::process::Command::new(APPLY[0]);
+    cmd.args(&APPLY[1..])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::inherit());
     let _ = std::thread::Builder::new()
         .name("wol-appearance".into())
-        .spawn(|| {
-            let _ = std::process::Command::new(APPLY[0])
-                .args(&APPLY[1..])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::inherit())
-                .status();
-        });
+        .spawn(move || cmd.status());
 }
 
 #[cfg(test)]

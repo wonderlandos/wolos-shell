@@ -69,7 +69,7 @@ pub fn start(wants: Wants) -> async_channel::Receiver<wol_core::monitor::sampler
             }
         });
     if let Err(e) = spawned {
-        eprintln!("wol-monitor: no sampler thread: {e}");
+        crate::diag::say!("wol-monitor: no sampler thread: {e}");
     }
     rx
 }

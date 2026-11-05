@@ -1620,7 +1620,7 @@ fn disks_from(
             let disk = match serde_json::from_str(&probe(name)) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("wol-installer: {name}: probe gave no disk: {e}");
+                    crate::diag::say!("wol-installer: {name}: probe gave no disk: {e}");
                     return None;
                 }
             };

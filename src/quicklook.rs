@@ -12,6 +12,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use zbus::object_server::SignalEmitter;
 
+/// How often a child that must finish in time is looked at (std has no timed wait for a child).
+const CHILD_POLL: Duration = Duration::from_millis(10);
+
 /// The bus name, object path and interface Files (Nautilus 45 and later) calls for Space.
 pub const NAME: &str = "org.gnome.NautilusPreviewer";
 pub const PATH: &str = "/org/gnome/NautilusPreviewer";
@@ -358,7 +361,7 @@ pub fn run_bounded_in(
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
-            Ok(None) if Instant::now() < end => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) if Instant::now() < end => std::thread::sleep(CHILD_POLL),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();

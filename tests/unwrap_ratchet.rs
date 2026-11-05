@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 const NEEDLES: [&str; 5] = [".unwrap()", ".expect(", " as i32", " as u32", " as usize"];
 
 /// Per file, outside tests. Only shrinks.
-const BASELINE: [(&str, usize); 33] = [
+const BASELINE: [(&str, usize); 35] = [
     ("bin/wol-window-shot.rs", 5),
     ("clock.rs", 5),
     ("hypr.rs", 1),
@@ -22,11 +22,15 @@ const BASELINE: [(&str, usize); 33] = [
     ("kit/check.rs", 4),
     ("kit/data.rs", 5),
     ("kit/form.rs", 2),
+    // WALL-SHELL: the gate transition resamples a picture (pixel math: u8/u32 to f32 and back, bounded by MAX_WORK).
+    ("kit/gate.rs", 17),
     ("kit/pickers.rs", 1),
     ("kit/widgets.rs", 2),
     ("shortcut_sheet.rs", 1),
     ("theme.rs", 1),
     ("ui/dock.rs", 1),
+    // SETUP-FL: the keyboard page converts the dropdown index (u32 <-> usize) both ways.
+    ("ui/first_login.rs", 2),
     ("ui/flatpak_consent.rs", 1),
     ("ui/installer/disks.rs", 6),
     ("ui/lock.rs", 9),

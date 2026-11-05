@@ -9,6 +9,8 @@ use crate::open_with::{self as ow, CATEGORIES, Category, Snapshot};
 use gtk::prelude::*;
 
 pub(super) const TITLE: &str = "Default Apps";
+/// The spinner shows only when the apps take longer than this to read.
+const SPINNER_AFTER: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// The menu of one row: the apps that can open the kind, by name, and which one is chosen.
 /// A leading "Not chosen" stands for a current app that is not among them.
@@ -103,7 +105,7 @@ pub(super) fn page(e: &Rc<Env>) -> gtk::Box {
     let done = Rc::new(Cell::new(false));
     {
         let (s, done) = (spinner.downgrade(), done.clone());
-        glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+        glib::timeout_add_local_once(SPINNER_AFTER, move || {
             if let (false, Some(s)) = (done.get(), s.upgrade()) {
                 s.set_visible(true);
             }

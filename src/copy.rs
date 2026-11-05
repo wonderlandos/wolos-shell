@@ -1366,7 +1366,11 @@ mod tests {
     fn every_snap_place_has_a_tooltip_that_passes_the_lint() {
         for z in crate::snap::ZONES {
             let t = snap_zone(z);
-            assert!(!t.is_empty() && lint(t).is_empty(), "{z}: {t}");
+            // A tooltip is a label (no full stop); the lint reads sentences, so it reads it as one.
+            assert!(
+                !t.is_empty() && lint(&format!("{t}.")).is_empty(),
+                "{z}: {t}"
+            );
         }
         assert_eq!(snap_zone("zoom"), "");
     }

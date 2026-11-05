@@ -44,7 +44,7 @@ impl Lane {
                     }
                 });
             if let Err(e) = started {
-                eprintln!("wol: {}: {e}", self.name());
+                crate::diag::say!("wol: {}: {e}", self.name());
             }
             tx
         })

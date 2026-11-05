@@ -71,7 +71,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 39] = [
+const BASELINE: [(&str, usize); 40] = [
     // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
     // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
     // cannot follow a call into another file); each row only shrinks.
@@ -100,6 +100,9 @@ const BASELINE: [(&str, usize); 39] = [
     // (`.status()`), journals restarts, checks the display socket and reads where its stderr goes.
     ("supervise.rs", 3),
     ("system.rs", 8),
+    // SETUP-FL: Facts::read at the page build is two small file reads and one `gsettings get`, once per
+    // account at its first sign-in, before the desktop exists (nothing else is on screen to freeze).
+    ("ui/first_login.rs", 3),
     ("widgets/weather.rs", 1),
     // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).
     ("kit/assistant.rs", 1),

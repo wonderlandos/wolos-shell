@@ -173,6 +173,8 @@ fn not_an_icon(n: &str) -> bool {
     ]
     .contains(&n)
         || n.starts_with("wolos-module-")
+        // The Moon Gate pictures (design/brand/wallpapers/wolos-gate-*), shipped wallpapers.
+        || n.starts_with("wolos-gate-")
         || n.ends_with('-')
 }
 

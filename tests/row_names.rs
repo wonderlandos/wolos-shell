@@ -9,6 +9,7 @@ use std::path::Path;
 
 /// Kills the private broadwayd on every exit path.
 struct Kill(std::process::Child);
+// Drop: kills the private broadwayd the test started.
 impl Drop for Kill {
     fn drop(&mut self) {
         let _ = self.0.kill();

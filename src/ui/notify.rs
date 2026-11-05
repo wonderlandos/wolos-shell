@@ -202,7 +202,7 @@ impl Bus {
                 let _ = tx.send_blocking(());
             });
         if let Err(e) = spawned {
-            eprintln!("wol-shell: notifications: no bus watch: {e}");
+            crate::diag::say!("wol-shell: notifications: no bus watch: {e}");
         }
         rx
     }
@@ -986,11 +986,11 @@ pub fn start(app: &gtk::Application) -> (gtk::Window, Rc<dyn Fn()>) {
                     b2.replace(Some(b));
                     let _ = closed.recv().await;
                     b2.replace(None);
-                    eprintln!("wol-shell: notifications: {BUS_GONE}");
+                    crate::diag::say!("wol-shell: notifications: {BUS_GONE}");
                 }
                 Err(e) => {
                     if failed == 0 {
-                        eprintln!("wol-shell: notifications: {e}");
+                        crate::diag::say!("wol-shell: notifications: {e}");
                     }
                     failed += 1;
                 }
