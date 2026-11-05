@@ -24,6 +24,7 @@ pub mod notify;
 pub mod overview;
 pub mod panels;
 pub mod plugins;
+pub mod quicklook;
 pub mod searchbar;
 pub mod settings;
 pub mod setup;

@@ -29,6 +29,10 @@ pub mod first_login;
 #[path = "copy_monitor.rs"]
 pub mod monitor;
 
+/// Quick Look's sentences (docs/modules/quicklook.md): the preview and the information card hold none of their own.
+#[path = "copy_quicklook.rs"]
+pub mod quicklook;
+
 /// Fragments a user must never read (case-insensitive, at a word start; the [`WHOLE_WORD`] ones
 /// as whole words only), and what to do instead. Upstream projects are never named on screen
 /// (docs/THIRD-PARTY.md:4-5): the reasons starting "upstream:" mark them for RU-006.
