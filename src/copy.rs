@@ -138,6 +138,9 @@ pub fn lint(s: &str) -> Vec<String> {
     out
 }
 
+/// The Help menu's first row (`appmenu::help_menu`): it opens Search, whose Manual provider answers.
+pub const HELP_SEARCH_MANUAL: &str = "Search the manual…";
+
 /// A blank disk has nothing to sit alongside.
 pub const INSTALL_BLANK: &str =
     "This disk is empty, so there’s nothing to install alongside. Use Erase Disk.";

@@ -19,6 +19,10 @@ pub enum Act {
     ToDesktop(u8),
     /// An app command (⌘C …) handed to the app in front as its own key.
     Key(Cmd),
+    /// Help > Search the manual…: opens Search, whose Manual provider answers.
+    Manual,
+    /// Help > Keyboard Shortcuts: the ⇧⌘/ sheet.
+    Shortcuts,
 }
 
 /// App commands. ⌘ is Command: the app in front gets the key it listens for (Ctrl on this
@@ -276,8 +280,23 @@ pub fn wolkit_menus(json: &str) -> Vec<shared::view::Menu> {
     }
 }
 
-/// Apps known to open their preferences on Ctrl+, (no fake "Settings…" elsewhere).
-const SETTINGS_ON_CTRL_COMMA: &[&str] = &["org.gnome.TextEditor", "org.gnome.Nautilus"];
+/// Apps known to open their preferences on a key, as (lowercase window class, MODS, key): the
+/// hand-off of "Settings…". An app not listed gets no row (no fake "Settings…"); add a class here
+/// once its key is known. ⌘, is the system's own Settings (`hyprland.conf`), never handed on.
+pub const SETTINGS_KEYS: [(&str, &str, &str); 3] = [
+    ("org.gnome.texteditor", "CTRL", "comma"),
+    ("org.gnome.nautilus", "CTRL", "comma"),
+    ("org.gnome.ptyxis", "CTRL", "comma"),
+];
+
+/// What "Settings…" taps into an app of window class `class`: None = the app has no known key.
+pub fn settings_key(class: &str) -> Option<Handoff> {
+    let class = class.to_ascii_lowercase();
+    SETTINGS_KEYS
+        .iter()
+        .find(|k| k.0 == class)
+        .map(|k| Handoff::Keys(k.1, k.2))
+}
 
 pub fn app_menu(name: &str, class: &str) -> Vec<Row> {
     if class.is_empty() {
@@ -286,7 +305,7 @@ pub fn app_menu(name: &str, class: &str) -> Vec<Row> {
     let row = |l: String, k, a| (l, k, Some(a));
     let sep = || (String::new(), None, None);
     let mut m = vec![row(format!("About {name}"), None, Act::About), sep()];
-    if SETTINGS_ON_CTRL_COMMA.contains(&class) {
+    if settings_key(class).is_some() {
         m.push(row("Settings…".into(), Some("Ctrl+,"), Act::Settings));
         m.push(sep());
     }
@@ -322,10 +341,280 @@ pub fn window_menu() -> Vec<Row> {
     m
 }
 
+// ---- the standard menus: File, Edit, View and Help for an app that publishes none ----------------
+
+/// What kind of app a window class is, for the menu rows that mean something else or nothing in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Terminal,
+    /// The browser (Atlas, Helium) and other web engines' windows.
+    Browser,
+    /// The file manager.
+    Files,
+    /// A document viewer (PDF).
+    Document,
+    /// A text editor.
+    Editor,
+    Other,
+}
+
+/// The kind of app of window class `class` (any case).
+pub fn kind(class: &str) -> Kind {
+    let class = class.to_ascii_lowercase();
+    if TERMINALS.iter().any(|t| t.0 == class) {
+        return Kind::Terminal;
+    }
+    match class.as_str() {
+        "helium" | "atlas" | "org.wolos.atlas" | "chromium" | "org.chromium.chromium" => {
+            Kind::Browser
+        }
+        "org.gnome.nautilus" | "wol-files" | "org.wolos.files" => Kind::Files,
+        "org.gnome.papers" | "org.gnome.evince" => Kind::Document,
+        "org.gnome.texteditor" => Kind::Editor,
+        _ => Kind::Other,
+    }
+}
+
+/// Commands an app of this kind is known not to have, or to give another meaning to the same key
+/// (⌘L in a text editor is "go to line"; a viewer has nothing to cut). Everything else is offered
+/// when [`send`] has a key for it. Terminals need no entry: [`send`] answers `Nothing` for them.
+const NOT_APPLICABLE: [(Kind, &[Cmd]); 4] = [
+    (Kind::Editor, &[Cmd::Reload, Cmd::Location]),
+    (
+        Kind::Document,
+        &[
+            Cmd::New,
+            Cmd::NewTab,
+            Cmd::Cut,
+            Cmd::Paste,
+            Cmd::Undo,
+            Cmd::Redo,
+            Cmd::Location,
+            Cmd::Emoji,
+        ],
+    ),
+    (
+        Kind::Files,
+        &[Cmd::Save, Cmd::Print, Cmd::FindNext, Cmd::Emoji],
+    ),
+    (Kind::Browser, &[Cmd::Emoji]),
+];
+
+/// Whether the row for `c` is live in an app of window class `class`: the hand-off has a key for
+/// it and the app is not known to lack it. A menu row that did nothing would cost the bar its trust.
+pub fn enabled(c: Cmd, class: &str) -> bool {
+    if class.is_empty() || send(c, class) == Handoff::Nothing {
+        return false;
+    }
+    let k = kind(class);
+    !NOT_APPLICABLE
+        .iter()
+        .any(|(kk, cmds)| *kk == k && cmds.contains(&c))
+}
+
+/// A shortcut as the bar shows it ("Super+Shift+Z"), from the conf's MODS and key.
+pub fn shortcut_text(mods: &str, key: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for m in ["SUPER", "CTRL", "ALT", "SHIFT"] {
+        if mods.split_whitespace().any(|w| w == m) {
+            out.push(match m {
+                "SUPER" => "Super".into(),
+                "CTRL" => "Ctrl".into(),
+                "ALT" => "Alt".into(),
+                _ => "Shift".into(),
+            });
+        }
+    }
+    out.push(match key {
+        "equal" => "=".into(),
+        "minus" => "-".into(),
+        "comma" => ",".into(),
+        "slash" => "/".into(),
+        k => k.to_string(),
+    });
+    out.join("+")
+}
+
+/// One line of a standard menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StdEntry {
+    Separator,
+    Item {
+        label: &'static str,
+        /// Shown right-aligned ("" = none).
+        shortcut: String,
+        act: Act,
+        /// False: greyed out, the app has no such command.
+        enabled: bool,
+    },
+}
+
+/// A menu of the bar that the shell itself draws.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StdMenu {
+    pub title: &'static str,
+    pub entries: Vec<StdEntry>,
+}
+
+impl StdMenu {
+    /// The items only: (label, act, enabled).
+    pub fn items(&self) -> Vec<(&'static str, Act, bool)> {
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                StdEntry::Item {
+                    label,
+                    act,
+                    enabled,
+                    ..
+                } => Some((*label, *act, *enabled)),
+                StdEntry::Separator => None,
+            })
+            .collect()
+    }
+}
+
+/// One row of a standard menu: `None` = a separator.
+type Spec = Option<(&'static str, Cmd)>;
+
+const FILE: [Spec; 7] = [
+    Some(("New", Cmd::New)),
+    Some(("New Tab", Cmd::NewTab)),
+    Some(("Open…", Cmd::Open)),
+    None,
+    Some(("Save", Cmd::Save)),
+    Some(("Print…", Cmd::Print)),
+    Some(("Close", Cmd::Close)),
+];
+
+const EDIT: [Spec; 12] = [
+    Some(("Undo", Cmd::Undo)),
+    Some(("Redo", Cmd::Redo)),
+    None,
+    Some(("Cut", Cmd::Cut)),
+    Some(("Copy", Cmd::Copy)),
+    Some(("Paste", Cmd::Paste)),
+    Some(("Select All", Cmd::SelectAll)),
+    None,
+    Some(("Find…", Cmd::Find)),
+    Some(("Find Next", Cmd::FindNext)),
+    None,
+    Some(("Emoji & Symbols", Cmd::Emoji)),
+];
+
+const VIEW: [Spec; 6] = [
+    Some(("Zoom In", Cmd::ZoomIn)),
+    Some(("Zoom Out", Cmd::ZoomOut)),
+    Some(("Actual Size", Cmd::ActualSize)),
+    None,
+    Some(("Reload", Cmd::Reload)),
+    Some(("Open Location…", Cmd::Location)),
+];
+
+fn std_menu(title: &'static str, specs: &[Spec], class: &str) -> StdMenu {
+    StdMenu {
+        title,
+        entries: specs
+            .iter()
+            .map(|s| match s {
+                None => StdEntry::Separator,
+                Some((label, c)) => {
+                    let (m, k) = c.keys();
+                    StdEntry::Item {
+                        label,
+                        shortcut: shortcut_text(m, k),
+                        act: Act::Key(*c),
+                        enabled: enabled(*c, class),
+                    }
+                }
+            })
+            .collect(),
+    }
+}
+
+/// File, Edit and View for an app of window class `class` that publishes no menus of its own (a
+/// Wolkit app that does keeps them: [`source`]). Every row is the key the ⌘ shortcut taps
+/// ([`send`]), greyed where the app has none. No window in front: no menus.
+pub fn standard_menus(class: &str) -> Vec<StdMenu> {
+    if class.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        std_menu("File", &FILE, class),
+        std_menu("Edit", &EDIT, class),
+        std_menu("View", &VIEW, class),
+    ]
+}
+
+/// What the bar shows between the app name and Window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Menus {
+    /// The app published these (a Wolkit app, through `org.wolos.Menus`): they keep precedence.
+    Own(Vec<shared::view::Menu>),
+    /// The app published none: the shell's File, Edit and View.
+    Standard(Vec<StdMenu>),
+}
+
+/// The menus of the app of window class `class`, given what it `published` (nothing, or something
+/// that did not pass [`wolkit_menus`]: empty).
+pub fn menus(class: &str, published: Vec<shared::view::Menu>) -> Menus {
+    if published.is_empty() {
+        Menus::Standard(standard_menus(class))
+    } else {
+        Menus::Own(published)
+    }
+}
+
+impl Menus {
+    /// Whether the system's Help follows Window: not with no window in front, and not when the
+    /// app has a Help menu of its own (the person would find two).
+    pub fn help_shown(&self) -> bool {
+        match self {
+            Menus::Own(m) => !m.iter().any(|m| m.title == HELP),
+            Menus::Standard(m) => !m.is_empty(),
+        }
+    }
+}
+
+/// The title of the Help menu.
+pub const HELP: &str = "Help";
+
+/// Help: the same two rows in every app (they are the system's).
+pub fn help_menu() -> StdMenu {
+    let item = |label, shortcut: &str, act| StdEntry::Item {
+        label,
+        shortcut: shortcut.to_string(),
+        act,
+        enabled: true,
+    };
+    StdMenu {
+        title: HELP,
+        entries: vec![
+            item(crate::copy::HELP_SEARCH_MANUAL, "Super+Space", Act::Manual),
+            item("Keyboard Shortcuts", "Super+Shift+/", Act::Shortcuts),
+        ],
+    }
+}
+
+/// The program and arguments that run `a` from a menu click (About is drawn by the shell: empty).
+pub fn argv(a: Act) -> Vec<String> {
+    let own = |v: &[&str]| v.iter().map(|s| s.to_string()).collect();
+    match a {
+        Act::About => Vec::new(),
+        Act::Manual => own(&["wol-search"]),
+        Act::Shortcuts => own(&["wol", "shell", "toggle", "shortcuts"]),
+        a => {
+            let mut v = vec!["wol-app".to_string()];
+            v.extend(verb(a).unwrap_or_default().split(' ').map(String::from));
+            v
+        }
+    }
+}
+
 /// `wol-app` verb for an action (About is drawn by the shell, not dispatched).
 pub fn verb(a: Act) -> Option<String> {
     Some(match a {
-        Act::About => return None,
+        Act::About | Act::Manual | Act::Shortcuts => return None,
         Act::Settings => "settings".into(),
         Act::Hide => "hide".into(),
         Act::HideOthers => "hide-others".into(),
@@ -393,7 +682,7 @@ pub fn batch(
     };
     let (zx, zy, zw, zh) = zone;
     let cmds: Vec<Dispatch> = match a {
-        Act::About => return None,
+        Act::About | Act::Manual | Act::Shortcuts => return None,
         Act::Settings => vec![Dispatch::SendShortcut {
             mods: "CTRL".into(),
             key: "comma".into(),
