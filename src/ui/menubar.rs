@@ -29,7 +29,8 @@ pub struct Bar {
     pub appname: gtk::Label,
     app_menu: gtk::MenuButton,
     window_menu: gtk::MenuButton,
-    /// What the AppMenus item holds: the frontmost Wolkit app's own menus, then Window.
+    /// What the AppMenus item holds: the frontmost app's menus (its own through `org.wolos.Menus`,
+    /// else File, Edit and View), then Window and Help.
     app_menus: gtk::Box,
     global: Rc<Global>,
     network: gtk::Image,
@@ -89,6 +90,44 @@ impl Bar {
     }
 }
 
+impl Bar {
+    /// The bar as for an app of window class `class` that publishes no menus, with no bus read
+    /// (goldens: [`Bar::set_app`] asks the session bus, which answers later).
+    pub fn preview_standard(&self, name: &str, class: &str) {
+        self.appname.set_label(name);
+        self.app_menu.set_visible(true);
+        self.window_menu.set_visible(!class.is_empty());
+        self.global.class.replace(class.to_string());
+        self.global.show_standard();
+    }
+
+    /// The rows of the bar's menu `title` out of its popover, on the popover's glass (goldens, like
+    /// [`logo_menu_view`]); None when the bar has no such menu.
+    pub fn menu_card(&self, title: &str) -> Option<gtk::Widget> {
+        let mut c = self.global.host.first_child();
+        while let Some(x) = c {
+            c = x.next_sibling();
+            let Some(b) = x.downcast_ref::<gtk::MenuButton>() else {
+                continue;
+            };
+            let shown = b
+                .child()
+                .and_downcast::<gtk::Label>()
+                .is_some_and(|l| l.label() == title);
+            let Some(p) = b.popover().filter(|_| shown) else {
+                continue;
+            };
+            let rows = p.child()?;
+            p.set_child(None::<&gtk::Widget>);
+            let card = w::vbox(0);
+            card.add_css_class("menu");
+            card.append(&rows);
+            return Some(card.upcast());
+        }
+        None
+    }
+}
+
 /// Menu rows -> clickable rows: About opens the about window, the rest run `wol-app <verb>`.
 fn actions(rows: Vec<appmenu::Row>, name: &str, class: &str) -> Vec<w::MenuRow> {
     rows.into_iter()
@@ -97,13 +136,7 @@ fn actions(rows: Vec<appmenu::Row>, name: &str, class: &str) -> Vec<w::MenuRow> 
             let f: Box<dyn Fn()> = match act {
                 Some(appmenu::Act::About) => Box::new(move || about(&name, &class)),
                 Some(a) => {
-                    let mut argv = vec!["wol-app".to_string()];
-                    argv.extend(
-                        appmenu::verb(a)
-                            .unwrap_or_default()
-                            .split(' ')
-                            .map(String::from),
-                    );
+                    let argv = appmenu::argv(a);
                     Box::new(move || kit::spawn(&argv))
                 }
                 None => Box::new(|| {}),
@@ -129,12 +162,18 @@ fn about(name: &str, class: &str) {
 
 // ---- the global menu: a Wolkit app's own menus in the bar ----------------------------------
 
-/// The menus of the frontmost Wolkit app (`appmenu::Source::Wolkit`): one title per menu, before
-/// Window, filled from the app's `org.wolos.Menus` object and refreshed when it signals a change.
-/// Choosing an item calls `Activate` on the app, which clicks the item in its window.
+/// The menus of the frontmost app, before Window. A Wolkit app that publishes its own
+/// (`appmenu::Source::Wolkit`) gets one title per menu, filled from its `org.wolos.Menus` object and
+/// refreshed when it signals a change; choosing an item calls `Activate` on the app, which clicks
+/// the item in its window. Any other app gets File, Edit and View ([`appmenu::standard_menus`]),
+/// each row the key its shortcut taps. Help follows Window in both.
 struct Global {
-    /// Holds the menu titles and, last, the Window menu.
+    /// Holds the menu titles and, last, the Window and Help menus.
     host: gtk::Box,
+    /// The system's Help menu: shown once the app's menus are known, unless the app has its own.
+    help: gtk::MenuButton,
+    /// The window class in front ("" = none).
+    class: RefCell<String>,
     shown: RefCell<Vec<gtk::MenuButton>>,
     /// Bumped on every change of app; an answer for an older one is dropped.
     epoch: std::cell::Cell<u64>,
@@ -146,9 +185,11 @@ struct Global {
 const MENUS_TIMEOUT_MS: i32 = 500;
 
 impl Global {
-    fn new(host: &gtk::Box) -> Global {
+    fn new(host: &gtk::Box, help: &gtk::MenuButton) -> Global {
         Global {
             host: host.clone(),
+            help: help.clone(),
+            class: RefCell::new(String::new()),
             shown: RefCell::new(Vec::new()),
             epoch: std::cell::Cell::new(0),
             watch: RefCell::new(None),
@@ -161,7 +202,8 @@ impl Global {
         let epoch = self.epoch.get() + 1;
         self.epoch.set(epoch);
         self.watch.take();
-        self.show(None, Vec::new());
+        self.class.replace(class.to_string());
+        self.clear();
         // Every app is a candidate; the call below fails at once for one that publishes none
         // (and never starts a service: `NO_AUTO_START`).
         let appmenu::Source::Wolkit { bus, path } = appmenu::source(class, |_| true) else {
@@ -170,6 +212,9 @@ impl Global {
         let me = self.clone();
         glib::spawn_future_local(async move {
             let Ok(conn) = gio::bus_get_future(gio::BusType::Session).await else {
+                if me.epoch.get() == epoch {
+                    me.show_standard();
+                }
                 return;
             };
             if me.epoch.get() != epoch {
@@ -199,27 +244,53 @@ impl Global {
         });
     }
 
-    /// Replace the titles with `menus` (none: the app's own menus are gone).
-    fn show(
-        &self,
-        from: Option<(&gio::DBusConnection, &str, &str)>,
-        menus: Vec<shared::view::Menu>,
-    ) {
+    /// The bar's menus for `menus`: the app's own (a choice calls `Activate` on it over `from`) or
+    /// the standard ones, and Help when it applies.
+    fn apply(&self, menus: appmenu::Menus, from: Option<(&gio::DBusConnection, &str, &str)>) {
+        self.clear();
+        let help = menus.help_shown();
+        match (menus, from) {
+            (appmenu::Menus::Own(menus), Some((conn, bus, path))) => {
+                for m in &menus {
+                    let b = w::menubar_menu(&w::label(&m.title, ""));
+                    b.set_popover(Some(&popover(conn, bus, path, m)));
+                    self.push(b);
+                }
+            }
+            (appmenu::Menus::Standard(menus), _) => {
+                for m in &menus {
+                    let b = w::menubar_menu(&w::label(m.title, ""));
+                    b.set_popover(Some(&std_popover(m)));
+                    self.push(b);
+                }
+            }
+            // Menus to call without an app to call them on: nothing to show.
+            (appmenu::Menus::Own(_), None) => return,
+        }
+        self.help.set_visible(help);
+    }
+
+    /// Drop every title and Help: nothing is known about the app in front yet.
+    fn clear(&self) {
         for b in self.shown.take() {
             self.host.remove(&b);
         }
-        let Some((conn, bus, path)) = from else {
-            return;
-        };
-        let mut last: Option<gtk::MenuButton> = None;
-        for m in &menus {
-            let b = w::menubar_menu(&w::label(&m.title, ""));
-            b.set_popover(Some(&popover(conn, bus, path, m)));
-            hover_in(&b, &self.host);
-            self.host.insert_child_after(&b, last.as_ref());
-            last = Some(b.clone());
-            self.shown.borrow_mut().push(b);
-        }
+        self.help.set_visible(false);
+    }
+
+    /// Put `b` as the next title, before Window.
+    fn push(&self, b: gtk::MenuButton) {
+        let last = self.shown.borrow().last().cloned();
+        hover_in(&b, &self.host);
+        self.host.insert_child_after(&b, last.as_ref());
+        self.shown.borrow_mut().push(b);
+    }
+
+    /// The app publishes nothing (or the session bus is gone): File, Edit and View out of the keys
+    /// the ⌘ shortcuts tap, and the system's Help. Rows the app has no key for are greyed.
+    fn show_standard(&self) {
+        let menus = appmenu::menus(&self.class.borrow(), Vec::new());
+        self.apply(menus, None);
     }
 }
 
@@ -247,49 +318,61 @@ fn read_menus(me: &Rc<Global>, conn: &gio::DBusConnection, bus: &str, path: &str
             .and_then(|v| v.get::<(String,)>())
             .map(|(json,)| appmenu::wolkit_menus(&json))
             .unwrap_or_default();
-        me.show(Some((&conn, &bus, &path)), menus);
+        let menus = appmenu::menus(&me.class.borrow(), menus);
+        me.apply(menus, Some((&conn, &bus, &path)));
     });
 }
 
-/// One menu of the app: its items as buttons (disabled ones greyed, a checked one ticked); a
-/// choice calls `Activate(menu, key)` on the app.
-fn popover(
-    conn: &gio::DBusConnection,
-    bus: &str,
-    path: &str,
-    m: &shared::view::Menu,
-) -> gtk::Popover {
-    use shared::view::MenuEntry;
+/// How dim a menu row looks when the app has no such command.
+const DISABLED_OPACITY: f64 = 0.45;
+
+/// One line of a bar menu's popover.
+enum PopEntry {
+    Separator,
+    Item {
+        label: String,
+        shortcut: String,
+        enabled: bool,
+        checked: bool,
+        run: Rc<dyn Fn()>,
+    },
+}
+
+/// A bar menu's popover: items as buttons (disabled ones greyed, a checked one ticked), a choice
+/// closes it and runs the item.
+fn pop(entries: Vec<PopEntry>) -> gtk::Popover {
     let p = gtk::Popover::new();
     p.add_css_class("menu");
     p.set_has_arrow(false);
     let col = w::vbox(0);
-    for e in &m.entries {
+    for e in entries {
         match e {
-            MenuEntry::Separator => col.append(&gtk::Separator::new(gtk::Orientation::Horizontal)),
-            MenuEntry::Item {
-                key,
+            PopEntry::Separator => col.append(&gtk::Separator::new(gtk::Orientation::Horizontal)),
+            PopEntry::Item {
                 label,
                 shortcut,
                 enabled,
                 checked,
+                run,
             } => {
                 let row = w::hbox(w::S6);
-                let tick = if *checked { "\u{2713} " } else { "" };
+                let tick = if checked { "\u{2713} " } else { "" };
                 row.append(&w::label(&format!("{tick}{label}"), ""));
                 if !shortcut.is_empty() {
                     row.append(&w::spacer());
-                    row.append(&w::label(shortcut, "menu-key"));
+                    row.append(&w::label(&shortcut, "menu-key"));
                 }
                 let it = gtk::Button::builder().child(&row).build();
                 it.add_css_class("menu-item");
-                it.set_sensitive(*enabled);
-                let (p2, conn, bus, path) =
-                    (p.clone(), conn.clone(), bus.to_string(), path.to_string());
-                let (id, key) = (m.id, key.clone());
+                it.set_sensitive(enabled);
+                if !enabled {
+                    // kit.css has no disabled look for a menu row: dim it here.
+                    it.set_opacity(DISABLED_OPACITY);
+                }
+                let p2 = p.clone();
                 it.connect_clicked(move |_| {
                     p2.popdown();
-                    activate(&conn, &bus, &path, id, &key);
+                    run();
                 });
                 col.append(&it);
             }
@@ -297,6 +380,66 @@ fn popover(
     }
     p.set_child(Some(&col));
     p
+}
+
+/// One menu of a Wolkit app: a choice calls `Activate(menu, key)` on the app.
+fn popover(
+    conn: &gio::DBusConnection,
+    bus: &str,
+    path: &str,
+    m: &shared::view::Menu,
+) -> gtk::Popover {
+    use shared::view::MenuEntry;
+    pop(m
+        .entries
+        .iter()
+        .map(|e| match e {
+            MenuEntry::Separator => PopEntry::Separator,
+            MenuEntry::Item {
+                key,
+                label,
+                shortcut,
+                enabled,
+                checked,
+            } => {
+                let (conn, bus, path) = (conn.clone(), bus.to_string(), path.to_string());
+                let (id, key) = (m.id, key.clone());
+                PopEntry::Item {
+                    label: label.clone(),
+                    shortcut: shortcut.clone(),
+                    enabled: *enabled,
+                    checked: *checked,
+                    run: Rc::new(move || activate(&conn, &bus, &path, id, &key)),
+                }
+            }
+        })
+        .collect())
+}
+
+/// One of the shell's own menus (File, Edit, View, Help): a choice runs its action.
+fn std_popover(m: &appmenu::StdMenu) -> gtk::Popover {
+    pop(m
+        .entries
+        .iter()
+        .map(|e| match e {
+            appmenu::StdEntry::Separator => PopEntry::Separator,
+            appmenu::StdEntry::Item {
+                label,
+                shortcut,
+                act,
+                enabled,
+            } => {
+                let argv = appmenu::argv(*act);
+                PopEntry::Item {
+                    label: (*label).to_string(),
+                    shortcut: shortcut.clone(),
+                    enabled: *enabled,
+                    checked: false,
+                    run: Rc::new(move || kit::spawn(&argv)),
+                }
+            }
+        })
+        .collect())
 }
 
 /// `Activate(menu, key)` on the app; nothing comes back.
@@ -522,17 +665,23 @@ pub fn content_with(
             .map(|(t, argv)| (t, run(argv)))
             .collect(),
     )));
-    // Only menus backed by real actions: the app menu and Window (no placeholder File/Edit/View).
+    // Only menus backed by real actions: the app menu, the app's own, or File/Edit/View out of the
+    // keys the ⌘ shortcuts tap (greyed where the app has none), Window and Help.
     let appname = w::label(crate::apps::DESKTOP_NAME, "app-name");
     let app_menu = w::menubar_menu(&appname);
     app_menu.set_visible(false);
     let window_menu = w::menubar_menu(&w::label("Window", ""));
     window_menu.set_popover(Some(&w::menu_keys(actions(appmenu::window_menu(), "", ""))));
     window_menu.set_visible(false);
+    let help_menu = w::menubar_menu(&w::label("Help", ""));
+    help_menu.set_popover(Some(&std_popover(&appmenu::help_menu())));
+    help_menu.set_visible(false);
     let app_menus = w::hbox(0);
     app_menus.append(&window_menu);
-    let global = Rc::new(Global::new(&app_menus));
+    app_menus.append(&help_menu);
+    let global = Rc::new(Global::new(&app_menus, &help_menu));
     hover_in(&window_menu, &app_menus);
+    hover_in(&help_menu, &app_menus);
     let slots = [w::hbox(0), w::hbox(0), w::hbox(0)];
     let spacers = [w::spacer(), w::spacer()];
     root.append(&slots[0]);

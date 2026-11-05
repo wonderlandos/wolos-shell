@@ -18,6 +18,53 @@ fn labels(w: &gtk::Widget) -> Vec<String> {
     out
 }
 
+/// The bar for an app of `class` with its Edit menu open under it: the titles File, Edit, View,
+/// Window, Help, and the rows. `live` rows must be tappable, `grey` ones greyed out.
+fn standard_bar(name: &str, class: &str, live: &[&str], grey: &[&str]) -> gtk::Widget {
+    let b = shell::ui::menubar::content(&shell::system::Fake);
+    b.preview_standard(name, class);
+    let l = labels(b.root.upcast_ref());
+    for want in ["File", "Edit", "View", "Window", "Help"] {
+        assert!(l.iter().any(|x| x == want), "{want} in {l:?}");
+    }
+    let card = b.menu_card("Edit").expect("an Edit menu");
+    for (rows, tappable) in [(live, true), (grey, false)] {
+        for row in rows {
+            let w = find_row(&card, row).unwrap_or_else(|| panic!("no row {row}"));
+            assert_eq!(w.is_sensitive(), tappable, "{row} in {class}");
+            assert_eq!(
+                w.opacity() < 1.0,
+                !tappable,
+                "{row} in {class} looks {}",
+                w.opacity()
+            );
+        }
+    }
+    let col = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    col.append(&b.root);
+    col.append(&card);
+    card.set_halign(gtk::Align::Start);
+    card.set_margin_start(80);
+    col.upcast()
+}
+
+/// The button of the menu row labelled `text`.
+fn find_row(w: &gtk::Widget, text: &str) -> Option<gtk::Button> {
+    if let Some(b) = w.downcast_ref::<gtk::Button>()
+        && labels(w).iter().any(|l| l == text)
+    {
+        return Some(b.clone());
+    }
+    let mut c = w.first_child();
+    while let Some(x) = c {
+        if let Some(b) = find_row(&x, text) {
+            return Some(b);
+        }
+        c = x.next_sibling();
+    }
+    None
+}
+
 pub fn cases() -> Vec<Case> {
     vec![
         Case {
@@ -86,6 +133,37 @@ pub fn cases() -> Vec<Case> {
                 assert!(l.iter().any(|x| x == "Telegram"), "{l:?}");
                 assert!(!l.iter().any(|x| x.contains("org.telegram")), "{l:?}");
                 b.root.clone().upcast()
+            }),
+        },
+        Case {
+            // E2E-MENU: an app that publishes no menus gets File, Edit, View, Window and Help; the
+            // Edit menu open, Undo and Redo live in the editor.
+            name: "menubar-edit-texteditor".into(),
+            size: (900, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                standard_bar(
+                    "Text Editor",
+                    "org.gnome.TextEditor",
+                    &["Undo", "Redo"],
+                    &[],
+                )
+            }),
+        },
+        Case {
+            // A terminal has no Undo, Redo, Cut or Select All: those rows are greyed.
+            name: "menubar-edit-foot".into(),
+            size: (900, 1),
+            class: "preview",
+            wallpaper: true,
+            build: Box::new(|| {
+                standard_bar(
+                    "Terminal",
+                    "foot",
+                    &["Copy", "Paste"],
+                    &["Undo", "Redo", "Cut", "Select All"],
+                )
             }),
         },
         Case {

@@ -340,18 +340,22 @@ maker-start-dark	Save | Check | Create Package | Share… | Open Plugin… | Cre
 maker-start-light	Save | Check | Create Package | Share… | Open Plugin… | Create Plugin
 maker-theme-dark	Save | Check | Create Package | Share… | Open Theme… | Use Wallpaper Colors | Save Theme | WolOS Dark
 maker-theme-light	Save | Check | Create Package | Share… | Open Theme… | Use Wallpaper Colors | Save Theme | WolOS Dark
-menubar-app-name-dark	Telegram | Window | Mon 26 Oct 14:05
-menubar-app-name-light	Telegram | Window | Mon 26 Oct 14:05
-menubar-dark	Files | Window | Mon 26 Oct 14:05
+menubar-app-name-dark	Telegram | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+menubar-app-name-light	Telegram | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+menubar-dark	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
 menubar-desktop-dark	Mon 26 Oct 14:05
 menubar-desktop-light	Mon 26 Oct 14:05
-menubar-inactive-dark	Files | Window | Mon 26 Oct 14:05
-menubar-inactive-light	Files | Window | Mon 26 Oct 14:05
-menubar-light	Files | Window | Mon 26 Oct 14:05
-menubar-plugin-dark	Files | Window | CPU 12% MEM 41% | Mon 26 Oct 14:05
-menubar-plugin-light	Files | Window | CPU 12% MEM 41% | Mon 26 Oct 14:05
-menubar-recording-dark	Files | Window | Mon 26 Oct 14:05
-menubar-recording-light	Files | Window | Mon 26 Oct 14:05
+menubar-edit-foot-dark	Terminal | File | Edit | View | Window | Help | Mon 26 Oct 14:05 | Undo Super+Z | Redo Super+Shift+Z | Cut Super+X | Copy Super+C | Paste Super+V | Select All Super+A | Find… Super+F | Find Next Super+G | Emoji & Symbols Super+Ctrl+Space
+menubar-edit-foot-light	Terminal | File | Edit | View | Window | Help | Mon 26 Oct 14:05 | Undo Super+Z | Redo Super+Shift+Z | Cut Super+X | Copy Super+C | Paste Super+V | Select All Super+A | Find… Super+F | Find Next Super+G | Emoji & Symbols Super+Ctrl+Space
+menubar-edit-texteditor-dark	Text Editor | File | Edit | View | Window | Help | Mon 26 Oct 14:05 | Undo Super+Z | Redo Super+Shift+Z | Cut Super+X | Copy Super+C | Paste Super+V | Select All Super+A | Find… Super+F | Find Next Super+G | Emoji & Symbols Super+Ctrl+Space
+menubar-edit-texteditor-light	Text Editor | File | Edit | View | Window | Help | Mon 26 Oct 14:05 | Undo Super+Z | Redo Super+Shift+Z | Cut Super+X | Copy Super+C | Paste Super+V | Select All Super+A | Find… Super+F | Find Next Super+G | Emoji & Symbols Super+Ctrl+Space
+menubar-inactive-dark	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+menubar-inactive-light	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+menubar-light	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+menubar-plugin-dark	Files | File | Edit | View | Window | Help | CPU 12% MEM 41% | Mon 26 Oct 14:05
+menubar-plugin-light	Files | File | Edit | View | Window | Help | CPU 12% MEM 41% | Mon 26 Oct 14:05
+menubar-recording-dark	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+menubar-recording-light	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
 motion-controlcenter-open-dark	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode On | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
 motion-controlcenter-open-light	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode Off | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
 motion-dock-hover-dark	
@@ -698,8 +702,8 @@ switcher-dark
 switcher-light	
 theme-picker-dark	Catppuccin Latte | Catppuccin Mocha | Ethereal | Everforest | Flexoki Light | Gruvbox | Hackerman | Jade Horse | Kanagawa | Lumon | Lupine | Matte Black | Miasma | Nord | Retro 82 | Ristretto | Rose Pine | Solitude | Tokyo Night | Vantablack | White
 theme-picker-light	Catppuccin Latte | Catppuccin Mocha | Ethereal | Everforest | Flexoki Light | Gruvbox | Hackerman | Jade Horse | Kanagawa | Lumon | Lupine | Matte Black | Miasma | Nord | Retro 82 | Ristretto | Rose Pine | Solitude | Tokyo Night | Vantablack | White
-tray-items-dark	Files | Window | Mon 26 Oct 14:05
-tray-items-light	Files | Window | Mon 26 Oct 14:05
+tray-items-dark	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+tray-items-light	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
 widget-battery-large-dark	
 widget-battery-large-light	
 widget-battery-medium-dark	
