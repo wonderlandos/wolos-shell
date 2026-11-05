@@ -2,5 +2,6 @@
 //! `wol-plugin-maker [folder | --theme [theme.json]]`: Plugin Maker / Theme Studio (ADR 0031,
 //! docs/modules/plugin-maker.md).
 fn main() -> gtk::glib::ExitCode {
+    shell::kit::renderer::settle();
     shell::ui::maker::run()
 }

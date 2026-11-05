@@ -228,6 +228,8 @@ fn build_panels(
     // App windows and app notifications through libwol (ADR 0020).
     fence::guard("app host", app_host::listen);
     fence::guard("app notices", crate::app_notices::start);
+    // QA-BOOT-16: what the startup check refused, and which version started instead.
+    fence::guard("startup notice", crate::app_notices::start_boot_notice);
     // Sessions (ADR 0032): offer last time's windows once, then keep the set saved.
     fence::guard("sessions", || {
         crate::sessions::start(crate::sessions::ask_by_notification)

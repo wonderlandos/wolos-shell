@@ -387,10 +387,86 @@ pub fn start() {
     });
 }
 
+/// The banner title of the startup check's message (QA-BOOT-16).
+pub const BOOT_NOTICE_TITLE: &str = "WolOS started a different version";
+
+/// The banner for the startup check's message (`wol_core::seal::NOTICE`): a refused or damaged
+/// version and which one started instead (QA-BOOT-16: it was written and nothing showed it, so a
+/// refused slot ran as if all was well). None when there is no message. The file goes once its
+/// cause is gone (`wol boot bless`), so a session shows it while it holds.
+pub fn boot_notice(text: Option<&str>) -> Option<(&'static str, String)> {
+    let body = text?.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!body.is_empty()).then_some((BOOT_NOTICE_TITLE, body))
+}
+
+/// Shows [`boot_notice`] once per session, a few seconds after the shell's notification server is
+/// up (a GTK timer; the post blocks, so it runs on its own thread); a shell restarted within the
+/// session does not show it again (a mark in the runtime dir). Call on the GTK thread.
+pub fn start_boot_notice() {
+    let Some((title, body)) = boot_notice(
+        std::fs::read_to_string(wol_core::seal::NOTICE)
+            .ok()
+            .as_deref(),
+    ) else {
+        return;
+    };
+    let mark = Some(gtk::glib::user_runtime_dir().join("boot-notice.shown"));
+    if mark.as_ref().is_some_and(|m| m.exists()) {
+        return;
+    }
+    gtk::glib::timeout_add_seconds_local_once(BOOT_NOTICE_AFTER, move || {
+        let posted = std::thread::Builder::new()
+            .name("wol-boot-notice".into())
+            .spawn(move || match post_own(title, &body) {
+                Ok(()) => {
+                    if let Some(m) = &mark {
+                        let _ = std::fs::write(m, b"");
+                    }
+                }
+                Err(e) => {
+                    crate::diag::say!(
+                        "wol-shell: the startup notice could not be shown ({e}): {body}"
+                    )
+                }
+            });
+        if let Err(e) = posted {
+            crate::diag::say!("wol-shell: no thread for the startup notice: {e}");
+        }
+    });
+}
+
+/// Seconds after the shell starts before [`start_boot_notice`] posts (its banners are up by then).
+const BOOT_NOTICE_AFTER: u32 = 4;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use shared::portal::NoteAction;
+
+    /// QA-BOOT-16: the startup check's message reaches the person as a banner, in one line.
+    #[test]
+    fn the_startup_check_s_message_is_a_banner() {
+        assert_eq!(boot_notice(None), None);
+        assert_eq!(boot_notice(Some(" \n")), None);
+        let (title, body) = boot_notice(Some(
+            "This version of WolOS (wolos-b) is older than the version last used here.\nThe \
+             other version starts instead.\n",
+        ))
+        .expect("a banner");
+        assert_eq!(title, BOOT_NOTICE_TITLE);
+        assert!(
+            body.contains("older than the version last used here"),
+            "{body}"
+        );
+        assert!(!body.contains('\n'), "{body}");
+        // The shell reads the file the boot checks write.
+        assert_eq!(wol_core::seal::NOTICE, "/var/lib/wolos/verity-notice");
+        let ui = include_str!("ui/mod.rs");
+        assert!(
+            ui.contains("crate::app_notices::start_boot_notice"),
+            "started by the shell"
+        );
+    }
 
     #[test]
     fn notifications_become_notify_calls() {

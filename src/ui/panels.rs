@@ -765,7 +765,7 @@ async fn run_before_end(argv: &'static [&'static str]) {
     let r =
         gio::spawn_blocking(move || wol_core::system::run_full(argv, None, BEFORE_END_WAIT)).await;
     match r {
-        // pkill: 1 = nothing to stop.
+        // 1: nothing to stop (an older pkill step; systemctl stop of a stopped unit is 0).
         Ok(Ok((0 | 1, ..))) => {}
         Ok(Ok((code, _, err))) => {
             crate::diag::say!(

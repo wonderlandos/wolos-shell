@@ -165,7 +165,9 @@ pub fn cases() -> Vec<Case> {
                 pump(50);
                 let p = a.content.visible_child().expect("a page shows");
                 let d: gtk::DropDown = on_row(&p, "Shell in the terminal");
-                assert_eq!(d.selected(), 4, "pwsh is chosen");
+                // Its place in the menu, not a number: a shell added to the table moves it (rsh).
+                let at = wol_core::terminal_shell::ids().position(|i| i == "pwsh");
+                assert_eq!(Some(d.selected() as usize), at, "pwsh is chosen");
                 let _ = std::fs::remove_file(&f);
                 a.root.clone().upcast()
             }),

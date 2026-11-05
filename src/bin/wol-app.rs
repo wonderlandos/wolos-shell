@@ -5,6 +5,7 @@
 use shell::{appmenu, hypr};
 
 fn main() -> std::process::ExitCode {
+    shell::kit::renderer::settle();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(act) = appmenu::parse_verb(&args.join(" ")) else {
         eprintln!(

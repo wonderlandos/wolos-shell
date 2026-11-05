@@ -2,5 +2,6 @@
 //! `wol-quicklook`: the previewer Files calls for Space (docs/modules/quicklook.md), the window in
 //! `shell::ui::quicklook`.
 fn main() -> gtk::glib::ExitCode {
+    shell::kit::renderer::settle();
     shell::ui::quicklook::run()
 }

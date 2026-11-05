@@ -3,6 +3,7 @@
 //! what the person did (copied, saved, opened or cancelled); a failure prints one sentence on
 //! standard error and exits 1. Files' "Share…" starts it.
 fn main() -> std::process::ExitCode {
+    shell::kit::renderer::settle();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cwd = std::env::current_dir().unwrap_or_else(|_| "/".into());
     match shell::ui::share_sheet::run(&args, &cwd) {

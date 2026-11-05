@@ -251,11 +251,17 @@ pub fn session_command(action: &str) -> Option<&'static [&'static str]> {
 }
 
 /// What runs (and is waited for) right before an action's command: Log Out (compositor exit)
-/// stops hypridle first, which aborted (SIGABRT) when its display went (QA-LIVE-32). An argv,
-/// never a shell string (RR-020).
+/// stops hypridle first, which aborted (SIGABRT) when its display went (QA-LIVE-32). Through its
+/// unit, not `pkill`: wolos-hypridle.service restarts it on failure 2 s later, so a killed one
+/// came back to a compositor on its way out and aborted all the same (dry run 0.13.0,
+/// live-logout); a stopped unit is not restarted, and `stop` waits for it. An argv, never a
+/// shell string (RR-020).
 pub fn before_end(action: &str) -> Option<&'static [&'static str]> {
-    (action == "logout").then_some(&["pkill", "-x", "hypridle"][..])
+    (action == "logout").then_some(&IDLE_STOP[..])
 }
+
+/// [`before_end`] of Log Out.
+pub const IDLE_STOP: [&str; 4] = ["systemctl", "--user", "stop", "wolos-hypridle.service"];
 
 /// Restart, Shut Down and Log Out end every app: the shell asks the open windows to close first
 /// (`ui::panels::end_session`, QA-LIVE1-22); Lock and Sleep end nothing.
@@ -465,7 +471,10 @@ mod tests {
             );
         }
         assert_eq!(session_command("dance"), None);
-        assert_eq!(before_end("logout"), Some(&["pkill", "-x", "hypridle"][..]));
+        assert_eq!(
+            before_end("logout"),
+            Some(&["systemctl", "--user", "stop", "wolos-hypridle.service"][..])
+        );
         assert_eq!(before_end("restart"), None);
         let (q, line, button) = crate::copy::session_confirm("shutdown", 60).unwrap();
         assert_eq!(q, "Are you sure you want to shut down your computer now?");

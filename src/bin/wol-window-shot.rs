@@ -91,6 +91,7 @@ delegate_noop!(State: ignore wl_buffer::WlBuffer);
 delegate_noop!(State: ignore HyprlandToplevelExportManagerV1);
 
 fn main() {
+    shell::kit::renderer::settle();
     if let Err(e) = run() {
         eprintln!("wol-window-shot: {e}");
         std::process::exit(1);

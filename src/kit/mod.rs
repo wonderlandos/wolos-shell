@@ -22,6 +22,7 @@ pub mod patience;
 pub mod pickers;
 pub mod picture;
 pub mod render;
+pub mod renderer;
 pub mod reveal;
 pub mod sheets;
 pub mod style;
