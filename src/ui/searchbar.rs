@@ -35,7 +35,7 @@ pub fn index(apps: Vec<crate::desktop::Entry>) -> Vec<Item> {
         .collect();
     for p in crate::apps::here() {
         if !v.iter().any(|i| i.title == p.name) {
-            // Found by the real name too: Helium, Geary, Nautilus (QA-LN-20).
+            // Found by the real name too: Atlas, Geary, Nautilus (QA-LN-20).
             v.push(
                 Item::new(
                     p.name,
@@ -310,7 +310,7 @@ fn search_url(query: &str) -> String {
 /// The row under [`no_results`]: the browser searches for the query.
 pub fn web_search(query: &str) -> Item {
     let browser = crate::apps::here().iter().find(|p| p.name == "Browser");
-    let (icon, exec) = browser.map_or(("wolos-browser", "helium"), |p| (p.icon, p.exec[0]));
+    let (icon, exec) = browser.map_or(("wolos-browser", "atlas"), |p| (p.icon, p.exec[0]));
     Item::new(
         &format!("Search the web for \u{201c}{query}\u{201d}"),
         "Browser",
@@ -700,7 +700,7 @@ mod tests {
     fn index_has_generic_and_product_names() {
         let idx = index(vec![]);
         let top = |q: &str| search::search(&idx, q, 1).first().map(|i| i.title.clone());
-        assert_eq!(top("helium").as_deref(), Some("Browser"));
+        assert_eq!(top("atlas").as_deref(), Some("Browser"));
         assert_eq!(top("geary").as_deref(), Some("Mail"));
         assert_eq!(top("nautilus").as_deref(), Some("Files"));
         assert_eq!(top("amberol").as_deref(), Some("Music"));
@@ -923,10 +923,7 @@ mod tests {
     fn no_results_offers_the_web() {
         assert_eq!(no_results("qwzx"), "No results for \u{201c}qwzx\u{201d}");
         let web = web_search("tax forms");
-        assert_eq!(
-            web.exec,
-            ["helium", "https://duckduckgo.com/?q=tax%20forms"]
-        );
+        assert_eq!(web.exec, ["atlas", "https://duckduckgo.com/?q=tax%20forms"]);
         assert_eq!(
             search_url("a&b=c/ü"),
             "https://duckduckgo.com/?q=a%26b%3Dc%2F%C3%BC"
@@ -946,7 +943,7 @@ mod tests {
         };
         let idx = index(vec![
             e("org.gnome.Geary.desktop", "Geary", "geary"),
-            e("helium.desktop", "Helium", "/usr/bin/helium"),
+            e("atlas.desktop", "Atlas", "/usr/bin/atlas"),
             e(
                 "org.gnome.Calculator.desktop",
                 "Calculator",
@@ -958,7 +955,7 @@ mod tests {
             ("Mail", 1),
             ("Geary", 0),
             ("Browser", 1),
-            ("Helium", 0),
+            ("Atlas", 0),
             ("Calculator", 1),
         ] {
             assert_eq!(titles.iter().filter(|t| **t == name).count(), n, "{name}");
@@ -969,6 +966,6 @@ mod tests {
             ("wolos-mail", &["geary".to_string()][..])
         );
         let web = idx.iter().find(|i| i.title == "Browser").unwrap();
-        assert_eq!(web.exec, ["helium"]);
+        assert_eq!(web.exec, ["atlas"]);
     }
 }

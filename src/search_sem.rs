@@ -66,7 +66,7 @@ pub fn build_for(items: &[Item]) {
 /// The item of a manual section: opens its page at the section in the browser.
 pub fn manual_item(id: &str, title: &str) -> Item {
     let browser = crate::apps::here().iter().find(|p| p.name == "Browser");
-    let exec = browser.map_or("helium", |p| p.exec[0]);
+    let exec = browser.map_or("atlas", |p| p.exec[0]);
     Item::new(
         title,
         MANUAL,

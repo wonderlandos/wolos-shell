@@ -250,6 +250,39 @@ fn every_command_shortcut_reaches_the_app_as_ctrl() {
     }
 }
 
+/// AT-25, reel scene R10: Super L, T, W, F stay bound to `wol-app location|new-tab|close|find`
+/// (in the conf and the Lua config), and the browser's window class gets them as its Ctrl keys.
+#[test]
+fn super_l_t_w_f_reach_the_browser() {
+    use shell::appmenu::{Cmd, Handoff, send};
+    use wol_core::shortcuts::{Combo, parse};
+    let binds = parse(CONF);
+    let atlas = wol_core::browser::ATLAS.class;
+    for (key, verb, cmd) in [
+        ("L", "location", Cmd::Location),
+        ("T", "new-tab", Cmd::NewTab),
+        ("W", "close", Cmd::Close),
+        ("F", "find", Cmd::Find),
+    ] {
+        let combo = Combo::parse("SUPER", key).unwrap();
+        let b = binds
+            .iter()
+            .find(|b| b.combo.same(&combo))
+            .unwrap_or_else(|| panic!("Super+{key} not bound"));
+        assert_eq!(
+            (b.dispatcher.as_str(), b.args.as_str()),
+            ("exec", format!("wol-app {verb}").as_str())
+        );
+        assert!(
+            LUA.lines()
+                .any(|l| l.trim() == format!("bind(mod .. \" + {key}\", \"wol-app {verb}\")")),
+            "Super+{key} in hyprland.lua"
+        );
+        assert_eq!(cmd.verb(), verb);
+        assert_eq!(send(cmd, atlas), Handoff::Keys("CTRL", key), "{verb}");
+    }
+}
+
 /// System shortcuts sit off the app letters: ⌘Space, ⇧⌘3/4/5, ⌃↑ and ⌘↑, ⌘Tab, ⌃⌘Q,
 /// ⌥⌘Esc (Force Quit), ⌃F2 (menu bar), ⌃F3 (Dock). Esc (closes panels, dismisses banners) is
 /// forwarded by wol-hypr, not bound (`no_process_per_escape_or_super_release`).

@@ -222,7 +222,7 @@ mod tests {
         let c = |a: &str, class: &str| Client::new(a, class, "");
         let clients = [
             c("0x1", "foot"),
-            c("0x2", "helium"),
+            c("0x2", "atlas"),
             c("0x3", "foot"),
             c("0x4", "org.gnome.Nautilus"),
             c("0x5", "org.gnome.Nautilus"),

@@ -38,10 +38,10 @@ pub const PINS: &[Pin] = &[
         class: "",
     },
     Pin {
-        id: "helium",
+        id: "atlas",
         name: "Browser",
         icon: "wolos-browser",
-        exec: &["helium"],
+        exec: &["atlas"],
         class: "",
     },
     Pin {
@@ -102,9 +102,19 @@ pub const PINS: &[Pin] = &[
     },
 ];
 
+/// The pin a saved Dock layout means: a layout saved before the browser was renamed names it by
+/// its old id (`wol_core::browser::LEGACY`), which is the browser pin now.
+pub fn current_id(id: &str) -> &str {
+    if id == wol_core::browser::LEGACY.pin {
+        wol_core::browser::ATLAS.class
+    } else {
+        id
+    }
+}
+
 /// The names a person knows a pinned app by besides its WolOS name: the program and the app id's
-/// last part (`Files` is Nautilus, `Browser` is Helium, `Mail` is Geary). Lowercase search words
-/// (QA-LN-20: Helium, Geary and Nautilus found nothing).
+/// last part (`Files` is Nautilus, `Browser` is Atlas, `Mail` is Geary). Lowercase search words
+/// (QA-LN-20: the browser's, Geary's and Nautilus's names found nothing).
 pub fn product_words(p: &Pin) -> String {
     let prog = p.exec.first().map(|x| program(x)).unwrap_or_default();
     let tail = p.id.rsplit('.').next().unwrap_or_default();
@@ -627,15 +637,24 @@ mod tests {
         );
         assert_eq!(icon_for(class, PINS, &installed), "web-browser");
         // The browser itself stays the Browser pin, and the web app stays its own app in Apps.
-        assert_eq!(frontmost_name("helium", "t", PINS, &installed), "Browser");
+        assert_eq!(frontmost_name("atlas", "t", PINS, &installed), "Browser");
         assert_eq!(pin_for_entry(&installed[0], PINS), None);
-        let helium = crate::desktop::Entry {
-            id: "helium.desktop".into(),
-            exec: vec!["helium".into()],
-            wm_class: "helium".into(),
+        let atlas = crate::desktop::Entry {
+            id: "atlas.desktop".into(),
+            exec: vec!["atlas".into()],
+            wm_class: "atlas".into(),
             ..Default::default()
         };
-        assert_eq!(pin_for_entry(&helium, PINS).map(|p| p.id), Some("helium"));
+        assert_eq!(pin_for_entry(&atlas, PINS).map(|p| p.id), Some("atlas"));
+    }
+
+    #[test]
+    fn a_layout_saved_before_the_rename_keeps_its_browser_pin() {
+        let old = wol_core::browser::LEGACY.pin;
+        let pin = PINS.iter().find(|p| p.id == current_id(old)).unwrap();
+        assert_eq!(pin.name, "Browser");
+        assert_eq!(current_id("org.gnome.Nautilus"), "org.gnome.Nautilus");
+        assert!(PINS.iter().all(|p| p.id != old));
     }
 
     #[test]
@@ -649,7 +668,7 @@ mod tests {
         }];
         for (c, w) in [
             ("foot", "wolos-terminal"),
-            ("Helium", "wolos-browser"),
+            ("Atlas", "wolos-browser"),
             ("gnome-calculator", "accessories-calculator"),
             ("weird", "weird"),
             ("Mail", "wolos-mail"),
@@ -661,7 +680,7 @@ mod tests {
     #[test]
     fn running_by_class() {
         let classes: std::collections::HashSet<String> =
-            ["foot".to_string(), "helium".into()].into();
+            ["foot".to_string(), "atlas".into()].into();
         let running: Vec<&str> = PINS
             .iter()
             .filter(|p| is_running(p, &classes))
@@ -762,7 +781,7 @@ mod tests {
         assert_eq!(p.class, e.wm_class);
         let mine: std::collections::HashSet<String> = [e.wm_class.to_lowercase()].into();
         assert!(is_running(p, &mine), "its own window");
-        let browser: std::collections::HashSet<String> = ["helium".to_string()].into();
+        let browser: std::collections::HashSet<String> = ["atlas".to_string()].into();
         assert!(!is_running(p, &browser), "the browser is not the web app");
         assert_eq!(entry_pin(&e), *p, "one copy per entry");
         assert!(
