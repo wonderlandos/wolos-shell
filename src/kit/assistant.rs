@@ -594,7 +594,7 @@ pub fn card_width(want: i32, screen: i32) -> i32 {
 /// A card of the key-screen page is this wide where the screen allows: its numbered steps read
 /// on one line each. (The card measured its content at the height the screen leaves; behind a
 /// scroller that wide natural width is lost, and the page wrapped and scrolled at 1280x800.)
-pub const CARD_WIDE: i32 = 850;
+pub const CARD_WIDE: i32 = 900;
 
 /// [`CARD`]'s size, the height following the screen it is shown on ([`card_height`]): read
 /// once the window has its size (the first frame after the map), then at every resize.

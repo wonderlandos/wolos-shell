@@ -38,6 +38,8 @@ capture-thumb-dark
 capture-thumb-light	
 clipboard-dark	Clear | alice@wonderland.example | Meet at the Mad Hatter’s at four | https://wolos.org/docs/install | sudo pacman -Syu
 clipboard-light	Clear | alice@wonderland.example | Meet at the Mad Hatter’s at four | https://wolos.org/docs/install | sudo pacman -Syu
+controlcenter-airplane-dark	Wi-Fi Not Connected | Bluetooth Off | Focus Off | Dark Mode On | Airplane Mode | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
+controlcenter-airplane-light	Wi-Fi Not Connected | Bluetooth Off | Focus Off | Dark Mode Off | Airplane Mode | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
 controlcenter-all-dark	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode On | Night Shift | Keyboard Brightness | 82% | Stay Awake | Screenshot | Record | Zoom | Increase Contrast | Reduce Motion | Screen Mirroring
 controlcenter-all-light	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode Off | Night Shift | Keyboard Brightness | 82% | Stay Awake | Screenshot | Record | Zoom | Increase Contrast | Reduce Motion | Screen Mirroring
 controlcenter-bluetooth-dark	AirPods Pro Connected | MX Keys Connected | Magic Trackpad
@@ -69,9 +71,39 @@ displays-no-hyprsunset-no-row-light	2560 × 1600 | 60 Hz | 200%
 dock-dark	
 dock-downloads-stack-dark	Quarterly report.pdf | holiday-photos.zip | wallpaper.png | Album | setup-notes.txt | song.mp3 | Open in Files
 dock-downloads-stack-light	Quarterly report.pdf | holiday-photos.zip | wallpaper.png | Album | setup-notes.txt | song.mp3 | Open in Files
+dock-kept-webapp-dark	
+dock-kept-webapp-light	
 dock-light	
+dock-running-unpinned-dark	
+dock-running-unpinned-light	
 drop-shelf-dark	
 drop-shelf-light	
+firstlogin-accounts-1024-dark	Open Mail | Back | Later | Continue
+firstlogin-accounts-1024-light	Open Mail | Back | Later | Continue
+firstlogin-accounts-1280-dark	Open Mail | Back | Later | Continue
+firstlogin-accounts-1280-light	Open Mail | Back | Later | Continue
+firstlogin-done-1024-dark	Back | Get Started
+firstlogin-done-1024-light	Back | Get Started
+firstlogin-done-1280-dark	Back | Get Started
+firstlogin-done-1280-light	Back | Get Started
+firstlogin-helper-1024-dark	Back | Later | Continue
+firstlogin-helper-1024-light	Back | Later | Continue
+firstlogin-helper-1280-dark	Back | Later | Continue
+firstlogin-helper-1280-light	Back | Later | Continue
+firstlogin-keyboard-1024-dark	U.S. | Open Modules | Back | Later | Continue
+firstlogin-keyboard-1024-light	U.S. | Open Modules | Back | Later | Continue
+firstlogin-keyboard-1280-dark	U.S. | Open Modules | Back | Later | Continue
+firstlogin-keyboard-1280-light	U.S. | Open Modules | Back | Later | Continue
+firstlogin-look-1024-dark	Light | Dark | Auto | Day | Dusk | Night | Back | Later | Continue
+firstlogin-look-1024-light	Light | Dark | Auto | Day | Dusk | Night | Back | Later | Continue
+firstlogin-look-1280-dark	Light | Dark | Auto | Day | Dusk | Night | Back | Later | Continue
+firstlogin-look-1280-light	Light | Dark | Auto | Day | Dusk | Night | Back | Later | Continue
+firstlogin-privacy-1024-dark	Later | Continue
+firstlogin-privacy-1024-light	Later | Continue
+firstlogin-privacy-1280-dark	Later | Continue
+firstlogin-privacy-1280-light	Later | Continue
+firstlogin-privacy-password-1024-dark	Later | Continue
+firstlogin-privacy-password-1024-light	Later | Continue
 flatpak-consent-dark	Don’t Allow | Allow
 flatpak-consent-light	Don’t Allow | Allow
 force-quit-dark	Files | Browser | Terminal | Mail | Force Quit
@@ -112,6 +144,8 @@ installer-done-key-1024-dark	Save to USB | Restart
 installer-done-key-1024-light	Save to USB | Restart
 installer-done-key-1280-dark	Save to USB | Restart
 installer-done-key-1280-light	Save to USB | Restart
+installer-done-key-640x400-dark	Save to USB | Restart
+installer-done-key-640x400-light	Save to USB | Restart
 installer-done-key-screen-1024-dark	Restart
 installer-done-key-screen-1024-light	Restart
 installer-done-key-screen-1280-dark	Restart
@@ -166,14 +200,14 @@ installer-key-unread-1024-dark	Details | Try Again
 installer-key-unread-1024-light	Details | Try Again
 installer-key-unread-1280-dark	Details | Try Again
 installer-key-unread-1280-light	Details | Try Again
-installer-language-1024-dark	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
-installer-language-1024-light	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
-installer-language-1280-dark	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
-installer-language-1280-light	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
-installer-manual-1024-dark	Startup partition Not used · 1 GB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
-installer-manual-1024-light	Startup partition Not used · 1 GB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
-installer-manual-1280-dark	Startup partition Not used · 1 GB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
-installer-manual-1280-light	Startup partition Not used · 1 GB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
+installer-language-1024-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+installer-language-1024-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+installer-language-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+installer-language-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+installer-manual-1024-dark	Startup partition Not used · 999 MB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
+installer-manual-1024-light	Startup partition Not used · 999 MB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
+installer-manual-1280-dark	Startup partition Not used · 999 MB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
+installer-manual-1280-light	Startup partition Not used · 999 MB | Windows Not used · 600 GB | Ubuntu 24.04 Will be deleted · 200 GB | New: WolOS system 100 GB | Free space 298 GB | Back | Continue
 installer-method-1024-dark	Install Alongside Windows Keeps what’s there | Replace a Partition Erases one partition, keeps the rest | Erase Disk Starts clean | Manual For experts | Compressed memory | Back | Continue
 installer-method-1024-light	Install Alongside Windows Keeps what’s there | Replace a Partition Erases one partition, keeps the rest | Erase Disk Starts clean | Manual For experts | Compressed memory | Back | Continue
 installer-method-1280-dark	Install Alongside Windows Keeps what’s there | Replace a Partition Erases one partition, keeps the rest | Erase Disk Starts clean | Manual For experts | Compressed memory | Back | Continue
@@ -290,6 +324,8 @@ kit-permission-row-dark
 kit-permission-row-light	
 kit-preset-card-dark	WolOS Soft glass, gentle motion. | Rounded Round corners and wide gaps.
 kit-preset-card-light	WolOS Soft glass, gentle motion. | Rounded Round corners and wide gaps.
+kit-row-spinner-dark	Install
+kit-row-spinner-light	Install
 kit-search-field-dark	
 kit-search-field-light	
 kit-shortcut-recorder-dark	⌘Space | ⇧⌘4 | Swap | Cancel | Off | ⌘Drag
@@ -356,6 +392,42 @@ menubar-plugin-dark	Files | File | Edit | View | Window | Help | CPU 12% MEM 41%
 menubar-plugin-light	Files | File | Edit | View | Window | Help | CPU 12% MEM 41% | Mon 26 Oct 14:05
 menubar-recording-dark	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
 menubar-recording-light	Files | File | Edit | View | Window | Help | Mon 26 Oct 14:05
+monitor-apps-1280-dark	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-apps-1280-light	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-apps-empty-dark	
+monitor-apps-empty-light	
+monitor-apps-narrow-dark	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-apps-narrow-light	Quit | Force Quit | Quit | Quit | Quit | Quit
+monitor-disks-1280-dark	
+monitor-disks-1280-light	
+monitor-disks-narrow-dark	
+monitor-disks-narrow-light	
+monitor-network-1280-dark	
+monitor-network-1280-light	
+monitor-network-narrow-dark	
+monitor-network-narrow-light	
+monitor-overview-1280-dark	
+monitor-overview-1280-light	
+monitor-overview-first-second-dark	
+monitor-overview-first-second-light	
+monitor-overview-narrow-dark	
+monitor-overview-narrow-light	
+monitor-processes-1280-dark	End Process
+monitor-processes-1280-light	End Process
+monitor-processes-narrow-dark	End Process
+monitor-processes-narrow-light	End Process
+monitor-processes-no-match-dark	End Process
+monitor-processes-no-match-light	End Process
+monitor-quit-paused-dark	Quit | Force Quit | Quit | Quit | Quit | Quit | Cancel | Force Quit
+monitor-quit-paused-light	Quit | Force Quit | Quit | Quit | Quit | Quit | Cancel | Force Quit
+monitor-startup-1280-dark	Open Login Items
+monitor-startup-1280-light	Open Login Items
+monitor-startup-loading-dark	Open Login Items
+monitor-startup-loading-light	Open Login Items
+monitor-startup-narrow-dark	Open Login Items
+monitor-startup-narrow-light	Open Login Items
+monitor-startup-not-read-dark	Open Login Items
+monitor-startup-not-read-light	Open Login Items
 motion-controlcenter-open-dark	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode On | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
 motion-controlcenter-open-light	Wi-Fi Wonderland | Bluetooth On | Focus Off | Dark Mode Off | Night Shift | 82% | Stay Awake | Screenshot | Record | Screen Mirroring
 motion-dock-hover-dark	
@@ -366,10 +438,38 @@ motion-switcher-select-dark
 motion-switcher-select-light	
 motion-wallpaper-crossfade-dark	
 motion-wallpaper-crossfade-light	
+motion-wallpaper-gate-morph-end-dark	
+motion-wallpaper-gate-morph-end-light	
+motion-wallpaper-gate-morph-mid-dark	
+motion-wallpaper-gate-morph-mid-light	
 overview-dark	
 overview-light	
 plugins-bar-item-dark	CPU 12% MEM 41%
 plugins-bar-item-light	CPU 12% MEM 41%
+quicklook-audio-480x360-dark	
+quicklook-audio-480x360-light	
+quicklook-audio-900x600-dark	
+quicklook-audio-900x600-light	
+quicklook-code-480x360-dark	
+quicklook-code-480x360-light	
+quicklook-code-900x600-dark	
+quicklook-code-900x600-light	
+quicklook-folder-480x360-dark	
+quicklook-folder-480x360-light	
+quicklook-folder-900x600-dark	
+quicklook-folder-900x600-light	
+quicklook-image-480x360-dark	
+quicklook-image-480x360-light	
+quicklook-image-900x600-dark	
+quicklook-image-900x600-light	
+quicklook-pdf-480x360-dark	
+quicklook-pdf-480x360-light	
+quicklook-pdf-900x600-dark	
+quicklook-pdf-900x600-light	
+quicklook-unknown-480x360-dark	
+quicklook-unknown-480x360-light	
+quicklook-unknown-900x600-dark	
+quicklook-unknown-900x600-light	
 row-button-focus-offset-dark	Home Secured | Office Secured | Guest Secured
 row-button-focus-offset-light	Home Secured | Office Secured | Guest Secured
 searchbar-calc-dark	= 2057.1428571429 Calculator
@@ -390,10 +490,10 @@ settings-about-narrow-dark	Hardware 2 devices need attention
 settings-about-narrow-light	Hardware 2 devices need attention
 settings-about-wide-dark	Hardware 2 devices need attention
 settings-about-wide-light	Hardware 2 devices need attention
-settings-accessibility-narrow-dark	
-settings-accessibility-narrow-light	
-settings-accessibility-wide-dark	
-settings-accessibility-wide-light	
+settings-accessibility-narrow-dark	Normal
+settings-accessibility-narrow-light	Normal
+settings-accessibility-wide-dark	Normal
+settings-accessibility-wide-light	Normal
 settings-appearance-narrow-dark	Light | Dark | Auto | Catppuccin Latte | Catppuccin Mocha | Ethereal | Everforest | Flexoki Light | Gruvbox | Hackerman | Jade Horse | Kanagawa | Lumon | Lupine | Matte Black | Miasma | Nord | Retro 82 | Ristretto | Rose Pine | Solitude | Tokyo Night | Vantablack | White | Choose… | Make Theme | Open Studio
 settings-appearance-narrow-light	Light | Dark | Auto | Catppuccin Latte | Catppuccin Mocha | Ethereal | Everforest | Flexoki Light | Gruvbox | Hackerman | Jade Horse | Kanagawa | Lumon | Lupine | Matte Black | Miasma | Nord | Retro 82 | Ristretto | Rose Pine | Solitude | Tokyo Night | Vantablack | White | Choose… | Make Theme | Open Studio
 settings-appearance-wide-dark	Light | Dark | Auto | Catppuccin Latte | Catppuccin Mocha | Ethereal | Everforest | Flexoki Light | Gruvbox | Hackerman | Jade Horse | Kanagawa | Lumon | Lupine | Matte Black | Miasma | Nord | Retro 82 | Ristretto | Rose Pine | Solitude | Tokyo Night | Vantablack | White | Choose… | Make Theme | Open Studio
@@ -418,6 +518,10 @@ settings-datetime-narrow-dark	Lisbon (Europe)
 settings-datetime-narrow-light	Lisbon (Europe)
 settings-datetime-wide-dark	Lisbon (Europe)
 settings-datetime-wide-light	Lisbon (Europe)
+settings-defaultapps-narrow-dark	No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this
+settings-defaultapps-narrow-light	No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this
+settings-defaultapps-wide-dark	No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this
+settings-defaultapps-wide-light	No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this | No app for this
 settings-desktopdock-narrow-dark	Bottom
 settings-desktopdock-narrow-light	Bottom
 settings-desktopdock-wide-dark	Bottom
@@ -430,34 +534,44 @@ settings-displays-two-wide-dark	2560 × 1600 | 60 Hz | 200% | 3840 × 2160 | 60 
 settings-displays-two-wide-light	2560 × 1600 | 60 Hz | 200% | 3840 × 2160 | 60 Hz | 150% | Automatic
 settings-displays-wide-dark	2560 × 1600 | 60 Hz | 200%
 settings-displays-wide-light	2560 × 1600 | 60 Hz | 200%
+settings-dnsovertls-narrow-dark	Off | When available | Always | Apply
+settings-dnsovertls-narrow-light	Off | When available | Always | Apply
+settings-dnsovertls-wide-dark	Off | When available | Always | Apply
+settings-dnsovertls-wide-light	Off | When available | Always | Apply
 settings-effectslooks-narrow-dark	WolOS Soft glass and gentle motion. | Compact Tight gaps, room for more windows. | Focus Other windows step back. | Glass Deep blur, see-through windows. | Light Easiest on the battery. | Minimal Flat and quiet, quick motion. | Neon Gradient borders, bouncy motion. | Paper Sharp corners, soft shadows. | Import… | Export… | Restore Defaults | Zoom | Pop | Slide | Slide | Vertical | Fade
 settings-effectslooks-narrow-light	WolOS Soft glass and gentle motion. | Compact Tight gaps, room for more windows. | Focus Other windows step back. | Glass Deep blur, see-through windows. | Light Easiest on the battery. | Minimal Flat and quiet, quick motion. | Neon Gradient borders, bouncy motion. | Paper Sharp corners, soft shadows. | Import… | Export… | Restore Defaults | Zoom | Pop | Slide | Slide | Vertical | Fade
 settings-effectslooks-wide-dark	WolOS Soft glass and gentle motion. | Compact Tight gaps, room for more windows. | Focus Other windows step back. | Glass Deep blur, see-through windows. | Light Easiest on the battery. | Minimal Flat and quiet, quick motion. | Neon Gradient borders, bouncy motion. | Paper Sharp corners, soft shadows. | Import… | Export… | Restore Defaults | Zoom | Pop | Slide | Slide | Vertical | Fade
 settings-effectslooks-wide-light	WolOS Soft glass and gentle motion. | Compact Tight gaps, room for more windows. | Focus Other windows step back. | Glass Deep blur, see-through windows. | Light Easiest on the battery. | Minimal Flat and quiet, quick motion. | Neon Gradient borders, bouncy motion. | Paper Sharp corners, soft shadows. | Import… | Export… | Restore Defaults | Zoom | Pop | Slide | Slide | Vertical | Fade
-settings-general-narrow-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
-settings-general-narrow-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
-settings-general-shells-narrow-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
-settings-general-shells-narrow-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
-settings-general-shells-wide-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
-settings-general-shells-wide-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
-settings-general-wide-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
-settings-general-wide-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
+settings-general-narrow-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
+settings-general-narrow-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
+settings-general-shells-narrow-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
+settings-general-shells-narrow-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
+settings-general-shells-wide-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
+settings-general-shells-wide-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | pwsh
+settings-general-wide-dark	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
+settings-general-wide-light	About Name, kernel, processor and memory | Software Update Updates with a restore point first | Storage What uses your disk, and restore points | Login Items Apps that open when you log in | Default Apps Which app opens links, mail, pictures and music | Language & Region Language of menus and formats | Date & Time Time zone and network time | Sharing Computer name and remote login | zsh
 settings-hardware-narrow-dark	Fix | Fix
 settings-hardware-narrow-light	Fix | Fix
 settings-hardware-wide-dark	Fix | Fix
 settings-hardware-wide-light	Fix | Fix
+settings-ipsettings-narrow-dark	Automatic | Manual | Apply
+settings-ipsettings-narrow-light	Automatic | Manual | Apply
+settings-ipsettings-wide-dark	Automatic | Manual | Apply
+settings-ipsettings-wide-light	Automatic | Manual | Apply
+settings-keyboard-japanese-wide-dark	Keyboard Shortcuts Change or add shortcuts for WolOS | Add Input Source… | Install
+settings-keyboard-japanese-wide-light	Keyboard Shortcuts Change or add shortcuts for WolOS | Add Input Source… | Install
 settings-keyboard-narrow-dark	Keyboard Shortcuts Change or add shortcuts for WolOS | Add Input Source…
 settings-keyboard-narrow-light	Keyboard Shortcuts Change or add shortcuts for WolOS | Add Input Source…
 settings-keyboard-wide-dark	Keyboard Shortcuts Change or add shortcuts for WolOS | Add Input Source…
 settings-keyboard-wide-light	Keyboard Shortcuts Change or add shortcuts for WolOS | Add Input Source…
-settings-keyboardshortcuts-narrow-dark	⌘Space | ⌃↑ | ⌘↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
-settings-keyboardshortcuts-narrow-light	⌘Space | ⌃↑ | ⌘↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
-settings-keyboardshortcuts-wide-dark	⌘Space | ⌃↑ | ⌘↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
-settings-keyboardshortcuts-wide-light	⌘Space | ⌃↑ | ⌘↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
-settings-languageregion-narrow-dark	English (US) | Input Sources Keyboard layouts you type with
-settings-languageregion-narrow-light	English (US) | Input Sources Keyboard layouts you type with
-settings-languageregion-wide-dark	English (US) | Input Sources Keyboard layouts you type with
-settings-languageregion-wide-light	English (US) | Input Sources Keyboard layouts you type with
+settings-keyboardshortcuts-narrow-dark	⌘Space | ⌃↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘← | ⌘→ | ⌘↑ | ⌘↓ | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘P | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
+settings-keyboardshortcuts-narrow-light	⌘Space | ⌃↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘← | ⌘→ | ⌘↑ | ⌘↓ | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘P | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
+settings-keyboardshortcuts-wide-dark	⌘Space | ⌃↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘← | ⌘→ | ⌘↑ | ⌘↓ | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘P | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
+settings-keyboardshortcuts-wide-light	⌘Space | ⌃↑ | ⌃⌥← | ⌃⌥→ | ⌃⌥1 | ⌃⌥2 | ⌃⌥3 | ⌃⌥4 | ⌃⌥⇧← | ⌃⌥⇧→ | ⌃⌥⇧1 | ⌃⌥⇧2 | ⌃⌥⇧3 | ⌃⌥⇧4 | ⌘← | ⌘→ | ⌘↑ | ⌘↓ | ⌘⇥ | ⇧⌘⇥ | ⌘Q | ⌘H | ⌥⌘H | ⌘M | ⌃⌘F | ⌘Drag | ⌘Right-drag | ⌃⌥⌘← | ⌃⌥⌘→ | ⌥⌘← | ⌥⌘→ | ⌥⌘↑ | ⌥⌘↓ | ⇧⌘← | ⇧⌘→ | ⇧⌘↑ | ⇧⌘↓ | ⌃⌘← | ⌃⌘→ | ⌃⌘↑ | ⌃⌘↓ | ⌥⌘F | ⌘↩ | ⌘, | ⌘C | ⌘V | ⌘X | ⌘Z | ⇧⌘Z | ⌘A | ⌘S | ⌘O | ⌘P | ⌘F | ⌘G | ⌘T | ⌘W | ⌘N | ⌘R | ⌘L | ⌘= | ⌘- | ⌘0 | ⌃⌘Space | ⇧⌘3 | ⇧⌘4 | ⇧⌘5 | Print | ⌃⇧⌘3 | ⌃⇧⌘4 | ⌃⌘C | ⌃⌘A | ⌥⌘8 | ⌥⌘= | ⌥⌘- | Volume Up | Volume Down | Mute | Mic Mute | Brightness Up | Brightness Down | Play | Next Track | Previous Track | ⌘⎋ | ⌥⌘⎋ | ⇧⌘/ | ⌃F2 | ⌃F3 | ⌃⌘Q | ⇧⌘V | ⌃⌘T | ⌃⌘P | ⌃⌘N | ⌃⌘D | ⌃⌘I | Off | Restore Defaults
+settings-languageregion-narrow-dark	English | Input Sources Keyboard layouts you type with
+settings-languageregion-narrow-light	English | Input Sources Keyboard layouts you type with
+settings-languageregion-wide-dark	English | Input Sources Keyboard layouts you type with
+settings-languageregion-wide-light	English | Input Sources Keyboard layouts you type with
 settings-lockscreen-narrow-dark	5 minutes
 settings-lockscreen-narrow-light	5 minutes
 settings-lockscreen-wide-dark	5 minutes
@@ -480,10 +594,12 @@ settings-modules-narrow-dark	Finish Setup | Install | Install
 settings-modules-narrow-light	Finish Setup | Install | Install
 settings-modules-wide-dark	Finish Setup | Install | Install
 settings-modules-wide-light	Finish Setup | Install | Install
-settings-network-narrow-dark	
-settings-network-narrow-light	
-settings-network-wide-dark	
-settings-network-wide-light	
+settings-network-all-wide-dark	Configure… | Connect | Import… | Proxy Off | DNS over TLS When available, dns.quad9.net
+settings-network-all-wide-light	Configure… | Connect | Import… | Proxy Off | DNS over TLS When available, dns.quad9.net
+settings-network-narrow-dark	Configure… | Connect | Import… | Proxy Off | DNS over TLS When available, dns.quad9.net
+settings-network-narrow-light	Configure… | Connect | Import… | Proxy Off | DNS over TLS When available, dns.quad9.net
+settings-network-wide-dark	Configure… | Connect | Import… | Proxy Off | DNS over TLS When available, dns.quad9.net
+settings-network-wide-light	Configure… | Connect | Import… | Proxy Off | DNS over TLS When available, dns.quad9.net
 settings-notifications-narrow-dark	Show
 settings-notifications-narrow-light	Show
 settings-notifications-wide-dark	Show
@@ -496,6 +612,10 @@ settings-privacysecurity-narrow-dark	Reset | Startup Security On, with this comp
 settings-privacysecurity-narrow-light	Reset | Startup Security On, with this computer's enrolled key | Assistants & Automation What helpers and scripts may change
 settings-privacysecurity-wide-dark	Reset | Startup Security On, with this computer's enrolled key | Assistants & Automation What helpers and scripts may change
 settings-privacysecurity-wide-light	Reset | Startup Security On, with this computer's enrolled key | Assistants & Automation What helpers and scripts may change
+settings-proxy-narrow-dark	Off | Automatic | Manual | Apply
+settings-proxy-narrow-light	Off | Automatic | Manual | Apply
+settings-proxy-wide-dark	Off | Automatic | Manual | Apply
+settings-proxy-wide-light	Off | Automatic | Manual | Apply
 settings-restore-narrow-dark	Undo | Undo | Undo | Undo | Start From This
 settings-restore-narrow-light	Undo | Undo | Undo | Undo | Start From This
 settings-restore-wide-dark	Undo | Undo | Undo | Undo | Start From This
@@ -540,10 +660,10 @@ settings-usersgroups-narrow-dark	Change Password… | Change Password… | Add U
 settings-usersgroups-narrow-light	Change Password… | Change Password… | Add User…
 settings-usersgroups-wide-dark	Change Password… | Change Password… | Add User…
 settings-usersgroups-wide-light	Change Password… | Change Password… | Add User…
-settings-wallpaper-narrow-dark	Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
-settings-wallpaper-narrow-light	Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
-settings-wallpaper-wide-dark	Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
-settings-wallpaper-wide-light	Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
+settings-wallpaper-narrow-dark	Moon Gate | Cachoeira Station | Brasília | Ponte Estaiada | Rio–Niterói Bridge | Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
+settings-wallpaper-narrow-light	Moon Gate | Cachoeira Station | Brasília | Ponte Estaiada | Rio–Niterói Bridge | Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
+settings-wallpaper-wide-dark	Moon Gate | Cachoeira Station | Brasília | Ponte Estaiada | Rio–Niterói Bridge | Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
+settings-wallpaper-wide-light	Moon Gate | Cachoeira Station | Brasília | Ponte Estaiada | Rio–Niterói Bridge | Dynamic | Wonderland Day | Wonderland Dusk | Wonderland Night | Add Photo…
 settings-wi-fi-narrow-dark	Wonderland Connected | Network Details Address, router and DNS | Disconnect | Rabbit Hole 5G | Tea Party | Look Again | Other Network… | Forget | Forget
 settings-wi-fi-narrow-light	Wonderland Connected | Network Details Address, router and DNS | Disconnect | Rabbit Hole 5G | Tea Party | Look Again | Other Network… | Forget | Forget
 settings-wi-fi-wide-dark	Wonderland Connected | Network Details Address, router and DNS | Disconnect | Rabbit Hole 5G | Tea Party | Look Again | Other Network… | Forget | Forget
@@ -562,14 +682,28 @@ setup-account-1280-dark	Back | Continue
 setup-account-1280-light	Back | Continue
 setup-account-caps-lock-1024-dark	Back | Continue
 setup-account-caps-lock-1024-light	Back | Continue
+setup-account-de-1280-dark	Zurück | Weiter
+setup-account-de-1280-light	Zurück | Weiter
 setup-account-filled-1024-dark	Back | Continue
 setup-account-filled-1024-light	Back | Continue
 setup-account-filled-1280-dark	Back | Continue
 setup-account-filled-1280-light	Back | Continue
+setup-account-fr-1280-dark	Retour | Continuer
+setup-account-fr-1280-light	Retour | Continuer
+setup-account-it-1280-dark	Indietro | Continua
+setup-account-it-1280-light	Indietro | Continua
+setup-account-ja-1280-dark	戻る | 続ける
+setup-account-ja-1280-light	戻る | 続ける
 setup-account-mismatch-1024-dark	Back | Continue
 setup-account-mismatch-1024-light	Back | Continue
+setup-account-pt-br-1280-dark	Voltar | Continuar
+setup-account-pt-br-1280-light	Voltar | Continuar
+setup-account-ru-1280-dark	Назад | Продолжить
+setup-account-ru-1280-light	Назад | Продолжить
 setup-account-tab-one-ring-1280-dark	Back | Continue
 setup-account-tab-one-ring-1280-light	Back | Continue
+setup-account-xx-1280-dark	[Ɓåçķ] | [Çöñţîñüé ~]
+setup-account-xx-1280-light	[Ɓåçķ] | [Çöñţîñüé ~]
 setup-appearance-1024-dark	Light | Dark | Auto | Wonderland | Ocean | Slate | Back | Continue
 setup-appearance-1024-light	Light | Dark | Auto | Wonderland | Ocean | Slate | Back | Continue
 setup-appearance-1280-dark	Light | Dark | Auto | Wonderland | Ocean | Slate | Back | Continue
@@ -582,10 +716,24 @@ setup-key-screen-1024-dark	Back | Continue
 setup-key-screen-1024-light	Back | Continue
 setup-key-screen-1280-dark	Back | Continue
 setup-key-screen-1280-light	Back | Continue
-setup-language-1024-dark	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
-setup-language-1024-light	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
-setup-language-1280-dark	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
-setup-language-1280-light	English United States | English United Kingdom | Português Brasil | Português Portugal | Español España | Français France | Deutsch Deutschland | U.S. | Back | Continue
+setup-language-1024-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+setup-language-1024-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+setup-language-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+setup-language-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Back | Continue
+setup-language-de-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | German | Zurück | Weiter
+setup-language-de-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | German | Zurück | Weiter
+setup-language-fr-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | French | Retour | Continuer
+setup-language-fr-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | French | Retour | Continuer
+setup-language-it-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | Italian | Indietro | Continua
+setup-language-it-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | Italian | Indietro | Continua
+setup-language-ja-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | Japanese | 戻る | 続ける
+setup-language-ja-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | Japanese | 戻る | 続ける
+setup-language-pt-br-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | Brazilian (ABNT2) | Voltar | Continuar
+setup-language-pt-br-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | Brazilian (ABNT2) | Voltar | Continuar
+setup-language-ru-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Назад | Продолжить
+setup-language-ru-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | Назад | Продолжить
+setup-language-xx-1280-dark	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | [Ɓåçķ] | [Çöñţîñüé ~]
+setup-language-xx-1280-light	English United States | Português Brasil | 日本語 日本 | Français France | Русский Россия | Italiano Italia | Deutsch Deutschland | U.S. | [Ɓåçķ] | [Çöñţîñüé ~]
 setup-welcome-1024-dark	Continue
 setup-welcome-1024-light	Continue
 setup-welcome-1280-dark	Continue
@@ -596,10 +744,26 @@ setup-wifi-1024-dark	Wonderland | Rabbit Hole 5G | Tea Party | Back | Not Now | 
 setup-wifi-1024-light	Wonderland | Rabbit Hole 5G | Tea Party | Back | Not Now | Continue
 setup-wifi-1280-dark	Wonderland | Rabbit Hole 5G | Tea Party | Back | Not Now | Continue
 setup-wifi-1280-light	Wonderland | Rabbit Hole 5G | Tea Party | Back | Not Now | Continue
+share-file-4-dark	Mail | Notes | Atlas | Photos | Cancel | Open With… | Save a Copy… | Copy
+share-file-4-light	Mail | Notes | Atlas | Photos | Cancel | Open With… | Save a Copy… | Copy
+share-file-6-dark	Mail | Notes | Atlas | Photos | Calendar | Music | Cancel | Open With… | Save a Copy… | Copy
+share-file-6-light	Mail | Notes | Atlas | Photos | Calendar | Music | Cancel | Open With… | Save a Copy… | Copy
+share-file-none-dark	Cancel | Open With… | Save a Copy… | Copy
+share-file-none-light	Cancel | Open With… | Save a Copy… | Copy
+share-open-2-dark	Mail | Notes | Cancel
+share-open-2-light	Mail | Notes | Cancel
+share-open-6-dark	Mail | Notes | Atlas | Photos | Calendar | Music | Cancel
+share-open-6-light	Mail | Notes | Atlas | Photos | Calendar | Music | Cancel
+share-text-2-dark	Mail | Notes | Cancel | Save… | Copy
+share-text-2-light	Mail | Notes | Cancel | Save… | Copy
 shortcut-sheet-dark	
 shortcut-sheet-light	
 shortcut-sheet-small-screen-dark	1 | 2
 shortcut-sheet-small-screen-light	1 | 2
+snap-layouts-dark	
+snap-layouts-light	
+snap-preview-dark	
+snap-preview-light	
 store-aur-audit-narrow-dark	
 store-aur-audit-narrow-light	
 store-aur-audit-wide-dark	
@@ -636,6 +800,10 @@ store-discover-narrow-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get |
 store-discover-narrow-light	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-discover-wide-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-discover-wide-light	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
+store-install-failed-narrow-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
+store-install-failed-narrow-light	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
+store-install-failed-wide-dark	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
+store-install-failed-wide-light	Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get | Get
 store-kits-added-narrow-dark	Added
 store-kits-added-narrow-light	Added
 store-kits-added-wide-dark	Added
@@ -648,6 +816,10 @@ store-package-damaged-narrow-dark
 store-package-damaged-narrow-light	
 store-package-damaged-wide-dark	
 store-package-damaged-wide-light	
+store-package-missing-narrow-dark	
+store-package-missing-narrow-light	
+store-package-missing-wide-dark	
+store-package-missing-wide-light	
 store-package-signed-narrow-dark	Install
 store-package-signed-narrow-light	Install
 store-package-signed-wide-dark	Install
