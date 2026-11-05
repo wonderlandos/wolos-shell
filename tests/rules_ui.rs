@@ -1891,9 +1891,12 @@ fn rules_table_is_sound() {
 #[test]
 fn rules_doc_matches_table() {
     let doc = read(docs().join("RULES-ui.md"));
+    // RU-001..099 only: RU-100..999 are the component rules, generated from the catalog and
+    // compared by `component_rules_match_the_catalog`.
     let in_doc: BTreeMap<String, String> = doc
         .lines()
         .filter_map(|l| l.strip_prefix("| RU-"))
+        .filter(|r| r.as_bytes()[0] == b'0')
         .map(|r| {
             let (id, text) = r.split_once(" | ").unwrap();
             (format!("RU-{id}"), text.trim_end_matches(" |").to_string())
@@ -1911,6 +1914,146 @@ fn rules_doc_matches_table() {
         RULES.len(),
         "docs/RULES-ui.md lists a rule the test lacks"
     );
+}
+
+// ---------------------------------------------------------------- component rules (RU-100..999)
+
+/// One rule of the component catalog (`design/components/catalog.json`, written by
+/// `design/tools/components.py` from the specs): (id, component name, kind, text, enforced by).
+type CatalogRule = (String, String, String, String, String);
+
+fn catalog_rules() -> Vec<CatalogRule> {
+    let cat: serde_json::Value =
+        serde_json::from_str(&read(root().join("design/components/catalog.json")))
+            .expect("catalog.json is JSON");
+    assert_eq!(cat["schema"], 1, "catalog schema");
+    let mut out = Vec::new();
+    for c in cat["components"].as_array().expect("components") {
+        let name = c["name"].as_str().expect("component name");
+        for r in c["rules"].as_array().expect("rules") {
+            let f = |k: &str| {
+                r[k].as_str()
+                    .unwrap_or_else(|| panic!("{name}: rule without {k}"))
+            };
+            out.push((
+                f("id").into(),
+                name.into(),
+                f("kind").into(),
+                f("text").into(),
+                f("enforced").into(),
+            ));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The generated block of docs/RULES-ui.md, between its two markers.
+fn component_block() -> String {
+    let doc = read(docs().join("RULES-ui.md"));
+    let a = doc
+        .find("<!-- component-rules:begin")
+        .expect("docs/RULES-ui.md has no component-rules:begin marker");
+    let b = doc
+        .find("<!-- component-rules:end -->")
+        .expect("docs/RULES-ui.md has no component-rules:end marker");
+    assert!(a < b, "component-rules markers are in the wrong order");
+    doc[a..b].to_string()
+}
+
+/// The generated table and the manual list say what the catalog says: the same rules, with the same
+/// component, kind, words and enforcement (`components.py --rules-md --write` makes it so).
+#[test]
+fn component_rules_match_the_catalog() {
+    let want = catalog_rules();
+    let block = component_block();
+    let mut got: Vec<CatalogRule> = Vec::new();
+    for l in block.lines().filter(|l| l.starts_with("| RU-")) {
+        let cells: Vec<&str> = l.trim_matches(['|', ' ']).split(" | ").collect();
+        assert_eq!(cells.len(), 5, "a component rule row has five cells: {l}");
+        let kind = match cells[2] {
+            "Do" => "do",
+            "Do not" => "dont",
+            k => panic!("{}: kind {k:?} is Do or Do not", cells[0]),
+        };
+        got.push((
+            cells[0].into(),
+            cells[1].into(),
+            kind.into(),
+            cells[3].into(),
+            cells[4].trim_matches('`').into(),
+        ));
+    }
+    got.sort();
+    assert_eq!(
+        got, want,
+        "docs/RULES-ui.md differs from the catalog: run python3 -I design/tools/components.py --rules-md --write"
+    );
+    let listed: BTreeSet<String> = block
+        .lines()
+        .filter_map(|l| l.strip_prefix("- RU-"))
+        .map(|l| format!("RU-{}", l.split(' ').next().unwrap()))
+        .collect();
+    let manual: BTreeSet<String> = want
+        .iter()
+        .filter(|r| r.4 == "manual")
+        .map(|r| r.0.clone())
+        .collect();
+    assert_eq!(
+        listed, manual,
+        "the list of rules a person checks is the rules enforced by `manual`"
+    );
+}
+
+/// Ids: RU-100..999 only, unique, none of the shell's own RU-001..099, and the shell keeps to its range.
+#[test]
+fn component_rule_ids_are_reserved_and_unique() {
+    let mut seen = BTreeSet::new();
+    for (id, comp, ..) in catalog_rules() {
+        let n: u32 = id
+            .strip_prefix("RU-")
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("{comp}: {id} is not RU-nnn"));
+        assert!(
+            (100..=999).contains(&n),
+            "{comp}: {id} is outside RU-100..999"
+        );
+        assert!(seen.insert(id.clone()), "{id} is in two specs");
+        assert!(
+            !RULES.iter().any(|r| r.0 == id),
+            "{id} is also a rules_ui rule"
+        );
+    }
+    for (id, _) in RULES {
+        assert!(
+            id[3..].parse::<u32>().unwrap() < 100,
+            "{id}: RU-100..999 are reserved for the component specs"
+        );
+    }
+}
+
+/// A rule says what holds it: `manual`, a ratchet id that docs/RULES.md defines, or a test file.
+#[test]
+fn component_rules_say_what_enforces_them() {
+    let ratchets = read(docs().join("RULES.md"));
+    let mut tests = BTreeSet::new();
+    for c in std::fs::read_dir(root().join("crates")).unwrap().flatten() {
+        for f in files(&c.path().join("tests"), "rs") {
+            tests.insert(f.file_stem().unwrap().to_string_lossy().into_owned());
+        }
+    }
+    let mut bad = Vec::new();
+    for (id, comp, _, _, by) in catalog_rules() {
+        let ok = by == "manual"
+            || (by.starts_with("RH-") && ratchets.contains(&format!("| {by} |")))
+            || tests.contains(&by);
+        if !ok {
+            bad.push(format!(
+                "{id} ({comp}): {by:?} is not manual, a ratchet id in docs/RULES.md or a test file"
+            ));
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
 #[test]
