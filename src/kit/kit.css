@@ -81,6 +81,8 @@ button.menubar-item:focus-visible, .menubar-strip menubutton > button:focus-visi
 popover.menu > contents, box.menu { background: var(--glass); border-radius: var(--glass-radius-s); padding: 4px; box-shadow: var(--glass-shadow); border: 1px solid var(--line); }
 button.menu-item { background: none; border: none; box-shadow: none; border-radius: 8px; padding: 4px 12px; min-height: 0; }
 button.menu-item label { color: var(--text); }
+.density-compact button.menu-item { padding-top: 2px; padding-bottom: 2px; }
+.density-comfortable button.menu-item { padding-top: 6px; padding-bottom: 6px; }
 button.menu-item label.menu-key { color: var(--dim); }
 button.menu-item:hover { background: var(--accent); }
 button.menu-item:hover label { color: var(--accent-text); }
@@ -175,6 +177,7 @@ button.btn-default { background: var(--control); color: var(--text); }
 button.btn-primary { background: var(--accent); color: var(--accent-text); box-shadow: var(--elev-1); }
 button.btn-destructive { background: var(--danger); color: var(--accent-text); }
 button.btn-plain { background: none; color: var(--accent-ink); }
+button.btn-outlined { background: none; color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--line); }
 button.btn label { font-weight: 500; }
 button.icon-button { background: none; border: none; box-shadow: none; border-radius: 8px; padding: 4px; min-width: 0; min-height: 0; color: var(--text); }
 button.icon-button:hover { background: var(--control); }
@@ -258,7 +261,8 @@ button.hit.selected label { color: var(--accent-text); }
 /* 344 px outer width: 318 + 2 x 12 padding + 2 x 1 border. */
 .notification { min-width: 318px; padding: 12px; margin: 0; border-radius: 16px; }
 .notification.critical { border-color: var(--danger); }
-.osd-pill { border-radius: 999px; padding: 8px 16px; min-width: 216px; margin-bottom: 112px; }
+/* The same 8 px inset on all four sides (HIG section 6 insets; DS-COMPONENTS osd spec found 16 x 8). */
+.osd-pill { border-radius: 999px; padding: 8px; min-width: 216px; margin-bottom: 112px; }
 progressbar trough { min-height: 4px; border-radius: 2px; background: var(--control); }
 progressbar progress { background: var(--text); border-radius: 2px; min-height: 4px; }
 button.session-item { background: none; border: none; box-shadow: none; padding: 8px 12px; border-radius: 12px; }
@@ -381,6 +385,8 @@ label.assistant-caption { color: var(--dim); font-size: 12px; }
 label.assistant-status { color: var(--dim); font-size: 12px; }
 label.assistant-status.problem,
 label.assistant-caption.problem { color: var(--danger); }
+/* The line under a form row that says what is wrong (assistant::problem_line). */
+label.assistant-problem { color: var(--danger); }
 scrolledwindow.assistant-list { background: var(--card); border: 1px solid var(--line); border-radius: var(--glass-radius-s); }
 /* Theme picker (ui/theme_picker.rs): the card gallery scrolls inside its glass panel. */
 scrolledwindow.theme-gallery { background: none; }
@@ -450,7 +456,7 @@ button.snap-cell:active { background: var(--accent); }
 button.overview-desktop-button, button.overview-window-button { background: none; border: none; box-shadow: none; padding: 0; min-width: 0; min-height: 0; }
 .overview-caption, .overview-title { color: white; font-size: 12px; font-weight: 600; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
 .overview-title, .overview-caption { background: alpha(black, 0.35); border-radius: 999px; padding: 2px 10px; }
-.overview-window { border-radius: 12px; background: var(--card); box-shadow: var(--elev-3); }
+.overview-window { border-radius: 12px; background: var(--card); box-shadow: var(--elev-3), inset 0 0 0 1px var(--glass-hairline); }
 button.overview-window-button:hover .overview-window { outline: 3px solid var(--accent); outline-offset: 0; }
 
 /* ---- Screenshot toolbar ---- */
@@ -462,7 +468,7 @@ button.capture-mode:checked { background: alpha(var(--accent), 0.18); }
 button.capture-mode { min-width: 40px; }
 button.capture-mode:checked image { color: var(--accent-ink); }
 button.capture-go { margin-left: 6px; min-height: 28px; padding: 0 14px; }
-.capture-thumb { border-radius: 12px; border: 4px solid white; margin: 0 24px 24px 0; box-shadow: var(--elev-3); }
+.capture-thumb { border-radius: 12px; border: 4px solid white; margin: 0 24px 24px 0; box-shadow: var(--elev-3), inset 0 0 0 1px var(--glass-hairline); }
 .menu-heading { font-size: 12px; font-weight: 600; color: var(--dim); padding: 4px 8px 2px 8px; }
 
 /* ---- Notification banners ---- */
@@ -624,3 +630,178 @@ listview.process-list, listview.process-list > row { background: none; }
 listview.process-list > row:selected { background: alpha(var(--accent), 0.18); border-radius: 8px; }
 .process-row { min-height: 28px; padding: 0 12px; }
 button.process-twist { min-width: 16px; min-height: 16px; padding: 0; }
+/* ---- Choice controls (kit/choice.rs; design/components/{checkbox,radio,chip,discrete-slider,range-slider}.toml) ----
+   Drawn heights are the spec's control heights: standard 24, compact 20, comfortable 32 (min-height is the content box). */
+checkbutton.checkbox, checkbutton.radio { padding: 2px 0; min-height: 20px; color: var(--text); }
+checkbutton.checkbox check, checkbutton.radio radio { min-width: 14px; min-height: 14px; margin: 0 8px 0 0; padding: 0; background: var(--card); background-image: none; border: 1px solid alpha(var(--text), 0.36); box-shadow: none; color: var(--accent-text); }
+checkbutton.checkbox check { border-radius: 4px; }
+checkbutton.radio radio { border-radius: 999px; }
+checkbutton.checkbox check:checked, checkbutton.checkbox check:indeterminate, checkbutton.radio radio:checked { background: var(--accent); border-color: var(--accent); }
+checkbutton.checkbox:disabled, checkbutton.radio:disabled { opacity: 0.45; }
+.radio-group { padding: 0; }
+.density-compact checkbutton.checkbox, .density-compact checkbutton.radio { padding: 0; min-height: 20px; }
+.density-comfortable checkbutton.checkbox, .density-comfortable checkbutton.radio { padding: 4px 0; min-height: 24px; }
+button.chip { min-height: 24px; padding: 0 8px; border-radius: 8px; border: none; box-shadow: none; background: var(--control); color: var(--text); }
+button.chip label { font-weight: 500; }
+button.chip-assist image { color: var(--accent-ink); }
+button.chip-suggestion { background: none; box-shadow: inset 0 0 0 1px var(--line); }
+button.chip-filter:checked { background: alpha(var(--accent), 0.18); }
+button.chip-filter:checked image { color: var(--accent-ink); }
+button.chip:hover { background-image: image(alpha(currentColor, 0.08)); }
+button.chip:active { background-image: image(alpha(black, 0.16)); }
+button.chip:disabled { opacity: 0.45; }
+.chip-input { min-height: 24px; padding: 0 2px 0 8px; border-radius: 8px; background: var(--control); }
+.chip-input label { font-weight: 500; }
+button.icon-button.chip-remove { padding: 2px; border-radius: 999px; }
+.chip-set { padding: 0; }
+.density-compact button.chip, .density-compact .chip-input { min-height: 20px; }
+.density-comfortable button.chip, .density-comfortable .chip-input { min-height: 32px; padding-left: 12px; padding-right: 12px; }
+scale.slider.discrete { padding: 0; }
+scale.slider.discrete marks indicator { min-width: 1px; min-height: 4px; color: var(--dim); background: var(--dim); }
+.range-slider { padding: 0; }
+.range-track { color: var(--accent); }
+scale.slider.range-knob highlight { background: none; }
+scale.slider.range-knob trough { background: none; }
+scale.slider.range-low { padding: 0; }
+/* ---- Navigation (kit/navigation.rs; tabs, navigation bar and rail, breadcrumb, disclosure, bottom app bar) ---- */
+.tabs { padding: 0; }
+.tab-list { background: linear-gradient(var(--line), var(--line)) center bottom / 100% 1px no-repeat; }
+.tab-list-scrollable { padding: 0 4px; }
+scrolledwindow.tab-scroller { background: none; }
+.tab-panels { padding-top: 12px; }
+button.tab { background: none; border: none; border-radius: 0; box-shadow: none; min-height: 40px; padding: 0 12px; color: var(--dim); }
+button.tab label { font-weight: 500; }
+button.tab:checked { color: var(--accent-ink); box-shadow: inset 0 -2px var(--accent); }
+.tabs-secondary button.tab { min-height: 32px; }
+.tabs-secondary button.tab:checked { color: var(--text); box-shadow: inset 0 -2px var(--text); }
+button.tab:hover { background: alpha(var(--text), 0.04); }
+button.tab:active { background: alpha(var(--text), 0.08); }
+button.tab:disabled { opacity: 0.45; }
+button.tab:focus:focus-visible { outline-offset: -2px; }
+.density-compact button.tab { min-height: 32px; padding: 0 8px; }
+.density-compact .tabs-secondary button.tab { min-height: 24px; }
+.density-comfortable button.tab { min-height: 48px; padding: 0 16px; }
+.density-comfortable .tabs-secondary button.tab { min-height: 40px; }
+.navigation-bar { min-height: 52px; padding: 4px 0; background: linear-gradient(var(--line), var(--line)) center top / 100% 1px no-repeat, var(--glass); }
+.navigation-rail { min-width: 84px; padding: 12px 0; background: linear-gradient(var(--line), var(--line)) right center / 1px 100% no-repeat, var(--sidebar); }
+button.destination { background: none; border: none; box-shadow: none; padding: 4px 0; border-radius: 8px; min-height: 0; color: var(--text); }
+button.destination image.destination-icon { padding: 4px 16px; border-radius: 999px; color: var(--text); }
+button.destination:checked image.destination-icon { background: alpha(var(--accent), 0.18); color: var(--accent-ink); }
+label.destination-label { font-size: 11px; line-height: 16px; font-weight: 500; }
+button.destination:checked label.destination-label { font-weight: 600; }
+button.destination:hover image.destination-icon { background-image: image(alpha(var(--text), 0.06)); }
+button.destination:active image.destination-icon { background-image: image(alpha(var(--text), 0.12)); }
+button.destination:hover { background: none; }
+button.destination:active { background: none; }
+button.bar-destination { margin: 0 4px; }
+button.rail-destination { margin: 0 12px; }
+.breadcrumb { min-height: 24px; }
+button.crumb { background: none; border: none; box-shadow: none; min-height: 24px; padding: 0 4px; border-radius: 8px; color: var(--accent-ink); }
+button.crumb:hover { background: var(--control); }
+button.crumb:active { background-image: image(alpha(black, 0.16)); }
+image.crumb-separator { color: var(--dim); }
+label.crumb-current { font-weight: 500; padding: 0 4px; }
+expander-widget.disclosure > box > title { min-height: 40px; padding: 0 12px; border-radius: 8px; }
+expander-widget.disclosure > box > title:hover { background: alpha(var(--text), 0.04); }
+expander-widget.disclosure > box > title > expander { color: var(--dim); margin-right: 8px; }
+expander-widget.disclosure > box > title > label { font-weight: 500; }
+.density-compact expander-widget.disclosure > box > title { min-height: 32px; }
+.density-comfortable expander-widget.disclosure > box > title { min-height: 48px; }
+.bottom-app-bar { min-height: 40px; padding: 0 16px; background: linear-gradient(var(--line), var(--line)) center top / calc(100% - 24px) 1px no-repeat, var(--glass); }
+.density-compact .bottom-app-bar { min-height: 32px; }
+.density-comfortable .bottom-app-bar { min-height: 48px; }
+/* ---- Sheets and overlays (kit/sheets.rs; question sheet, bottom and side sheets, search view, rich tooltip) ---- */
+.question-buttons { margin-top: 8px; }
+.bottom-sheet { background: var(--card); border-radius: 24px 24px 0 0; padding: 8px 12px 12px 12px; border: 1px solid var(--line); border-bottom: none; box-shadow: var(--elev-2); }
+.sheet-handle { min-width: 40px; min-height: 4px; border-radius: 999px; background: alpha(var(--text), 0.24); }
+.side-sheet { background: linear-gradient(var(--line), var(--line)) left center / 1px 100% no-repeat, var(--card); padding: 12px; }
+.side-sheet-head { min-height: 28px; }
+.search-view { padding: 12px; }
+.search-results { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); padding: 4px; }
+label.search-none { padding: 8px 4px; }
+.rich-tooltip { background: var(--glass); border-radius: var(--glass-radius-s); padding: 12px; border: 1px solid var(--glass-hairline); box-shadow: var(--elev-2), inset 1px 1px 0 var(--glass-rim); }
+popover.rich-tooltip-popover > contents { padding: 0; background: none; border: none; box-shadow: none; }
+/* ---- Collections (kit/collection.rs; cards, list items, dividers, section headers, carousel, skeleton, table, tree, split view, FAB) ---- */
+.surface-card { border-radius: var(--glass-radius-s); padding: var(--inset); }
+.card-elevated { background: var(--card); box-shadow: var(--elev-1); }
+.card-filled { background: var(--control); }
+.card-outlined { background: var(--card); border: 1px solid var(--line); }
+.density-compact .surface-card { padding: 8px; }
+.density-comfortable .surface-card { padding: 16px; }
+.list-row.list-item-3 { padding-top: 8px; padding-bottom: 8px; }
+separator.divider { background: var(--line); min-height: 1px; margin: 0; }
+separator.divider-inset { margin: 0 12px; }
+.section-header { min-height: 28px; }
+.carousel { padding: 0; }
+.carousel-strip { padding: 4px 0; }
+button.icon-button.carousel-step { background: var(--card); border-radius: 999px; box-shadow: var(--elev-1); }
+.skeleton { padding: 0; }
+.skeleton-line { min-height: 12px; border-radius: 4px; background: alpha(var(--text), 0.10); }
+.skeleton-short { min-width: 120px; }
+.skeleton-avatar { min-width: 32px; min-height: 32px; border-radius: 999px; background: alpha(var(--text), 0.10); }
+columnview.table { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); }
+columnview.table > header > button { background: none; border: none; box-shadow: none; min-height: 28px; padding: 0 12px; color: var(--dim); font-size: 11px; font-weight: 600; }
+columnview.table > listview > row { min-height: 32px; }
+columnview.table > listview > row > cell { padding: 0 12px; }
+columnview.table > listview > row:selected { background: alpha(var(--accent), 0.18); color: var(--text); }
+label.tabular { font-feature-settings: "tnum"; }
+.density-compact columnview.table > listview > row { min-height: 24px; }
+.density-comfortable columnview.table > listview > row { min-height: 40px; }
+listview.tree { background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); padding: 4px; }
+listview.tree > row { min-height: 28px; padding: 0 8px; border-radius: 8px; }
+listview.tree > row:selected { background: alpha(var(--accent), 0.18); color: var(--text); }
+listview.tree treeexpander expander { color: var(--dim); }
+.density-compact listview.tree > row { min-height: 24px; }
+.density-comfortable listview.tree > row { min-height: 32px; }
+paned.split-view > separator { background: linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat; min-width: 1px; }
+button.fab { min-width: 40px; min-height: 40px; padding: 0; border-radius: 12px; border: none; background: var(--accent); color: var(--accent-text); box-shadow: var(--elev-2); }
+button.fab label { font-weight: 600; color: var(--accent-text); }
+button.fab image { color: var(--accent-text); }
+button.fab.fab-extended { padding: 0 16px; border-radius: 999px; }
+button.fab:hover { background-image: image(alpha(white, 0.10)); }
+button.fab:active { background-image: image(alpha(black, 0.16)); }
+/* ---- Date and time pickers (kit/calendar.rs) ---- */
+.date-picker { padding: 12px; background: var(--card); border-radius: var(--glass-radius-s); border: 1px solid var(--line); }
+.date-picker-head { min-height: 28px; }
+.date-grid { margin-top: 4px; }
+button.day { min-width: 28px; min-height: 28px; padding: 0; border-radius: 999px; border: none; box-shadow: none; background: none; color: var(--text); font-feature-settings: "tnum"; }
+button.day:hover { background: var(--control); }
+button.day:active { background-image: image(alpha(black, 0.16)); }
+button.day.today { box-shadow: inset 0 0 0 1px var(--accent); color: var(--accent-ink); }
+button.day:checked { background: var(--accent); color: var(--accent-text); }
+spinbutton.time-part { background: var(--control); border: 1px solid var(--line); border-radius: 8px; min-height: 22px; padding: 0 0 0 8px; box-shadow: none; font-feature-settings: "tnum"; }
+spinbutton.time-part > text { min-height: 22px; padding: 0; margin: 0; }
+spinbutton.time-part > button { min-width: 20px; min-height: 20px; padding: 0; margin: 1px; background: none; border: none; box-shadow: none; border-radius: 6px; }
+label.time-colon { font-weight: 600; }
+.time-picker { padding: 0; }
+/* ---- Text area (kit/text.rs) ---- */
+scrolledwindow.text-area-field { background: var(--control); border: 1px solid var(--line); border-radius: 8px; padding: 4px 0; }
+scrolledwindow.text-area-field:disabled { opacity: 0.45; }
+textview.text-area, textview.text-area > text { background: none; color: var(--text); }
+label.text-area-placeholder { margin: 4px 8px; color: var(--dim); }
+/* ---- Groups of actions and the drawer (kit/groups.rs; split button, button group, floating toolbar, navigation drawer, date input) ---- */
+.split-button button.split-main { border-radius: 8px 0 0 8px; }
+.split-button menubutton.split-arrow > button { background: var(--accent); color: var(--accent-text); border: none; box-shadow: var(--elev-1); border-radius: 0 8px 8px 0; min-height: 24px; min-width: 24px; padding: 0; }
+.split-button menubutton.split-arrow > button image { color: var(--accent-text); }
+.split-button menubutton.split-arrow > button:disabled { opacity: 0.45; }
+.button-group { background: var(--line); border-radius: 8px; }
+.button-group button.group-button { border-radius: 0; background: var(--control); }
+.button-group button.group-button:first-child { border-radius: 8px 0 0 8px; }
+.button-group button.group-button:last-child { border-radius: 0 8px 8px 0; }
+.floating-toolbar { background: var(--glass); border-radius: 999px; padding: 4px; box-shadow: var(--elev-3), inset 0 0 0 1px var(--glass-hairline); }
+.floating-toolbar button.icon-button { border-radius: 999px; padding: 4px; }
+.floating-toolbar button.floating-primary { background: var(--accent); color: var(--accent-text); }
+.floating-toolbar button.floating-primary image { color: var(--accent-text); }
+.navigation-drawer { min-width: 224px; padding: 12px 8px; background: var(--card); border-radius: 0 var(--glass-radius-s) var(--glass-radius-s) 0; box-shadow: var(--elev-3), inset 0 0 0 1px var(--line); }
+label.drawer-title { padding: 0 8px 8px 8px; }
+button.drawer-item { background: none; border: none; box-shadow: none; min-height: 32px; padding: 0 12px; border-radius: 999px; color: var(--text); }
+button.drawer-item:checked { background: alpha(var(--accent), 0.18); color: var(--accent-ink); }
+button.drawer-item:checked image { color: var(--accent-ink); }
+button.drawer-item:checked label { font-weight: 600; }
+button.drawer-item:hover { background-image: image(alpha(var(--text), 0.06)); }
+button.drawer-item:active { background-image: image(alpha(var(--text), 0.12)); }
+.density-compact button.drawer-item { min-height: 28px; }
+.density-comfortable button.drawer-item { min-height: 40px; }
+entry.text-field.invalid { box-shadow: inset 0 0 0 1px var(--danger); }
+.date-picker .day.in-range { background: alpha(var(--accent), 0.18); border-radius: 0; }
+.date-input { padding: 0; }

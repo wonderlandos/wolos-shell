@@ -1,0 +1,4 @@
+Box.app-window.page.vertical [0,0 480x48]
+  CheckButton.checkbox.text-button [24,4 138x20]
+    BuiltinIcon [24,6 16x16]
+    Label "Show hidden files" [52,4 110x20]

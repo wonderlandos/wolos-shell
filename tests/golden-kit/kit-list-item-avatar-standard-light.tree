@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x82]
+  Box.vertical [24,4 432x54]
+    Box.card-list.vertical [24,4 432x54]
+      Box.horizontal.list-row [25,5 430x52]
+        Label.avatar.avatar-s.avatar-tone-green "AL" [37,15 32x32]
+        Box.vertical [81,13 362x36]
+          Label "Ana Lima" [81,13 362x20]
+          Label.org".secondary "ana@example [81,33 362x16]

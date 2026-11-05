@@ -1,0 +1,5 @@
+Box.app-window.page.vertical [0,0 480x68]
+  Button.fab.fab-extended [338,4 118x40]
+    Box.horizontal [354,4 86x40]
+      Image [354,16 16x16]
+      Label "New Note" [378,14 62x20]

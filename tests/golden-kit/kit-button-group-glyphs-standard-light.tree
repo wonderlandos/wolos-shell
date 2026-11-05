@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x52]
+  Box.button-group.horizontal [24,4 74x24]
+    Button.group-button.icon-button.image-button [24,4 24x24]
+      Image [28,8 16x16]
+    Button.group-button.icon-button.image-button [49,4 24x24]
+      Image [53,8 16x16]
+    Button.group-button.icon-button.image-button [74,4 24x24]
+      Image [78,8 16x16]

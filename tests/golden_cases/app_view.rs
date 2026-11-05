@@ -2,7 +2,7 @@
 //! libwol app windows (ADR 0020): a view tree with every Kit part, drawn by the Kit host.
 use super::Case;
 use gtk::prelude::*;
-use shared::view::{Node, Role};
+use shared::view::{CardStyle, Chip, ChipKind, Choice, Node, Role};
 use shared::widgets::Size;
 use shell::kit::{data as d, widgets as w};
 use shell::ui::app_view::{Sink, View, app_frame};
@@ -116,6 +116,77 @@ pub fn sample() -> Node {
     }
 }
 
+/// The parts appended for the design system (DS-COMPONENTS): checkbox, radio group, chips, tabs,
+/// progress, divider, card and disclosure, as a libwol app would send them.
+pub fn design_parts() -> Node {
+    let ch = |k: &str, l: &str| Choice {
+        key: k.into(),
+        label: l.into(),
+    };
+    Node::Stack {
+        spacing: 12,
+        children: vec![
+            Node::Tabs {
+                id: 1,
+                tabs: vec![ch("general", "General"), ch("privacy", "Privacy")],
+                selected: "general".into(),
+                children: vec![
+                    Node::Stack {
+                        spacing: 8,
+                        children: vec![
+                            Node::Checkbox {
+                                id: 2,
+                                label: "Show hidden files".into(),
+                                checked: true,
+                                mixed: false,
+                            },
+                            Node::RadioGroup {
+                                id: 3,
+                                options: vec![ch("list", "As a list"), ch("grid", "As icons")],
+                                selected: "grid".into(),
+                            },
+                            Node::Chips {
+                                id: 4,
+                                kind: ChipKind::Filter,
+                                chips: vec![
+                                    Chip {
+                                        key: "photos".into(),
+                                        label: "Photos".into(),
+                                        on: true,
+                                    },
+                                    Chip {
+                                        key: "music".into(),
+                                        label: "Music".into(),
+                                        on: false,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    label("Nothing is shared.", Role::Body),
+                ],
+            },
+            Node::Divider,
+            Node::Card {
+                style: CardStyle::Outlined,
+                children: vec![
+                    label("Copying 3 files", Role::Title),
+                    Node::Progress {
+                        value: Some(0.4),
+                        label: "Copying".into(),
+                    },
+                ],
+            },
+            Node::Disclosure {
+                id: 5,
+                title: "Advanced Options".into(),
+                open: false,
+                children: vec![label("Hidden until opened.", Role::Body)],
+            },
+        ],
+    }
+}
+
 pub fn cases() -> Vec<Case> {
     let mut v: Vec<Case> = [Size::Small, Size::Medium]
         .into_iter()
@@ -144,6 +215,21 @@ pub fn cases() -> Vec<Case> {
             let view = View::new(&sample(), Sink::new(|_| {}));
             let aw = app_frame(&view);
             // The view lives as long as its widgets (the golden window).
+            let root = aw.root.clone();
+            unsafe { root.set_data("view", view) };
+            root.upcast()
+        }),
+    });
+    v.push(Case {
+        name: "app-window-design-parts".into(),
+        size: (420, 380),
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let tree = design_parts();
+            assert_eq!(tree.validate(), Ok(()), "the sample tree is a valid view");
+            let view = View::new(&tree, Sink::new(|_| {}));
+            let aw = app_frame(&view);
             let root = aw.root.clone();
             unsafe { root.set_data("view", view) };
             root.upcast()

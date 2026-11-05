@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x104]
+  Box.app-tile.horizontal [24,4 264x76]
+    Image [24,26 32x32]
+    Box.vertical [68,12 152x60]
+      Label.may-ellipsize "Text Editor".title [68,12 152x20]
+      Label.".may-ellipsize "Write notes and code.secondary [68,32 152x16]
+      Label.badge "Flathub" [68,52 56x20]
+    DrawingArea.progress-ring [248,30 24x24]

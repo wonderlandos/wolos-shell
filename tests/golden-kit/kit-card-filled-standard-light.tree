@@ -1,0 +1,5 @@
+Box.app-window.page.vertical [0,0 480x92]
+  Box.card-filled.surface-card.vertical [24,4 229x64]
+    Box.vertical [36,16 205x40]
+      Label.title "Atlas" [36,16 205x20]
+      Label.".secondary "A private browser that remembers less [36,40 205x16]

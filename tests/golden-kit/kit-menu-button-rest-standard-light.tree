@@ -1,0 +1,5 @@
+Box.app-window.page.vertical [0,0 480x62]
+  MenuButton.popup [24,4 36x34]
+    ToggleButton.flat.image-button.toggle [24,4 36x34]
+      Box.horizontal [34,9 16x24]
+        Image [34,9 16x24]

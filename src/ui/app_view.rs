@@ -5,8 +5,9 @@
 //! cursor while the app changes a label next to it); a different shape rebuilds that branch.
 use crate::kit::data as d;
 use crate::kit::widgets as w;
+use crate::kit::{choice, collection, navigation};
 use gtk::{gio, glib, prelude::*};
-use shared::view::{Menu, MenuEntry, Node, Role, Tool, Toolbar};
+use shared::view::{CardStyle, ChipKind, Menu, MenuEntry, Node, Role, Tool, Toolbar};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -19,6 +20,8 @@ pub enum Act {
     Slid(u32, f64),
     /// Menu or toolbar id, and the key chosen.
     Chose(u32, String),
+    /// A radio group, chip set or tabs, and the key picked.
+    Picked(u32, String),
 }
 
 /// Receives [`Act`]s; quiet while the view itself sets values.
@@ -192,6 +195,133 @@ fn draw(node: &Node, sink: &Rc<Sink>) -> Drawn {
             slider(*min, *max, *value, id.clone(), sink).upcast()
         }
         Node::Image { source, size } => image(source, *size).upcast(),
+        Node::Checkbox {
+            id: i,
+            label,
+            checked,
+            mixed,
+        } => {
+            id.set(*i);
+            let (s2, id2) = (sink.clone(), id.clone());
+            let c = choice::checkbox(label, *checked, move |on| {
+                s2.act(Act::Toggled(id2.get(), on))
+            });
+            choice::set_mixed(&c, *mixed);
+            c.upcast()
+        }
+        Node::RadioGroup {
+            id: i,
+            options,
+            selected,
+        } => {
+            id.set(*i);
+            let labels: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+            let keys: Vec<String> = options.iter().map(|o| o.key.clone()).collect();
+            let at = keys.iter().position(|k| k == selected).unwrap_or(0);
+            // Each option is named by its own label; the app's tree has no title to give the group.
+            let (s2, id2) = (sink.clone(), id.clone());
+            let g = choice::radio_group(None, &labels, at, move |i| {
+                if let Some(k) = keys.get(i) {
+                    s2.act(Act::Picked(id2.get(), k.clone()))
+                }
+            });
+            g.upcast()
+        }
+        Node::Chips { id: i, kind, chips } => {
+            id.set(*i);
+            let parts: Vec<gtk::Widget> = chips
+                .iter()
+                .map(|c| {
+                    let (s2, id2, k) = (sink.clone(), id.clone(), c.key.clone());
+                    let pick = move || s2.act(Act::Picked(id2.get(), k.clone()));
+                    match kind {
+                        ChipKind::Filter => {
+                            choice::filter_chip(&c.label, c.on, move |_| pick()).upcast()
+                        }
+                        ChipKind::Input => choice::input_chip(&c.label, &c.label, pick).upcast(),
+                        ChipKind::Assist => {
+                            choice::chip(choice::ChipKind::Assist, "", &c.label, pick).upcast()
+                        }
+                        ChipKind::Suggestion => {
+                            choice::chip(choice::ChipKind::Suggestion, "", &c.label, pick).upcast()
+                        }
+                    }
+                })
+                .collect();
+            choice::chip_set(&parts).upcast()
+        }
+        Node::Tabs {
+            id: i,
+            tabs,
+            selected,
+            children: c,
+        } => {
+            id.set(*i);
+            let mut pages = Vec::new();
+            for (t, n) in tabs.iter().zip(c) {
+                let dn = draw(n, sink);
+                pages.push((t.label.as_str(), dn.widget.clone()));
+                children.push(dn);
+            }
+            let keys: Vec<String> = tabs.iter().map(|t| t.key.clone()).collect();
+            let at = keys.iter().position(|k| k == selected).unwrap_or(0);
+            let (s2, id2) = (sink.clone(), id.clone());
+            let t =
+                navigation::Tabs::new(navigation::TabKind::Primary, pages, at, false, move |i| {
+                    if let Some(k) = keys.get(i) {
+                        s2.act(Act::Picked(id2.get(), k.clone()))
+                    }
+                });
+            t.root.upcast()
+        }
+        Node::Progress { value, label } => {
+            let p = w::progress();
+            match value {
+                Some(v) => p.set_fraction(*v),
+                None => p.pulse(),
+            }
+            if !label.is_empty() {
+                p.update_property(&[gtk::accessible::Property::Label(label)]);
+            }
+            p.set_valign(gtk::Align::Center);
+            p.upcast()
+        }
+        Node::Divider => collection::divider(false).upcast(),
+        Node::Card { style, children: c } => {
+            let body = w::vbox(w::S2);
+            for n in c {
+                let dn = draw(n, sink);
+                body.append(&dn.widget);
+                children.push(dn);
+            }
+            collection::card(
+                match style {
+                    CardStyle::Elevated => collection::CardStyle::Elevated,
+                    CardStyle::Filled => collection::CardStyle::Filled,
+                    CardStyle::Outlined => collection::CardStyle::Outlined,
+                },
+                &body,
+            )
+            .upcast()
+        }
+        Node::Disclosure {
+            id: i,
+            title,
+            open,
+            children: c,
+        } => {
+            id.set(*i);
+            let body = w::vbox(w::S2);
+            for n in c {
+                let dn = draw(n, sink);
+                body.append(&dn.widget);
+                children.push(dn);
+            }
+            let e = navigation::disclosure(title, *open, &body);
+            let (s2, id2) = (sink.clone(), id.clone());
+            e.connect_expanded_notify(move |e| s2.act(Act::Toggled(id2.get(), e.is_expanded())));
+            e.upcast()
+        }
     };
     Drawn {
         node: node.clone(),
@@ -233,6 +363,17 @@ fn same_shape(a: &Node, b: &Node) -> bool {
         (Button { .. }, Button { .. })
         | (Spacer, Spacer)
         | (TextField { .. }, TextField { .. }) => true,
+        (Divider, Divider) => true,
+        (
+            Checkbox { .. }
+            | RadioGroup { .. }
+            | Chips { .. }
+            | Tabs { .. }
+            | Progress { .. }
+            | Card { .. }
+            | Disclosure { .. },
+            _,
+        ) => a == b,
         _ => false,
     }
 }
@@ -318,6 +459,16 @@ fn patch(d: &mut Drawn, new: &Node, sink: &Rc<Sink>) -> Option<gtk::Widget> {
             }
         }
         Node::Spacer | Node::Image { .. } => {}
+        // The design-system parts (DS-COMPONENTS) are redrawn when they change: `same_shape`
+        // holds them equal only when they are equal.
+        Node::Checkbox { .. }
+        | Node::RadioGroup { .. }
+        | Node::Chips { .. }
+        | Node::Tabs { .. }
+        | Node::Progress { .. }
+        | Node::Divider
+        | Node::Card { .. }
+        | Node::Disclosure { .. } => {}
     }
     d.node = new.clone();
     None

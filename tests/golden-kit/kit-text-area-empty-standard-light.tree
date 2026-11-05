@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x150]
+  Box.vertical [24,4 432x122]
+    Label "Note" [24,4 432x20]
+    ScrolledWindow.text-area-field [24,32 432x94]
+      Viewport [25,37 430x84]
+        Overlay [25,37 430x84]
+          TextView.text-area.view [25,37 430x84]
+          Label.secondary.text-area-placeholder "A few words about this note".top [33,41 414x16]

@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x94]
+  Box.card-list.vertical [24,4 432x66]
+    Box.horizontal.list-row [25,5 430x64]
+      Box.horizontal.skeleton [37,11 406x52]
+        Box.vertical [37,11 406x52]
+          Box.horizontal.skeleton-line [37,11 406x12]
+          Box.horizontal.skeleton-line [37,31 406x12]
+          Box.horizontal.skeleton-line.skeleton-short [37,51 120x12]

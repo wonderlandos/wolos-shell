@@ -1,0 +1,7 @@
+Box.app-window.page.vertical [0,0 480x82]
+  Box.vertical [24,4 432x54]
+    Box.card-list.vertical [24,4 432x54]
+      Box.horizontal.list-row [25,5 430x52]
+        Image [37,23 16x16]
+        Box.vertical [65,21 378x20]
+          Label "Documents" [65,21 378x20]

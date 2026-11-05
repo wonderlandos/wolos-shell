@@ -1,0 +1,5 @@
+Box.app-window.page.vertical [0,0 480x52]
+  Box.horizontal [24,4 85x24]
+    Spinner [24,8 16x16]
+    Button.btn.btn-default.text-button [48,4 61x24]
+      Label "Install" [60,4 37x24]

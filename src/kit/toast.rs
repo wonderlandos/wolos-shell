@@ -10,7 +10,7 @@ use std::rc::Rc;
 /// How long a toast stays when nobody uses it.
 pub const TOAST_MS: u64 = 6000;
 
-type Action = Rc<RefCell<Option<Box<dyn Fn()>>>>;
+type Action = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
 
 pub struct Toast {
     pub revealer: gtk::Revealer,
@@ -28,7 +28,10 @@ impl Toast {
         let button = {
             let a = action.clone();
             w::button("", Kind::Plain, move || {
-                if let Some(f) = a.borrow().as_ref() {
+                // Not under the borrow: the action hides the toast, which clears this very slot
+                // (clicking Undo panicked "already borrowed" and aborted the shell).
+                let f = a.borrow().clone();
+                if let Some(f) = f {
                     f();
                 }
             })
@@ -60,7 +63,7 @@ impl Toast {
         self.button.set_label(action);
         self.button.set_visible(!action.is_empty());
         let me = Rc::downgrade(self);
-        *self.action.borrow_mut() = Some(Box::new(move || {
+        *self.action.borrow_mut() = Some(Rc::new(move || {
             if let Some(t) = me.upgrade() {
                 t.hide();
             }

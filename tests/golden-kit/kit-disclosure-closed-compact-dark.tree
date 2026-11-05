@@ -1,0 +1,6 @@
+Box.app-window.page.vertical [0,0 480x60]
+  Expander.disclosure [24,4 432x32]
+    Box.vertical [24,4 432x32]
+      Box.horizontal [24,4 432x32]
+        BuiltinIcon.horizontal [36,4 16x32]
+        Label "Advanced Options" [60,4 115x32]

@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x98]
+  Box.vertical [24,4 432x70]
+    Box.card-list.vertical [24,4 432x70]
+      Box.horizontal.list-item-3.list-row [25,5 430x68]
+        Image [37,23 32x32]
+        Box.vertical [81,13 362x52]
+          Label "Holiday in Porto" [81,13 362x20]
+          Label.may-ellipsize "48 photos and 3 videos from the trip in June, shared with the family album and backed up".secondary [81,33 362x32]

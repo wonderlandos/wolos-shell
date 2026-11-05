@@ -158,6 +158,8 @@ pub enum Kind {
     Primary,
     Destructive,
     Plain,
+    /// The second choice beside a primary button: no fill, a hairline, the accent ink.
+    Outlined,
 }
 
 pub fn button(text: &str, kind: Kind, clicked: impl Fn() + 'static) -> gtk::Button {
@@ -168,6 +170,7 @@ pub fn button(text: &str, kind: Kind, clicked: impl Fn() + 'static) -> gtk::Butt
         Kind::Primary => "btn-primary",
         Kind::Destructive => "btn-destructive",
         Kind::Plain => "btn-plain",
+        Kind::Outlined => "btn-outlined",
     });
     b.connect_clicked(move |_| clicked());
     b

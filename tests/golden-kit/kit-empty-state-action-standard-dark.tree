@@ -1,0 +1,7 @@
+Box.app-window.page.vertical [0,0 480x272]
+  Box.empty-state.vertical [98,4 283x244]
+    Image.dim-icon [138,44 203x64]
+    Label.large-title "Nothing here yet" [138,116 203x36]
+    Label.".secondary "Add a folder and its files show up here [138,160 203x16]
+    Button.btn.btn-primary.text-button [193,184 92x24]
+      Label "Add Folder" [205,184 68x24]

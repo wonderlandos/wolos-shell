@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x60]
+  Box.floating-toolbar.horizontal [196,4 88x32]
+    Button.icon-button.image-button [200,8 24x24]
+      Image [204,12 16x16]
+    Button.icon-button.image-button [228,8 24x24]
+      Image [232,12 16x16]
+    Button.floating-primary.icon-button.image-button [256,8 24x24]
+      Image [260,12 16x16]

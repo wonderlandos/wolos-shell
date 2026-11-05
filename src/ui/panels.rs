@@ -509,16 +509,8 @@ pub struct Osd {
 
 impl Osd {
     pub fn build(app: &gtk::Application) -> Rc<Osd> {
-        let g = w::glass_panel(w::S2);
-        g.add_css_class("osd-pill");
-        let row = w::hbox(w::S3);
-        let icon = w::icon("audio-volume-high-symbolic", w::ICON);
-        let bar = gtk::ProgressBar::new();
-        bar.set_hexpand(true);
-        bar.set_valign(gtk::Align::Center);
-        row.append(&icon);
-        row.append(&bar);
-        g.append(&row);
+        // The Kit's on-screen display pill (design/components/osd.toml).
+        let (g, icon, bar) = kit::sheets::osd_pill("audio-volume-high-symbolic");
         // Top layer (kit::surface::Spec::banners), shown over full screen too (a HUD). No
         // keyboard: an on-demand layer takes the keys from the app on map.
         let window = panel_on(

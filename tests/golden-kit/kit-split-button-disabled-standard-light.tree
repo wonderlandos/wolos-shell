@@ -1,0 +1,8 @@
+Box.app-window.page.vertical [0,0 480x52]
+  Box.horizontal.split-button [24,4 81x24]
+    Button.btn.btn-primary.split-main.text-button [24,4 55x24]
+      Label "Save" [36,4 31x24]
+    MenuButton.popup.split-arrow [81,4 24x24]
+      ToggleButton.flat.image-button.toggle [81,4 24x24]
+        Box.horizontal [85,4 16x24]
+          Image [85,4 16x24]

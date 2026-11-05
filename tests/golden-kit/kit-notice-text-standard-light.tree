@@ -1,0 +1,6 @@
+Box.app-window.page.vertical [0,0 480x86]
+  Box.vertical [24,4 432x58]
+    Box.card-list.vertical [24,4 432x58]
+      Box.horizontal.list-row.notice [25,5 430x56]
+        Image.warning-icon [37,25 16x16]
+        Label "Super+Space is used by Show Search." [61,23 382x20]
