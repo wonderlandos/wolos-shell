@@ -113,6 +113,17 @@ copy.trash_not_moved	That could not be moved to the Trash.		59
 copy.share_only_files	Only a file can be shared.	Shared or opened with an app: a file, never a folder.	43
 copy.clipboard_unchanged	The clipboard could not be changed.		57
 copy.copy_not_saved	That copy could not be saved.		49
+copy.privacy_media	Can show what it is playing and take the media keys, so you can pause or skip it from anywhere.	Settings > Privacy & Security: what each new switch allows (`ui/settings/privacy.rs`).	
+copy.privacy_recents	Can add files to your recent files.		
+copy.privacy_print	Can show the print dialog for a file. Nothing prints until you choose a printer.		
+copy.privacy_color_picker	Can let you pick a color from the screen. It gets that color only, never a picture of the screen.		
+copy.recent_refused	That file cannot be added to the recent files.	Hidden, outside the home folder and mounted drives, or not there: one sentence for all, so it does not say which (a recent file is never a way to ask what exists).	
+copy.recent_not_added	That could not be added to the recent files.		
+copy.color_none	Picking a color is not available on this computer.	No colour picker (hyprpicker) on this computer.	
+copy.print_refused	That file cannot be printed.	The same refusal for printing: hidden, outside the home folder and mounted drives, or not there.	
+copy.print_only_files	Only a file can be printed.	Printing is for a file, never a folder.	
+copy.print_kind	That kind of file cannot be printed.	The kind of file CUPS cannot print.	
+copy.print_failed	That could not be printed.	The print dialog could not be shown or the file could not be sent.	
 installer.secure_boot_title	Change One Startup Setting First	Sheet shown when this computer trusts only Windows at startup: honest, no jargon beyond the setting's own name. The image carries the signed first stage, so the one step left after the install is the firmware setting, then the key screen; never a second install (R2B-3).	46
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.		
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	Under the key-unread page's title: the install worked, the key is what is missing.	
