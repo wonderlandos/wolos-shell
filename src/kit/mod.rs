@@ -172,8 +172,9 @@ pub fn spawn_app(argv: &[String]) {
     let started = std::thread::Builder::new()
         .name("wol-launch".into())
         .spawn(move || {
-            let owned = budget_launch(owned, std::path::Path::new(&config_home()));
-            let env = user_scale_env();
+            let (owned, runtime_env) = budget_launch(owned, std::path::Path::new(&config_home()));
+            let mut env = user_scale_env();
+            env.extend(runtime_env);
             match command(&owned, &env).map(|mut c| c.spawn()) {
                 Some(Ok(mut c)) => {
                     let _ = c.wait();
@@ -190,20 +191,64 @@ pub fn spawn_app(argv: &[String]) {
 
 /// An app with a memory budget (`wol_core::memsaver::budget`, Discord) starts in its own scope,
 /// its own files read afresh, with the lean engine switches (`budget::launch_sh`), while Memory
-/// Saver is on and the app is not excluded; anything else starts as it is.
-fn budget_launch(argv: Vec<String>, config_home: &std::path::Path) -> Vec<String> {
+/// Saver is on and the app is not excluded; anything else starts as it is. While Memory Saver is
+/// on, an app whose engine is known (the budget's apps are Electron; `jsruntime::Class::of_exec`
+/// knows WebKitGTK and Bun by name) also gets its class's shipped runtime
+/// (`jsruntime::runtime_flags(class, Mode::Default)`): `Runtime::prefix` (`wolos-mm exec-merge
+/// --`, KSM for the whole tree) in front of everything, `systemd-run` included, then absolute
+/// paths only (`exec-merge` runs no bare name); its switches after the app's own; its environment
+/// in the second value. No `wolos-mm` installed: no prefix.
+fn budget_launch(
+    argv: Vec<String>,
+    config_home: &std::path::Path,
+) -> (Vec<String>, Vec<(String, String)>) {
+    let mm = std::path::Path::new(wol_core::jsruntime::EXEC_MERGE[0]).exists();
+    launch_plan(argv, config_home, mm)
+}
+
+/// [`budget_launch`] with whether `wolos-mm` is installed given.
+fn launch_plan(
+    argv: Vec<String>,
+    config_home: &std::path::Path,
+    mm: bool,
+) -> (Vec<String>, Vec<(String, String)>) {
+    use wol_core::jsruntime::{self, Class, Mode};
     use wol_core::memsaver::{self, budget};
-    let Some(b) = argv.first().and_then(|a| budget::of_exec(a)) else {
-        return argv;
+    let Some(first) = argv.first() else {
+        return (argv, Vec::new());
+    };
+    let b = budget::of_exec(first);
+    let Some(class) = b.map(|_| Class::Electron).or_else(|| Class::of_exec(first)) else {
+        return (argv, Vec::new());
     };
     let prefs = memsaver::load(config_home);
-    if !prefs.enabled || prefs.exclude.iter().any(|e| e == b.app) {
-        return argv;
+    if !prefs.enabled || b.is_some_and(|b| prefs.exclude.iter().any(|e| e == b.app)) {
+        return (argv, Vec::new());
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        budget::evict(std::path::Path::new(&home), b);
+    let rt = jsruntime::runtime_flags(class, Mode::Default);
+    // The app by its path; not found: no prefix, the start fails or works as it always did.
+    let exe = crate::desktop::resolve(first).map(|p| p.to_string_lossy().into_owned());
+    let mut out = match (&exe, mm) {
+        (Some(_), true) => rt.prefix(),
+        _ => Vec::new(),
+    };
+    let mut app = argv;
+    if let Some(exe) = exe {
+        app[0] = exe;
     }
-    budget::launch_sh(b, &argv)
+    match b {
+        Some(b) => {
+            if let Some(home) = std::env::var_os("HOME") {
+                budget::evict(std::path::Path::new(&home), b);
+            }
+            out.extend(budget::launch_sh(b, &app, &rt.args));
+        }
+        None => {
+            out.extend(app);
+            out.extend(rt.args);
+        }
+    }
+    (out, rt.env)
 }
 
 /// argv as a command with `env` added; None for an empty argv.
@@ -212,6 +257,95 @@ fn command(argv: &[String], env: &[(String, String)]) -> Option<std::process::Co
     let mut c = std::process::Command::new(p);
     c.args(a).envs(env.iter().map(|(k, v)| (k, v)));
     Some(c)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    fn argv(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// A program file the launch can find by its path.
+    fn program(dir: &std::path::Path, name: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let p = dir.join(name);
+        std::fs::write(&p, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    /// Discord from the Dock starts in its budget scope behind `wolos-mm exec-merge --`, every
+    /// program by its path; with Memory Saver off, or Discord excluded, or any other app, the argv
+    /// is untouched.
+    #[test]
+    fn budgeted_apps_start_in_their_scope_only_while_the_saver_is_on() {
+        let dir = std::env::temp_dir().join(format!("wol-kit-budget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let discord = program(&dir.join("bin"), "discord");
+        let (d, env) = super::launch_plan(argv(&[&discord, "--x"]), &dir, true);
+        assert_eq!(
+            d[..5],
+            ["/usr/bin/wolos-mm", "exec-merge", "--", "/bin/sh", "-c"],
+            "{d:?}"
+        );
+        assert!(d[5].contains("--unit=app-discord-$$.scope"), "{d:?}");
+        assert!(d[5].starts_with("exec '/usr/bin/systemd-run' "), "{d:?}");
+        assert_eq!(d[6..], ["sh".to_owned(), discord.clone(), "--x".to_owned()]);
+        assert!(env.is_empty(), "Electron's shipped rows set no variable");
+        // No wolos-mm on this machine: the same launch without the prefix.
+        let (d, _) = super::launch_plan(argv(&[&discord]), &dir, false);
+        assert_eq!(d[..2], ["/bin/sh", "-c"], "{d:?}");
+        let other = argv(&["gnome-text-editor"]);
+        assert_eq!(super::launch_plan(other.clone(), &dir, true).0, other);
+        let mut p = wol_core::memsaver::Prefs::default();
+        p.set_excluded("discord", true);
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(
+            super::launch_plan(argv(&[&discord]), &dir, true).0,
+            argv(&[&discord])
+        );
+        p.set_excluded("discord", false);
+        p.enabled = false;
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(
+            super::launch_plan(argv(&[&discord]), &dir, true).0,
+            argv(&[&discord])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A WebKitGTK browser has no budget: it starts where it always did, behind the prefix of its
+    /// class, by its path. A bare name that is nowhere in PATH gets no prefix (exec-merge would
+    /// refuse it).
+    #[test]
+    fn a_known_engine_gets_its_runtime_prefix_by_path() {
+        let dir = std::env::temp_dir().join(format!("wol-kit-runtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mini = program(&dir.join("bin"), "MiniBrowser");
+        let (a, env) = super::launch_plan(argv(&[&mini, "https://discord.com/login"]), &dir, true);
+        assert_eq!(
+            a,
+            argv(&[
+                "/usr/bin/wolos-mm",
+                "exec-merge",
+                "--",
+                &mini,
+                "https://discord.com/login"
+            ])
+        );
+        assert!(env.is_empty());
+        let bare = argv(&["MiniBrowser-not-installed-here"]);
+        assert_eq!(super::launch_plan(bare.clone(), &dir, true).0, bare);
+        let mut p = wol_core::memsaver::Prefs::default();
+        p.enabled = false;
+        wol_core::memsaver::save(&dir, &p).unwrap();
+        assert_eq!(
+            super::launch_plan(argv(&[&mini]), &dir, true).0,
+            argv(&[&mini])
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// What `wol-x11-env` exports to the systemd user manager after every scale change (audit X1-2).
@@ -305,30 +439,6 @@ pub fn snapshot_on_map(win: &impl gtk::prelude::IsA<gtk::Window>, name: &'static
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Discord from the Dock starts in its budget scope; with Memory Saver off, or Discord
-    /// excluded, or any other app, the argv is untouched.
-    #[test]
-    fn budgeted_apps_start_in_their_scope_only_while_the_saver_is_on() {
-        let dir = std::env::temp_dir().join(format!("wol-kit-budget-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let d = budget_launch(argv(&["/usr/bin/discord"]), &dir);
-        assert_eq!(d[..2], ["sh", "-c"], "{d:?}");
-        assert!(d[2].contains("--unit=app-discord-$$.scope"), "{d:?}");
-        assert_eq!(d[3..], ["sh", "/usr/bin/discord"]);
-        let other = argv(&["gnome-text-editor"]);
-        assert_eq!(budget_launch(other.clone(), &dir), other);
-        let mut p = wol_core::memsaver::Prefs::default();
-        p.set_excluded("discord", true);
-        wol_core::memsaver::save(&dir, &p).unwrap();
-        assert_eq!(budget_launch(argv(&["discord"]), &dir), argv(&["discord"]));
-        p.set_excluded("discord", false);
-        p.enabled = false;
-        wol_core::memsaver::save(&dir, &p).unwrap();
-        assert_eq!(budget_launch(argv(&["discord"]), &dir), argv(&["discord"]));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
 
     /// The bar's clock must never panic: without a local zone the UTC fallback is a real calendar.
     #[test]

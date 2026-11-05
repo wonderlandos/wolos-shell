@@ -60,15 +60,22 @@ pub fn parse(id: &str, text: &str) -> Option<Entry> {
 
 /// An absolute executable, or a name found in `PATH`.
 fn on_path(prog: &str) -> bool {
+    resolve(prog).is_some()
+}
+
+/// The executable `prog` names: itself when it holds a `/`, else the first match in `PATH`.
+pub(crate) fn resolve(prog: &str) -> Option<PathBuf> {
     let exe = |p: &Path| {
         use std::os::unix::fs::PermissionsExt;
         p.metadata()
             .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
     };
     if prog.contains('/') {
-        return exe(Path::new(prog));
+        return exe(Path::new(prog)).then(|| prog.into());
     }
-    std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| exe(&d.join(prog))))
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|d| d.join(prog))
+        .find(|p| exe(p))
 }
 
 /// Splits Exec, drops field codes (%f %U ...), honours double quotes.

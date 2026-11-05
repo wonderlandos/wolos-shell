@@ -62,7 +62,6 @@ const BASELINE: [(&str, usize); 44] = [
     ("ui/settings/language.rs", 2),
     ("ui/settings/lock.rs", 1),
     ("ui/settings/login_items.rs", 1),
-    ("ui/settings/memory_saver.rs", 2),
     ("ui/settings/mod.rs", 1),
     ("ui/settings/network.rs", 1),
     ("ui/settings/notifications.rs", 2),

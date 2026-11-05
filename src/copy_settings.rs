@@ -283,7 +283,9 @@ pub fn bluetooth_lines(name: &str) -> Vec<String> {
 }
 
 /// Every sentence above, for the lint.
-pub const ALL: [&str; 85] = [
+pub const ALL: [&str; 87] = [
+    MEMSAVER_ABOUT,
+    MEMSAVER_NAP,
     AUTO_METERED_HINT,
     REPORTS_HINT,
     BLUETOOTH_EMPTY_HINT,
@@ -370,6 +372,16 @@ pub const ALL: [&str; 85] = [
     DEFAULT_APPS_TEXT_SUB,
     DEFAULT_APPS_CALENDAR_SUB,
 ];
+
+// ---- Memory Saver ----
+
+/// The Memory Saver switch, in one plain sentence for the three things it turns on together: a
+/// background app gives its memory back (and an app with a budget, every 30 s while behind,
+/// `api::memsaver::engine::PAGEOUT_EVERY_MS`), an app's processes share identical memory (KSM,
+/// `wolos-mm exec-merge`), and Discord starts held to its budget (`memsaver::budget`).
+pub const MEMSAVER_ABOUT: &str = "Apps you aren’t using give their memory back, apps share identical memory, and Discord keeps to a limit.";
+/// "App Nap" subtitle.
+pub const MEMSAVER_NAP: &str = "Pauses apps hidden for 10 minutes that aren’t playing sound. They may show notifications late.";
 
 // ---- General ----
 
