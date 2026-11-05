@@ -64,12 +64,20 @@ pub fn cases() -> Vec<Case> {
         startup: Some(model::Startup::NotRead),
         ..Default::default()
     }));
-    v.push(state("processes-no-match", copy::PROCESSES, || {
-        model::Model {
-            filter: "zzz".into(),
-            ..demo::model()
-        }
-    }));
+    // The toolbar field shows the filter it applies (its clear button drawn: RU-701 holds it inside).
+    v.push(Case {
+        name: "monitor-processes-no-match".into(),
+        size: w::APP_SIZE,
+        class: "preview-app",
+        wallpaper: false,
+        build: Box::new(|| {
+            let m = model::Model {
+                filter: "zzz".into(),
+                ..demo::model()
+            };
+            shown(m, copy::PROCESSES, |m| m.filter.set_text("zzz"))
+        }),
+    });
     v.push(Case {
         name: "monitor-quit-paused".into(),
         size: w::APP_SIZE,
