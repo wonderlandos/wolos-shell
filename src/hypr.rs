@@ -674,10 +674,10 @@ mod tests {
             })
         );
         assert_eq!(
-            parse_event("openwindow>>55a1,1,helium,Helium"),
+            parse_event("openwindow>>55a1,1,atlas,Atlas"),
             Some(Event::OpenWindow {
                 address: "55a1".into(),
-                class: "helium".into()
+                class: "atlas".into()
             })
         );
         assert_eq!(
@@ -868,7 +868,7 @@ mod tests {
     #[test]
     fn fullscreen_is_per_monitor() {
         let clients = parse_clients(
-            r#"[{"address":"0x1","class":"helium","title":"t","workspace":{"id":1},"fullscreen":1}]"#,
+            r#"[{"address":"0x1","class":"atlas","title":"t","workspace":{"id":1},"fullscreen":1}]"#,
         );
         let mons = parse_monitor_workspaces(
             r#"[{"name":"DP-1","activeWorkspace":{"id":1,"name":"1"}},

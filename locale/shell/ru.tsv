@@ -129,6 +129,17 @@ copy.share_no_apps	No app here takes this. You can still copy it or save it.	З�
 copy.share_text_long	That text is longer than 24 KiB. Share a shorter part.	Этот текст больше 24 KiB. Поделитесь его частью покороче.	7984dc0f
 copy.share_text_odd	That text has characters that cannot be shared.	В этом тексте есть символы, которые нельзя передать.	4bbcaff3
 copy.share_app_not_started	That app could not start. Try another one.	Это приложение не удалось запустить. Попробуйте другое.	196307dd
+copy.privacy_media	Can show what it is playing and take the media keys, so you can pause or skip it from anywhere.	Может показывать, что воспроизводится, и получать медиаклавиши, чтобы вы могли поставить на паузу или перейти дальше откуда угодно.	87ddca0f
+copy.privacy_recents	Can add files to your recent files.	Может добавлять файлы в список недавних файлов.	4dcc6907
+copy.privacy_print	Can show the print dialog for a file. Nothing prints until you choose a printer.	Может показать окно печати для файла. Ничего не печатается, пока вы не выберете принтер.	b41ddcc6
+copy.privacy_color_picker	Can let you pick a color from the screen. It gets that color only, never a picture of the screen.	Может дать вам выбрать цвет на экране. Получает только этот цвет, но никогда не изображение экрана.	fbd6244a
+copy.recent_refused	That file cannot be added to the recent files.	Этот файл нельзя добавить в недавние файлы.	08edda44
+copy.recent_not_added	That could not be added to the recent files.	Не удалось добавить это в недавние файлы.	b77e1f8d
+copy.color_none	Picking a color is not available on this computer.	Выбор цвета недоступен на этом компьютере.	7ce56bc8
+copy.print_refused	That file cannot be printed.	Этот файл нельзя напечатать.	aea59b3e
+copy.print_only_files	Only a file can be printed.	Можно напечатать только файл.	d9bbfc6b
+copy.print_kind	That kind of file cannot be printed.	Этот тип файла нельзя напечатать.	9972b8b9
+copy.print_failed	That could not be printed.	Не удалось напечатать.	044402eb
 installer.secure_boot_title	Change One Startup Setting First	Сначала измените одну настройку загрузки	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	Безопасная загрузка этого компьютера доверяет только Windows, поэтому WolOS пока не может запуститься.	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	WolOS установлена, но ключ восстановления прочитать не удалось. Нажмите «Повторить»: «Перезагрузить» станет доступна, когда ключ будет показан.	87ec9bf0

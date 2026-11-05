@@ -129,6 +129,17 @@ copy.share_no_apps	No app here takes this. You can still copy it or save it.	Auc
 copy.share_text_long	That text is longer than 24 KiB. Share a shorter part.	Ce texte dépasse 24 KiB. Partagez-en une partie plus courte.	7984dc0f
 copy.share_text_odd	That text has characters that cannot be shared.	Ce texte contient des caractères qui ne peuvent pas être partagés.	4bbcaff3
 copy.share_app_not_started	That app could not start. Try another one.	Cette app n’a pas pu démarrer. Essayez-en une autre.	196307dd
+copy.privacy_media	Can show what it is playing and take the media keys, so you can pause or skip it from anywhere.	Peut afficher ce qu’elle lit et recevoir les touches multimédia, pour que vous puissiez la mettre en pause ou passer au suivant de partout.	87ddca0f
+copy.privacy_recents	Can add files to your recent files.	Peut ajouter des fichiers à vos fichiers récents.	4dcc6907
+copy.privacy_print	Can show the print dialog for a file. Nothing prints until you choose a printer.	Peut afficher la boîte de dialogue d’impression d’un fichier. Rien n’est imprimé tant que vous n’avez pas choisi une imprimante.	b41ddcc6
+copy.privacy_color_picker	Can let you pick a color from the screen. It gets that color only, never a picture of the screen.	Peut vous laisser choisir une couleur à l’écran. Elle ne reçoit que cette couleur, jamais une image de l’écran.	fbd6244a
+copy.recent_refused	That file cannot be added to the recent files.	Ce fichier ne peut pas être ajouté aux fichiers récents.	08edda44
+copy.recent_not_added	That could not be added to the recent files.	Cela n’a pas pu être ajouté aux fichiers récents.	b77e1f8d
+copy.color_none	Picking a color is not available on this computer.	Choisir une couleur n’est pas disponible sur cet ordinateur.	7ce56bc8
+copy.print_refused	That file cannot be printed.	Ce fichier ne peut pas être imprimé.	aea59b3e
+copy.print_only_files	Only a file can be printed.	Seul un fichier peut être imprimé.	d9bbfc6b
+copy.print_kind	That kind of file cannot be printed.	Ce type de fichier ne peut pas être imprimé.	9972b8b9
+copy.print_failed	That could not be printed.	Cela n’a pas pu être imprimé.	044402eb
 installer.secure_boot_title	Change One Startup Setting First	Modifiez d’abord un réglage de démarrage	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	Le démarrage sécurisé de cet ordinateur ne fait confiance qu’à Windows : WolOS ne peut donc pas encore démarrer.	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	WolOS est installé, mais sa clé de récupération n’a pas pu être lue. Cliquez sur Réessayer : Redémarrer attend que la clé s’affiche.	87ec9bf0

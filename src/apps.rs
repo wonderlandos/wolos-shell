@@ -38,10 +38,10 @@ pub const PINS: &[Pin] = &[
         class: "",
     },
     Pin {
-        id: "helium",
+        id: "atlas",
         name: "Browser",
         icon: "wolos-browser",
-        exec: &["helium"],
+        exec: &["atlas"],
         class: "",
     },
     Pin {
@@ -102,9 +102,19 @@ pub const PINS: &[Pin] = &[
     },
 ];
 
+/// The pin a saved Dock layout means: a layout saved before the browser was renamed names it by
+/// its old id (`wol_core::browser::LEGACY`), which is the browser pin now.
+pub fn current_id(id: &str) -> &str {
+    if id == wol_core::browser::LEGACY.pin {
+        wol_core::browser::ATLAS.class
+    } else {
+        id
+    }
+}
+
 /// The names a person knows a pinned app by besides its WolOS name: the program and the app id's
-/// last part (`Files` is Nautilus, `Browser` is Helium, `Mail` is Geary). Lowercase search words
-/// (QA-LN-20: Helium, Geary and Nautilus found nothing).
+/// last part (`Files` is Nautilus, `Browser` is Atlas, `Mail` is Geary). Lowercase search words
+/// (QA-LN-20: the browser's, Geary's and Nautilus's names found nothing).
 pub fn product_words(p: &Pin) -> String {
     let prog = p.exec.first().map(|x| program(x)).unwrap_or_default();
     let tail = p.id.rsplit('.').next().unwrap_or_default();
@@ -358,6 +368,23 @@ pub fn remove_from_dock(
     (v.len() != items.len()).then_some(v)
 }
 
+/// `s` as a `'static` string, leaked once per distinct text: an app whose launcher changes on an
+/// update keeps its name, icon and class, so only the changed text costs memory (QA-A7-22; a
+/// [`Pin`] borrows `'static`, so a string that might still be on the Dock cannot be freed).
+fn interned(s: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    static TEXTS: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
+    let mut t = TEXTS.lock().unwrap_or_else(|p| p.into_inner());
+    let t = t.get_or_insert_with(HashSet::new);
+    if let Some(known) = t.get(s) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+    t.insert(leaked);
+    leaked
+}
+
 /// The Dock pin of an installed entry: its name, icon, launcher and window class. One copy per
 /// distinct entry for the life of the shell (a Dock holds a handful; [`Pin`] borrows `'static`).
 pub fn entry_pin(e: &Entry) -> Pin {
@@ -378,7 +405,7 @@ pub fn entry_pin(e: &Entry) -> Pin {
     if let Some(p) = made.get(&key) {
         return p.clone();
     }
-    let leak = |s: &str| -> &'static str { Box::leak(s.to_string().into_boxed_str()) };
+    let leak = interned;
     let exec: Vec<&'static str> = e.exec.iter().map(|a| leak(a)).collect();
     let p = Pin {
         id: leak(&key.0),
@@ -472,6 +499,23 @@ pub fn running_unpinned(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-A7-22: an entry that changes only its launcher on an update does not leak its name,
+    /// icon and class again.
+    #[test]
+    fn a_changed_launcher_leaks_only_the_changed_text() {
+        let e = |exec: &str| Entry {
+            id: "leakcheck.desktop".into(),
+            name: "Leak Check".into(),
+            icon: "leakcheck".into(),
+            exec: vec![exec.into()],
+            wm_class: "leakcheck".into(),
+        };
+        let (a, b) = (entry_pin(&e("leak-1")), entry_pin(&e("leak-2")));
+        assert_ne!(a.exec, b.exec);
+        assert!(std::ptr::eq(a.name, b.name) && std::ptr::eq(a.icon, b.icon));
+        assert!(std::ptr::eq(a.class, b.class) && std::ptr::eq(a.id, b.id));
+    }
 
     #[test]
     fn install_leads_the_dock_only_while_trying_wolos() {
@@ -593,15 +637,24 @@ mod tests {
         );
         assert_eq!(icon_for(class, PINS, &installed), "web-browser");
         // The browser itself stays the Browser pin, and the web app stays its own app in Apps.
-        assert_eq!(frontmost_name("helium", "t", PINS, &installed), "Browser");
+        assert_eq!(frontmost_name("atlas", "t", PINS, &installed), "Browser");
         assert_eq!(pin_for_entry(&installed[0], PINS), None);
-        let helium = crate::desktop::Entry {
-            id: "helium.desktop".into(),
-            exec: vec!["helium".into()],
-            wm_class: "helium".into(),
+        let atlas = crate::desktop::Entry {
+            id: "atlas.desktop".into(),
+            exec: vec!["atlas".into()],
+            wm_class: "atlas".into(),
             ..Default::default()
         };
-        assert_eq!(pin_for_entry(&helium, PINS).map(|p| p.id), Some("helium"));
+        assert_eq!(pin_for_entry(&atlas, PINS).map(|p| p.id), Some("atlas"));
+    }
+
+    #[test]
+    fn a_layout_saved_before_the_rename_keeps_its_browser_pin() {
+        let old = wol_core::browser::LEGACY.pin;
+        let pin = PINS.iter().find(|p| p.id == current_id(old)).unwrap();
+        assert_eq!(pin.name, "Browser");
+        assert_eq!(current_id("org.gnome.Nautilus"), "org.gnome.Nautilus");
+        assert!(PINS.iter().all(|p| p.id != old));
     }
 
     #[test]
@@ -615,7 +668,7 @@ mod tests {
         }];
         for (c, w) in [
             ("foot", "wolos-terminal"),
-            ("Helium", "wolos-browser"),
+            ("Atlas", "wolos-browser"),
             ("gnome-calculator", "accessories-calculator"),
             ("weird", "weird"),
             ("Mail", "wolos-mail"),
@@ -627,7 +680,7 @@ mod tests {
     #[test]
     fn running_by_class() {
         let classes: std::collections::HashSet<String> =
-            ["foot".to_string(), "helium".into()].into();
+            ["foot".to_string(), "atlas".into()].into();
         let running: Vec<&str> = PINS
             .iter()
             .filter(|p| is_running(p, &classes))
@@ -728,7 +781,7 @@ mod tests {
         assert_eq!(p.class, e.wm_class);
         let mine: std::collections::HashSet<String> = [e.wm_class.to_lowercase()].into();
         assert!(is_running(p, &mine), "its own window");
-        let browser: std::collections::HashSet<String> = ["helium".to_string()].into();
+        let browser: std::collections::HashSet<String> = ["atlas".to_string()].into();
         assert!(!is_running(p, &browser), "the browser is not the web app");
         assert_eq!(entry_pin(&e), *p, "one copy per entry");
         assert!(

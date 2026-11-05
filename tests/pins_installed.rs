@@ -16,7 +16,7 @@ const PROVIDERS: &[(&str, &str, &str)] = &[
     ("gnome-calendar", "gnome-calendar", "org.gnome.Calendar"),
     ("gnote", "gnote", "org.gnome.Gnote"),
     ("foot", "foot", "foot"),
-    ("helium", "helium-browser", "helium"),
+    ("atlas", "atlas-browser", "atlas"),
 ];
 
 fn repo(p: &str) -> PathBuf {
@@ -102,10 +102,14 @@ fn packaged_pins_are_named_by_their_window_class() {
 }
 
 #[test]
-fn browser_pin_is_helium() {
-    // Helium is the WolOS browser: /usr/bin/helium sets its Wayland app-id (compositor class) to `helium`.
+fn browser_pin_is_atlas() {
+    // Atlas is the WolOS browser: /usr/bin/atlas sets its Wayland app-id (compositor class) to `atlas`.
     let b = PINS.iter().find(|p| p.name == "Browser").unwrap();
-    assert_eq!((b.id, b.exec), ("helium", &["helium"][..]));
+    assert_eq!((b.id, b.exec), ("atlas", &["atlas"][..]));
+    // The one place the browser's names live (the package contract).
+    let atlas = &wol_core::browser::ATLAS;
+    assert_eq!(b.id, atlas.class);
+    assert_eq!(Some(b.exec[0]), atlas.bin.rsplit('/').next());
 }
 
 #[test]

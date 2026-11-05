@@ -53,6 +53,12 @@ pub fn watch() {
     }
 }
 
+/// Makes this process use `p` now, for a file written by the journal (the monitor of [`watch`]
+/// would only catch up a moment later).
+pub fn remember(p: Patience) {
+    CURRENT.store(code(p), Ordering::Relaxed);
+}
+
 /// Saves the setting: the file holds `2`, `5` or `never`; normal removes it. Every shell process
 /// follows through [`watch`].
 pub fn save(p: Patience) -> std::io::Result<()> {

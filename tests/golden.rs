@@ -602,7 +602,7 @@ fn cases() -> Vec<Case> {
                     &[
                         c("0x1", "foot", 0),
                         c("0x2", "org.gnome.Nautilus", 1),
-                        c("0x3", "helium", 2),
+                        c("0x3", "atlas", 2),
                         c("0x4", "foot", 3),
                         c("0x5", "org.wolos.settings", 4),
                         c("0x6", "org.gnome.Geary", 5),
@@ -717,7 +717,7 @@ fn cases() -> Vec<Case> {
                 let apps = shell::switcher::apps(
                     &[
                         c("0x1", "org.gnome.Nautilus", 0),
-                        c("0x2", "helium", 1),
+                        c("0x2", "atlas", 1),
                         c("0x3", "foot", 2),
                         c("0x4", "org.gnome.Geary", 3),
                     ],
@@ -754,7 +754,7 @@ fn cases() -> Vec<Case> {
                 let clients = vec![
                     c("0x1", "foot", "~/src/wolos — fish", 1, [900, 560]),
                     c("0x2", "org.gnome.Nautilus", "Documents", 1, [1100, 700]),
-                    c("0x3", "helium", "WolOS — The friendly BSD", 1, [1280, 760]),
+                    c("0x3", "atlas", "WolOS — The friendly BSD", 1, [1280, 760]),
                     c("0x4", "org.gnome.Geary", "Inbox", 1, [800, 600]),
                     c("0x5", "wol-music", "Music", 2, [800, 600]),
                     c("0x6", "wol-notes", "Notes", 3, [800, 600]),

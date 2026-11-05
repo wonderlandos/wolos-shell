@@ -1257,6 +1257,30 @@ pub const SHARE_TEXT_ODD: &str = "That text has characters that cannot be shared
 /// The app the person chose in the share sheet did not start.
 pub const SHARE_APP_NOT_STARTED: &str = "That app could not start. Try another one.";
 
+// ---- A recent file, a colour, a printed file (libwol 1.16, app_session.rs) ----
+
+/// Settings > Privacy & Security: what each new switch allows (`ui/settings/privacy.rs`).
+pub const PRIVACY_MEDIA: &str = "Can show what it is playing and take the media keys, so you can pause or skip it from anywhere.";
+pub const PRIVACY_RECENTS: &str = "Can add files to your recent files.";
+pub const PRIVACY_PRINT: &str =
+    "Can show the print dialog for a file. Nothing prints until you choose a printer.";
+pub const PRIVACY_COLOR_PICKER: &str = "Can let you pick a color from the screen. It gets that color only, never a picture of the screen.";
+
+/// Hidden, outside the home folder and mounted drives, or not there: one sentence for all, so it
+/// does not say which (a recent file is never a way to ask what exists).
+pub const RECENT_REFUSED: &str = "That file cannot be added to the recent files.";
+pub const RECENT_NOT_ADDED: &str = "That could not be added to the recent files.";
+/// No colour picker (hyprpicker) on this computer.
+pub const COLOR_NONE: &str = "Picking a color is not available on this computer.";
+/// The same refusal for printing: hidden, outside the home folder and mounted drives, or not there.
+pub const PRINT_REFUSED: &str = "That file cannot be printed.";
+/// Printing is for a file, never a folder.
+pub const PRINT_ONLY_FILES: &str = "Only a file can be printed.";
+/// The kind of file CUPS cannot print.
+pub const PRINT_KIND: &str = "That kind of file cannot be printed.";
+/// The print dialog could not be shown or the file could not be sent.
+pub const PRINT_FAILED: &str = "That could not be printed.";
+
 #[cfg(test)]
 mod tests {
     /// QA-DOC-30: a Windows not checked since the shrink (or unreadable) got the BitLocker

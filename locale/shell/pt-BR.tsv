@@ -129,6 +129,17 @@ copy.share_no_apps	No app here takes this. You can still copy it or save it.	Nen
 copy.share_text_long	That text is longer than 24 KiB. Share a shorter part.	Esse texto tem mais de 24 KiB. Compartilhe uma parte menor.	7984dc0f
 copy.share_text_odd	That text has characters that cannot be shared.	Esse texto tem caracteres que não podem ser compartilhados.	4bbcaff3
 copy.share_app_not_started	That app could not start. Try another one.	Esse app não pôde ser iniciado. Tente outro.	196307dd
+copy.privacy_media	Can show what it is playing and take the media keys, so you can pause or skip it from anywhere.	Pode mostrar o que está tocando e receber as teclas de mídia, para você pausar ou pular de qualquer lugar.	87ddca0f
+copy.privacy_recents	Can add files to your recent files.	Pode adicionar arquivos aos seus arquivos recentes.	4dcc6907
+copy.privacy_print	Can show the print dialog for a file. Nothing prints until you choose a printer.	Pode mostrar a janela de impressão de um arquivo. Nada é impresso até você escolher uma impressora.	b41ddcc6
+copy.privacy_color_picker	Can let you pick a color from the screen. It gets that color only, never a picture of the screen.	Pode deixar você escolher uma cor da tela. Recebe só essa cor, nunca uma imagem da tela.	fbd6244a
+copy.recent_refused	That file cannot be added to the recent files.	Esse arquivo não pode ser adicionado aos arquivos recentes.	08edda44
+copy.recent_not_added	That could not be added to the recent files.	Isso não pôde ser adicionado aos arquivos recentes.	b77e1f8d
+copy.color_none	Picking a color is not available on this computer.	Escolher uma cor não está disponível neste computador.	7ce56bc8
+copy.print_refused	That file cannot be printed.	Esse arquivo não pode ser impresso.	aea59b3e
+copy.print_only_files	Only a file can be printed.	Só é possível imprimir um arquivo.	d9bbfc6b
+copy.print_kind	That kind of file cannot be printed.	Esse tipo de arquivo não pode ser impresso.	9972b8b9
+copy.print_failed	That could not be printed.	Isso não pôde ser impresso.	044402eb
 installer.secure_boot_title	Change One Startup Setting First	Mude antes um ajuste de inicialização	4cbaebaa
 installer.secure_boot_text	This computer’s Secure Boot only trusts Windows, so WolOS can’t start yet.	A Inicialização Segura deste computador só confia no Windows, então o WolOS ainda não consegue iniciar.	d853a848
 installer.key_unread_text	WolOS is installed, but its recovery key could not be read. Click Try Again: Restart waits until the key is shown.	O WolOS está instalado, mas não foi possível ler a chave de recuperação. Clique em Tentar de novo: Reiniciar espera até a chave aparecer.	87ec9bf0

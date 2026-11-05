@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The Moon Gate's day-to-night transition on the real pictures and the software renderer
 //! (`kit::gate`, `ui::panels::CrossFade::show_morph`): the morph starts on the day picture and
-//! ends on the night one, the ring lights up ahead of the ribbons, and one frame of the whole
-//! wallpaper (the morph step, the snapshot and GSK's cairo renderer at 1920x1080) is timed.
+//! ends on the night one, the ring lights up ahead of the ribbons, no frame is made on the GTK
+//! thread (a worker makes them, QA-A7-9), and the GTK thread's part of one frame of the whole
+//! wallpaper (the snapshot and GSK's cairo renderer at 1920x1080) is timed.
 //! The numbers are printed; `WOL_GATE_BUDGET=1 cargo test --release --test gate_transition`
 //! also asserts the 16 ms budget (a timing, so not by default). Runs under a private
 //! `gtk4-broadwayd` like `tests/golden.rs`; skips without the design's brand wallpapers.
@@ -160,6 +161,9 @@ fn main() {
     win.present();
     pump(300);
     fade.show(&day);
+    // QA-A7-9: the frames of the transition are made off the GTK thread, so none is made here
+    // while it runs (the test's own calls above are counted before this point).
+    let (made_before, all_before) = (gate::frames_made_here(), gate::frames_made());
     fade.show_morph(m, &day, &night);
     let paintable = gtk::WidgetPaintable::new(Some(&win));
     let renderer = gtk::gsk::CairoRenderer::new();
@@ -172,6 +176,11 @@ fn main() {
     while step_ms <= gate::MS + 16 {
         let t = Instant::now();
         clock.step(step_ms * MS);
+        // The frames are made by a worker and land through the main loop; the time given to it
+        // here is not part of the frame's cost on the GTK thread.
+        let spent = t.elapsed();
+        pump(12);
+        let t = Instant::now() - spent;
         let snap = gtk::Snapshot::new();
         paintable.snapshot(&snap, SIZE.0 as f64, SIZE.1 as f64);
         if let Some(node) = snap.to_node() {
@@ -184,6 +193,15 @@ fn main() {
         step_ms += 16;
     }
     renderer.unrealize();
+    assert_eq!(
+        gate::frames_made_here(),
+        made_before,
+        "a transition frame was made on the GTK thread"
+    );
+    assert!(
+        gate::frames_made() > all_before,
+        "the worker made frames for the transition"
+    );
     assert_eq!(fade.morph_progress(), 1.0, "the morph ran to its end");
     assert_eq!(
         fade.current().as_ref(),

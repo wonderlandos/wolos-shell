@@ -466,12 +466,12 @@ pub const AIRPLANE_SUB: &str =
     "Turns off Wi-Fi, Bluetooth and mobile data. Turning it off brings back the ones that were on.";
 /// IP Settings: while the new address is tried.
 pub const IP_TRYING: &str =
-    "Trying the new address. If the network is lost, it goes back to Automatic within 15 seconds.";
+    "Trying the new address. If the network is lost, it goes back to how it was within 15 seconds.";
 /// IP Settings: the change stayed.
 pub const IP_KEPT: &str = "Saved. The connection uses the new settings.";
 /// IP Settings: the typed address cut the computer off, and it went back (QA-LIVE3-14).
 pub const IP_ROLLED_BACK: &str =
-    "The new address did not reach the network, so the connection went back to Automatic (DHCP).";
+    "The new address did not reach the network, so the connection went back to how it was.";
 /// IP Settings: no link is on a network.
 pub const IP_NO_LINKS: &str =
     "Connect to a network first, then choose how this computer gets its address there.";
@@ -485,6 +485,9 @@ pub const VPN_BAD_FILE: &str =
     "That file is not a WireGuard or OpenVPN configuration this computer can read.";
 /// The VPN asks for its password.
 pub const VPN_NEEDS_PASSWORD: &str = "This VPN asks for its password. Type it, then click Connect.";
+/// A WireGuard profile whose key is no longer in the keyring: there is no password to type.
+pub const VPN_KEY_MISSING: &str =
+    "This VPN’s key is missing from this computer. Import its file again to use it.";
 /// The VPN did not come up.
 pub const VPN_DID_NOT_CONNECT: &str =
     "The VPN did not connect. Check the file with the people who run the VPN.";
@@ -495,6 +498,9 @@ pub fn vpn_added(name: &str) -> String {
 /// Proxy saved for the whole computer.
 pub const PROXY_SAVED: &str =
     "Saved. Apps opened from now on use it; an app that is open may need to be opened again.";
+/// Proxy saved for the whole computer, but this sign-in's own settings did not take (QA-A7-7).
+pub const PROXY_SAVED_NOT_HERE: &str =
+    "Saved for this computer. The apps open now follow it after you sign in again.";
 /// The proxy page's note.
 pub const PROXY_FOOT: &str =
     "The proxy applies to every account: the desktop’s apps, the terminal and the web browser.";
@@ -504,7 +510,7 @@ pub const DOT_SAVED: &str = "Saved. Every app’s name lookups use it now.";
 pub const DOT_FOOT: &str = "Hides the names this computer looks up. Always means no answer from a server that cannot encrypt.";
 
 /// Every network sentence, for the lint.
-pub const NETWORK_ALL: [&str; 27] = [
+pub const NETWORK_ALL: [&str; 29] = [
     FIREWALL_ON,
     FIREWALL_STOPPED,
     WIFI_ENTERPRISE,
@@ -527,8 +533,10 @@ pub const NETWORK_ALL: [&str; 27] = [
     VPN_NO_OPENVPN,
     VPN_BAD_FILE,
     VPN_NEEDS_PASSWORD,
+    VPN_KEY_MISSING,
     VPN_DID_NOT_CONNECT,
     PROXY_SAVED,
+    PROXY_SAVED_NOT_HERE,
     PROXY_FOOT,
     DOT_SAVED,
     DOT_FOOT,

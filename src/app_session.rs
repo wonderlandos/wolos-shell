@@ -57,6 +57,14 @@ pub trait Session {
     /// The chooser of the apps that open `path`, then the chosen one opens it: false when the
     /// person cancelled, or the sentence to show. Blocks until then.
     fn open_with(&self, path: &Path) -> Result<bool, String>;
+    /// Record `path` in the person's recent files as opened by the app at `app`. False on failure.
+    fn recent_add(&self, path: &Path, app: &str) -> bool;
+    /// The person clicks a colour on the screen: `#rrggbb`, None when they cancelled, or the
+    /// sentence to show when this computer cannot pick. Blocks until then.
+    fn pick_color(&self) -> Result<Option<String>, String>;
+    /// The print dialog for the file at `path`: true once sent to a printer, false when the
+    /// person cancelled, or the sentence to show. Blocks until then.
+    fn print_file(&self, path: &Path) -> Result<bool, String>;
 }
 
 /// The running desktop.
@@ -211,6 +219,86 @@ impl Session for Desktop {
                     _ => Ok(false),
                 };
                 let _ = tx.send(got);
+            });
+        });
+        rx.recv().unwrap_or(Ok(false))
+    }
+
+    fn recent_add(&self, path: &Path, app: &str) -> bool {
+        use gtk::gio::prelude::FileExt;
+        use gtk::prelude::RecentManagerExt;
+        let (uri, kind) = {
+            let f = gtk::gio::File::for_path(path);
+            let (kind, _) = gtk::gio::content_type_guess(Some(path), None);
+            (f.uri().to_string(), kind.to_string())
+        };
+        let (name, exec) = app_label(app);
+        let (tx, rx) = std::sync::mpsc::channel();
+        gtk::glib::MainContext::default().invoke(move || {
+            let data = gtk::RecentData::new(None, None, &kind, &name, &exec, &[], false);
+            let _ = tx.send(gtk::RecentManager::default().add_full(&uri, &data));
+        });
+        rx.recv().unwrap_or(false)
+    }
+
+    fn pick_color(&self) -> Result<Option<String>, String> {
+        // hyprpicker prints the colour the person clicks, and nothing if they press Escape. It runs
+        // in the ask's own thread, never the GTK one, for as long as the person takes.
+        let picker = Command::new("hyprpicker")
+            .args(["-f", "hex"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| crate::copy::COLOR_NONE.to_owned())?;
+        let out = picker
+            .wait_with_output()
+            .map_err(|_| crate::copy::COLOR_NONE.to_owned())?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        if text.trim().is_empty() {
+            return Ok(None);
+        }
+        color_of(&text)
+            .map(Some)
+            .ok_or_else(|| crate::copy::COLOR_NONE.to_owned())
+    }
+
+    fn print_file(&self, path: &Path) -> Result<bool, String> {
+        let path = path.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<bool, String>>();
+        gtk::glib::MainContext::default().invoke(move || {
+            let (kind, _) = gtk::gio::content_type_guess(Some(&path), None);
+            if !printable(&kind) {
+                let _ = tx.send(Err(crate::copy::PRINT_KIND.into()));
+                return;
+            }
+            let name = path
+                .file_name()
+                .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+            let file = gtk::gio::File::for_path(&path);
+            let dialog = gtk::PrintDialog::new();
+            dialog.set_title(&name);
+            let cancel = gtk::gio::Cancellable::NONE;
+            let again = dialog.clone();
+            dialog.setup(None::<&gtk::Window>, cancel, move |setup| {
+                let Ok(setup) = setup else {
+                    // Closing the dialog is a cancel; anything else is a failure.
+                    let _ = tx.send(Ok(false));
+                    return;
+                };
+                let done = tx.clone();
+                again.print_file(
+                    None::<&gtk::Window>,
+                    Some(&setup),
+                    &file,
+                    cancel,
+                    move |r| {
+                        let _ = done.send(
+                            r.map(|()| true)
+                                .map_err(|_| crate::copy::PRINT_FAILED.to_owned()),
+                        );
+                    },
+                );
             });
         });
         rx.recv().unwrap_or(Ok(false))
@@ -444,6 +532,60 @@ fn open_with(s: &dyn Session, path: &Path) -> Result<&'static str, String> {
         .map(|opened| if opened { "opened" } else { "cancelled" })
 }
 
+/// The app's name and its command for the recent files: its `.desktop` entry's name when the entry
+/// runs this very program ([`crate::app_media::identity`]), else the program's own name.
+fn app_label(app: &str) -> (String, String) {
+    // Runs in the ask's own thread, never the GTK one.
+    let load: fn() -> Vec<crate::desktop::Entry> = crate::desktop::load_all;
+    let (name, _) = crate::app_media::identity(&load(), app, &crate::app_media::path_dirs());
+    (name, format!("'{}' %u", app.replace('\'', "'\\''")))
+}
+
+/// The real path of the file an app named for the recent files or the printer, if it is in the
+/// person's home or on mounted media and nothing in it is hidden, as named and with every link
+/// followed ([`crate::app_media::canonical_within`]). One answer for hidden, outside and missing.
+fn vetted(s: &dyn Session, path: &Path) -> Option<PathBuf> {
+    let mut roots = vec![s.home()];
+    roots.extend(crate::install::MEDIA_ROOTS.map(PathBuf::from));
+    crate::app_media::canonical_within(path, &roots)
+}
+
+/// Add the file or folder at `path` to the recent files, as the app `app` (the kernel's word).
+fn recent_add(s: &dyn Session, path: &Path, app: &str) -> Result<(), String> {
+    let real = vetted(s, path).ok_or(crate::copy::RECENT_REFUSED)?;
+    if !s.recent_add(&real, app) {
+        return Err(crate::copy::RECENT_NOT_ADDED.into());
+    }
+    Ok(())
+}
+
+/// `#rrggbb` (any case) from what the picker printed; None for anything else.
+fn color_of(text: &str) -> Option<String> {
+    let t = text.trim();
+    let hex = t.strip_prefix('#').filter(|h| h.len() == 6)?;
+    hex.bytes()
+        .all(|b| b.is_ascii_hexdigit())
+        .then(|| format!("#{}", hex.to_ascii_lowercase()))
+}
+
+/// The kinds of file CUPS prints without help from the app.
+fn printable(content_type: &str) -> bool {
+    matches!(
+        content_type,
+        "application/pdf" | "application/postscript" | "text/plain" | "image/png" | "image/jpeg"
+    )
+}
+
+/// The print dialog for a plain file in the same places a recent file may be.
+fn print_file(s: &dyn Session, path: &Path) -> Result<&'static str, String> {
+    let real = vetted(s, path).ok_or(crate::copy::PRINT_REFUSED)?;
+    if !std::fs::metadata(&real).is_ok_and(|m| m.is_file()) {
+        return Err(crate::copy::PRINT_ONLY_FILES.into());
+    }
+    s.print_file(&real)
+        .map(|printed| if printed { "printed" } else { "cancelled" })
+}
+
 /// The start of shared text, for the dialog.
 fn preview(text: &str) -> String {
     let mut t: String = text.chars().take(MAX_PREVIEW).collect();
@@ -561,6 +703,18 @@ pub fn answer(s: &dyn Session, ask: Ask) -> Result<Option<Value>, String> {
         }
         Ask::OpenWith { path } => {
             let done = open_with(s, Path::new(&path))?;
+            Ok(Some(json!({ "done": done })))
+        }
+        Ask::RecentAdd { path, app } => {
+            recent_add(s, Path::new(&path), &app)?;
+            Ok(None)
+        }
+        Ask::ColorPick => Ok(Some(match s.pick_color()? {
+            Some(c) => json!({ "color": c }),
+            None => json!({ "cancelled": true }),
+        })),
+        Ask::PrintFile { path } => {
+            let done = print_file(s, Path::new(&path))?;
             Ok(Some(json!({ "done": done })))
         }
         Ask::Search { text } => {
@@ -765,6 +919,11 @@ mod tests {
         dir: PathBuf,
         /// What the chooser does: Some(true) opens, Some(false) cancels, None has no app.
         opens: Option<bool>,
+        /// What the picker gives: Ok(None) is Escape, Err has no picker.
+        color: Option<Result<Option<String>, String>>,
+        /// What the print dialog does: Some(true) prints, Some(false) cancels, None is a kind
+        /// CUPS cannot print.
+        prints: Option<bool>,
     }
 
     impl Session for Fake {
@@ -847,6 +1006,24 @@ mod tests {
             self.opens
                 .ok_or_else(|| "No app on this computer opens this kind of file.".into())
         }
+        fn recent_add(&self, path: &Path, app: &str) -> bool {
+            self.set
+                .borrow_mut()
+                .push(format!("recent {} by {app}", path.display()));
+            !self.refuse
+        }
+        fn pick_color(&self) -> Result<Option<String>, String> {
+            self.color
+                .clone()
+                .unwrap_or_else(|| Err(crate::copy::COLOR_NONE.into()))
+        }
+        fn print_file(&self, path: &Path) -> Result<bool, String> {
+            self.set
+                .borrow_mut()
+                .push(format!("print {}", path.display()));
+            self.prints
+                .ok_or_else(|| crate::copy::PRINT_KIND.to_owned())
+        }
     }
 
     fn scratch(tag: &str) -> PathBuf {
@@ -854,6 +1031,170 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(d.join("home/Pictures")).unwrap();
         d
+    }
+
+    #[test]
+    fn a_recent_file_is_added_as_the_app_the_kernel_named() {
+        let dir = scratch("recent");
+        let f = Fake {
+            dir: dir.clone(),
+            ..Fake::default()
+        };
+        let doc = dir.join("home/Documents");
+        std::fs::create_dir_all(&doc).unwrap();
+        let file = doc.join("report.pdf");
+        std::fs::write(&file, b"%PDF").unwrap();
+        let ask = |p: &Path| Ask::RecentAdd {
+            path: p.display().to_string(),
+            app: "/usr/bin/reader".into(),
+        };
+        let real = |p: &Path| p.canonicalize().unwrap().display().to_string();
+        assert_eq!(answer(&f, ask(&file)), Ok(None));
+        assert_eq!(answer(&f, ask(&doc)), Ok(None), "a folder is a recent too");
+        assert_eq!(
+            *f.set.borrow(),
+            [
+                format!("recent {} by /usr/bin/reader", real(&file)),
+                format!("recent {} by /usr/bin/reader", real(&doc)),
+            ]
+        );
+        f.set.borrow_mut().clear();
+        // Hidden, outside the home folder, a link into .ssh from a visible folder, and a file that
+        // is not there: the same sentence for every one, and nothing reaches the recent files.
+        let secret = dir.join("home/.ssh/id_ed25519");
+        std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+        std::fs::write(&secret, b"k").unwrap();
+        std::os::unix::fs::symlink(&secret, doc.join("notes.txt")).unwrap();
+        std::os::unix::fs::symlink(dir.join("home/.ssh"), doc.join("folder")).unwrap();
+        let outside = dir.join("etc-passwd");
+        std::fs::write(&outside, b"root").unwrap();
+        std::os::unix::fs::symlink(&outside, doc.join("out.txt")).unwrap();
+        let refused = Err("That file cannot be added to the recent files.".into());
+        for no in [
+            secret.clone(),
+            dir.join("home/.ssh"),
+            doc.join("notes.txt"),
+            doc.join("folder/id_ed25519"),
+            doc.join("folder"),
+            outside.clone(),
+            doc.join("out.txt"),
+            doc.join("gone.pdf"),
+            dir.join("home/.ssh/gone"),
+            doc.join("../.ssh/id_ed25519"),
+            PathBuf::from("/etc/passwd"),
+        ] {
+            assert_eq!(answer(&f, ask(&no)), refused, "{}", no.display());
+        }
+        assert!(
+            f.set.borrow().is_empty(),
+            "nothing reached the recent files"
+        );
+        let refusing = Fake {
+            refuse: true,
+            dir: dir.clone(),
+            ..Fake::default()
+        };
+        assert_eq!(
+            answer(&refusing, ask(&file)),
+            Err("That could not be added to the recent files.".into())
+        );
+    }
+
+    #[test]
+    fn a_picked_color_is_all_the_app_learns() {
+        let ask = || Ask::ColorPick;
+        let picks = |c| Fake {
+            color: Some(c),
+            ..Fake::default()
+        };
+        assert_eq!(
+            answer(&picks(Ok(Some("#0a1b2c".into()))), ask()),
+            Ok(Some(json!({ "color": "#0a1b2c" })))
+        );
+        assert_eq!(
+            answer(&picks(Ok(None)), ask()),
+            Ok(Some(json!({ "cancelled": true })))
+        );
+        assert_eq!(
+            answer(&Fake::default(), ask()),
+            Err("Picking a color is not available on this computer.".into())
+        );
+        for (text, want) in [
+            ("#FFA500\n", Some("#ffa500")),
+            ("#0a1b2c", Some("#0a1b2c")),
+            ("0a1b2c", None),
+            ("#0a1b2", None),
+            ("#0a1b2cd", None),
+            ("#0a1b2g", None),
+            ("rgb(1, 2, 3)", None),
+            ("", None),
+        ] {
+            assert_eq!(color_of(text).as_deref(), want, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn printing_is_for_a_plain_file_of_a_printable_kind() {
+        let dir = scratch("print");
+        let doc = dir.join("home/Documents");
+        std::fs::create_dir_all(&doc).unwrap();
+        let file = doc.join("report.pdf");
+        std::fs::write(&file, b"%PDF").unwrap();
+        let ask = |p: &Path| Ask::PrintFile {
+            path: p.display().to_string(),
+        };
+        let with = |prints| Fake {
+            prints,
+            dir: dir.clone(),
+            ..Fake::default()
+        };
+        assert_eq!(
+            answer(&with(Some(true)), ask(&file)),
+            Ok(Some(json!({ "done": "printed" })))
+        );
+        assert_eq!(
+            answer(&with(Some(false)), ask(&file)),
+            Ok(Some(json!({ "done": "cancelled" })))
+        );
+        assert_eq!(
+            answer(&with(None), ask(&file)),
+            Err("That kind of file cannot be printed.".into())
+        );
+        let f = with(Some(true));
+        f.set.borrow_mut().clear();
+        assert_eq!(
+            answer(&f, ask(&doc)),
+            Err("Only a file can be printed.".into())
+        );
+        // The same places as a recent file, and the same single refusal: hidden, a link into .ssh,
+        // outside the home folder, and not there.
+        let secret = dir.join("home/.ssh/id_ed25519");
+        std::fs::create_dir_all(secret.parent().unwrap()).unwrap();
+        std::fs::write(&secret, b"k").unwrap();
+        std::os::unix::fs::symlink(&secret, doc.join("notes.txt")).unwrap();
+        let refused = Err("That file cannot be printed.".into());
+        for no in [
+            secret,
+            doc.join("notes.txt"),
+            doc.join("gone.pdf"),
+            PathBuf::from("/etc/passwd"),
+        ] {
+            assert_eq!(answer(&f, ask(&no)), refused, "{}", no.display());
+        }
+        assert_eq!(f.set.borrow().len(), 0, "no dialog for any of them");
+        for (kind, ok) in [
+            ("application/pdf", true),
+            ("application/postscript", true),
+            ("text/plain", true),
+            ("image/png", true),
+            ("image/jpeg", true),
+            ("application/x-executable", false),
+            ("text/html", false),
+            ("application/zip", false),
+            ("", false),
+        ] {
+            assert_eq!(printable(kind), ok, "{kind}");
+        }
     }
 
     #[test]

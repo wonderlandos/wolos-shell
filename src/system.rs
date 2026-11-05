@@ -1001,12 +1001,9 @@ impl Inner {
             Action::KeyboardBrightness(p) => c.set_keyboard_brightness(*p),
             Action::ReduceMotion(on) => c.set_reduce_motion_saved(&config_home(), *on),
             Action::Zoom(on) => c.set_zoom(*on),
-            Action::IncreaseContrast(on) => crate::kit::style::set_contrast(*on)
-                .map_err(|_| wol_core::controls::ControlError::Failed),
-            Action::LargerText(on) => crate::kit::style::set_larger_text(*on)
-                .map_err(|_| wol_core::controls::ControlError::Failed),
-            Action::Timeouts(p) => {
-                crate::kit::patience::save(*p).map_err(|_| wol_core::controls::ControlError::Failed)
+            // Journaled under "accessibility" (the Undo toast, Restore, `wol history`): QA-A7-11.
+            Action::IncreaseContrast(_) | Action::LargerText(_) | Action::Timeouts(_) => {
+                perform_accessibility(a, &journal())
             }
             Action::Desktop(p) => wol_core::hyprprefs::apply_desktop(&*c.host, &config_home(), p)
                 .map(drop)
@@ -1085,9 +1082,9 @@ impl Inner {
     }
 }
 
-/// `$XDG_STATE_HOME/wolos/airplane`: the radios that were on before airplane mode.
+/// The radios that were on before airplane mode (the computer's list, [`wol_core::netconf::airplane_path`]).
 fn airplane_path() -> std::path::PathBuf {
-    wol_core::journal::state_home().join(wol_core::netconf::AIRPLANE_FILE)
+    wol_core::netconf::airplane_path(&wol_core::journal::state_home())
 }
 
 fn read_airplane_file(host: &dyn wol_core::system::Host) -> Option<String> {
@@ -1671,6 +1668,52 @@ fn config_home() -> std::path::PathBuf {
 /// Journal actor for changes made in Settings, Control Center and the shell.
 const BY: &str = "settings";
 
+/// The record files a Settings > Accessibility switch writes through the journal, relative to the
+/// config home: `Some` text = the file holds it, `None` = no file. Larger text has no file of its
+/// own state (gsettings holds the scale), so its record is
+/// [`wol_core::journal::LARGER_TEXT_FILE`].
+fn accessibility_files(a: &Action) -> Option<(&'static str, Option<String>)> {
+    match a {
+        Action::IncreaseContrast(on) => {
+            Some((crate::kit::style::CONTRAST_FILE, on.then(String::new)))
+        }
+        Action::LargerText(on) => Some((
+            wol_core::journal::LARGER_TEXT_FILE,
+            on.then(|| format!("{}\n", crate::kit::style::LARGER_TEXT)),
+        )),
+        Action::Timeouts(p) => Some((
+            shared::patience::FILE,
+            (*p != shared::patience::Patience::Normal).then(|| format!("{}\n", p.word())),
+        )),
+        _ => None,
+    }
+}
+
+/// An Accessibility switch: its file goes through `j` as one journal entry on the topic
+/// `accessibility`, then the live effect follows (the text scale in gsettings, the timeout
+/// multiplier of this process). A text scale that cannot be set leaves the record as it was.
+fn perform_accessibility(
+    a: &Action,
+    j: &wol_core::journal::Journal,
+) -> Result<(), wol_core::controls::ControlError> {
+    use wol_core::controls::ControlError::Failed;
+    let (rel, text) = accessibility_files(a).ok_or(Failed)?;
+    if let Action::LargerText(on) = a {
+        crate::kit::style::set_larger_text(*on).map_err(|_| Failed)?;
+    }
+    j.save(
+        "accessibility",
+        BY,
+        &[(rel, text.as_deref())],
+        wol_core::journal::now(),
+    )
+    .map_err(|_| Failed)?;
+    if let Action::Timeouts(p) = a {
+        crate::kit::patience::remember(*p);
+    }
+    Ok(())
+}
+
 fn journal() -> wol_core::journal::Journal {
     wol_core::journal::Journal::for_config(&config_home())
 }
@@ -1830,6 +1873,9 @@ fn reload_after_undo(c: &Controls, r: &wol_core::journal::Reload) {
     }
     if r.hyprland {
         let _ = c.host.run(&["hyprctl", "reload"]);
+    }
+    if let Some(on) = r.larger_text {
+        let _ = crate::kit::style::set_larger_text(on);
     }
 }
 

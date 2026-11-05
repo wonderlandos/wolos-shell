@@ -176,13 +176,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, c: ProxyConfig, status: &gtk::Label) {
                     move || m.apply_proxy_session(&c),
                     move |r| {
                         b.set_sensitive(true);
-                        say(
-                            &st,
-                            match r {
-                                Ok(()) => crate::copy::settings::PROXY_SAVED,
-                                Err(e) => ActionError::from(e).message(),
-                            },
-                        );
+                        say(&st, session_line(r));
                     },
                 );
             }),
@@ -190,6 +184,16 @@ fn render(e: &Rc<Env>, into: &gtk::Box, c: ProxyConfig, status: &gtk::Label) {
     });
     if admin("proxy", &[]).is_some() {
         into.append(&apply);
+    }
+}
+
+/// What the page says after the computer-wide proxy was saved and this sign-in's own settings
+/// (gsettings, NetworkManager) were applied. A step that failed there does not undo what
+/// wol-admind saved, so it is not "The change failed" (QA-A7-7).
+fn session_line(r: Result<(), wol_core::controls::ControlError>) -> &'static str {
+    match r {
+        Ok(()) => crate::copy::settings::PROXY_SAVED,
+        Err(_) => crate::copy::settings::PROXY_SAVED_NOT_HERE,
     }
 }
 
@@ -246,5 +250,16 @@ mod tests {
         assert_eq!(summary(&m), "Manual, proxy.lan:3128");
         assert_eq!(summary(&ProxyConfig::default()), "Off");
         assert_eq!(mode_index(ProxyMode::Auto), 1);
+    }
+
+    /// QA-A7-7: the computer-wide proxy is saved before the session steps run; when one of
+    /// them fails the page says what is true, not that the change failed.
+    #[test]
+    fn a_failed_session_step_still_says_it_was_saved() {
+        use wol_core::controls::ControlError;
+        assert_eq!(session_line(Ok(())), crate::copy::settings::PROXY_SAVED);
+        let line = session_line(Err(ControlError::Failed));
+        assert!(line.starts_with("Saved for this computer"), "{line}");
+        assert!(!line.contains("failed"), "{line}");
     }
 }

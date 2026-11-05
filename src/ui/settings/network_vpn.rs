@@ -29,6 +29,17 @@ pub(crate) fn error_sentence(e: ControlError) -> &'static str {
     }
 }
 
+/// What the pane shows when connecting `kind` failed with `e`: whether to ask for a password, and
+/// the sentence. A WireGuard profile has no password: NetworkManager asking for a secret means
+/// its key never reached (or left) the keyring, so the person is told to import the file again
+/// rather than shown a password row for a protocol that has none (QA-A7-19).
+fn failure(kind: wol_core::vpn::VpnKind, e: ControlError) -> (bool, &'static str) {
+    if !kind.has_password() && e == ControlError::WrongPassword {
+        return (false, crate::copy::settings::VPN_KEY_MISSING);
+    }
+    (e == ControlError::WrongPassword, error_sentence(e))
+}
+
 /// The VPN section of the Network pane, filled off the UI thread and again after each change.
 pub(super) fn section(e: &Rc<Env>) -> gtk::Box {
     let b = w::vbox(w::S2);
@@ -74,6 +85,7 @@ fn render(e: &Rc<Env>, into: &gtk::Box, vpns: Vec<Vpn>, status: &gtk::Label, rel
         let change = {
             let (m, st, uuid, reload) =
                 (e.machine(), status.clone(), v.uuid.clone(), reload.clone());
+            let kind = v.kind;
             let (pw, pw_row) = (password.clone(), pw_row.clone());
             Rc::new(move |c: VpnChange| {
                 let (m, st, uuid, reload, pw, pw_row) = (
@@ -93,8 +105,9 @@ fn render(e: &Rc<Env>, into: &gtk::Box, vpns: Vec<Vpn>, status: &gtk::Label, rel
                             reload()
                         }
                         Err(e) => {
-                            pw_row.set_visible(e == ControlError::WrongPassword);
-                            say(&st, error_sentence(e))
+                            let (ask, sentence) = failure(kind, e);
+                            pw_row.set_visible(ask);
+                            say(&st, sentence)
                         }
                     },
                 );
@@ -174,6 +187,23 @@ fn render(e: &Rc<Env>, into: &gtk::Box, vpns: Vec<Vpn>, status: &gtk::Label, rel
 mod tests {
     use super::*;
     use wol_core::vpn::VpnKind;
+
+    /// QA-A7-19: only a profile that can have a password shows the password row; a WireGuard
+    /// profile that asks for a secret says its key is missing.
+    #[test]
+    fn a_wireguard_profile_never_asks_for_a_password() {
+        let (ask, why) = failure(VpnKind::WireGuard, ControlError::WrongPassword);
+        assert!(!ask, "no password row for WireGuard");
+        assert_eq!(why, crate::copy::settings::VPN_KEY_MISSING);
+        assert_eq!(
+            failure(VpnKind::OpenVpn, ControlError::WrongPassword),
+            (true, crate::copy::settings::VPN_NEEDS_PASSWORD)
+        );
+        assert_eq!(
+            failure(VpnKind::WireGuard, ControlError::Failed),
+            (false, crate::copy::settings::VPN_DID_NOT_CONNECT)
+        );
+    }
 
     /// NET-21 VPN: each row says its kind and whether it is connected; a missing plugin and a
     /// password it asks for have their own sentence.
