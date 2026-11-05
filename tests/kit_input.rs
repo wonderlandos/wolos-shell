@@ -25,13 +25,9 @@ use std::rc::Rc;
 /// value is frozen; when a fix changes it the test fails until the row goes (or is lowered).
 /// (component, check, measured)
 const KNOWN: Known = &[
-    // `.list-row` draws 52 for a 40 row, and a control's `min-height: 24px` is the content box with the
-    // 1 px border on top (26) (DS-GTK-1: min-height 28 and 22). The colour well is a 22 px disc in a
-    // 26 px button.
+    // `.list-row` draws 52 for a 40 row (DS-GTK-1: min-height 28). The fields themselves are 24 px like
+    // their spec since the field root fix of KIT-LINT. The colour well is a 22 px disc in a 26 px button.
     ("text-field", "standard.row", "52"),
-    ("text-field", "standard.sizes.regular.height", "26"),
-    ("password-field", "standard.sizes.regular.height", "26"),
-    ("search-field", "standard.sizes.regular.height", "26"),
     ("shortcut-recorder", "standard.row", "52"),
     ("colour-well", "standard.row", "52"),
     ("colour-well", "standard.sizes.regular.width", "26"),

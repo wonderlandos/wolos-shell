@@ -71,7 +71,7 @@ const WINDOW: usize = 6;
 const SCOPE: [&str; 1] = [""];
 
 /// Blocking calls on the main thread, per file. Only shrinks.
-const BASELINE: [(&str, usize); 40] = [
+const BASELINE: [(&str, usize); 41] = [
     // Top-level modules, counted when the scope became all of `src/` (SP-5, frozen 2026-11-03).
     // Most are blocking helpers by contract (their callers hand them to a worker; the heuristic
     // cannot follow a call into another file); each row only shrinks.
@@ -102,7 +102,7 @@ const BASELINE: [(&str, usize); 40] = [
     ("system.rs", 8),
     // SETUP-FL: Facts::read at the page build is two small file reads and one `gsettings get`, once per
     // account at its first sign-in, before the desktop exists (nothing else is on screen to freeze).
-    ("ui/first_login.rs", 3),
+    ("ui/first_login.rs", 2),
     ("widgets/weather.rs", 1),
     // Picture/Image file decodes, counted since audit4 S3-3 (frozen 2026-11-02).
     ("kit/assistant.rs", 1),
@@ -119,6 +119,9 @@ const BASELINE: [(&str, usize); 40] = [
     // (frozen 2026-11-02).
     ("kit/widgets.rs", 1),
     ("ui/analyze.rs", 1),
+    // register_icons: the few small SVG files of a Kit window's named icons, read from the local theme
+    // when the window is mounted (WOLKIT-1TO1; INT-2: a row, the page cannot draw an icon it has not read).
+    ("ui/app_wolkit.rs", 1),
     // downloads_dir: user-dirs.dirs once when the Dock is built.
     ("ui/dock.rs", 1),
     ("ui/flatpak_consent.rs", 1),

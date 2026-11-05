@@ -288,8 +288,9 @@ const BASELINE: &[(&str, usize)] = &[
 /// 0045 (i18n), 0052 (federate), 0053 (Atlas private and Tor tabs), 0054 (keyring), 0055 (TLS
 /// policy), 0056 (wol-tor) and 0043 (Atlas, ADR 0043 proposed) landed with their branches in the 0.13
 /// integration and are dropped. 0058 is reserved for the Design System (main #9558) and is not written yet;
-/// 0059 (experience) and 0060 (wolkit on WebGPU) landed before it.
-const RU_089_KNOWN_GAPS: &[&str] = &["0046", "0047", "0049", "0050", "0058"];
+/// 0059 (experience) and 0060 (wolkit on WebGPU) landed before it. 0062 (Atlas's own interface) is
+/// written in the ATLAS-UI tree and has not landed; 0063 (Atlas Drive) came first.
+const RU_089_KNOWN_GAPS: &[&str] = &["0046", "0047", "0049", "0050", "0058", "0062"];
 
 fn baseline(id: &str) -> usize {
     BASELINE.iter().find(|b| b.0 == id).map_or(0, |b| b.1)
@@ -1461,7 +1462,10 @@ fn ru_070_to_073_golden_files() {
             .iter()
             .filter(|n| {
                 ((n.starts_with("installer-") || n.starts_with("setup-")) && !sized(n))
+                    // `settings-look-w<px>` are the Look pane's view tree drawn by libWolkit at the widths of
+                    // the responsive cases (WOLKIT-1TO1), named by width like `app-window-parts-w<px>`.
                     || (n.starts_with("settings-")
+                        && !n.starts_with("settings-look-w")
                         && !(n.ends_with("-wide") || n.ends_with("-narrow")))
             })
             .cloned()
@@ -1989,12 +1993,12 @@ fn ru_700_to_706_are_the_layout_lint() {
 #[test]
 fn rules_doc_matches_table() {
     let doc = read(docs().join("RULES-ui.md"));
-    // RU-001..099 only: RU-100..999 are the component rules, generated from the catalog and
-    // compared by `component_rules_match_the_catalog`.
+    // RU-001..099 and the layout lint RU-700..799 only: RU-100..699 are the component rules, generated
+    // from the catalog and compared by `component_rules_match_the_catalog`.
     let in_doc: BTreeMap<String, String> = doc
         .lines()
         .filter_map(|l| l.strip_prefix("| RU-"))
-        .filter(|r| r.as_bytes()[0] == b'0')
+        .filter(|r| matches!(r.as_bytes()[0], b'0' | b'7'))
         .map(|r| {
             let (id, text) = r.split_once(" | ").unwrap();
             (format!("RU-{id}"), text.trim_end_matches(" |").to_string())
@@ -2014,7 +2018,7 @@ fn rules_doc_matches_table() {
     );
 }
 
-// ---------------------------------------------------------------- component rules (RU-100..999)
+// ---------------------------------------------------------------- component rules (RU-100..699)
 
 /// One rule of the component catalog (`design/components/catalog.json`, written by
 /// `design/tools/components.py` from the specs): (id, component name, kind, text, enforced by).
@@ -2103,7 +2107,7 @@ fn component_rules_match_the_catalog() {
     );
 }
 
-/// Ids: RU-100..999 only, unique, none of the shell's own RU-001..099, and the shell keeps to its range.
+/// Ids: RU-100..699 only, unique, none of the shell's own RU-001..099 and RU-700..799, and the shell keeps to its range.
 #[test]
 fn component_rule_ids_are_reserved_and_unique() {
     let mut seen = BTreeSet::new();
@@ -2113,8 +2117,8 @@ fn component_rule_ids_are_reserved_and_unique() {
             .and_then(|n| n.parse().ok())
             .unwrap_or_else(|| panic!("{comp}: {id} is not RU-nnn"));
         assert!(
-            (100..=999).contains(&n),
-            "{comp}: {id} is outside RU-100..999"
+            (100..=699).contains(&n),
+            "{comp}: {id} is outside RU-100..699"
         );
         assert!(seen.insert(id.clone()), "{id} is in two specs");
         assert!(
@@ -2123,9 +2127,10 @@ fn component_rule_ids_are_reserved_and_unique() {
         );
     }
     for (id, _) in RULES {
+        let n = id[3..].parse::<u32>().unwrap();
         assert!(
-            id[3..].parse::<u32>().unwrap() < 100,
-            "{id}: RU-100..999 are reserved for the component specs"
+            n < 100 || (700..800).contains(&n),
+            "{id}: RU-100..699 are reserved for the component specs"
         );
     }
 }

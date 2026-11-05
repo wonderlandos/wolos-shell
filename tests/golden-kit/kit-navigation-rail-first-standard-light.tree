@@ -1,5 +1,5 @@
-Box.app-window.page.vertical [0,0 640x272]
-  Box.horizontal [24,4 592x244]
+Box.app-window.page.vertical [0,0 720x272]
+  Box.horizontal [24,4 672x244]
     Box.navigation-rail.vertical [24,4 84x244]
       ToggleButton.destination.rail-destination.toggle [36,16 60x52]
         Box.vertical [36,20 60x44]
