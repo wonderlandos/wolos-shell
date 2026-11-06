@@ -350,6 +350,18 @@ fn render(e: &Rc<Env>, into: &gtk::Box, f: Facts, status: &gtk::Label, reload: &
             .upcast()],
         ));
     }
+    // Not a grant either: the system TLS policy (ADR 0055), what each kind of connection uses.
+    let conn: Vec<gtk::Widget> = crate::copy::settings::PRIVACY_CONNECTIONS
+        .iter()
+        .map(|(title, what)| w::list_row("", title, what, None).upcast())
+        .collect();
+    into.append(&w::section(
+        crate::copy::settings::PRIVACY_CONNECTIONS_TITLE,
+        &conn,
+    ));
+    into.append(&w::footnote(
+        crate::copy::settings::PRIVACY_CONNECTIONS_NOTE,
+    ));
     // Not a grant: the compositor's rules are static and the portal asks each time.
     into.append(&w::section(
         "Screen Recording",

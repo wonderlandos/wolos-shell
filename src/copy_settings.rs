@@ -79,6 +79,39 @@ pub const PRIVACY_SCREEN: &str =
 /// Privacy footnote, before what WolOS does with the grants listed: how the screen is guarded.
 pub const PRIVACY_SCREEN_NOTE: &str = "Only WolOS’s own screenshot and recording tools can copy \
      the screen without asking. Every other app has to ask, each time.";
+/// Privacy & Security > Connections (ADR 0055): one row per kind of connection, (title, what
+/// it negotiates). `wol doctor tls` measures the same stacks.
+pub const PRIVACY_CONNECTIONS: [(&str, &str); 6] = [
+    (
+        "Browser",
+        "Post-quantum encryption with every site that offers it. Where a site allows it, the name of the site you visit is hidden too.",
+    ),
+    (
+        "Updates and system tools",
+        "Post-quantum encryption first, and only current, secure versions of the protocol.",
+    ),
+    (
+        "App Store, plugins and web apps",
+        "Post-quantum encryption first, and only current, secure versions of the protocol.",
+    ),
+    (
+        "Names of sites",
+        "When encrypted name lookups are on in Network, they use the same protection as updates.",
+    ),
+    (
+        "VPN",
+        "WireGuard is not post-quantum yet. A preshared key from your VPN provider adds that protection.",
+    ),
+    (
+        "Flatpak and Steam apps",
+        "They bring their own encryption, so WolOS cannot choose it for them.",
+    ),
+];
+/// The section's title.
+pub const PRIVACY_CONNECTIONS_TITLE: &str = "Connections";
+/// Under the Connections rows: why post-quantum matters now.
+pub const PRIVACY_CONNECTIONS_NOTE: &str = "Post-quantum encryption keeps what you send today \
+     private from computers that may break today’s encryption later.";
 /// No app has a grant yet, and none asked.
 pub const PRIVACY_NONE: &str =
     "Apps that ask to send notifications, control input or install apps are listed here.";
@@ -381,6 +414,17 @@ mod tests {
             let p = crate::copy::lint(&s);
             assert!(p.is_empty(), "“{s}”: {p:?}");
         }
+    }
+
+    #[test]
+    fn connections_sentences_pass_the_lint() {
+        for (title, s) in super::PRIVACY_CONNECTIONS {
+            assert!(!title.is_empty());
+            let p = crate::copy::lint(s);
+            assert!(p.is_empty(), "“{s}”: {p:?}");
+        }
+        let p = crate::copy::lint(super::PRIVACY_CONNECTIONS_NOTE);
+        assert!(p.is_empty(), "{p:?}");
     }
 
     #[test]
