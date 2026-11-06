@@ -1796,6 +1796,39 @@ fn pin_icon_search_path() {
     theme.set_search_path(&own);
 }
 
+/// FIX-GAP (lead 2026-11-05 22:52Z, mem #1889 "one bar"): the compositor's 28 px strip is the
+/// window's title bar; a Kit toolbar under it with nothing on it is an empty 40 px band (System
+/// Settings and the App Store drew one between the strip and the sidebar). A mapped `.toolbar`
+/// must hold a shown control or something the app put on it (hidden for now, as System
+/// Monitor's End Process on the Overview, so its bar does not come and go between pages).
+fn empty_toolbars(w: &gtk::Widget) -> Vec<String> {
+    fn shown_control(w: &gtk::Widget) -> bool {
+        let mut c = w.first_child();
+        while let Some(x) = c {
+            let holds = if x.has_css_class("toolbar-actions") {
+                x.first_child().is_some()
+            } else if !x.is_visible() {
+                false
+            } else if x.is::<gtk::Box>() {
+                shown_control(&x)
+            } else {
+                true
+            };
+            if holds {
+                return true;
+            }
+            c = x.next_sibling();
+        }
+        false
+    }
+    let mut bars = Vec::new();
+    find_class(w, "toolbar", &mut bars);
+    bars.iter()
+        .filter(|b| b.is_mapped() && b.height() > 0 && !shown_control(b))
+        .map(|b| format!("empty toolbar: a {} px band with nothing on it", b.height()))
+        .collect()
+}
+
 fn find_class(w: &gtk::Widget, class: &str, out: &mut Vec<gtk::Widget>) {
     if w.is_drawable() && w.has_css_class(class) {
         out.push(w.clone());
@@ -2221,6 +2254,7 @@ fn main() {
             issues.extend(contrast_issues(&win, &tex, contrast_classes(&c.name)));
             issues.extend(untitled_icon_buttons(win.upcast_ref()));
             issues.extend(host_icons(win.upcast_ref()));
+            issues.extend(empty_toolbars(win.upcast_ref()));
             // Layout lint (RU-700..RU-706): counted per rule and surface against its BASELINE at
             // the end of the run, not per case.
             let lint = layout_lint::lint(&name, &win, Some(&tex));

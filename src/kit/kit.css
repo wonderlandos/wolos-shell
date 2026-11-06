@@ -223,6 +223,9 @@ button.row-button:hover { background: var(--control); }
    (`.toolbar > :not(.linked) > button { margin: 1px }`), which made 10 px gaps and, with the bar's
    stretch, 38 px buttons. The kit bar's controls keep the kit's own size and gaps (RU-702, RU-705). */
 .toolbar button { margin: 0; }
+/* One bar (FIX-GAP): a toolbar with nothing on it is no band under the compositor's title strip. */
+.toolbar.toolbar-empty { min-height: 0; padding: 0; background: none; }
+.app-window.toolbar-empty .page { padding-top: 12px; }
 .traffic-lights { margin-left: 16px; }
 /* WolOS window buttons: a quiet circle, the glyph (close, minimise, zoom) shows while the pointer is over the group,
    and only the button under the pointer takes the accent (pressed: a shade deeper). */

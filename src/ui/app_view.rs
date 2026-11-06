@@ -618,6 +618,8 @@ impl Chrome {
             // Drawn by libWolkit, the window has no GTK title row until the app has tools.
             head.set_visible(toolbar.is_some_and(|t| !t.tools.is_empty()));
         }
+        // Any frame: a toolbar with no tools takes no room under the strip (FIX-GAP, one bar).
+        w::sync_toolbar(&self.actions);
     }
 
     fn menus(&self, app: &gtk::Application, menus: &[Menu]) {

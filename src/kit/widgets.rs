@@ -719,6 +719,36 @@ pub fn authenticate_sheet(who: &str) -> AuthSheet {
 
 // ---- App scaffold ----
 
+/// Collapses an [`AppWindow`]'s toolbar (the bar holding `actions`) to nothing while it holds
+/// nothing: no shown control of its own (the narrow window's sidebar toggle) and nothing an app put
+/// on `actions`, shown or hidden for now (System Monitor's End Process is hidden on the Overview,
+/// and its bar does not come and go between pages). A class, not visibility: a toggle shown under
+/// a hidden bar stayed hidden (GTK 4.24, the narrow-sidebar regression).
+pub fn sync_toolbar(actions: &gtk::Box) {
+    let Some(bar) = actions.parent() else { return };
+    let mut holds = actions.first_child().is_some();
+    let mut c = bar.first_child();
+    while let Some(x) = c {
+        holds |= x.is_visible() && !x.is::<gtk::Box>();
+        c = x.next_sibling();
+    }
+    // The bar, and the window root (`app-window`), whose pages then keep their top inset off the
+    // strip themselves (kit.css: the 4 px under a toolbar became 4 px under the strip, RU-700).
+    let root = bar.parent().and_then(|h| h.parent());
+    for w in std::iter::once(bar).chain(root) {
+        if w.has_css_class(TOOLBAR_EMPTY) == holds {
+            if holds {
+                w.remove_css_class(TOOLBAR_EMPTY);
+            } else {
+                w.add_css_class(TOOLBAR_EMPTY);
+            }
+        }
+    }
+}
+
+/// The class of a toolbar with nothing on it: no height, no glass, no divider (kit.css).
+pub const TOOLBAR_EMPTY: &str = "toolbar-empty";
+
 /// The narrow-window sidebar toggle's icon and tooltip: "Show Sidebar" (back arrow) over the
 /// content, "Hide Sidebar" (forward arrow, back to the page) while the sidebar fills the window.
 fn toggle_face(t: &gtk::Button, sidebar_shown: bool) {
@@ -732,7 +762,8 @@ fn toggle_face(t: &gtk::Button, sidebar_shown: bool) {
 }
 
 /// HIG §1 AppWindow: 40px glass toolbar (actions, search), 240px sidebar, content, status bar.
-/// The compositor draws the window buttons and the title, in a 28px strip above the toolbar.
+/// The compositor draws the window buttons and the title, in a 28px strip above the toolbar; a
+/// toolbar with nothing on it takes no room ([`sync_toolbar`]): one bar under the strip, not two.
 pub struct AppWindow {
     pub root: gtk::Box,
     pub actions: gtk::Box,
@@ -769,9 +800,27 @@ impl AppWindow {
         // bar's height by default, which stretched System Monitor's End Process and Filter field to
         // the bar's top and bottom.
         actions.set_valign(gtk::Align::Center);
+        actions.add_css_class("toolbar-actions");
         bar.append(&actions);
         let handle = gtk::WindowHandle::builder().child(&bar).build();
         root.append(&handle);
+        // One bar (lead 2026-11-04, mem #1889): the compositor's strip is the title bar, so the
+        // toolbar takes room only while it holds something ([`sync_toolbar`]). System Settings
+        // and the App Store put nothing on it and a wide window hides the sidebar toggle: the bar
+        // was an empty 40 px band between the strip and the sidebar (FIX-GAP, 2026-11-05).
+        {
+            let a = actions.downgrade();
+            let s = move || {
+                if let Some(a) = a.upgrade() {
+                    sync_toolbar(&a);
+                }
+            };
+            s();
+            let m = s.clone();
+            sidebar_toggle.connect_visible_notify(move |_| s());
+            // Actions an app appends after `new` (Maker, System Monitor) are there by the map.
+            root.connect_map(move |_| m());
+        }
         let body = hbox(0);
         body.set_vexpand(true);
         let sidebar = gtk::ListBox::new();
