@@ -64,7 +64,7 @@ pub(crate) struct LanguagePage {
 /// keeps the two equal), so no one has to scroll to find theirs. The installer's list keeps
 /// [`crate::kit::assistant::ROWS`]: its cards share the height of the tallest one, and two more rows
 /// would lengthen every installer page past a 1024x600 screen.
-pub const LANGUAGE_ROWS: i32 = 7;
+pub const LANGUAGE_ROWS: i32 = 10;
 
 pub(crate) fn language_page(
     (title, subtitle): (&str, &str),

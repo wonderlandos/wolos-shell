@@ -140,10 +140,11 @@ fn catalog(english: &str, lang: Lang) -> String {
     crate::i18n::tr_in(english, lang).to_string()
 }
 
-/// `text` is `english` in some language Settings ships (or `english` itself), ignoring case.
+/// `text` is `english` in some language the shell has a catalogue for (or `english` itself),
+/// ignoring case: a draft's title (ru, it) still resolves, a link may come from such a computer.
 fn is_title(english: &str, text: &str, tr: Translate) -> bool {
     let text = text.trim().to_lowercase();
-    Lang::SHIPPED
+    Lang::CATALOGUED
         .iter()
         .any(|l| tr(english, *l).to_lowercase() == text)
 }
@@ -301,7 +302,7 @@ mod tests {
     /// title from a script or an older link), and so does the id whatever the language in use.
     #[test]
     fn a_translated_title_still_resolves() {
-        for lang in Lang::SHIPPED {
+        for lang in Lang::CATALOGUED {
             for (id, english) in PAGE_IDS {
                 let shown = crate::i18n::tr_in(english, lang);
                 assert_eq!(

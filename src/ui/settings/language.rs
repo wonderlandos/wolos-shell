@@ -79,16 +79,19 @@ mod tests {
         assert_eq!(language_index(Some("pt_BR.UTF-8"), ""), 1);
         assert_eq!(language_index(Some("xx_XX.UTF-8"), ""), 0);
         // A saved choice beats the computer's.
-        assert_eq!(language_index(Some("de_DE.UTF-8"), "pt_BR.UTF-8"), 6);
-        // A language no longer offered (es_ES from 0.12) shows the computer's, else English.
-        assert_eq!(language_index(Some("es_ES.UTF-8"), "fr_FR.UTF-8"), 3);
+        assert_eq!(language_index(Some("de_DE.UTF-8"), "pt_BR.UTF-8"), 4);
+        // A language no longer offered (ru_RU, a draft since 2026-11-06) shows the computer's,
+        // else English.
+        assert_eq!(language_index(Some("ru_RU.UTF-8"), "fr_FR.UTF-8"), 3);
+        assert_eq!(language_index(Some("it_IT.UTF-8"), ""), 0);
+        assert_eq!(language_index(Some("zh_CN.UTF-8"), ""), 7);
     }
 
     /// QA-SET-27: nothing saved yet on a Portuguese computer: the pane shows Português (Brasil).
     #[test]
     fn language_index_none_picks_system() {
         assert_eq!(language_index(None, "pt_BR.UTF-8"), 1);
-        assert_eq!(language_index(None, "ja_JP.UTF-8"), 2);
+        assert_eq!(language_index(None, "ja_JP.UTF-8"), 5);
         assert_eq!(language_index(None, "C.UTF-8"), 0);
         assert_eq!(language_index(None, ""), 0);
         assert_eq!(language_index(Some("junk"), "fr_FR.UTF-8"), 3);

@@ -195,6 +195,7 @@ pub fn lang_from(get: impl Fn(&str) -> Option<String>) -> Lang {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shared::i18n::Stage;
 
     // These tests never change the process's language (`set_lang`): other tests of this binary
     // read English text at the same time. `tests/locale_lang.rs` drives `set_lang` alone.
@@ -238,7 +239,11 @@ mod tests {
         assert_eq!(lang_of("ru_RU.UTF-8"), Lang::Ru);
         assert_eq!(lang_of("it_IT.UTF-8"), Lang::It);
         assert_eq!(lang_of("xx"), Lang::Xx);
-        assert_eq!(lang_of("es_ES.UTF-8"), Lang::En);
+        assert_eq!(lang_of("es_ES.UTF-8"), Lang::Es);
+        assert_eq!(lang_of("zh_CN.UTF-8"), Lang::ZhHans);
+        assert_eq!(lang_of("zh-Hans"), Lang::ZhHans);
+        assert_eq!(lang_of("zh_TW.UTF-8"), Lang::En);
+        assert_eq!(lang_of("nl_NL.UTF-8"), Lang::En);
         assert_eq!(lang_of(""), Lang::En);
     }
 
@@ -259,11 +264,15 @@ mod tests {
         assert_eq!(lang_from(env(&[("LC_ALL", ""), ("LANG", "")])), Lang::En);
     }
 
-    /// Every official language has a table in the binary (L10N-2: none ships half-done).
+    /// Every complete language has a table in the binary (L10N-2: none ships half-done); a
+    /// language still being filled reads English for every row it lacks, never "".
     #[test]
     fn every_offered_language_has_a_table() {
-        for l in Lang::SHIPPED {
-            assert!(has(l), "{l:?}");
+        for l in Lang::OFFERED {
+            match l.stage() {
+                Stage::Source | Stage::Complete => assert!(has(l), "{l:?}"),
+                _ => assert!(!tr_in("Choose a password.", l).is_empty(), "{l:?}"),
+            }
         }
         for (locale, _) in wol_core::region::LANGUAGES {
             assert_ne!(Lang::from_posix(locale), None, "{locale}");

@@ -463,9 +463,12 @@ pub fn zone_for_language(i: usize) -> &'static str {
         "pt_BR.UTF-8" => "America/Sao_Paulo",
         "ja_JP.UTF-8" => "Asia/Tokyo",
         "fr_FR.UTF-8" => "Europe/Paris",
-        "ru_RU.UTF-8" => "Europe/Moscow",
-        "it_IT.UTF-8" => "Europe/Rome",
+        "es_ES.UTF-8" => "Europe/Madrid",
         "de_DE.UTF-8" => "Europe/Berlin",
+        "ko_KR.UTF-8" => "Asia/Seoul",
+        "zh_CN.UTF-8" => "Asia/Shanghai",
+        "id_ID.UTF-8" => "Asia/Jakarta",
+        "tl_PH.UTF-8" => "Asia/Manila",
         _ => "America/New_York",
     }
 }

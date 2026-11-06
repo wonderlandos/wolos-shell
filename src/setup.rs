@@ -117,18 +117,22 @@ const fn lang(
     }
 }
 
-/// The languages Setup and the installer offer, in [`wol_core::region::LANGUAGES`]' order (the
-/// lead's priority, L10N-2; `languages_match_settings` keeps the two lists one). A Russian
-/// computer starts on the U.S. layout: the account name and password are typed in Latin letters
-/// (Russian is one pick away in the keyboard list).
-pub const LANGUAGES: [Language; 7] = [
+/// The languages Setup and the installer offer, in [`wol_core::region::LANGUAGES`]' order
+/// (English and the lead's nine, 2026-11-06; `languages_match_settings` keeps the two lists one).
+/// A computer in a language with its own script (Japanese, Korean, Chinese) starts on its usual
+/// Latin layout: the account name and password are typed in Latin letters, the script comes from
+/// the input method. Russian and Italian are drafts, not offered (`Lang::stage`).
+pub const LANGUAGES: [Language; 10] = [
     lang("English", "United States", "en_US.UTF-8", "us"),
     lang("Português", "Brasil", "pt_BR.UTF-8", "br"),
-    lang("日本語", "日本", "ja_JP.UTF-8", "jp"),
+    lang("Español", "España", "es_ES.UTF-8", "es"),
     lang("Français", "France", "fr_FR.UTF-8", "fr"),
-    lang("Русский", "Россия", "ru_RU.UTF-8", "us"),
-    lang("Italiano", "Italia", "it_IT.UTF-8", "it"),
     lang("Deutsch", "Deutschland", "de_DE.UTF-8", "de"),
+    lang("日本語", "日本", "ja_JP.UTF-8", "jp"),
+    lang("한국어", "대한민국", "ko_KR.UTF-8", "us"),
+    lang("简体中文", "中国", "zh_CN.UTF-8", "us"),
+    lang("Bahasa Indonesia", "Indonesia", "id_ID.UTF-8", "us"),
+    lang("Tagalog", "Pilipinas", "tl_PH.UTF-8", "us"),
 ];
 
 /// (xkb layout, name): the same list Settings > Keyboard offers.
@@ -149,26 +153,32 @@ pub fn keyboard_command(k: &str) -> Vec<String> {
 }
 
 /// Time zone prefix -> locale, for machines that know where they are but not the language.
-const ZONES: [(&str, &str); 19] = [
+const ZONES: [(&str, &str); 25] = [
     ("America/Sao_Paulo", "pt_BR.UTF-8"),
     ("America/Fortaleza", "pt_BR.UTF-8"),
     ("America/Recife", "pt_BR.UTF-8"),
     ("America/Manaus", "pt_BR.UTF-8"),
     ("America/Bahia", "pt_BR.UTF-8"),
     ("Brazil/", "pt_BR.UTF-8"),
+    ("Europe/Madrid", "es_ES.UTF-8"),
+    ("America/Mexico_City", "es_ES.UTF-8"),
+    ("America/Bogota", "es_ES.UTF-8"),
+    ("America/Argentina/", "es_ES.UTF-8"),
+    ("America/Lima", "es_ES.UTF-8"),
+    ("America/Santiago", "es_ES.UTF-8"),
     ("Asia/Tokyo", "ja_JP.UTF-8"),
     ("Japan", "ja_JP.UTF-8"),
     ("Europe/Paris", "fr_FR.UTF-8"),
-    ("Europe/Moscow", "ru_RU.UTF-8"),
-    ("Europe/Samara", "ru_RU.UTF-8"),
-    ("Asia/Yekaterinburg", "ru_RU.UTF-8"),
-    ("Asia/Novosibirsk", "ru_RU.UTF-8"),
-    ("Asia/Vladivostok", "ru_RU.UTF-8"),
-    ("Europe/Rome", "it_IT.UTF-8"),
     ("Europe/Berlin", "de_DE.UTF-8"),
     ("Europe/Vienna", "de_DE.UTF-8"),
     ("Europe/Zurich", "de_DE.UTF-8"),
     ("Europe/Lisbon", "pt_BR.UTF-8"),
+    ("Asia/Seoul", "ko_KR.UTF-8"),
+    ("Asia/Shanghai", "zh_CN.UTF-8"),
+    ("Asia/Jakarta", "id_ID.UTF-8"),
+    ("Asia/Makassar", "id_ID.UTF-8"),
+    ("Asia/Jayapura", "id_ID.UTF-8"),
+    ("Asia/Manila", "tl_PH.UTF-8"),
 ];
 
 /// Console keymap (`KEYMAP=` in vconsole.conf, `br-abnt2`, `de-latin1`) -> xkb layout.
@@ -824,8 +834,8 @@ mod tests {
     }
 
     /// QA-L10N-8: Setup, the installer and Settings > Language & Region offer the same languages in
-    /// the same order (the lead's priority: English, Português, 日本語, Français, Русский,
-    /// Italiano, Deutsch).
+    /// the same order: English and the lead's nine (2026-11-06), exactly `Lang::OFFERED`; the
+    /// drafts (Русский, Italiano) are not listed.
     #[test]
     fn languages_match_settings() {
         let setup: Vec<&str> = LANGUAGES.iter().map(|l| l.locale).collect();
@@ -840,12 +850,47 @@ mod tests {
             [
                 "en_US.UTF-8",
                 "pt_BR.UTF-8",
-                "ja_JP.UTF-8",
+                "es_ES.UTF-8",
                 "fr_FR.UTF-8",
-                "ru_RU.UTF-8",
-                "it_IT.UTF-8",
-                "de_DE.UTF-8"
+                "de_DE.UTF-8",
+                "ja_JP.UTF-8",
+                "ko_KR.UTF-8",
+                "zh_CN.UTF-8",
+                "id_ID.UTF-8",
+                "tl_PH.UTF-8"
             ]
+        );
+        let langs: Vec<shared::i18n::Lang> = LANGUAGES
+            .iter()
+            .map(|l| crate::i18n::lang_of(l.locale))
+            .collect();
+        assert_eq!(langs, shared::i18n::Lang::OFFERED);
+        let names: Vec<&str> = LANGUAGES.iter().map(|l| l.name).collect();
+        assert!(!names.contains(&"Русский") && !names.contains(&"Italiano"));
+    }
+
+    /// A machine that only knows its time zone starts Setup in that zone's language, for the new
+    /// languages too; a zone of a draft language (Moscow, Rome) starts in English.
+    #[test]
+    fn zones_pick_offered_languages() {
+        let at = |z: &str| {
+            let h = Hints {
+                zone: Some(z.into()),
+                ..Hints::default()
+            };
+            LANGUAGES[h.language()].locale
+        };
+        assert_eq!(at("Asia/Seoul"), "ko_KR.UTF-8");
+        assert_eq!(at("Asia/Shanghai"), "zh_CN.UTF-8");
+        assert_eq!(at("Asia/Jakarta"), "id_ID.UTF-8");
+        assert_eq!(at("Asia/Manila"), "tl_PH.UTF-8");
+        assert_eq!(at("America/Argentina/Buenos_Aires"), "es_ES.UTF-8");
+        assert_eq!(at("Europe/Moscow"), "en_US.UTF-8");
+        assert_eq!(at("Europe/Rome"), "en_US.UTF-8");
+        assert!(
+            ZONES
+                .iter()
+                .all(|z| LANGUAGES.iter().any(|l| l.locale == z.1))
         );
     }
 
@@ -894,9 +939,14 @@ mod tests {
             ("ja_JP.UTF-8", "jp")
         );
         assert_eq!(
+            pick(&h(None, Some("Asia/Seoul"), None)),
+            ("ko_KR.UTF-8", "us"),
+            "Korean starts on a Latin keyboard"
+        );
+        assert_eq!(
             pick(&h(None, Some("Europe/Moscow"), None)),
-            ("ru_RU.UTF-8", "us"),
-            "Russian starts on a Latin keyboard"
+            ("en_US.UTF-8", "us"),
+            "Russian is a draft, not offered: English"
         );
         assert_eq!(
             pick(&h(None, Some("Europe/London"), None)),

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The shell's text unit (ADR 0045): `locale/shell/en.tsv` is what `wol-i18n extract` makes of the
 //! copy modules, every translation file compiles, and the pseudo-locale lengthens every string.
-use shared::i18n::{Lang, compile, files};
+use shared::i18n::{Lang, Stage, compile, files};
 use std::path::Path;
 
 fn unit() -> std::path::PathBuf {
@@ -44,13 +44,19 @@ fn every_sentence_in_the_module_is_a_key_of_the_unit() {
     assert!(names.len() >= 300, "{} keys", names.len());
 }
 
-/// L10N-2: the seven official languages ship whole: every key of en.tsv is translated in each,
-/// none stale, none with an error (`wol-i18n status` at 100 %).
+/// L10N-2: the complete languages ship whole: every key of en.tsv is translated in each, none
+/// stale, none with an error (`wol-i18n status` at 100 %). A language reaches `Stage::Complete`
+/// only by passing this.
 #[test]
 fn every_official_language_is_complete() {
     let d = unit();
     let unit = files::load_unit(&d).expect("unit");
-    for l in Lang::SHIPPED.into_iter().skip(1) {
+    let complete: Vec<Lang> = Lang::CATALOGUED
+        .into_iter()
+        .filter(|l| l.stage() == Stage::Complete)
+        .collect();
+    assert_eq!(complete, [Lang::PtBr, Lang::Fr, Lang::De, Lang::Ja]);
+    for l in complete {
         let rows = files::load_lang(&d, l).expect("rows");
         let c = compile::compile(&unit, l, &rows).expect("compiles");
         assert!(c.ok(), "{l:?}: {:?}", c.problems);
@@ -63,6 +69,24 @@ fn every_official_language_is_complete() {
             c.rows,
             c.stale
         );
+    }
+}
+
+/// Every language with a catalogue has its file, and the file has a row for every row English
+/// wants in that language (`wol-i18n sync`), so a translator only fills column 3; the drafts (ru,
+/// it) and the languages being filled compile with no error.
+#[test]
+fn every_catalogue_has_every_row_and_compiles() {
+    let d = unit();
+    let unit = files::load_unit(&d).expect("unit");
+    for l in Lang::CATALOGUED.into_iter().skip(1) {
+        assert!(files::lang_file(&d, l).exists(), "{}.tsv", l.tag());
+        let rows = files::load_lang(&d, l).expect("rows");
+        let c = compile::compile(&unit, l, &rows).expect("compiles");
+        assert!(c.ok(), "{l:?}: {:?}", c.problems);
+        let want: Vec<String> = unit.rows_for(l).into_iter().map(|w| w.0).collect();
+        let have: Vec<String> = rows.iter().map(|r| r.key.clone()).collect();
+        assert_eq!(have, want, "{}.tsv: run wol-i18n sync", l.tag());
     }
 }
 
